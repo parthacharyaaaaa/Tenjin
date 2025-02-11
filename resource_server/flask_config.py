@@ -1,7 +1,9 @@
 import os
 from dotenv import load_dotenv
+from traceback import format_exc
 
-bLoaded : bool = load_dotenv(".env", verbose=True, override=True)
+bLoaded : bool = load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"),
+                             verbose=True, override=True)
 if not bLoaded:
     print(f"Failed to load .env file for resource server, please ensure .env exists within this directory: {os.path.dirname(__file__)}")
     raise FileNotFoundError
@@ -17,7 +19,7 @@ class FlaskConfig:
         # TODO: Add JWT signing key, peer server metadata, and Redis data. (Maybe session configs too if we use a hybrid approach instead of pure REST?)
 
         ### Database Configurations ###
-        SQLALCHEMY_DATABASE_URI : str = "postgres+psycopg2://{username}:{password}@{host}:{post}/{database}".format(username=os.environ["POSTGRES_USERNAME"],
+        SQLALCHEMY_DATABASE_URI : str = "postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}".format(username=os.environ["POSTGRES_USERNAME"],
                                                                                                                     password=os.environ["POSTGRES_PASSWORD"],
                                                                                                                     host=os.environ["POSTGRES_HOST"],
                                                                                                                     port=os.environ.get("POSTGRES_PORT", 5432),
@@ -35,9 +37,11 @@ class FlaskConfig:
 
     except (TypeError, ValueError):
         print("\n\nERROR: Invalid format/type for environment variables\n\n")
+        print(format_exc())
         raise Exception()
     except KeyError:
         print("\n\n ERROR: Failed to load environment variables\n\n")
+        print(format_exc())
         raise KeyError()
 
 
