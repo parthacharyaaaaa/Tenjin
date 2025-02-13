@@ -118,3 +118,37 @@ class Post(db.Model):
         Index("idx_posts_author_name", author_uname),
         Index("idx_posts_title", title),
     )
+
+class Comment(db.Model):
+    __tablename__ = "comments"
+
+    # Basic identification
+    id = db.Column(BIGINT, nullable=False, autoincrement = True)
+    author_id = db.Column(BIGINT, nullable = False)
+    author_uname = db.Column(VARCHAR(64), nullable = False)
+    parent_forum = db.Column(INTEGER, nullable = False)
+
+    # Comment details
+    time_created = db.Column(TIMESTAMP, nullable = False)
+    body = db.Column(VARCHAR(512), nullable=False)
+    parent_post = db.Column(BIGINT, nullable=False)
+    parent_thread = db.Column(BIGINT)
+    replying_to = db.Column(BIGINT)
+    score = db.Column(INTEGER, default = 0)
+    reports = db.Column(INTEGER, default = 0)
+
+    __table_args__ = (
+        PrimaryKeyConstraint(id, name="pk_comments"),
+        Index("idx_comments_author_uname", author_uname),
+        Index("idx_comments_author_id", author_id),
+        Index("idx_comments_parent_post", parent_post),
+        Index("idx_comments_parent_thread", parent_thread),
+        Index("idx_comments_reply_to", replying_to),
+        ForeignKeyConstraint(author_id, User.id, "fk_comments_author_id_users_id"),
+        ForeignKeyConstraint(author_uname, User.username, "fk_comments_author_uname_users_username"),
+        ForeignKeyConstraint(replying_to, id, "fk_comments_replying_to_self_id"),
+        ForeignKeyConstraint(parent_post, Post.id, "fk_comments_parent_post_posts_id"),
+        ForeignKeyConstraint(parent_thread, id, "fk_comments_parent_thread_self_id"),
+        CheckConstraint("reports >= 0", "check_reports_value"),
+        
+    )
