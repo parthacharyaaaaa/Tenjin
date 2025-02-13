@@ -10,6 +10,7 @@ from resource_server.blueprint_forum import forum
 from resource_server.blueprint_admin import admin
 from resource_server.blueprint_user import user
 from resource_server.blueprint_config import config
+from resource_server.blueprint_posts import post
 
 app = Flask(import_name="RS",
             instance_path=os.path.join(os.path.dirname(__file__), "instance"))
@@ -19,6 +20,7 @@ app.register_blueprint(forum)
 app.register_blueprint(admin)
 app.register_blueprint(user)
 app.register_blueprint(config)
+app.register_blueprint(post)
 
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
