@@ -70,6 +70,24 @@ class Forum(db.Model):
         Index(_name, name="idx_forums_name"),
     )
 
+class Forum_Rules(db.Model):
+    __tablename__ = "forum_rules"
+
+    #Identification
+    forum_id = db.Column(INTEGER, nullable = False)
+    
+    # Data
+    rule_number = db.Column(NUMERIC(1), nullable = False)
+    title = db.Column(VARCHAR(32), nullable = False)
+    body = db.Column(VARCHAR(64))
+    author = db.Column(INTEGER, nullable = False)
+
+    time_created = db.Column(TIMESTAMP, nullable = False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint(forum_id, rule_number, name="pk_forum_rules"),
+    )
+
 class Post(db.Model):
     __tablename__ = "posts"
 
