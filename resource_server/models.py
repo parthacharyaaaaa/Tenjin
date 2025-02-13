@@ -38,6 +38,38 @@ class User(db.Model):
         CheckConstraint(r"email ~*'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'", name="ck_users_email_regex"),
     )
 
+class Forum(db.Model):
+    __tablename__ = "forums"
+
+    # Basic identification
+    id = db.Column(INTEGER, nullable = False, autoincrement = True)
+    _name = db.Column(VARCHAR(64), nullable = False)
+
+    # Appearance
+    color_theme = db.Column(NUMERIC(2), nullable = False, default = 1)
+    pfp = db.Column(VARCHAR(128))
+    description = db.Column(VARCHAR(256))
+
+    # Activity stats
+    subscribers = db.Column(BIGINT, nullable = False, default = 0)
+    posts = db.Column(BIGINT, nullable = False, default = 0)
+    highlight_post_1 = db.Column(BIGINT, nullable = True)
+    highlight_post_2 = db.Column(BIGINT, nullable = True)
+    highlight_post_3 = db.Column(BIGINT, nullable = True)
+
+    created_at = db.Column(TIMESTAMP, nullable = False)
+    admin_count = db.Column(NUMERIC(3), default = 1)
+
+    __table_args__ = (
+        PrimaryKeyConstraint(id, name="pk_forums_id"),
+        UniqueConstraint(_name, name="uq_forums_name"),
+        CheckConstraint("posts >= 0", name="check_posts_value"),
+        CheckConstraint("subscribers >= 0", name="check_subs_values"),
+        CheckConstraint("color_theme > 0 AND color_theme < 20", name="limit_color_themes"),
+        CheckConstraint("admin_count > 0", name="check_atleast_1_admin"),
+        Index(_name, name="idx_forums_name"),
+    )
+
 class Post(db.Model):
     __tablename__ = "posts"
 
@@ -66,5 +98,5 @@ class Post(db.Model):
         ForeignKeyConstraint(author_uname, User.username, name="fk_posts_author_uname_users_username"),
         Index("idx_posts_author_id", author_id),
         Index("idx_posts_author_name", author_uname),
-        Index("idx_posts_title", title)
+        Index("idx_posts_title", title),
     )
