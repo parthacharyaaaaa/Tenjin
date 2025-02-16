@@ -5,10 +5,6 @@ from typing import Literal
 from flask import request, current_app, g
 from werkzeug.exceptions import BadRequest, Unauthorized
 
-with open("config.json", "r") as configFile:
-    CONFIG = orjson.loads(configFile)
-
-
 def enforce_json(endpoint):
     @wraps(endpoint)
     def decorated(*args, **kwargs):
