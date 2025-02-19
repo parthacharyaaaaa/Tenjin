@@ -17,6 +17,7 @@ APP_CTX_CWD : os.PathLike = os.path.dirname(__file__)
 
 app = Flask(import_name="RS",
             instance_path=os.path.join(APP_CTX_CWD, "instance"))
+app.config.from_object(FLASK_CONFIG_OBJECT)
 
 ### Database setup ###
 CONFIG : dict = {}
@@ -28,7 +29,6 @@ db = SQLAlchemy(app, metadata=METADATA)
 migrate = Migrate(app, db)
 
 ### Blueprints registaration ###
-app.config.from_object(FLASK_CONFIG_OBJECT)
 app.register_blueprint(forum)
 app.register_blueprint(admin)
 app.register_blueprint(user)
