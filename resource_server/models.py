@@ -45,13 +45,13 @@ class User(db.Model):
 
     # Passwords and salts
     pw_hash = db.Column(BYTEA(256), nullable = False)
-    ps_salt = db.Column(BYTEA(64), nullable = False)
+    pw_salt = db.Column(BYTEA(64), nullable = False)
 
     # Activity
     aura = db.Column(BIGINT, default = 0)
     total_posts = db.Column(INTEGER, default = 0)
     total_comments = db.Column(INTEGER, default = 0)
-    date_joined = db.Column(TIMESTAMP, nullable = False, server_default=db.func.now)
+    time_joined = db.Column(TIMESTAMP, nullable = False, server_default=db.func.now)
     last_login = db.Column(TIMESTAMP)
 
     ### Relationships ###
@@ -65,6 +65,19 @@ class User(db.Model):
         CheckConstraint("_alias IS NULL OR LENGTH(_alias) > 5", name="ck_users_alias_length"),
         CheckConstraint(r"email ~*'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'", name="ck_users_email_regex"),
     )
+
+    def __repr__(self) -> str:
+        return f"<User({self.id}, {self.username}, {self.aura}, {self._alias}, {self.email}, {self.total_posts}, {self.total_comments}, {self.date_joined.strftime('%d/%m/%y, %H:%M:%S')}, {self.last_login.strftime('%d/%m/%y, %H:%M:%S')})>"
+    
+    def __json_like__(self) -> dict:
+        return {"id" : self.id,
+                "username" : self.username,
+                "alias" : self._alias,
+                "aura" : self.aura,
+                "posts" : self.total_posts,
+                "comments" : self.total_comments,
+                "epoch" : self.time_joined.strftime('%d/%m/%y, %H:%M:%S'),
+                "last_login" : self.last_login.strftime('%d/%m/%y, %H:%M:%S')}
 
 class Forum(db.Model):
     __tablename__ = "forums"
@@ -99,12 +112,25 @@ class Forum(db.Model):
         CheckConstraint("color_theme > 0 AND color_theme < 20", name="limit_color_themes"),
         CheckConstraint("admin_count > 0", name="check_atleast_1_admin"),
     )
+    def __repr__(self) -> str:
+        return f"<Forum({self.id}, {self._name}, {self.color_theme}, {self.pfp}, {self.description}, {self.subscribers}, {self.posts}, {self.highlight_post_1}, {self.highlight_post_2}, {self.highlight_post_3}, {self.created_at.strftime('%d/%m/%y, %H:%M:%S'), {self.admin_count}})>"
+    
+    def __json_like__(self) -> str:
+        return {"id" : self.id,
+                "name" : self.name,
+                "pfp" : self.pfp,
+                "color_theme" : self.color_theme,
+                "description" : self.description,
+                "posts" : self.posts,
+                "highlights" : [self.highlight_post_1, self.highlight_post_2, self.highlight_post_3],
+                "epoch" : self.created_at.strftime('%d/%m/%y, %H:%M:%S'), 
+                "admin_count" : self.admin_count}
 
 class Forum_Rules(db.Model):
     __tablename__ = "forum_rules"
 
     #Identification
-    forum_id = db.Column(INTEGER, nullable = False)
+    forum_id = db.Column(INTEGER, db.ForeignKey("forums.id"),nullable = False)
     
     # Data
     rule_number = db.Column(SMALLINT, nullable = False, unique=True, autoincrement=True)
@@ -121,6 +147,17 @@ class Forum_Rules(db.Model):
         PrimaryKeyConstraint("forum_id", "rule_number", name="pk_forum_rules"),
         CheckConstraint("rule_number < 6", "check_max_forum_rules"),
     )
+
+    def __repr__(self) -> str:
+        return f"<Forum_Rules(f{self.forum_id}, {self.rule_number}, {self.title if len(self.title) < 16 else self.title[:16]+'...'}, {self.body if len(self.body) < 16 else self.body[:16]+'...'}, {self.author}, {self.time_created.strftime('%d/%m/%y, %H:%M:%S')})>"
+    
+    def __json_like__(self) -> dict:
+        return {"forum_id" : self.forum_id,
+                "rule_number" : self.rule_number,
+                "title" : self.title,
+                "body" : self.body,
+                "author" : self.author,
+                "epoch" : self.time_created.strftime('%d/%m/%y, %H:%M:%S')}
 
 class Post(db.Model):
     __tablename__ = "posts"
@@ -156,6 +193,23 @@ class Post(db.Model):
         CheckConstraint("LENGTH(title) > 8", name="check_title_length_over_8"),
     )
 
+    def __repr__(self) -> str:
+        return f"<Post({self.id}, {self.author_id}, {self.author_uname}, {self.forum}, {self.score}, {self.total_comments}, {self.title if len(self.title) < 16 else self.title[:16] + '...'}, {self.body_text if len(self.body_text) < 32 else self.body_text[:32]+'...'}, {self.flair}, {self.closed}, {self.time_posted.strftime('%d/%m/%y, %H:%M:%S')}, {self.saves}, {self.reports})>"
+    
+    def __json_like__(self) -> dict:
+        return {"id" : self.id,
+                "author_id" : self.author_id,
+                "author_username" : self.author_uname,
+                "forum" : self.forum,
+                "score" : self.score,
+                "comments" : self.total_comments,
+                "title" : self.title,
+                "body" : self.body_text,
+                "flair" : self.flair,
+                "closed" : self.closed,
+                "epoch" : self.time_posted.strftime("%d/%m/%y, %H:%M:%S"),
+                "saves" : self.saves}
+
 class Comment(db.Model):
     __tablename__ = "comments"
 
@@ -186,3 +240,17 @@ class Comment(db.Model):
         PrimaryKeyConstraint("id", name="pk_comments"),
         CheckConstraint("reports >= 0", "check_reports_value"),
     )
+
+    def __repr__(self) -> str:
+        return f"<Comment({self.id}, {self.author_id}, {self.parent_forum}, {self.time_created.strftime('%d/%m/%y, %H:%M:%S')}, {self.body}, {self.parent_post}, {self.parent_thread}, {self.replying_to}, {self.score}, {self.reports}, {self.author_id}, {self.post}, {self.parent}, {self.child}, {self.parent_comment}, {self.comment_replied})>"
+    
+    def __json_like__(self) -> dict:
+        return {"id" : self.id,
+                "author_id" : self.author_id,
+                "parent_forum" : self.parent_forum,
+                "time_created" : self.time_created.strftime('%d/%m/%y, %H:%M:%S'),
+                "body" : self.body,
+                "parent_post" : self.parent_post,
+                "parent_thread" : self.parent_thread,
+                "replying_to" : self.replying_to,
+                "score" : self.score}
