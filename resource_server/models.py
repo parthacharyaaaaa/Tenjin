@@ -1,6 +1,7 @@
 from resource_server import db
 
 from sqlalchemy import PrimaryKeyConstraint, CheckConstraint
+from sqlalchemy.sql import text
 from sqlalchemy.orm import Mapped
 from sqlalchemy.dialects.postgresql import TIMESTAMP, BYTEA
 from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, TEXT
@@ -10,7 +11,7 @@ user_subscriptions = db.Table(
     "user_subscriptions",
     db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
     db.Column("forum_id", INTEGER, db.ForeignKey("forums.id")),
-    db.Column("time_subscribed", TIMESTAMP, nullable=False, server_default=db.func.now),
+    db.Column("time_subscribed", TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")),
     db.PrimaryKeyConstraint("user_id", "forum_id", name="pk_forum_subscriptions")
 )
 
@@ -51,7 +52,7 @@ class User(db.Model):
     aura = db.Column(BIGINT, default = 0)
     total_posts = db.Column(INTEGER, default = 0)
     total_comments = db.Column(INTEGER, default = 0)
-    time_joined = db.Column(TIMESTAMP, nullable = False, server_default=db.func.now)
+    time_joined = db.Column(TIMESTAMP, nullable = False, server_default=text("CURRENT_TIMESTAMP"))
     last_login = db.Column(TIMESTAMP)
 
     ### Relationships ###
@@ -87,7 +88,7 @@ class Forum(db.Model):
     _name = db.Column(VARCHAR(64), nullable = False, unique=True, index=True)
  
     # Appearance
-    color_theme = db.Column(SMALLINT, nullable = False, server_default = 1)
+    color_theme = db.Column(SMALLINT, nullable = False, server_default = "1")
     pfp = db.Column(VARCHAR(128))
     description = db.Column(VARCHAR(256))
 
@@ -130,7 +131,7 @@ class Forum_Rules(db.Model):
     __tablename__ = "forum_rules"
 
     #Identification
-    forum_id = db.Column(INTEGER, db.ForeignKey("forums.id"),nullable = False)
+    forum_id = db.Column(INTEGER, db.ForeignKey("forums.id"), nullable = False)
     
     # Data
     rule_number = db.Column(SMALLINT, nullable = False, unique=True, autoincrement=True)
@@ -165,7 +166,7 @@ class Post(db.Model):
     ### Attributes ###
     # Basic identification
     id = db.Column(BIGINT, nullable = False, autoincrement = True)
-    author_id = db.Column(VARCHAR(64), db.ForeignKey("users.id"), nullable = False, index=True)
+    author_id = db.Column(BIGINT, db.ForeignKey("users.id"), nullable = False, index=True)
     author_uname = db.Column(VARCHAR(64), db.ForeignKey("users.username"), nullable = False, index=True)
     forum = db.Column(VARCHAR(128), nullable = False)
 
@@ -178,13 +179,13 @@ class Post(db.Model):
     body_text = db.Column(TEXT, nullable = False)
     flair = db.Column(VARCHAR(16), index=True)
     closed = db.Column(BOOLEAN, default=False)
-    time_posted = db.Column(TIMESTAMP, nullable=False, server_default=db.func.now)
+    time_posted = db.Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
     saves = db.Column(INTEGER, default=0)
     reports = db.Column(INTEGER, default=0)
 
     ### Relationships ###
-    authored_by : Mapped["User"] = db.relationship("User", back_populates="posts", loading="select")        # M:1
-    has_comments : Mapped[list["Comment"]] = db.relationship("Comment", back_populates="post", loading="select")    # 1:M
+    authored_by : Mapped["User"] = db.relationship("User", back_populates="posts", lazy="select")        # M:1
+    has_comments : Mapped[list["Comment"]] = db.relationship("Comment", back_populates="post", lazy="select")    # 1:M
     parent_forum : Mapped["Post"] = db.relationship("Parent", back_populates="child_posts")             # M:1
 
 
@@ -220,7 +221,7 @@ class Comment(db.Model):
     parent_forum = db.Column(INTEGER, nullable = False)
 
     # Comment details
-    time_created = db.Column(TIMESTAMP, nullable = False, server_default=db.func.now)
+    time_created = db.Column(TIMESTAMP, nullable = False, server_default=text("CURRENT_TIMESTAMP"))
     body = db.Column(VARCHAR(512), nullable=False)
     parent_post = db.Column(BIGINT, db.ForeignKey("posts.id"), nullable=False, index=True)
     parent_thread = db.Column(BIGINT, db.ForeignKey("comments.id"))

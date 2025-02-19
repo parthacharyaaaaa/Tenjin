@@ -34,3 +34,5 @@ app.register_blueprint(admin)
 app.register_blueprint(user)
 app.register_blueprint(config)
 app.register_blueprint(post)
+
+from resource_server.models import *
