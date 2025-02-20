@@ -75,7 +75,25 @@ def register() -> Response:
     
 @user.route("/", methods=["DELETE"])
 def delete_user() -> Response:
-    ...
+    if not (g.REQUEST_JSON.get("username") and
+            g.REQUEST_JSON.get("password")):
+        raise BadRequest("Requires username and password to be provided")
+    
+    OP, USER_DETAILS = processUserInfo(username=g.REQUEST_JSON['username'], password=g.REQUEST_JSON['password'])
+    if not OP:
+        raise BadRequest(list(USER_DETAILS.values())[0])        # This is such an awful hack. Maybe change processUserInfo to return dict as {"error" : {"error_type" : "error_message"}}
+    user : User | None = db.session.execute(select(User).where(User.username == USER_DETAILS['username']).with_for_update()).scalar_one_or_none()
+    if not user:
+        raise NotFound("Requested user could not be found")
+    
+    try:
+        db.session.execute(update(User).where(User.id == user.id).values(deleted=True, time_deleted=datetime.now()))
+        db.session.commit()
+    except:
+        raise InternalServerError("Failed to perform account deletion, please try again. If the issue persists, please raise a ticket")
+    
+    #TODO: Add logic for purging user's JWTs from auth server
+    return jsonify({"message" : "account deleted succesfully", "username" : user.username, "time_deleted" : user.time_deleted}), 203
 
 @user.route("/", methods=["GET", "HEAD", "OPTIONS"])
 def get_users() -> Response:
