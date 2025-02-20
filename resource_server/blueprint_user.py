@@ -24,7 +24,9 @@ def register() -> Response:
             g.REQUEST_JSON.get('email').strip()):
         raise BadRequest("Response requires username, password, and email")
     
-    op, USER_DETAILS = processUserInfo(g.REQUEST_JSON["username"], g.REQUEST_JSON["email"], g.REQUEST_JSON["password"])
+    op, USER_DETAILS = processUserInfo(username=g.REQUEST_JSON["username"],
+                                       email=g.REQUEST_JSON["email"],
+                                       password=g.REQUEST_JSON["password"])
     if not op:
         raise BadRequest(list(USER_DETAILS.values())[0])
 
@@ -110,7 +112,3 @@ def login() -> Response:
     response = jsonify(user.__json_like__())
     # response.cookies.update(tokenPair)
     return response, 200
-
-@user.route("/logout", methods=["DELETE", "OPTIONS"])
-def logout() -> Response:
-    ...

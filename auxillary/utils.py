@@ -21,23 +21,34 @@ def verify_password(password: str, password_hash : bytes, salt: bytes) -> bool:
     '''
     return hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000) == password_hash
 
-def processUserInfo(username : str, email : str, password : str) -> tuple[bool, dict]:
+def processUserInfo(**kwargs) -> tuple[bool, dict]:
+    '''Validate and process user details\n
+    Currently accepts params:
+    - username (str)
+    - password (str)
+    - email (str)
+
+    returns:
+    tuple of boolean and dictionary. In case of failure in validation, the bool value is False, and the immediate error message is contained in the dict. Otherwise, boolean is True and the dict contains the processed user data
+    '''
     global EMAIL_REGEX
     try:
-        username = username.strip()
-        email = email.strip()
-
-        if not (5 < len(username) < 64):
-            return False, {"username_error" : "username must not end or begin with whitespaces, and must be between 5 and 64 characters long"}
-        if not username.isalnum():
-            return False, {"username_error" : "username must be strictly alphanumeric"}
+        if kwargs.get("username"):
+            username : str = kwargs['username'].strip()
+            if not (5 < len(username) < 64):
+                return False, {"username_error" : "username must not end or begin with whitespaces, and must be between 5 and 64 characters long"}
+            if not username.isalnum():
+                return False, {"username_error" : "username must be strictly alphanumeric"}
         
-        if not re.match(EMAIL_REGEX, email, re.IGNORECASE):
-            return False, {"email_error" : "invalid email address"}
-
-        if not (8 < len(password) < 64):
-            return False, {"password_error" : "Password length must lie between 8 and 64"}
+        if kwargs.get("email"):
+            email : str = kwargs['email'].strip()
+            if not re.match(EMAIL_REGEX, email, re.IGNORECASE):
+                return False, {"email_error" : "invalid email address"}
         
-        return True, {"username" : username, "email" : email, "password" : password}
+        if kwargs.get('password'):
+            if not (8 < len(kwargs.get('password')) < 64):
+                return False, {"password_error" : "Password length must lie between 8 and 64"}
+        
+        return True, {"username" : username, "email" : email, "password" : kwargs.get('password')}
     except:
-        return False, {}
+        return False, {"error" : "Malformatted data, please validate data types of each field"}
