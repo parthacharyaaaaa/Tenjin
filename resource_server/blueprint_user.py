@@ -1,19 +1,23 @@
-'''Blueprint module for all actions related to resource: user (`users` in database)'''
+'''Blueprint module for all actions related to resource: user (`users` in database)
+### Note: All user related actions (account creation, User.last_login updation, and account deletion are done directly without query dispatching to Redis)
+'''
 from flask import Blueprint, Response, g, request, jsonify
 user = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/users")
 
-from werkzeug.exceptions import BadRequest, Conflict, InternalServerError
+from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized
 from auxillary.decorators import enforce_json
 from auxillary.utils import processUserInfo
 from auxillary.utils import hash_password, verify_password
-from sqlalchemy import select, insert
+from sqlalchemy import select, insert, update
 from sqlalchemy.exc import IntegrityError
 
 from resource_server import db
 from resource_server.models import User
 
-@enforce_json
+from datetime import datetime
+
 @user.route("/", methods=["POST", "OPTIONS"])
+@enforce_json
 def register() -> Response:
     if not (g.REQUEST_JSON.get('username').strip() and
             g.REQUEST_JSON.get('password').strip() and
@@ -76,8 +80,36 @@ def get_users() -> Response:
     ...
 
 @user.route("/login", methods=["POST", "OPTIONS"])
+@enforce_json
 def login() -> Response:
-    ...
+    if not(g.REQUEST_JSON.get('identity') and g.REQUEST_JSON.get('password')):
+        raise BadRequest("Login requires email/username and password to be provided")
+    
+    identity : str = g.REQUEST_JSON['identity'].strip()
+    if not 5 < len(identity) < 320:
+        raise BadRequest("Provided username/email must be between 5 and 320 characters long")
+
+    isEmail = False
+    if "@" in identity:
+        query = [User.email == identity.lower()]
+        isEmail = True
+    else:
+        query = [User.username == identity]
+
+    user : User | None = db.session.execute(select(User).where(*query).with_for_update()).scalar_one_or_none()
+    if not user:
+        raise NotFound(f"No user witb {'email' if isEmail else 'username'} could be found")
+    if not verify_password(g.REQUEST_JSON['password'], user.pw_hash, user.pw_salt):
+        raise Unauthorized("Incorrect password")
+    
+    epoch = datetime.now()
+    db.session.execute(update(User).where(User.id == user.id).values(last_login = epoch))
+    db.session.commit()
+    # Communicate with auth server
+    
+    response = jsonify(user.__json_like__())
+    # response.cookies.update(tokenPair)
+    return response, 200
 
 @user.route("/logout", methods=["DELETE", "OPTIONS"])
 def logout() -> Response:
