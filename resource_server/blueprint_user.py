@@ -28,7 +28,7 @@ def register() -> Response:
                                        email=g.REQUEST_JSON["email"],
                                        password=g.REQUEST_JSON["password"])
     if not op:
-        raise BadRequest(list(USER_DETAILS.values())[0])
+        raise BadRequest(USER_DETAILS.get("error"))
 
     response_kwargs = {}
     if g.REQUEST_JSON.get("alias"):
@@ -81,7 +81,7 @@ def delete_user() -> Response:
     
     OP, USER_DETAILS = processUserInfo(username=g.REQUEST_JSON['username'], password=g.REQUEST_JSON['password'])
     if not OP:
-        raise BadRequest(list(USER_DETAILS.values())[0])        # This is such an awful hack. Maybe change processUserInfo to return dict as {"error" : {"error_type" : "error_message"}}
+        raise BadRequest(USER_DETAILS.get("error"))
     user : User | None = db.session.execute(select(User).where(User.username == USER_DETAILS['username']).with_for_update()).scalar_one_or_none()
     if not user:
         raise NotFound("Requested user could not be found")
