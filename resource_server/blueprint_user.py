@@ -8,7 +8,7 @@ from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFo
 from auxillary.decorators import enforce_json
 from auxillary.utils import processUserInfo
 from auxillary.utils import hash_password, verify_password
-from sqlalchemy import select, insert, update
+from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError
 
 from resource_server.models import db, User
@@ -45,11 +45,18 @@ def register() -> Response:
         finally:
             g.REQUEST_JSON["pfp"] = None
 
-    if db.session.execute(select(User).where((User.username == USER_DETAILS["username"]) | (User.email == USER_DETAILS["email"]))).scalar_one_or_none():
-        conflict = Conflict("An account with this username or email address already exists")
-        conflict.__setattr__("kwargs", response_kwargs)
-        raise Conflict
+    existingUsers = db.session.execute(select(User).where((User.username == USER_DETAILS["username"]) | (User.email == USER_DETAILS["email"]))).scalars().all()
     
+    if existingUsers:
+        # Live account has the same username/email
+        if not (existingUsers[0].deleted and existingUsers[-1].deleted):
+                    conflict = Conflict("An account with this username or email address already exists")
+                    conflict.__setattr__("kwargs", response_kwargs)
+                    raise Conflict
+        
+        # Hard delete both accounts that violate unique contraint for email and username. Purge time >:3
+        db.session.execute(delete(User).where(User.id.in_([existingUsers[0].id, existingUsers[-1].id])))
+
     # All checks passed, user creation good to go
     passwordHash, passwordSalt = hash_password(USER_DETAILS.pop("password"))
 
@@ -82,7 +89,8 @@ def delete_user() -> Response:
     OP, USER_DETAILS = processUserInfo(username=g.REQUEST_JSON['username'], password=g.REQUEST_JSON['password'])
     if not OP:
         raise BadRequest(USER_DETAILS.get("error"))
-    user : User | None = db.session.execute(select(User).where(User.username == USER_DETAILS['username']).with_for_update()).scalar_one_or_none()
+    user : User | None = db.session.execute(select(User).where(User.username == USER_DETAILS['username'],
+                                                               User.deleted == False).with_for_update()).scalar_one_or_none()
     if not user:
         raise NotFound("Requested user could not be found")
     
