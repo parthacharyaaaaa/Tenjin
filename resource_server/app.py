@@ -3,6 +3,7 @@ from flask import Flask
 from flask_migrate import Migrate
 from traceback import format_exc
 from resource_server.flask_config import FLASK_CONFIG_OBJECT
+from auxillary.utils import generic_error_handler
 
 APP_CTX_CWD : os.PathLike = os.path.dirname(__file__)
 
@@ -11,6 +12,7 @@ def create_app() -> Flask:
     app = Flask(import_name="RS",
                 instance_path=os.path.join(APP_CTX_CWD, "instance"))
     app.config.from_object(FLASK_CONFIG_OBJECT)
+    app.register_error_handler(Exception, generic_error_handler)
 
     ### Database setup ###
     from resource_server.models import db, CONFIG

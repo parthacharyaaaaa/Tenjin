@@ -1,8 +1,27 @@
 '''Helper functions'''
 import hashlib
 import re
-
+from flask import jsonify
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
+
+def generic_error_handler(e : Exception):
+    #TODO: Update this with custom class enforcing (HTTPException, with __slots__ to reduce lookup speed)
+    '''Return a JSON formatted error message to the client
+    
+    Contents of the error message are determined by the following:
+    - e.message: Error message
+    - e.kwargs: Additonal information about the error, attached to HTTP body
+    - e.header_kwargs: Additional information (e.g. server's state, broader context of the error message), attached in HTTP headers
+
+    All of these attributes are dictionaries and are **optional**, since in their absense a generic HTTP 500 code is thrown
+    '''
+    print(e.description)
+    response = jsonify({"message" : getattr(e, "description", "An error occured"),
+                        **getattr(e, "kwargs", {})})
+    if getattr(e, "header_kwargs", None):
+        response.headers.update(e.header_kwargs)
+
+    return response, getattr(e, "code", 500)
 
 def hash_password(password: str, salt: bytes = None) -> tuple[bytes, bytes]:
     '''
