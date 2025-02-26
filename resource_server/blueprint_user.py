@@ -18,9 +18,10 @@ from datetime import datetime
 @user.route("/", methods=["POST", "OPTIONS"])
 @enforce_json
 def register() -> Response:
-    if not (g.REQUEST_JSON.get('username').strip() and
-            g.REQUEST_JSON.get('password').strip() and
-            g.REQUEST_JSON.get('email').strip()):
+    print(g.REQUEST_JSON)
+    if not (g.REQUEST_JSON.get('username') and
+            g.REQUEST_JSON.get('password') and
+            g.REQUEST_JSON.get('email')):
         raise BadRequest("Response requires username, password, and email")
     
     op, USER_DETAILS = processUserInfo(username=g.REQUEST_JSON["username"],
