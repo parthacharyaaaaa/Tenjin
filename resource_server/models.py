@@ -1,10 +1,21 @@
-from resource_server import db
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
 
-from sqlalchemy import PrimaryKeyConstraint, CheckConstraint
+from sqlalchemy import PrimaryKeyConstraint, CheckConstraint, MetaData
 from sqlalchemy.sql import text
 from sqlalchemy.orm import Mapped
 from sqlalchemy.dialects.postgresql import TIMESTAMP, BYTEA
 from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, TEXT
+
+import orjson, os
+
+CONFIG : dict = {}
+with open(os.path.join(os.path.dirname(__file__), "instance", "config.json"), 'rb') as configFile:
+    CONFIG = orjson.loads(configFile.read())
+    METADATA = MetaData(naming_convention=CONFIG["database"]["naming_convention"])
+
+db = SQLAlchemy()
+migrate = Migrate(db=db)
 
 ### Assosciation Tables ###
 user_subscriptions = db.Table(
@@ -40,7 +51,7 @@ class User(db.Model):
     id = db.Column(BIGINT, nullable = False, autoincrement=True)
     username = db.Column(VARCHAR(64), nullable = False, unique=True, index=True)
     _alias = db.Column(VARCHAR(64), nullable = True)
-    email = db.Column(VARCHAR(64), nullable = False, unique=True, index=True)
+    email = db.Column(VARCHAR(320), nullable = False, unique=True, index=True)
 
     pfp = db.Column(VARCHAR(256))
 
@@ -54,7 +65,9 @@ class User(db.Model):
     total_comments = db.Column(INTEGER, default = 0)
     time_joined = db.Column(TIMESTAMP, nullable = False, server_default=text("CURRENT_TIMESTAMP"))
     last_login = db.Column(TIMESTAMP)
-
+    deleted = db.Column(BOOLEAN, nullable=False, server_default=text("false"))
+    time_deleted = db.Column(TIMESTAMP, nullable=True)
+    
     ### Relationships ###
     posts : Mapped[list["Post"]] = db.relationship("Post", back_populates="authored_by", uselist=True, lazy="select")
     comments : Mapped[list["Comment"]] = db.relationship("Comment", back_populates="author_id", lazy="select")
