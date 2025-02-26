@@ -15,7 +15,6 @@ with open(os.path.join(os.path.dirname(__file__), "instance", "config.json"), 'r
     METADATA = MetaData(naming_convention=CONFIG["database"]["naming_convention"])
 
 db = SQLAlchemy()
-migrate = Migrate(db=db)
 
 ### Assosciation Tables ###
 user_subscriptions = db.Table(
@@ -67,7 +66,7 @@ class User(db.Model):
     last_login = db.Column(TIMESTAMP)
     deleted = db.Column(BOOLEAN, nullable=False, server_default=text("false"))
     time_deleted = db.Column(TIMESTAMP, nullable=True)
-    
+
     ### Relationships ###
     posts : Mapped[list["Post"]] = db.relationship("Post", back_populates="authored_by", uselist=True, lazy="select")
     comments : Mapped[list["Comment"]] = db.relationship("Comment", back_populates="author_id", lazy="select")

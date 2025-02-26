@@ -11,8 +11,7 @@ from auxillary.utils import hash_password, verify_password
 from sqlalchemy import select, insert, update
 from sqlalchemy.exc import IntegrityError
 
-from resource_server import db
-from resource_server.models import User
+from resource_server.models import db, User
 
 from datetime import datetime
 

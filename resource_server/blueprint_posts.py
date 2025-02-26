@@ -1,10 +1,8 @@
 from flask import Blueprint, Response, jsonify
 post = Blueprint("post", "post", url_prefix="/posts")
 
-from resource_server import db
-
 from sqlalchemy import select
-from resource_server.models import Post
+from resource_server.models import db, Post
 
 from werkzeug.exceptions import NotFound
 
