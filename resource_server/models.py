@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP, BYTEA
 from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, TEXT
 
 import orjson, os
+from datetime import datetime
 
 CONFIG : dict = {}
 with open(os.path.join(os.path.dirname(__file__), "instance", "config.json"), 'rb') as configFile:
@@ -70,6 +71,7 @@ class User(db.Model):
     ### Relationships ###
     posts : Mapped[list["Post"]] = db.relationship("Post", back_populates="authored_by", uselist=True, lazy="select")
     comments : Mapped[list["Comment"]] = db.relationship("Comment", back_populates="author_id", lazy="select")
+    tickets : Mapped[list["UserTicket"]] = db.relationship("UserTicket", back_populates="parent_user", lazy="select")
     #NOTE:  Only query the related attributes when necessary (attribute access time, typically GET /users/<user_id>), not on any other queries where a user might be part of the SELECT query, such as author (posts, comments, forum rules) or in GET /users/search?q=some-string
 
     __table_args__ = (
@@ -91,6 +93,19 @@ class User(db.Model):
                 "comments" : self.total_comments,
                 "epoch" : self.time_joined.strftime('%d/%m/%y, %H:%M:%S'),
                 "last_login" : self.last_login.strftime('%d/%m/%y, %H:%M:%S')}
+
+class UserTicket(db.Model):
+    __tablename__ = 'user_tickets'
+
+    user_id : int = db.Column(BIGINT, db.ForeignKey("users.id"))
+    time_raised : datetime = db.Column(TIMESTAMP, nullable = False, server_default = text("CURRENT_TIMESTAMP"))
+    description : str = db.Column(VARCHAR(512), nullable = False)
+
+    parent_user : Mapped[User]= db.relationship("User", back_populates="tickets", lazy="select")
+
+    __table_args__ = (
+        PrimaryKeyConstraint("user_id"),
+    )
 
 class Forum(db.Model):
     __tablename__ = "forums"
@@ -115,7 +130,7 @@ class Forum(db.Model):
     admin_count = db.Column(SMALLINT, default = 1)
 
     ### Relationships ###
-    rules : Mapped[list["Forum_Rules"]]= db.relationship("Forum_Rules", back_populates="forum", uselist=True, lazy="select")       # 1:M
+    rules : Mapped[list["ForumRules"]]= db.relationship("Forum_Rules", back_populates="forum", uselist=True, lazy="select")       # 1:M
     #NOTE: Relationship (M:1) between posts and forums is ommitted at the SQLAlchemy level, because of separate logic at the same level (LIMIT*OFFSET+ORDER BY)
 
     __table_args__ = (
@@ -139,7 +154,7 @@ class Forum(db.Model):
                 "epoch" : self.created_at.strftime('%d/%m/%y, %H:%M:%S'), 
                 "admin_count" : self.admin_count}
 
-class Forum_Rules(db.Model):
+class ForumRules(db.Model):
     __tablename__ = "forum_rules"
 
     #Identification
