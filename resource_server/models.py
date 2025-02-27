@@ -112,10 +112,8 @@ class PasswordRecoveryToken(db.Model):
     __tablename__ = "password_recovery_tokens"
 
     user_id : int = db.Column(BIGINT, db.ForeignKey("users.id"))
-    expiry : datetime = db.Column(TIMESTAMP, nullable = False, server_default = text("CURRENT_TIMESTAMP"))
-    attempts : int = db.Column(SMALLINT, nullable = False, server_default = text("1"), index = True)
+    expiry : datetime = db.Column(TIMESTAMP, nullable = False, server_default = text("CURRENT_TIMESTAMP"), index=True)
     url_hash : str = db.Column(BYTEA(512), nullable = False, unique = True, index = True)
-    revoked : bool = db.Column(BOOLEAN, nullable = False, server_default = text("false"))
 
     parent_user : Mapped[User]= db.relationship("User", back_populates="password_token", lazy="select")
 

@@ -9,7 +9,7 @@ from auxillary.decorators import enforce_json
 from auxillary.utils import processUserInfo
 from auxillary.utils import hash_password, verify_password
 from sqlalchemy import select, insert, update, delete
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from resource_server.models import db, User, PasswordRecoveryToken
 
@@ -157,7 +157,7 @@ def recover_user() -> Response:
                    "email" : deadAccount.email,
                    "_links" : {"login" : {"href" : url_for(".login")}}}), 200
 
-@user.route("/recover-password", methods = ["OPTIONS", "PATCH"])
+@user.route("/recover-password", methods = ["OPTIONS", "POST"])
 @enforce_json
 def recover_password() -> Response:
     if not g.REQUEST_JSON.get('identity'):
@@ -175,7 +175,8 @@ def recover_password() -> Response:
     if not recoveryAccount:
         raise NotFound(f"No account with this {'email' if isEmail else 'username'} exists")
     
-    hashedToken = sha256((uuid4().hex + datetime.now().strftime('%d%m%y%H%M%S')).encode()).digest()
+    temp_url = (uuid4().hex + datetime.now().strftime('%d%m%y%H%M%S'))
+    hashedToken = sha256(temp_url.encode()).digest()
     try:
         db.session.execute(delete(PasswordRecoveryToken).where(PasswordRecoveryToken.user_id == recoveryAccount.id))
         db.session.execute(insert(PasswordRecoveryToken).values(user_id = recoveryAccount.id,
@@ -187,6 +188,42 @@ def recover_password() -> Response:
     
     #TODO: Invoke RedisManager method to send recovery email to recoveryAccount.email with a temp link
     return jsonify({"message" : "An email has been sent to account"}), 200    
+
+@user.route("/update-password/<string:token>", methods=["OPTIONS", "PATCH"])
+@enforce_json
+def update_password(token : str) -> Response:
+    if len(token < 15):
+        raise BadRequest("Invalid token")
+    
+    if not (g.REQUEST_JSON.get('password') and g.REQUEST_JSON.get('cpassword')):
+        raise BadRequest("Request requires new password")
+    
+    if g.REQUEST_JSON['password'] != g.REQUEST_JSON['cpassword']:
+        raise BadRequest("Passwords do not match")
+    
+    OP, DETAILS = processUserInfo(password = g.REQUEST_JSON['password'])
+    if not OP:
+        raise BadRequest(DETAILS.get('error', "Invalid password"))
+    
+    hashedToken = sha256(token.encode()).digest()
+    dbToken : PasswordRecoveryToken | None = db.session.execute(select(PasswordRecoveryToken).where(PasswordRecoveryToken.url_hash == hashedToken).with_for_update(nowait=True)).scalar_one_or_none()
+    if not dbToken:
+        raise NotFound("No such token exists. Please retry")
+    
+    if datetime.now() > dbToken.expiry:
+        return jsonify({"message" : "Token expired, please try again"}), 410
+    
+    pw_hash, pw_salt = hash_password(DETAILS['password'])
+    try:
+        user = db.session.execute(update(User).where(User.id == dbToken.user_id).values(pw_hash = pw_hash, pw_salt = pw_salt).returning(User.id)).scalar_one_or_none()
+        if not user:
+            raise NotFound("Account not found")
+        db.session.execute(delete(PasswordRecoveryToken).where(PasswordRecoveryToken.user_id == dbToken.user_id))
+    except SQLAlchemyError:
+        raise InternalServerError("Failed to recover password")     #TODO: Some better response
+    
+    return jsonify({"message" : "password updated succesfully",
+                    "_links" : {"login" : {"href" : url_for(".login")}}})
 
 @user.route("/", methods=["GET", "HEAD", "OPTIONS"])
 def get_users() -> Response:
