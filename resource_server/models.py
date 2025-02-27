@@ -1,14 +1,16 @@
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
-from sqlalchemy import PrimaryKeyConstraint, CheckConstraint, MetaData
+from sqlalchemy import PrimaryKeyConstraint, CheckConstraint, UniqueConstraint, MetaData
 from sqlalchemy.sql import text
 from sqlalchemy.orm import Mapped
 from sqlalchemy.dialects.postgresql import TIMESTAMP, BYTEA
-from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, TEXT
+from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, NUMERIC, TEXT
 
 import orjson, os
 from datetime import datetime
+
+from dataclasses import dataclass
 
 CONFIG : dict = {}
 with open(os.path.join(os.path.dirname(__file__), "instance", "config.json"), 'rb') as configFile:
@@ -42,31 +44,47 @@ post_votes = db.Table(
     db.PrimaryKeyConstraint("voter_id", "post_id", name="pk_post_votes")
 )
 
+stream_links = db.Table(
+    "stream_links",
+    db.Column("anime_id", INTEGER, db.ForeignKey("animes.id")),
+    db.Column("url", VARCHAR(256), nullable = False),
+    db.Column("website", VARCHAR(64), nullable = False),
+    db.PrimaryKeyConstraint("anime_id", "url", name="pk_stream_links")
+)
+
+anime_genres = db.Table(
+    "anime_genres",
+    db.Column("anime_id", INTEGER, db.ForeignKey("animes.id")),
+    db.Column("genre_id", SMALLINT, db.ForeignKey("genres.id")),
+    db.PrimaryKeyConstraint("anime_id", "genre_id", name="pk_anime_genres")
+)
+
+
 ### Tables ###
 class User(db.Model):
     __tablename__ = "users"
 
     ### Attributes ###
     # Basic identification
-    id = db.Column(BIGINT, nullable = False, autoincrement=True)
-    username = db.Column(VARCHAR(64), nullable = False, unique=True, index=True)
-    _alias = db.Column(VARCHAR(64), nullable = True)
-    email = db.Column(VARCHAR(320), nullable = False, unique=True, index=True)
+    id : int = db.Column(BIGINT, nullable = False, autoincrement=True)
+    username : str = db.Column(VARCHAR(64), nullable = False, unique=True, index=True)
+    _alias : str = db.Column(VARCHAR(64), nullable = True)
+    email : str = db.Column(VARCHAR(320), nullable = False, unique=True, index=True)
 
-    pfp = db.Column(VARCHAR(256))
+    pfp : str = db.Column(VARCHAR(256))
 
     # Passwords and salts
-    pw_hash = db.Column(BYTEA(256), nullable = False)
-    pw_salt = db.Column(BYTEA(64), nullable = False)
+    pw_hash : bytes = db.Column(BYTEA(256), nullable = False)
+    pw_salt : bytes = db.Column(BYTEA(64), nullable = False)
 
     # Activity
-    aura = db.Column(BIGINT, default = 0)
-    total_posts = db.Column(INTEGER, default = 0)
-    total_comments = db.Column(INTEGER, default = 0)
-    time_joined = db.Column(TIMESTAMP, nullable = False, server_default=text("CURRENT_TIMESTAMP"))
-    last_login = db.Column(TIMESTAMP)
-    deleted = db.Column(BOOLEAN, nullable=False, server_default=text("false"))
-    time_deleted = db.Column(TIMESTAMP, nullable=True)
+    aura : int = db.Column(BIGINT, default = 0)
+    total_posts : int = db.Column(INTEGER, default = 0)
+    total_comments : int = db.Column(INTEGER, default = 0)
+    time_joined : datetime = db.Column(TIMESTAMP, nullable = False, server_default=text("CURRENT_TIMESTAMP"))
+    last_login : datetime = db.Column(TIMESTAMP)
+    deleted : bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
+    time_deleted : datetime = db.Column(TIMESTAMP, nullable=True)
 
     ### Relationships ###
     posts : Mapped[list["Post"]] = db.relationship("Post", back_populates="authored_by", uselist=True, lazy="select")
@@ -95,6 +113,7 @@ class User(db.Model):
                 "epoch" : self.time_joined.strftime('%d/%m/%y, %H:%M:%S'),
                 "last_login" : self.last_login.strftime('%d/%m/%y, %H:%M:%S')}
 
+@dataclass
 class UserTicket(db.Model):
     __tablename__ = 'user_tickets'
 
@@ -108,6 +127,7 @@ class UserTicket(db.Model):
         PrimaryKeyConstraint("user_id"),
     )
 
+@dataclass
 class PasswordRecoveryToken(db.Model):
     __tablename__ = "password_recovery_tokens"
 
@@ -121,30 +141,73 @@ class PasswordRecoveryToken(db.Model):
         PrimaryKeyConstraint("user_id"),
     )
 
+@dataclass
+class Anime(db.Model):
+    __tablename__ = "animes"
+
+    id : int = db.Column(INTEGER, nullable = False, autoincrement = True)
+    title : str = db.Column(VARCHAR(128), nullable = False, index = True, unique = True)
+
+    rating : float = db.Column(NUMERIC(3,2), nullable = False)
+    mal_ranking : int = db.Column(INTEGER, nullable = False)
+    members : int = db.Column(BIGINT, nullable = False, server_default = text("0"))
+    synposis : str = db.Column(TEXT, nullable = False)
+    # Genres is multi-valued, made into separate table
+    # Stream links are multi-valued, made into separate table
+
+    registered_forums : Mapped[list["Forum"]] = db.relationship("Forum", lazy = "select")
+
+    def __json_like__(self) -> dict:
+        return {"id" : self.id,
+                "title" : self.title,
+                "rating" : self.rating,
+                "mal_ranking" : self.mal_ranking,
+                "members" : self.members,
+                "synopsis" : self.synposis[:16] + "..."}
+    #TODO: Add stream links and genres to be queried in either __json_like__ or some other Python-level method
+
+    __table_args__ = (
+        PrimaryKeyConstraint("id"),
+        CheckConstraint("mal_ranking >= 0", "check_ranking_positive"),
+        CheckConstraint("members >= 0", "check_members_positive"),
+        CheckConstraint("rating >= 0", "check_rating_positive"),
+    )
+
+@dataclass
+class Genre(db.Model):
+    __tablename__ = "genres"
+    id = db.Column(SMALLINT, autoincrement = True)
+    _name = db.Column(VARCHAR(16), nullable = False, unique = True, index = True)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("id"),
+    )
+
 class Forum(db.Model):
     __tablename__ = "forums"
 
     # Basic identification
-    id = db.Column(INTEGER, nullable = False, autoincrement = True)
-    _name = db.Column(VARCHAR(64), nullable = False, unique=True, index=True)
+    id : int= db.Column(INTEGER, nullable = False, autoincrement = True)
+    _name : str = db.Column(VARCHAR(64), nullable = False, unique=True, index=True)
+    anime : int | None = db.Column(INTEGER, db.ForeignKey("animes.id"), index = True)
  
     # Appearance
-    color_theme = db.Column(SMALLINT, nullable = False, server_default = "1")
-    pfp = db.Column(VARCHAR(128))
-    description = db.Column(VARCHAR(256))
+    color_theme : int = db.Column(SMALLINT, nullable = False, server_default = "1")
+    pfp : str = db.Column(VARCHAR(128))
+    description : str = db.Column(VARCHAR(256))
 
     # Activity stats
-    subscribers = db.Column(BIGINT, nullable = False, default = 0)
-    posts = db.Column(BIGINT, nullable = False, default = 0)
-    highlight_post_1 = db.Column(BIGINT, nullable = True)
-    highlight_post_2 = db.Column(BIGINT, nullable = True)
-    highlight_post_3 = db.Column(BIGINT, nullable = True)
+    subscribers : int = db.Column(BIGINT, nullable = False, default = 0)
+    posts : int = db.Column(BIGINT, nullable = False, default = 0)
+    highlight_post_1 : int = db.Column(BIGINT, nullable = True)
+    highlight_post_2 : int = db.Column(BIGINT, nullable = True)
+    highlight_post_3 : int = db.Column(BIGINT, nullable = True)
 
-    created_at = db.Column(TIMESTAMP, nullable = False)
-    admin_count = db.Column(SMALLINT, default = 1)
+    created_at : datetime = db.Column(TIMESTAMP, nullable = False)
+    admin_count : int = db.Column(SMALLINT, default = 1)
 
     ### Relationships ###
-    rules : Mapped[list["ForumRules"]]= db.relationship("Forum_Rules", back_populates="forum", uselist=True, lazy="select")       # 1:M
+    rules : Mapped[list["ForumRules"]] = db.relationship("ForumRules", back_populates="forum", uselist=True, lazy="select")       # 1:M
     #NOTE: Relationship (M:1) between posts and forums is ommitted at the SQLAlchemy level, because of separate logic at the same level (LIMIT*OFFSET+ORDER BY)
 
     __table_args__ = (
@@ -153,6 +216,7 @@ class Forum(db.Model):
         CheckConstraint("subscribers >= 0", name="check_subs_values"),
         CheckConstraint("color_theme > 0 AND color_theme < 20", name="limit_color_themes"),
         CheckConstraint("admin_count > 0", name="check_atleast_1_admin"),
+        UniqueConstraint("_name", "anime", name="uq_name_anime"),
     )
     def __repr__(self) -> str:
         return f"<Forum({self.id}, {self._name}, {self.color_theme}, {self.pfp}, {self.description}, {self.subscribers}, {self.posts}, {self.highlight_post_1}, {self.highlight_post_2}, {self.highlight_post_3}, {self.created_at.strftime('%d/%m/%y, %H:%M:%S'), {self.admin_count}})>"
@@ -172,22 +236,22 @@ class ForumRules(db.Model):
     __tablename__ = "forum_rules"
 
     #Identification
-    forum_id = db.Column(INTEGER, db.ForeignKey("forums.id"), nullable = False)
+    forum_id : int = db.Column(INTEGER, db.ForeignKey("forums.id"), nullable = False)
     
     # Data
-    rule_number = db.Column(SMALLINT, nullable = False, unique=True, autoincrement=True)
-    title = db.Column(VARCHAR(32), nullable = False)
-    body = db.Column(VARCHAR(128), server_default="No additional description provided for this rule.")
-    author = db.Column(INTEGER, nullable = False)
+    rule_number : int = db.Column(SMALLINT, nullable = False, unique=True, autoincrement=True)
+    title : str = db.Column(VARCHAR(32), nullable = False)
+    body : str = db.Column(VARCHAR(128), server_default="No additional description provided for this rule.")
+    author : int = db.Column(INTEGER, nullable = False)
 
-    time_created = db.Column(TIMESTAMP, nullable = False)
+    time_created : datetime = db.Column(TIMESTAMP, nullable = False)
 
     ### Relationships ###
     forum : Mapped["Forum"] = db.relationship("Forum", back_populates="rules", lazy="select")      # M:1
 
     __table_args__ = (
         PrimaryKeyConstraint("forum_id", "rule_number", name="pk_forum_rules"),
-        CheckConstraint("rule_number < 6", "check_max_forum_rules"),
+        CheckConstraint("rule_number BETWEEN 0 AND 5", "enforce_forum_rules_range"),
     )
 
     def __repr__(self) -> str:
@@ -206,23 +270,23 @@ class Post(db.Model):
 
     ### Attributes ###
     # Basic identification
-    id = db.Column(BIGINT, nullable = False, autoincrement = True)
-    author_id = db.Column(BIGINT, db.ForeignKey("users.id"), nullable = False, index=True)
-    author_uname = db.Column(VARCHAR(64), db.ForeignKey("users.username"), nullable = False, index=True)
-    forum = db.Column(VARCHAR(128), nullable = False)
+    id : int = db.Column(BIGINT, nullable = False, autoincrement = True)
+    author_id : int = db.Column(BIGINT, db.ForeignKey("users.id"), nullable = False, index=True)
+    author_uname : str = db.Column(VARCHAR(64), db.ForeignKey("users.username"), nullable = False, index=True)
+    forum : str = db.Column(VARCHAR(128), nullable = False)
 
     # Post statistics
-    score = db.Column(INTEGER, default = 0)
-    total_comments = db.Column(INTEGER, default = 0)
+    score : int = db.Column(INTEGER, default = 0)
+    total_comments : int = db.Column(INTEGER, default = 0)
 
     # Post details
-    title = db.Column(VARCHAR(64), nullable = False, index=True)
-    body_text = db.Column(TEXT, nullable = False)
-    flair = db.Column(VARCHAR(16), index=True)
-    closed = db.Column(BOOLEAN, default=False)
-    time_posted = db.Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    saves = db.Column(INTEGER, default=0)
-    reports = db.Column(INTEGER, default=0)
+    title : str = db.Column(VARCHAR(64), nullable = False, index=True)
+    body_text : str = db.Column(TEXT, nullable = False)
+    flair : str = db.Column(VARCHAR(16), index=True)
+    closed : bool = db.Column(BOOLEAN, default=False)
+    time_posted : datetime = db.Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    saves : int = db.Column(INTEGER, default=0)
+    reports : int = db.Column(INTEGER, default=0)
 
     ### Relationships ###
     authored_by : Mapped["User"] = db.relationship("User", back_populates="posts", lazy="select")        # M:1
@@ -257,18 +321,18 @@ class Comment(db.Model):
 
     ### Attributes ###
     # Basic identification
-    id = db.Column(BIGINT, nullable=False, autoincrement = True)
-    author_id = db.Column(BIGINT, db.ForeignKey("users.id"), nullable = False, index=True)
-    parent_forum = db.Column(INTEGER, nullable = False)
+    id : int = db.Column(BIGINT, nullable=False, autoincrement = True)
+    author_id : int = db.Column(BIGINT, db.ForeignKey("users.id"), nullable = False, index=True)
+    parent_forum : int = db.Column(INTEGER, nullable = False)
 
     # Comment details
-    time_created = db.Column(TIMESTAMP, nullable = False, server_default=text("CURRENT_TIMESTAMP"))
-    body = db.Column(VARCHAR(512), nullable=False)
-    parent_post = db.Column(BIGINT, db.ForeignKey("posts.id"), nullable=False, index=True)
-    parent_thread = db.Column(BIGINT, db.ForeignKey("comments.id"))
-    replying_to = db.Column(BIGINT, db.ForeignKey("comments.id"))
-    score = db.Column(INTEGER, default = 0)
-    reports = db.Column(INTEGER, default = 0)
+    time_created : datetime = db.Column(TIMESTAMP, nullable = False, server_default=text("CURRENT_TIMESTAMP"))
+    body : str = db.Column(VARCHAR(512), nullable=False)
+    parent_post : int = db.Column(BIGINT, db.ForeignKey("posts.id"), nullable=False, index=True)
+    parent_thread : int = db.Column(BIGINT, db.ForeignKey("comments.id"))
+    replying_to : int = db.Column(BIGINT, db.ForeignKey("comments.id"))
+    score : int = db.Column(INTEGER, default = 0)
+    reports : int= db.Column(INTEGER, default = 0)
 
     ### Relationships ###
     author_id : Mapped["User"] = db.relationship("User", back_populates="comments")   # M:1
