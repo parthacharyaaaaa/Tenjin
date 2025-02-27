@@ -11,9 +11,11 @@ from auxillary.utils import hash_password, verify_password
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError
 
-from resource_server.models import db, User
+from resource_server.models import db, User, PasswordRecoveryToken
 
 from datetime import datetime
+from uuid import uuid4
+from hashlib import sha256
 
 @user.route("/", methods=["POST", "OPTIONS"])
 @enforce_json
@@ -85,7 +87,7 @@ def register() -> Response:
     return jsonify({"message" : "Account created", "username" : USER_DETAILS["username"], "email" : USER_DETAILS["email"], "alias" : g.REQUEST_JSON.get("alias"), **response_kwargs}), 201
 
     
-@user.route("/", methods=["DELETE"])
+@user.route("/", methods=["OPTIONS", "DELETE"])
 @enforce_json
 def delete_user() -> Response:
     if not (g.REQUEST_JSON.get("username") and
@@ -109,7 +111,7 @@ def delete_user() -> Response:
     #TODO: Add logic for purging user's JWTs from auth server
     return jsonify({"message" : "account deleted succesfully", "username" : user.username, "time_deleted" : user.time_deleted}), 203
 
-@user.route("/recover", methods=["POST"])
+@user.route("/recover", methods=["OPTIONS", "PATCH"])
 @enforce_json
 def recover_user() -> Response:
     if not (g.REQUEST_JSON.get("identity") and g.REQUEST_JSON.get("password")):
@@ -154,7 +156,38 @@ def recover_user() -> Response:
                    "username" : deadAccount.username,
                    "email" : deadAccount.email,
                    "_links" : {"login" : {"href" : url_for(".login")}}}), 200
+
+@user.route("/recover-password", methods = ["OPTIONS", "PATCH"])
+@enforce_json
+def recover_password() -> Response:
+    if not g.REQUEST_JSON.get('identity'):
+        raise BadRequest("Missing identity for password recovery")
     
+    isEmail = '@' in g.REQUEST_JSON['identity']
+    OP, USER_DETAIL = processUserInfo(email = g.REQUEST_JSON.get('identity') if isEmail else None,
+                                      username = g.REQUEST_JSON.get('identity') if not isEmail else None)
+    
+    if not OP:
+        raise BadRequest(USER_DETAIL["error"])
+
+    recoveryAccount = db.session.execute(select(User).where(User.email == USER_DETAIL.get('email') if isEmail else User.username == USER_DETAIL['username'])).scalar_one_or_none()
+
+    if not recoveryAccount:
+        raise NotFound(f"No account with this {'email' if isEmail else 'username'} exists")
+    
+    hashedToken = sha256((uuid4().hex + datetime.now().strftime('%d%m%y%H%M%S')).encode()).digest()
+    try:
+        db.session.execute(delete(PasswordRecoveryToken).where(PasswordRecoveryToken.user_id == recoveryAccount.id))
+        db.session.execute(insert(PasswordRecoveryToken).values(user_id = recoveryAccount.id,
+                                                                expiry_time = datetime.now() + current_app.config['PASSWORD_TOKEN_MAX_AGE'],
+                                                                url_hash = hashedToken))
+        db.session.commit()
+    except:
+        raise InternalServerError("There seems to be an issue with our password recovery service")      #TODO: For the love of god add some better consideration here
+    
+    #TODO: Invoke RedisManager method to send recovery email to recoveryAccount.email with a temp link
+    return jsonify({"message" : "An email has been sent to account"}), 200    
+
 @user.route("/", methods=["GET", "HEAD", "OPTIONS"])
 def get_users() -> Response:
     ...

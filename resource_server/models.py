@@ -72,6 +72,7 @@ class User(db.Model):
     posts : Mapped[list["Post"]] = db.relationship("Post", back_populates="authored_by", uselist=True, lazy="select")
     comments : Mapped[list["Comment"]] = db.relationship("Comment", back_populates="author_id", lazy="select")
     tickets : Mapped[list["UserTicket"]] = db.relationship("UserTicket", back_populates="parent_user", lazy="select")
+    password_token : Mapped[list["PasswordRecoveryToken"]] = db.relationship("PasswordRecoveryToken", back_populates="parent_user", lazy="select")
     #NOTE:  Only query the related attributes when necessary (attribute access time, typically GET /users/<user_id>), not on any other queries where a user might be part of the SELECT query, such as author (posts, comments, forum rules) or in GET /users/search?q=some-string
 
     __table_args__ = (
@@ -102,6 +103,21 @@ class UserTicket(db.Model):
     description : str = db.Column(VARCHAR(512), nullable = False)
 
     parent_user : Mapped[User]= db.relationship("User", back_populates="tickets", lazy="select")
+
+    __table_args__ = (
+        PrimaryKeyConstraint("user_id"),
+    )
+
+class PasswordRecoveryToken(db.Model):
+    __tablename__ = "password_recovery_tokens"
+
+    user_id : int = db.Column(BIGINT, db.ForeignKey("users.id"))
+    expiry : datetime = db.Column(TIMESTAMP, nullable = False, server_default = text("CURRENT_TIMESTAMP"))
+    attempts : int = db.Column(SMALLINT, nullable = False, server_default = text("1"), index = True)
+    url_hash : str = db.Column(BYTEA(512), nullable = False, unique = True, index = True)
+    revoked : bool = db.Column(BOOLEAN, nullable = False, server_default = text("false"))
+
+    parent_user : Mapped[User]= db.relationship("User", back_populates="password_token", lazy="select")
 
     __table_args__ = (
         PrimaryKeyConstraint("user_id"),
