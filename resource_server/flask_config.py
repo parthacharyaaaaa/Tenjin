@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 from traceback import format_exc
-
+from datetime import timedelta
 bLoaded : bool = load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"),
                              verbose=True, override=True)
 if not bLoaded:
@@ -29,6 +29,9 @@ class FlaskConfig:
         SQLALCHEMY_POOL_RECYCLE = int(os.environ.get("SQLALCHEMY_POOL_RECYCLE", 600))
         SQLALCHEMY_POOL_TIMEOUT = int(os.environ.get("SQLALCHEMY_POOL_TIMEOUT", 30))
         SQLALCHEMY_TRACK_MODIFICATIONS = bool(int(os.environ.get("SQLALCHEMY_TRACK_MODIFICATIONS", 0)))
+
+        ### Application-specific configurations ###
+        ACCOUNT_RECOVERY_PERIOD = timedelta(days=int(os.environ["ACCOUNT_RECOVERY_PERIOD"]))
 
         GENERIC_HTTP_MESSAGES : dict = {2 : "Success",
                                 3 : "Redirection",

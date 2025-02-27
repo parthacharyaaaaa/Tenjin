@@ -1,7 +1,7 @@
 '''Blueprint module for all actions related to resource: user (`users` in database)
 ### Note: All user related actions (account creation, User.last_login updation, and account deletion are done directly without query dispatching to Redis)
 '''
-from flask import Blueprint, Response, g, request, jsonify
+from flask import Blueprint, Response, g, request, jsonify, current_app, url_for
 user = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/users")
 
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized
@@ -48,8 +48,13 @@ def register() -> Response:
     existingUsers = db.session.execute(select(User).where((User.username == USER_DETAILS["username"]) | (User.email == USER_DETAILS["email"]))).scalars().all()
     
     if existingUsers:
-        # Live account has the same username/email
-        if not (existingUsers[0].deleted and existingUsers[-1].deleted):
+        current_date = datetime.now()
+        # Check if dead account, if dead account is within recovery period, then raise conflict too
+        if (
+            not (existingUsers[0].deleted and existingUsers[-1].deleted) or
+            existingUsers[0].time_deleted + current_app['ACCOUNT_RECOVERY_PERIOD'] >= current_date or
+            existingUsers[-1].time_deleted + current_app['ACCOUNT_RECOVERY_PERIOD'] >= current_date
+            ):
                     conflict = Conflict("An account with this username or email address already exists")
                     conflict.__setattr__("kwargs", response_kwargs)
                     raise Conflict
@@ -81,6 +86,7 @@ def register() -> Response:
 
     
 @user.route("/", methods=["DELETE"])
+@enforce_json
 def delete_user() -> Response:
     if not (g.REQUEST_JSON.get("username") and
             g.REQUEST_JSON.get("password")):
@@ -103,6 +109,52 @@ def delete_user() -> Response:
     #TODO: Add logic for purging user's JWTs from auth server
     return jsonify({"message" : "account deleted succesfully", "username" : user.username, "time_deleted" : user.time_deleted}), 203
 
+@user.route("/recover", methods=["POST"])
+@enforce_json
+def recover_user() -> Response:
+    if not (g.REQUEST_JSON.get("identity") and g.REQUEST_JSON.get("password")):
+        raise BadRequest("Required identity (email/username) and account password")
+    
+    isEmail = '@' in g.REQUEST_JSON['identity']
+    OP, USER_DETAILS = processUserInfo(password=g.REQUEST_JSON['password'],
+                                          email=g.REQUEST_JSON['identity'] if isEmail else None,
+                                          username=g.REQUEST_JSON['identity'] if not isEmail else None)
+    if not OP:
+        raise BadRequest(USER_DETAILS.get('error', "Invalid user details"))
+    
+    deadAccount = db.session.execute(select(User).where(User.email == USER_DETAILS.get('email') if isEmail else User.username == USER_DETAILS['username']).with_for_update()).scalar_one_or_none()
+
+    # Never existed, or hard deleted already
+    if not deadAccount:
+        nf = NotFound(f"No accounts with this {'email' if isEmail else 'username'} exists.")
+        nf.__setattr__("kwargs", {"info" : f"If you had believe that this account is still in the recovery period of {current_app['ACCOUNT_RECOVERY_PERIOD']} days, contact support",
+                                  "_links" : {"tickets" : {"href" : url_for("tickets")}}})
+        raise nf
+    
+    # Tough luck, its already past recovery period >:(
+    if deadAccount.time_deleted + current_app['ACCOUNT_RECOVERY_PERIOD'] <= datetime.now():
+        cnf = Conflict("Account recovery period for this account has already expired, and its deletion is due soon. Please create a new account, or raise a user ticket")
+        cnf.__setattr__("kwargs", {"_links" : {"tickets" : {"href" : url_for("tickets")}}})
+        raise cnf
+    
+    # Match password hashes
+    if not verify_password(USER_DETAILS['password'], deadAccount.pw_hash, deadAccount.pw_salt):
+        unauth = Unauthorized("Incorrect password")
+        unauth.__setattr__("kwargs", {"info" : "If you have forgotten your password and want to recover your account, please perform the deleted account password recovery phase", 
+                                      "_links" : {"recovery" : {"href" : url_for(".recovery")}}})
+        
+    # Account recovery good to go
+    try:
+        db.session.execute(update(User).where(User.id == deadAccount.id).values({"deleted" : False, "time_deleted" : None}))
+        db.session.commit()
+    except:
+        raise InternalServerError("Failed to recover your account. If this issue persists, please raise a user ticket immediately")
+    
+    return jsonify({"message" : "Account recovered succesfully",
+                   "username" : deadAccount.username,
+                   "email" : deadAccount.email,
+                   "_links" : {"login" : {"href" : url_for(".login")}}}), 200
+    
 @user.route("/", methods=["GET", "HEAD", "OPTIONS"])
 def get_users() -> Response:
     ...
