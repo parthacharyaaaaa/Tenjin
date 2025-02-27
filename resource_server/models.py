@@ -4,7 +4,7 @@ from flask_migrate import Migrate
 from sqlalchemy import PrimaryKeyConstraint, CheckConstraint, UniqueConstraint, MetaData
 from sqlalchemy.sql import text
 from sqlalchemy.orm import Mapped
-from sqlalchemy.dialects.postgresql import TIMESTAMP, BYTEA
+from sqlalchemy.dialects.postgresql import TIMESTAMP, BYTEA, ENUM
 from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, NUMERIC, TEXT
 
 import orjson, os
@@ -59,6 +59,14 @@ anime_genres = db.Table(
     db.PrimaryKeyConstraint("anime_id", "genre_id", name="pk_anime_genres")
 )
 
+ADMIN_ROLES = ENUM("admin", "super", "owner", name="ADMIN_ROLES", create_type=True)
+forum_admins = db.Table(
+    "forum_admins",
+    db.Column("forum_id", INTEGER, db.ForeignKey("forums.id")),
+    db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
+    db.Column("role", ADMIN_ROLES, nullable = False, server_default = text(f"'{ADMIN_ROLES.enums[0]}'")),         # Awful hack alert
+    db.PrimaryKeyConstraint("forum_id", "user_id", name = "pk_forum_admins")
+)
 
 ### Tables ###
 class User(db.Model):
