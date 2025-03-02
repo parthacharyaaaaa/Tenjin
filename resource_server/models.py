@@ -20,12 +20,19 @@ with open(os.path.join(os.path.dirname(__file__), "instance", "config.json"), 'r
 db = SQLAlchemy()
 
 ### Assosciation Tables ###
-user_subscriptions = db.Table(
-    "user_subscriptions",
+forum_subscriptions = db.Table(
+    "forum_subscriptions",
     db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
     db.Column("forum_id", INTEGER, db.ForeignKey("forums.id")),
     db.Column("time_subscribed", TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")),
     db.PrimaryKeyConstraint("user_id", "forum_id", name="pk_forum_subscriptions")
+)
+
+anime_subscriptions = db.Table(
+    "anime_subscriptions",
+    db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
+    db.Column("anime_id", INTEGER, db.ForeignKey("animes.id")),
+    db.PrimaryKeyConstraint("user_id", "anime_id", name="pk_anime_subscriptions")
 )
 
 comment_votes = db.Table(
@@ -36,12 +43,33 @@ comment_votes = db.Table(
     db.PrimaryKeyConstraint("voter_id", "comment_id", name="pk_comment_votes")
 )
 
+comment_reports = db.Table(
+    "comment_reports",
+    db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
+    db.Column("comment_id", BIGINT, db.ForeignKey("comments.id")),
+    db.PrimaryKeyConstraint("user_id", "comment_id", name="pk_comment_reports")
+)
+
 post_votes = db.Table(
     "post_votes",
     db.Column("voter_id", BIGINT, db.ForeignKey("users.id")),
     db.Column("post_id", BIGINT, db.ForeignKey("posts.id")),
     db.Column("vote", BOOLEAN, nullable=False),
     db.PrimaryKeyConstraint("voter_id", "post_id", name="pk_post_votes")
+)
+
+post_saves = db.Table(
+    "post_saves",
+    db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
+    db.Column("post_id", BIGINT, db.ForeignKey("posts.id")),
+    db.PrimaryKeyConstraint("user_id", "post_id", name="pk_post_saves")
+)
+
+post_reports = db.Table(
+    "post_reports",
+    db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
+    db.Column("post_id", BIGINT, db.ForeignKey("posts.id")),
+    db.PrimaryKeyConstraint("user_id", "post_id", name="pk_post_reports")
 )
 
 stream_links = db.Table(
@@ -280,7 +308,6 @@ class Post(db.Model):
     # Basic identification
     id : int = db.Column(BIGINT, nullable = False, autoincrement = True)
     author_id : int = db.Column(BIGINT, db.ForeignKey("users.id"), nullable = False, index=True)
-    author_uname : str = db.Column(VARCHAR(64), db.ForeignKey("users.username"), nullable = False, index=True)
     forum : str = db.Column(VARCHAR(128), nullable = False)
 
     # Post statistics
