@@ -82,7 +82,7 @@ with CONNECTION.cursor() as cursor:
     cursor.execute(f"SAVEPOINT s_{latestValidCheckpoint};")
 
     with requests.session() as fetchSession:
-        for animeID in range(1,1070):
+        for animeID in range(1,100):
             # Check if this anime exists already
             cursor.execute("SELECT id FROM animes WHERE id = %s", (animeID,))
             if cursor.fetchone():
@@ -168,7 +168,7 @@ with CONNECTION.cursor() as cursor:
 
     CONNECTION.commit()
     with open("temp.txt", "w+") as logFile:
-        logFile.write(",".join([lambda x: str(x) for x in forumsCreated]))
+        logFile.write(",".join([str(x) for x in forumsCreated]))
 
     # Add Tenjin superuser as admin in all forums
     cursor.executemany("INSERT INTO forum_admins VALUES (%s, %s, %s);", ((forumID, 1, AdminRoles.owner.value) for forumID in forumsCreated))
