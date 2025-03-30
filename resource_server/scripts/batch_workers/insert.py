@@ -7,12 +7,16 @@ from datetime import datetime
 from typing import Any
 from traceback import format_exc
 import json
+from redis import Redis, exceptions as redisExceptions
+from time import sleep
 
 loaded = load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"))
 if not loaded:
     raise FileNotFoundError()
 
 ID: int = os.getpid()
+
+interface: Redis = Redis(os.environ["REDIS_HOST"], int(os.environ["REDIS_PORT"]))
 
 CONNECTION_KWARGS : dict[str, int | str] = {
     "user" : os.environ["POSTGRES_USERNAME"],
@@ -33,24 +37,67 @@ if __name__ == "__main__":
         configData: dict = json.loads(configFile.read())
         wait: float = configData.get("wait", 1)
         backoffSequence: list[float] = configData.get("backoff_seq", [0.1, 0.5, 1, 2, 3])
+        backoffIndex, maxBackoffIndex = 0, len(backoffSequence) - 1
+        streamName: str = configData["insert_stream"]
+        batchSize: int = configData["insert_batch_size"]
     
-
     INSERTION_SQL: str = "INSERT INTO {table_name} VALUES %s ON CONFLICT DO NOTHING RETURNING {query_id};"
     ERROR_SQL: str = "INSERT INTO insert_errors VALUES %s ON CONFLICT DO NOTHING;"
     query_groups: dict[str, list[dict[str, Any]]] = {}       # Please, I can explain dict[<tablename> : argslist[dict[<attribute> : <value>]]]
     dbCursor: pg.extensions.cursor = CONNECTION.cursor()
 
-    # Some logic to xread 1k from insert consumer group
-    # some logic to sort queries into respective buckets
     with dbCursor as dbCursor:
-        for qidx, (table, qargs) in enumerate(query_groups.items()):
-            template: str =  f"({', '.join(qargs[0].keys())})"
-            _res: tuple[tuple[int]] = execute_values(cur=dbCursor, 
-                                                     sql=INSERTION_SQL.format(table_name = table, query_id = qidx),
-                                                     argslist=qargs,
-                                                     template=template,
-                                                     fetch=True)
-            if _res:
-                execute_batch(cur=dbCursor,
-                              sql=ERROR_SQL,
-                              argslist=[t[0] for t in _res])
+        while(True):
+            try:
+                _streamd_queries: list[tuple[bytes, dict[bytes, bytes]]] = interface.xrange(streamName, count=batchSize)
+            except (redisExceptions.ConnectionError):
+                if backoffIndex >= maxBackoffIndex:
+                    print(f"[{ID}]: Connection to Redis instance compromised, exiting...")
+                    exit(100)
+                sleep(wait)
+                backoffIndex+=1
+                continue
+            
+            backoffIndex = 0
+            print(_streamd_queries)
+            for queryData in _streamd_queries:
+                try:
+                    tableData = queryData[1]
+                    decodedData: dict[str, Any] = {k.decode() : v.decode() for k,v in tableData.items()}
+                    table: str = decodedData.pop('table')
+                    if query_groups.get(table):
+                        query_groups[table].append(decodedData)
+                    else:
+                        query_groups[table] = [decodedData]
+                except KeyError:
+                    print(f"[{ID}]: Received invalid query params from entry: {queryData[0].decode()}")
+
+            dbCursor.execute(f"SAVEPOINT s{ID}")
+            for qidx, (table, qargs) in enumerate(query_groups.items()):
+                try:
+                    template: str =  f"({', '.join(qargs[0].keys())})"
+                    _res: tuple[tuple[int]] = execute_values(cur=dbCursor, 
+                                                            sql=INSERTION_SQL.format(table_name = table, query_id = qidx),
+                                                            argslist=qargs,
+                                                            template=template,
+                                                            fetch=True)
+                    if _res:
+                        execute_batch(cur=dbCursor,
+                                    sql=ERROR_SQL,
+                                    argslist=[t[0] for t in _res])
+                except (pg.errors.ModifyingSqlDataNotPermitted):
+                    print(f"[{ID}]: Permission error, aborting script...")
+                    exit(500)
+                except (pg.errors.SyntaxError, pg.errors.AmbiguousColumn, pg.errors.AmbiguousParameter):
+                    print(f"[{ID}]: SQL invalid, aborting script, please manually resolve insertion logic...")
+                    exit(500)
+                except (pg.errors.FdwTableNotFound, pg.errors.UndefinedTable):
+                    print(f"[{ID}]: Table not found")
+                    dbCursor.execute(f"ROLLBACK TO s{ID}")
+                except pg.errors.Error as pg_error:
+                    print(f"[{ID}]: Error in executing batch isnert for table {table}, exception: {pg_error.__class__.__name__}")
+                    print(f"[{ID}]: Error details: {format_exc()}")
+                    dbCursor.execute(f"ROLLBACK TO SAVEPOINT s{ID}")
+
+            # Good night >:3
+            sleep(wait)
