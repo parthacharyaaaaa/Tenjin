@@ -57,10 +57,52 @@ def get_post(post_id : int) -> Response:
         raise NotFound(f"Post with id {post_id} could not be found :(")
     return jsonify(post.__json_like__()), 200
 
-
+@enforce_json
 @post.route("/<int:post_id>", methods=["PATCH", "OPTIONS"])
 def edit_post(post_id : int) -> Response:
+    if not (g.REQUEST_JSON.get('title') or 
+            g.REQUEST_JSON.get('body') or 
+            g.REQUEST_JSON.get('flair') or 
+            g.REQUEST_JSON.get('closed')):
+        raise BadRequest("No changes sent")
+    
+    update_kw = {}
+    additional_kw = {}
+    if g.REQUEST_JSON.get('title'):
+        title: str = g.REQUEST_JSON.pop('title').strip()
+        if title:
+            update_kw['title'] = title
+        else:
+            additional_kw['title_err'] = "Invalid title"
+
+    if g.REQUEST_JSON.get('body'):
+        body: str = g.REQUEST_JSON.pop('body').strip()
+        if body:
+            update_kw["body"] = body
+        else:
+            additional_kw["body_err"] = "Invalid body"
+    if g.REQUEST_JSON.get('closed'):
+        g.REQUEST_JSON.pop('closed')
+        update_kw["closed"] = True
+
+    if not update_kw:
+        raise BadRequest("Empty request for updating post")
+
+    if g.REQUEST_JSON.get('flair'):
+        flair: str = g.REQUEST_JSON.pop('flair').strip()
+        if flair:
+            # Again, check if flair is valid
+            forumID: int = db.session.execute(select(Forum.id).join(Post, Post.forum_id == Forum.id).where(Post.id == post_id)).scalar_one_or_none()
+            if not forumID:
+                flair = None
+                additional_kw["flair_err"] = "Invalid flair for this forum"
+        else:
+            additional_kw["flair_err"] = "Invalid flair for this forum"
+    
+    # All checks done, push to updation stream
     ...
+    return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected", "post_id" : post_id}), 202
+
 
 @post.route("/<int:post_id>", methods=["DELETE", "OPTIONS"])
 def delete_post(post_id : int) -> Response:
