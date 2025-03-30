@@ -20,6 +20,13 @@ with open(os.path.join(os.path.dirname(__file__), "instance", "config.json"), 'r
 db = SQLAlchemy()
 
 ### Assosciation Tables ###
+forum_flairs = db.Table(
+    "forum_flairs",
+    db.Column("forum_id", INTEGER, db.ForeignKey("forums.id"), nullable = False),
+    db.Column("flair_name", VARCHAR(32), nullable = False),
+    db.PrimaryKeyConstraint("forum_id", "flair_name", name="pk_forum_flairs")
+)
+
 forum_subscriptions = db.Table(
     "forum_subscriptions",
     db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
@@ -314,7 +321,7 @@ class Post(db.Model):
     # Basic identification
     id: int = db.Column(BIGINT, nullable = False, autoincrement = True)
     author_id: int = db.Column(BIGINT, db.ForeignKey("users.id"), nullable = False, index=True)
-    forum: str = db.Column(VARCHAR(128), nullable = False)
+    forum_id: int = db.Column(INTEGER, db.ForeignKey("forums.id"), nullable = False)
 
     # Post statistics
     score: int = db.Column(INTEGER, default = 0)
