@@ -2,7 +2,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
 from sqlalchemy import PrimaryKeyConstraint, CheckConstraint, UniqueConstraint, MetaData
-from sqlalchemy.sql import text
+from sqlalchemy.sql import text, DDL
 from sqlalchemy.orm import Mapped
 from sqlalchemy.dialects.postgresql import TIMESTAMP, BYTEA, ENUM
 from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, NUMERIC, TEXT
@@ -76,7 +76,7 @@ stream_links = db.Table(
     "stream_links",
     db.Column("anime_id", INTEGER, db.ForeignKey("animes.id")),
     db.Column("url", VARCHAR(256), nullable = False),
-    db.Column("website", VARCHAR(64), nullable = False),
+    db.Column("website", VARCHAR(128), nullable = False),
     db.PrimaryKeyConstraint("anime_id", "url", name="pk_stream_links")
 )
 
@@ -106,6 +106,7 @@ class User(db.Model):
     username : str = db.Column(VARCHAR(64), nullable = False, unique=True, index=True)
     _alias : str = db.Column(VARCHAR(64), nullable = True)
     email : str = db.Column(VARCHAR(320), nullable = False, unique=True, index=True)
+    rtfb : bool = db.Column(BOOLEAN, server_default=text('false'), nullable = False)
 
     pfp : str = db.Column(VARCHAR(256))
 
@@ -185,9 +186,9 @@ class Anime(db.Model):
     title : str = db.Column(VARCHAR(128), nullable = False, index = True, unique = True)
 
     rating : float = db.Column(NUMERIC(3,2), nullable = False)
-    mal_ranking : int = db.Column(INTEGER, nullable = False)
+    mal_ranking : int = db.Column(INTEGER, nullable = True)
     members : int = db.Column(BIGINT, nullable = False, server_default = text("0"))
-    synposis : str = db.Column(TEXT, nullable = False)
+    synopsis : str = db.Column(TEXT, nullable = False)
     # Genres is multi-valued, made into separate table
     # Stream links are multi-valued, made into separate table
 
@@ -223,7 +224,7 @@ class Forum(db.Model):
     __tablename__ = "forums"
 
     # Basic identification
-    id : int= db.Column(INTEGER, nullable = False, autoincrement = True)
+    id : int = db.Column(INTEGER, nullable = False, autoincrement = True)
     _name : str = db.Column(VARCHAR(64), nullable = False, unique=True, index=True)
     anime : int | None = db.Column(INTEGER, db.ForeignKey("animes.id"), index = True)
  
