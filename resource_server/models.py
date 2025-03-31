@@ -1,9 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
 
 from sqlalchemy import PrimaryKeyConstraint, CheckConstraint, UniqueConstraint, MetaData
 from sqlalchemy.sql import text, DDL
-from sqlalchemy.orm import Mapped
 from sqlalchemy.dialects.postgresql import TIMESTAMP, BYTEA, ENUM
 from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, NUMERIC, TEXT
 
@@ -132,10 +130,10 @@ class User(db.Model):
     time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
 
     ### Relationships ###
-    posts: Mapped[list["Post"]] = db.relationship("Post", back_populates="authored_by", uselist=True, lazy="select")
-    comments: Mapped[list["Comment"]] = db.relationship("Comment", back_populates="author_id", lazy="select")
-    tickets: Mapped[list["UserTicket"]] = db.relationship("UserTicket", back_populates="parent_user", lazy="select")
-    password_token: Mapped[list["PasswordRecoveryToken"]] = db.relationship("PasswordRecoveryToken", back_populates="parent_user", lazy="select")
+    # posts: Mapped[list["Post"]] = db.relationship("Post", back_populates="authored_by", uselist=True, lazy="select")
+    # comments: Mapped[list["Comment"]] = db.relationship("Comment", back_populates="authored_by", lazy="select")
+    # tickets: Mapped[list["UserTicket"]] = db.relationship("UserTicket", back_populates="parent_user", lazy="select")
+    # password_token: Mapped[list["PasswordRecoveryToken"]] = db.relationship("PasswordRecoveryToken", back_populates="parent_user", lazy="select")
     #NOTE:  Only query the related attributes when necessary (attribute access time, typically GET /users/<user_id>), not on any other queries where a user might be part of the SELECT query, such as author (posts, comments, forum rules) or in GET /users/search?q=some-string
 
     __table_args__ = (
@@ -166,7 +164,6 @@ class UserTicket(db.Model):
     time_raised: datetime = db.Column(TIMESTAMP, nullable = False, server_default = text("CURRENT_TIMESTAMP"))
     description: str = db.Column(VARCHAR(512), nullable = False)
 
-    parent_user: Mapped[User]= db.relationship("User", back_populates="tickets", lazy="select")
 
     __table_args__ = (
         PrimaryKeyConstraint("user_id"),
@@ -180,7 +177,6 @@ class PasswordRecoveryToken(db.Model):
     expiry: datetime = db.Column(TIMESTAMP, nullable = False, server_default = text("CURRENT_TIMESTAMP"), index=True)
     url_hash: str = db.Column(BYTEA(512), nullable = False, unique = True, index = True)
 
-    parent_user: Mapped[User]= db.relationship("User", back_populates="password_token", lazy="select")
 
     __table_args__ = (
         PrimaryKeyConstraint("user_id"),
@@ -200,7 +196,6 @@ class Anime(db.Model):
     # Genres is multi-valued, made into separate table
     # Stream links are multi-valued, made into separate table
 
-    registered_forums: Mapped[list["Forum"]] = db.relationship("Forum", lazy = "select")
 
     def __json_like__(self) -> dict:
         return {"id": self.id,
@@ -209,8 +204,7 @@ class Anime(db.Model):
                 "mal_ranking": self.mal_ranking,
                 "members": self.members,
                 "synopsis": self.synposis[:16] + "..."}
-    #TODO: Add stream links and genres to be queried in either __json_like__ or some other Python-level method
-
+    
     __table_args__ = (
         PrimaryKeyConstraint("id"),
         CheckConstraint("mal_ranking >= 0", "check_ranking_positive"),
@@ -255,10 +249,6 @@ class Forum(db.Model):
     deleted: bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
     time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
 
-    ### Relationships ###
-    rules: Mapped[list["ForumRules"]] = db.relationship("ForumRules", back_populates="forum", uselist=True, lazy="select")       # 1:M
-    #NOTE: Relationship (M:1) between posts and forums is ommitted at the SQLAlchemy level, because of separate logic at the same level (LIMIT*OFFSET+ORDER BY)
-
     __table_args__ = (
         PrimaryKeyConstraint("id"),
         CheckConstraint("posts >= 0", name="check_posts_value"),
@@ -294,9 +284,6 @@ class ForumRules(db.Model):
     author: int = db.Column(INTEGER, nullable = False)
 
     time_created: datetime = db.Column(TIMESTAMP, nullable = False)
-
-    ### Relationships ###
-    forum: Mapped["Forum"] = db.relationship("Forum", back_populates="rules", lazy="select")      # M:1
 
     __table_args__ = (
         PrimaryKeyConstraint("forum_id", "rule_number", name="pk_forum_rules"),
@@ -340,12 +327,6 @@ class Post(db.Model):
     deleted: bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
     time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
 
-    ### Relationships ###
-    authored_by: Mapped["User"] = db.relationship("User", back_populates="posts", lazy="select")        # M:1
-    has_comments: Mapped[list["Comment"]] = db.relationship("Comment", back_populates="post", lazy="select")    # 1:M
-    parent_forum: Mapped["Post"] = db.relationship("Parent", back_populates="child_posts")             # M:1
-
-
     __table_args__ = (
         PrimaryKeyConstraint("id"),
         CheckConstraint("LENGTH(title) > 8", name="check_title_length_over_8"),
@@ -385,14 +366,6 @@ class Comment(db.Model):
     replying_to: int = db.Column(BIGINT, db.ForeignKey("comments.id"))
     score: int = db.Column(INTEGER, default = 0)
     reports: int= db.Column(INTEGER, default = 0)
-
-    ### Relationships ###
-    author_id: Mapped["User"] = db.relationship("User", back_populates="comments")   # M:1
-    post: Mapped["Post"] = db.relationship("Post", back_populates="has_comments")    # M:1
-    parent: Mapped["Comment"] = db.relationship("Comment", back_populates="parent")   # 1:1, Unary
-    child: Mapped["Comment"] = db.relationship("Comment", back_populates="child")   # 1:1, Unary
-    parent_comment: Mapped["Comment"] = db.relationship("Comment", back_populates="comment_replied")  # 1:1, Unary
-    comment_replied: Mapped["Comment"] = db.relationship("Comment", back_populates="parent_comment")  # 1:1, Unary
 
     # Deletion metadata
     deleted : bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
