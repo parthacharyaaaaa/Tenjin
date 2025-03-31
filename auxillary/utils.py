@@ -2,6 +2,7 @@
 import hashlib
 import re
 from flask import jsonify
+import os
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
 
 def generic_error_handler(e : Exception):
@@ -15,7 +16,6 @@ def generic_error_handler(e : Exception):
 
     All of these attributes are dictionaries and are **optional**, since in their absense a generic HTTP 500 code is thrown
     '''
-    print(e.description)
     response = jsonify({"message" : getattr(e, "description", "An error occured"),
                         **getattr(e, "kwargs", {})})
     if getattr(e, "header_kwargs", None):
@@ -30,7 +30,6 @@ def hash_password(password: str, salt: bytes = None) -> tuple[bytes, bytes]:
     returns: tuple[password-hash, salt]'''
     if salt is None:
         salt = os.urandom(16)
-    
     passwordHash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
     return passwordHash, salt
 
