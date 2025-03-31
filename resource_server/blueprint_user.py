@@ -5,9 +5,8 @@ from flask import Blueprint, Response, g, request, jsonify, current_app, url_for
 user = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/users")
 
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized
-from auxillary.decorators import enforce_json
-from auxillary.utils import processUserInfo
-from auxillary.utils import hash_password, verify_password
+from auxillary.decorators import enforce_json, private
+from auxillary.utils import processUserInfo, hash_password, verify_password
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
@@ -18,14 +17,13 @@ from uuid import uuid4
 from hashlib import sha256
 
 @user.route("/", methods=["POST", "OPTIONS"])
+# @private
 @enforce_json
-def register() -> Response:
-    print(g.REQUEST_JSON)
+def register() -> tuple[Response, int]:
     if not (g.REQUEST_JSON.get('username') and
             g.REQUEST_JSON.get('password') and
             g.REQUEST_JSON.get('email')):
         raise BadRequest("Response requires username, password, and email")
-    
     op, USER_DETAILS = processUserInfo(username=g.REQUEST_JSON["username"],
                                        email=g.REQUEST_JSON["email"],
                                        password=g.REQUEST_JSON["password"])
@@ -33,9 +31,11 @@ def register() -> Response:
         raise BadRequest(USER_DETAILS.get("error"))
 
     response_kwargs = {}
+    alias: str | None = None
     if g.REQUEST_JSON.get("alias"):
         try:
-            if not (5 < len(g.REQUEST_JSON["alias"].strip()) < 16):
+            alias = g.REQUEST_JSON.pop('alias').strip()
+            if not (5 < len(alias) < 16):
                 response_kwargs["alias_error"] = "Alias length should be in range 5 and 16"
         finally:
             g.REQUEST_JSON["alias"] = None
@@ -46,9 +46,12 @@ def register() -> Response:
                 response_kwargs["pfp_error"] = "Invalid pfp selected"
         finally:
             g.REQUEST_JSON["pfp"] = None
-
-    existingUsers = db.session.execute(select(User).where((User.username == USER_DETAILS["username"]) | (User.email == USER_DETAILS["email"]))).scalars().all()
-    
+    try:
+        existingUsers = db.session.execute(select(User).where((User.username == USER_DETAILS["username"]) | (User.email == USER_DETAILS["email"]))).scalars().all()
+    except:
+        import traceback
+        print(traceback.format_exc())
+        raise InternalServerError()
     if existingUsers:
         current_date = datetime.now()
         # Check if dead account, if dead account is within recovery period, then raise conflict too
@@ -66,14 +69,13 @@ def register() -> Response:
 
     # All checks passed, user creation good to go
     passwordHash, passwordSalt = hash_password(USER_DETAILS.pop("password"))
-
     try:
         db.session.execute(insert(User).values(email=USER_DETAILS["email"],
                                                username=USER_DETAILS["username"],
                                                pw_hash=passwordHash,
                                                pw_salt=passwordSalt,
-                                               pfp=g.REQUEST_JSON["pfp"],
-                                               _alias=g.REQUEST_JSON["alias"]))
+                                               pfp=g.REQUEST_JSON.get("pfp"),
+                                               _alias=alias))
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
@@ -84,7 +86,12 @@ def register() -> Response:
         db.session.rollback()
         raise InternalServerError("An error occured with our database service")
     
-    return jsonify({"message" : "Account created", "username" : USER_DETAILS["username"], "email" : USER_DETAILS["email"], "alias" : g.REQUEST_JSON.get("alias"), **response_kwargs}), 201
+    # Respond to auth server
+    return jsonify({"message" : "Account created",
+                    "sub" : USER_DETAILS["username"], 
+                    "email" : USER_DETAILS["email"], 
+                    "alias" : alias, 
+                    **response_kwargs}), 201
 
     
 @user.route("/", methods=["OPTIONS", "DELETE"])
@@ -230,6 +237,7 @@ def get_users() -> Response:
     ...
 
 @user.route("/login", methods=["POST", "OPTIONS"])
+# @private
 @enforce_json
 def login() -> Response:
     if not(g.REQUEST_JSON.get('identity') and g.REQUEST_JSON.get('password')):
@@ -241,22 +249,20 @@ def login() -> Response:
 
     isEmail = False
     if "@" in identity:
-        query = [User.email == identity.lower()]
+        query = [User.email == identity]
         isEmail = True
     else:
         query = [User.username == identity]
 
-    user : User | None = db.session.execute(select(User).where(*query).with_for_update()).scalar_one_or_none()
+    user : User | None = db.session.execute(select(User).where(query[0]).with_for_update()).scalar_one_or_none()
     if not user:
-        raise NotFound(f"No user witb {'email' if isEmail else 'username'} could be found")
+        raise NotFound(f"No user with {'email' if isEmail else 'username'} could be found")
     if not verify_password(g.REQUEST_JSON['password'], user.pw_hash, user.pw_salt):
         raise Unauthorized("Incorrect password")
     
     epoch = datetime.now()
     db.session.execute(update(User).where(User.id == user.id).values(last_login = epoch))
     db.session.commit()
+
     # Communicate with auth server
-    
-    response = jsonify(user.__json_like__())
-    # response.cookies.update(tokenPair)
-    return response, 200
+    return jsonify({"message" : "authorization successful", "sub" : user.username}), 200
