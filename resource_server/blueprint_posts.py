@@ -4,12 +4,11 @@ post = Blueprint("post", "post", url_prefix="/posts")
 from sqlalchemy import select
 from resource_server.models import db, Post, User, Forum, forum_flairs
 from auxillary.decorators import enforce_json
-from resource_server import red
 
 from werkzeug.exceptions import NotFound, BadRequest
 
-@enforce_json
 @post.route("/", methods=["POST", "OPTIONS"])
+@enforce_json
 def create_post() -> Response:
     if not (g.REQUEST_JSON.get('author') and
             g.REQUEST_JSON.get('forum') and 
