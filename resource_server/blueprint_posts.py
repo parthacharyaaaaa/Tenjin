@@ -4,8 +4,12 @@ post = Blueprint("post", "post", url_prefix="/posts")
 from sqlalchemy import select
 from resource_server.models import db, Post, User, Forum, forum_flairs
 from auxillary.decorators import enforce_json
+from resource_server.external_extensions import RedisInterface
+from auxillary.utils import rediserialize
 
 from werkzeug.exceptions import NotFound, BadRequest
+
+from datetime import datetime
 
 @post.route("/", methods=["POST", "OPTIONS"])
 @enforce_json
@@ -21,9 +25,7 @@ def create_post() -> Response:
         forumID: int = int(g.REQUEST_JSON['forum'])
         title: str = g.REQUEST_JSON['title'].strip()
         body: str = g.REQUEST_JSON['body'].strip()
-
-        if g.REQUEST_JSON.get('flair'):
-            flair: str = g.REQUEST_JSON['flair'].strip()
+        flair: str = g.REQUEST_JSON.get('flair', '').strip()
 
     except (KeyError, ValueError):
         raise BadRequest("Malformatted post details")
@@ -46,8 +48,11 @@ def create_post() -> Response:
             flair = None
             additional_kw.update["flair_err"] = f"Invalid flair for {forum._name}, defaulting to None."
         
-    # All checks done, push to insert stream
-    ...
+    # Push to INSERTION stream. Since the consumers of this stream expect the entire table data to be given, we can use our class definitions
+    post: Post = Post(author.id, forum.id, title, body, datetime.now(), flair)
+    RedisInterface.xadd("INSERTIONS", rediserialize(post.__attrdict__()))
+
+    return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
 
 @post.route("/<int:post_id>", methods=["GET", "OPTIONS"])
 def get_post(post_id : int) -> Response:
