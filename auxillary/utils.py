@@ -1,9 +1,13 @@
 '''Helper functions'''
+import datetime
 import hashlib
 import re
 from flask import jsonify
 import os
 import traceback
+from typing import Mapping, Callable
+from types import NoneType
+
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
 
 def generic_error_handler(e : Exception):
@@ -72,3 +76,10 @@ def processUserInfo(**kwargs) -> tuple[bool, dict]:
         return True, {"username" : username, "email" : email, "password" : kwargs.get('password')}
     except:
         return False, {"error" : "Malformatted data, please validate data types of each field"}
+    
+def rediserialize(mapping: dict, 
+                  typeMapping: Mapping[type, Callable] = {NoneType : lambda _ : '',
+                                                          bool: lambda b : int(b), 
+                                                          datetime.datetime: lambda dt : dt.isoformat()}) -> dict:
+    '''Serialize a Python dictionary to a Redis hashmap'''
+    return {k : typeMapping.get(type(v), lambda x : x)(v) for k,v in mapping.items()}
