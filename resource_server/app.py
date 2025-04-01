@@ -22,6 +22,10 @@ def create_app() -> Flask:
     db.init_app(app)
     migrate = Migrate(app, db)
 
+    ### External Extensions ###
+    from resource_server.external_extensions import init_redis
+    init_redis(app)
+
     ### Blueprints registaration ###
     from resource_server.blueprint_forum import forum
     from resource_server.blueprint_admin import admin

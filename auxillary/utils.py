@@ -3,6 +3,7 @@ import hashlib
 import re
 from flask import jsonify
 import os
+import traceback
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
 
 def generic_error_handler(e : Exception):
@@ -16,6 +17,7 @@ def generic_error_handler(e : Exception):
 
     All of these attributes are dictionaries and are **optional**, since in their absense a generic HTTP 500 code is thrown
     '''
+    print(traceback.format_exc())
     response = jsonify({"message" : getattr(e, "description", "An error occured"),
                         **getattr(e, "kwargs", {})})
     if getattr(e, "header_kwargs", None):
