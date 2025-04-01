@@ -1,5 +1,6 @@
 from redis import Redis
 from flask import Flask
+from enum import Enum
 
 RedisInterface = None
 
@@ -10,3 +11,4 @@ def init_redis(app: Flask):
                                   decode_responses=True)
     if not RedisInterface.ping():
         raise ConnectionError()
+    

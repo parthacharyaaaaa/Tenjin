@@ -33,6 +33,11 @@ class FlaskConfig:
         ### Application-specific configurations ###
         ACCOUNT_RECOVERY_PERIOD = timedelta(days=int(os.environ["ACCOUNT_RECOVERY_PERIOD"]))
 
+        ### Redis Configuration ###
+        REDIS_HOST: str = os.environ["REDIS_HOST"]
+        REDIS_PORT: int = os.environ["REDIS_PORT"]
+        REDIS_DB: int = os.environ.get("REDIS_DB", 0)
+
         GENERIC_HTTP_MESSAGES : dict = {2 : "Success",
                                 3 : "Redirection",
                                 4 : "Client-Side Error",
