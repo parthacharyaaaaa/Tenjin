@@ -102,6 +102,8 @@ forum_admins = db.Table(
 )
 
 ### Tables ###
+db.Model.__attrdict__ = lambda x : {k : v for k,v in x.__dict__.items() if k != '_sa_instance_state'}
+
 class User(db.Model):
     __tablename__ = "users"
 
@@ -327,19 +329,34 @@ class Post(db.Model):
     deleted: bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
     time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
 
+    def __init__(self, author_id: int, forum_id: int, title: str, body_text: str, epoch: datetime, flair: str = None, score: int = 0, total_comments: int = 0, closed: bool = False, saves: int = 0, reports: int = 0, deleted: bool = False, time_deleted: datetime = None):
+        self.author_id = author_id
+        self.forum_id = forum_id
+        self.title = title
+        self.body_text = body_text
+        self.flair = flair
+        self.score = score
+        self.time_posted = epoch
+        self.total_comments = total_comments
+        self.closed = closed
+        self.saves = saves
+        self.reports = reports
+        self.deleted = deleted
+        self.time_deleted = time_deleted
+
+
     __table_args__ = (
         PrimaryKeyConstraint("id"),
         CheckConstraint("LENGTH(title) > 8", name="check_title_length_over_8"),
     )
 
     def __repr__(self) -> str:
-        return f"<Post({self.id}, {self.author_id}, {self.author_uname}, {self.forum}, {self.score}, {self.total_comments}, {self.title if len(self.title) < 16 else self.title[:16] + '...'}, {self.body_text if len(self.body_text) < 32 else self.body_text[:32]+'...'}, {self.flair}, {self.closed}, {self.time_posted.strftime('%d/%m/%y, %H:%M:%S')}, {self.saves}, {self.reports})>"
+        return f"<Post({self.id}, {self.author_id}, {self.forum_id}, {self.score}, {self.total_comments}, {self.title if len(self.title) < 16 else self.title[:16] + '...'}, {self.body_text if len(self.body_text) < 32 else self.body_text[:32]+'...'}, {self.flair}, {self.closed}, {self.time_posted.strftime('%d/%m/%y, %H:%M:%S')}, {self.saves}, {self.reports})>"
     
     def __json_like__(self) -> dict:
         return {"id": self.id,
                 "author_id": self.author_id,
-                "author_username": self.author_uname,
-                "forum": self.forum,
+                "forum": self.forum_id,
                 "score": self.score,
                 "comments": self.total_comments,
                 "title": self.title,
