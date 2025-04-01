@@ -90,9 +90,7 @@ class TokenManager:
         
         aToken: JWT encoded access token\n
         rToken: JWT encoded refresh token'''
-        self.incrementActiveTokens()
         decodedRefreshToken = self.decodeToken(rToken, tType = "refresh")
-        self.revokeTokenWithIDs(decodedRefreshToken["jti"], decodedRefreshToken['fid'])
 
         # issue tokens here
         refreshToken = self.issueRefreshToken(decodedRefreshToken["sub"],
@@ -100,6 +98,7 @@ class TokenManager:
                                               jti=decodedRefreshToken["jti"],
                                               familyID=decodedRefreshToken["fid"],
                                               exp=decodedRefreshToken["exp"])
+        self.revokeTokenWithIDs(decodedRefreshToken["jti"], decodedRefreshToken['fid'])
         accessToken = self.issueAccessToken(decodedRefreshToken['sub'],
                                             additionalClaims={"fid" : decodedRefreshToken["fid"]})
         
@@ -132,7 +131,7 @@ class TokenManager:
                 self.invalidateFamily(familyID)
                 raise TOKEN_STORE_INTEGRITY_ERROR(f"Token family {familyID} is invalid or empty")
             key_metadata = key.split(b":")
-            if key_metadata[0] != jti or float(key_metadata[1]) != exp:
+            if str(key_metadata[0]) != jti or float(key_metadata[1]) != exp:
                 self.invalidateFamily(familyID)
                 raise TOKEN_STORE_INTEGRITY_ERROR(f"Replay attack detected or token metadata mismatch for family {familyID}")
 
@@ -157,6 +156,7 @@ class TokenManager:
 
         self._TokenStore.lpush(f"FID:{payload['fid']}", f"{payload['jti']}:{payload['exp']}")
         self._TokenStore.expireat(f"FID:{payload['fid']}", int(payload["exp"]))
+        TokenManager.incrementActiveTokens()
 
         return jwt.encode(payload=payload,
                           key=self.signingKey,
@@ -189,8 +189,7 @@ class TokenManager:
             
             if llen >= self.max_llen:
                 self._TokenStore.rpop(f"FID:{fID}", max(1, llen-self.max_llen))
-
-            self.decrementActiveTokens()
+            TokenManager.decrementActiveTokens()
         except ValueError as e:
             print("Number of active tokens must be non-negative integer")
         except Exception as e:
@@ -199,23 +198,23 @@ class TokenManager:
     def invalidateFamily(self, fID : str) -> None:
         '''Remove entire token family from revocation list and token store'''
         try:
-            if self._TokenStore.get(f"FID:{fID}"):
+            if self._TokenStore.lrange(f"FID:{fID}", 0, -1):
                 self._TokenStore.delete(f"FID:{fID}")
-                self.decrementActiveTokens()
+                TokenManager.decrementActiveTokens()
             else:
                 print("No Family Found")
         except Exception as e:
             raise InternalServerError("Failed to perform operation on token store")
 
-    @staticmethod
-    def decrementActiveTokens():
-        if TokenManager.activeRefreshTokens == 0:
+    @classmethod
+    def decrementActiveTokens(cls):
+        if cls.activeRefreshTokens == 0:
             raise ValueError("Active refresh tokens cannot be a negative number")
-        TokenManager.activeRefreshTokens -= 1
+        cls.activeRefreshTokens -= 1
 
-    @staticmethod
-    def incrementActiveTokens():
-        TokenManager.activeRefreshTokens += 1
+    @classmethod
+    def incrementActiveTokens(cls):
+        cls.activeRefreshTokens += 1
     
     @staticmethod
     def generate_unique_identifier():
