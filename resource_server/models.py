@@ -234,7 +234,6 @@ class Forum(db.Model):
  
     # Appearance
     color_theme: int = db.Column(SMALLINT, nullable = False, server_default = "1")
-    pfp: str = db.Column(VARCHAR(128))
     description: str = db.Column(VARCHAR(256))
 
     # Activity stats
