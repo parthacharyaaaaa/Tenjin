@@ -166,7 +166,6 @@ class UserTicket(db.Model):
     time_raised: datetime = db.Column(TIMESTAMP, nullable = False, server_default = text("CURRENT_TIMESTAMP"))
     description: str = db.Column(VARCHAR(512), nullable = False)
 
-
     __table_args__ = (
         PrimaryKeyConstraint("user_id"),
     )
@@ -178,7 +177,6 @@ class PasswordRecoveryToken(db.Model):
     user_id: int = db.Column(BIGINT, db.ForeignKey("users.id"))
     expiry: datetime = db.Column(TIMESTAMP, nullable = False, server_default = text("CURRENT_TIMESTAMP"), index=True)
     url_hash: str = db.Column(BYTEA(512), nullable = False, unique = True, index = True)
-
 
     __table_args__ = (
         PrimaryKeyConstraint("user_id"),
@@ -234,7 +232,7 @@ class Forum(db.Model):
  
     # Appearance
     color_theme: int = db.Column(SMALLINT, nullable = False, server_default = "1")
-    description: str = db.Column(VARCHAR(256))
+    description: str = db.Column(VARCHAR(256), nullable = True)
 
     # Activity stats
     subscribers: int = db.Column(BIGINT, nullable = False, default = 0)
@@ -258,6 +256,19 @@ class Forum(db.Model):
         CheckConstraint("admin_count > 0", name="check_atleast_1_admin"),
         UniqueConstraint("_name", "anime", name="uq_name_anime"),
     )
+    
+    def __init__(self, name: str, anime: int, ctheme: int, desc: str, epoch: datetime | None = None) -> None:
+        self._name = name
+        self.anime = anime
+        self.color_theme = ctheme
+        self.description = desc
+        self.subscribers = 0
+        self.posts = 0
+        self.highlight_post_1 = None; self.highlight_post_2 = None; self.highlight_post_3 = None
+        self.created_at = epoch or datetime.now()
+        self.admin_count = 1
+        self.deleted = False; self.time_deleted = None
+    
     def __repr__(self) -> str:
         return f"<Forum({self.id}, {self._name}, {self.color_theme}, {self.pfp}, {self.description}, {self.subscribers}, {self.posts}, {self.highlight_post_1}, {self.highlight_post_2}, {self.highlight_post_3}, {self.created_at.strftime('%d/%m/%y, %H:%M:%S'), {self.admin_count}})>"
     
@@ -290,6 +301,14 @@ class ForumRules(db.Model):
         PrimaryKeyConstraint("forum_id", "rule_number", name="pk_forum_rules"),
         CheckConstraint("rule_number BETWEEN 0 AND 5", "enforce_forum_rules_range"),
     )
+
+    def __init__(self, forumID: int, ruleNumber: int, title: str, body: str, authorID: int, time_created: datetime | None = None) -> None:
+        self.forum_id = forumID
+        self.rule_number = ruleNumber
+        self.title = title
+        self.body = body
+        self.author = authorID
+        self.time_created = time_created or datetime.now()
 
     def __repr__(self) -> str:
         return f"<Forum_Rules(f{self.forum_id}, {self.rule_number}, {self.title if len(self.title) < 16 else self.title[:16]+'...'}, {self.body if len(self.body) < 16 else self.body[:16]+'...'}, {self.author}, {self.time_created.strftime('%d/%m/%y, %H:%M:%S')})>"
@@ -328,20 +347,20 @@ class Post(db.Model):
     deleted: bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
     time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
 
-    def __init__(self, author_id: int, forum_id: int, title: str, body_text: str, epoch: datetime, flair: str = None, score: int = 0, total_comments: int = 0, closed: bool = False, saves: int = 0, reports: int = 0, deleted: bool = False, time_deleted: datetime = None):
+    def __init__(self, author_id: int, forum_id: int, title: str, body_text: str, epoch: datetime, flair: str = None, score: int = 0, total_comments: int = 0, closed: bool = False):
         self.author_id = author_id
         self.forum_id = forum_id
+        self.score = score
+        self.total_comments = total_comments
         self.title = title
         self.body_text = body_text
         self.flair = flair
-        self.score = score
-        self.time_posted = epoch
-        self.total_comments = total_comments
         self.closed = closed
-        self.saves = saves
-        self.reports = reports
-        self.deleted = deleted
-        self.time_deleted = time_deleted
+        self.time_posted = epoch
+        self.saves = 0
+        self.reports = 0
+        self.deleted = False
+        self.time_deleted = None
 
 
     __table_args__ = (
@@ -391,6 +410,19 @@ class Comment(db.Model):
         PrimaryKeyConstraint("id", name="pk_comments"),
         CheckConstraint("reports >= 0", "check_reports_value"),
     )
+
+    def __init__(self, authorID: int, parentForum: int, epoch: datetime, body: str, parentPost: int, parentThread: int, replyingTo: int | None = None):
+        self.author_id = authorID
+        self.parent_forum = parentForum
+        self.time_created = epoch
+        self.body = body
+        self.parent_post = parentPost
+        self.parent_thread = parentThread
+        self.replying_to = replyingTo
+        self.score = 0
+        self.reports = 0
+        self.deleted = False
+        self.time_deleted = None
 
     def __repr__(self) -> str:
         return f"<Comment({self.id}, {self.author_id}, {self.parent_forum}, {self.time_created.strftime('%d/%m/%y, %H:%M:%S')}, {self.body}, {self.parent_post}, {self.parent_thread}, {self.replying_to}, {self.score}, {self.reports}, {self.author_id}, {self.post}, {self.parent}, {self.child}, {self.parent_comment}, {self.comment_replied})>"
