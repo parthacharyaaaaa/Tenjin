@@ -50,7 +50,7 @@ def create_post() -> Response:
         
     # Push to INSERTION stream. Since the consumers of this stream expect the entire table data to be given, we can use our class definitions
     post: Post = Post(author.id, forum.id, title, body, datetime.now(), flair)
-    RedisInterface.xadd("INSERTIONS", rediserialize(post.__attrdict__()))
+    RedisInterface.xadd("INSERTIONS", rediserialize(post.__attrdict__()) | {'table' : Post.__tablename__})
 
     return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
 
