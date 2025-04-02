@@ -1,10 +1,10 @@
 {
     "wait" : 1,
     "backoff_seq" : [0.1, 0.5, 1, 2, 3],
-    "insert_stream" : "myStream",
+    "insert_stream" : "INSERTIONS",
     "insert_batch_size" : 100,
-    "delete_stream" : "deletions",
+    "delete_stream" : "DELETIONS",
     "delete_batch_size" : 100,
-    "update_stream" : "updations",
+    "update_stream" : "UPDATIONS",
     "update_batch_size" : 100
 }
