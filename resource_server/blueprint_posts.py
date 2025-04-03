@@ -1,9 +1,10 @@
-from flask import Blueprint, Response, jsonify, g, url_for
+from flask import Blueprint, Response, jsonify, g, url_for, request
 post = Blueprint("post", "post", url_prefix="/posts")
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from resource_server.models import db, Post, User, Forum, forum_flairs
-from auxillary.decorators import enforce_json
+from uuid import uuid4
+from auxillary.decorators import enforce_json, token_required
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize
 
@@ -13,15 +14,14 @@ from datetime import datetime
 
 @post.route("/", methods=["POST", "OPTIONS"])
 @enforce_json
+@token_required
 def create_post() -> Response:
-    if not (g.REQUEST_JSON.get('author') and
-            g.REQUEST_JSON.get('forum') and 
+    if not (g.REQUEST_JSON.get('forum') and 
             g.REQUEST_JSON.get('title') and
             g.REQUEST_JSON.get('body')):
         raise BadRequest("Invalid details for creating a post")
 
     try:
-        postAuthor: str = str(g.REQUEST_JSON.get('author'))
         forumID: int = int(g.REQUEST_JSON['forum'])
         title: str = g.REQUEST_JSON['title'].strip()
         body: str = g.REQUEST_JSON['body'].strip()
@@ -31,7 +31,7 @@ def create_post() -> Response:
         raise BadRequest("Malformatted post details")
     
     # Ensure author and forum actually exist
-    author: User = db.session.execute(select(User).where(User.id == postAuthor)).scalar_one_or_none()
+    author: User = db.session.execute(select(User).where(User.id == g.decodedToken['sid'])).scalar_one_or_none()
     if not author:
         nf: NotFound = NotFound("Invalid author ID")
         nf.__setattr__("kwargs", {"help" : "If you believe that this is an erorr, please contact support",
@@ -61,9 +61,10 @@ def get_post(post_id : int) -> Response:
         raise NotFound(f"Post with id {post_id} could not be found :(")
     return jsonify(post.__json_like__()), 200
 
-@enforce_json
 @post.route("/<int:post_id>", methods=["PATCH", "OPTIONS"])
-def edit_post(post_id : int) -> Response:
+@enforce_json
+@token_required
+def edit_post(post_id : int) -> tuple[Response, int]:
     if not (g.REQUEST_JSON.get('title') or 
             g.REQUEST_JSON.get('body') or 
             g.REQUEST_JSON.get('flair') or 
@@ -103,11 +104,11 @@ def edit_post(post_id : int) -> Response:
         else:
             additional_kw["flair_err"] = "Invalid flair for this forum"
     
-    # All checks done, push to updation stream
-    ...
+    db.session.execute(update(Post).where(Post.id == post_id).values(**update_kw))
     return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected", "post_id" : post_id}), 202
 
 
 @post.route("/<int:post_id>", methods=["DELETE", "OPTIONS"])
+@token_required
 def delete_post(post_id : int) -> Response:
     ...
