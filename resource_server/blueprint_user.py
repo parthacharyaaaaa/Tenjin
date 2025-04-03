@@ -49,8 +49,6 @@ def register() -> tuple[Response, int]:
     try:
         existingUsers = db.session.execute(select(User).where((User.username == USER_DETAILS["username"]) | (User.email == USER_DETAILS["email"]))).scalars().all()
     except:
-        import traceback
-        print(traceback.format_exc())
         raise InternalServerError()
     if existingUsers:
         current_date = datetime.now()
@@ -70,12 +68,12 @@ def register() -> tuple[Response, int]:
     # All checks passed, user creation good to go
     passwordHash, passwordSalt = hash_password(USER_DETAILS.pop("password"))
     try:
-        db.session.execute(insert(User).values(email=USER_DETAILS["email"],
-                                               username=USER_DETAILS["username"],
-                                               pw_hash=passwordHash,
-                                               pw_salt=passwordSalt,
-                                               pfp=g.REQUEST_JSON.get("pfp"),
-                                               _alias=alias))
+        uID: int = db.session.execute(insert(User).values(email=USER_DETAILS["email"],
+                                                          username=USER_DETAILS["username"],
+                                                          pw_hash=passwordHash,
+                                                          pw_salt=passwordSalt,
+                                                          pfp=g.REQUEST_JSON.get("pfp"),
+                                                          _alias=alias).returning(User.id)).scalar_one_or_none()
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
@@ -88,7 +86,8 @@ def register() -> tuple[Response, int]:
     
     # Respond to auth server
     return jsonify({"message" : "Account created",
-                    "sub" : USER_DETAILS["username"], 
+                    "sub" : USER_DETAILS["username"],
+                    "sid" : uID,
                     "email" : USER_DETAILS["email"], 
                     "alias" : alias, 
                     **response_kwargs}), 201
@@ -244,14 +243,16 @@ def login() -> Response:
         raise BadRequest("Login requires email/username and password to be provided")
     
     identity : str = g.REQUEST_JSON['identity'].strip()
-    if not 5 < len(identity) < 320:
-        raise BadRequest("Provided username/email must be between 5 and 320 characters long")
 
     isEmail = False
     if "@" in identity:
+        if not 5 < len(identity) < 320:
+            raise BadRequest("Provided email must be between 5 and 320 characters long")
         query = [User.email == identity]
         isEmail = True
     else:
+        if not 5 < len(identity) <= 64:
+            raise BadRequest("Provided username must be between 5 and 64 characters long")
         query = [User.username == identity]
 
     user : User | None = db.session.execute(select(User).where(query[0]).with_for_update()).scalar_one_or_none()
@@ -265,4 +266,6 @@ def login() -> Response:
     db.session.commit()
 
     # Communicate with auth server
-    return jsonify({"message" : "authorization successful", "sub" : user.username}), 200
+    return jsonify({"message" : "authorization successful",
+                    "sub" : user.username,
+                    "sid" : user.id}), 200
