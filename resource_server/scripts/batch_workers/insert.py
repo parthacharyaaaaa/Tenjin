@@ -48,7 +48,7 @@ if __name__ == "__main__":
         streamName: str = configData["insert_stream"]
         batchSize: int = configData["insert_batch_size"]
     
-    INSERTION_SQL: str = "INSERT INTO {table_name} {tColumns} VALUES %s ON CONFLICT DO NOTHING RETURNING {query_id};"
+    INSERTION_SQL: str = "INSERT INTO {table_name} {tColumns} VALUES %s ON CONFLICT DO NOTHING;"
     ERROR_SQL: str = "INSERT INTO insert_errors VALUES %s ON CONFLICT DO NOTHING;"
     query_groups: dict[str, list[dict[str, Any]]] = {}       # dict[<tablename> : argslist[dict[<attribute> : <value>]]]
     dbCursor: pg.extensions.cursor = CONNECTION.cursor()
@@ -66,10 +66,14 @@ if __name__ == "__main__":
                 continue
             
             backoffIndex = 0
-            # print(_streamd_queries)
             if not _streamd_queries:
                 sleep(wait)
+                continue
             
+            trimUBs: str = _streamd_queries[-1][0].split("-")
+            trimUB: str = '-'.join((trimUBs[0], str(int(trimUBs[1]) + 1)))
+            
+            print(trimUB)
             for queryData in _streamd_queries:
                 try:
                     tableData = {k : None if v == '' else v for k,v in queryData[1].items()}
@@ -79,8 +83,8 @@ if __name__ == "__main__":
                     else:
                         dTypesList = getDtypes(dbCursor, table)
                         dtypes_cache[table] = dTypesList
-                        print(f"{dTypesList=}")
-                        print(f"{tableData.keys()=}")
+                        # print(f"{dTypesList=}")
+                        # print(f"{tableData.keys()=}")
 
                         tableData = {k : dTypesList[idx](v) if v else v for idx, (k,v) in enumerate(tableData.items())}
 
@@ -90,6 +94,8 @@ if __name__ == "__main__":
                         query_groups[table] = [tableData]
                 except KeyError:
                     print(f"[{ID}]: Received invalid query params from entry: {queryData[0]}")
+            
+
             
             dbCursor.execute(f"SAVEPOINT s{ID}")
             for qidx, (table, qargs) in enumerate(query_groups.items()):
@@ -101,16 +107,13 @@ if __name__ == "__main__":
                         template: str = '(' + ', '.join(f"%({k})s" for k in columns) + ')'
                         templates_cache[table] = template
                     
-                    _res: tuple[tuple[int]] = execute_values(cur=dbCursor, 
-                                                            sql=INSERTION_SQL.format(table_name = table, tColumns = tColumns, query_id = qidx),
-                                                            argslist=qargs,
-                                                            template=template,
-                                                            fetch=True)
+                    execute_values(cur=dbCursor,
+                                   sql=INSERTION_SQL.format(table_name = table, tColumns = tColumns, query_id = qidx),
+                                   argslist=qargs,
+                                   template=template)
                     CONNECTION.commit()
-                    if _res:
-                        execute_batch(cur=dbCursor,
-                                    sql=ERROR_SQL,
-                                    argslist=[t[0] for t in _res])
+
+                    interface.xtrim(streamName, minid=trimUB)
 
                 except (pg.errors.ModifyingSqlDataNotPermitted):
                     print(f"[{ID}]: Permission error, aborting script...")
