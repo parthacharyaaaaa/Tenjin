@@ -1,4 +1,4 @@
-<!-- <?php 
+<?php 
 require_once "controllerUserData.php"; 
 require 'vendor/autoload.php'; // Ensure Redis is installed via Composer
 
@@ -12,7 +12,7 @@ if (!$info) {
     header('Location: login-user.php');  
     exit();
 }
-?> -->
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>

@@ -5,9 +5,9 @@ $email = "";
 $name = "";
 $errors = array();
 
-// Connect to Redis
-// $redis = new Redis();
-// $redis->connect('127.0.0.1', 6379);
+Connect to Redis
+$redis = new Redis();
+$redis->connect('127.0.0.1', 6379);
 
 //if user signup button
 if(isset($_POST['signup'])){

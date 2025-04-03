@@ -1,4 +1,4 @@
-<!-- <?php 
+<?php 
 require_once "controllerUserData.php"; 
 require 'vendor/autoload.php'; // Ensure Redis is installed via Composer
 
@@ -16,7 +16,7 @@ if (!$email) {
 // Get session info and errors from Redis
 $info = $redis->get('info');
 $errors = json_decode($redis->get('errors'), true) ?? [];
-?> -->
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>

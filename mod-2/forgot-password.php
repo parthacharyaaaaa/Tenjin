@@ -1,9 +1,9 @@
 <?php require_once "controllerUserData.php"; ?>
 <?php 
-// // Connect to Redis
-// $redis = new Redis();
-// $redis->connect('127.0.0.1', 6379);
-// ?>
+// Connect to Redis
+$redis = new Redis();
+$redis->connect('127.0.0.1', 6379);
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>

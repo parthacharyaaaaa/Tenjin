@@ -1,13 +1,13 @@
  <?php
 require_once "controllerUserData.php";
 
-// // Include Redis
-// $redis = new Redis();
-// $redis->connect('127.0.0.1', 6379);
+// Include Redis
+$redis = new Redis();
+$redis->connect('127.0.0.1', 6379);
 
-// // Retrieve session values from Redis
-// $email = $redis->get('email') ?? '';
-// $name = $redis->get('name') ?? '';
+// Retrieve session values from Redis
+$email = $redis->get('email') ?? '';
+$name = $redis->get('name') ?? '';
  ?> 
 
 <!DOCTYPE html>

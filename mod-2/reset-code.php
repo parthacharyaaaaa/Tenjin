@@ -2,16 +2,16 @@
 require_once "controllerUserData.php"; 
 require 'vendor/autoload.php'; // Ensure you have Redis installed via Composer
 
-// // Connect to Redis
-// $redis = new Predis\Client();
+// Connect to Redis
+$redis = new Predis\Client();
 
-// // Get email from Redis instead of session
-// $email = $redis->get('email');
+// Get email from Redis instead of session
+$email = $redis->get('email');
 
-// if (!$email) {
-//     header('Location: login-user.php');
-//     exit();
-// }
+if (!$email) {
+    header('Location: login-user.php');
+    exit();
+}
 ?> 
 <!DOCTYPE html>
 <html lang="en">
