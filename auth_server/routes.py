@@ -8,6 +8,7 @@ import jwt.exceptions as JWT_exc
 import time
 import traceback
 import secrets
+from typing import Any
 
 @auth.after_request
 def enforceMinCSP(response):
@@ -78,21 +79,19 @@ def login():
         
         break
     
-    response = valid.json()
-    subject = response["sub"]
-    aToken = tokenManager.issueAccessToken(sub = subject)
-    rToken = tokenManager.issueRefreshToken(sub = subject,
-                                            firstTime=True)
+    rsResponse: dict = valid.json()
+    sub, sid = rsResponse.pop('sub'), rsResponse.pop('sid')
+    aToken = tokenManager.issueAccessToken(sub, sid)
+    rToken = tokenManager.issueRefreshToken(sub, sid, firstTime=True)
 
     epoch = time.time()
     response = jsonify({
-        "message" : response.get("message", "Login complete."),
-        "alias" : response.get('alias', None),
-        "username" : response.get('sub'),
+        "message" : rsResponse.pop("message", "Login complete."),
+        "username" : sub,
         "time_of_issuance" : epoch,
         "access_exp" : epoch + tokenManager.accessLifetime,
         "leeway" : tokenManager.leeway,
-        "issuer" : "babel-auth-service",
+        "issuer" : "babel-auth-service"
     })
     response.set_cookie(key="access",
                         value=aToken,
@@ -139,20 +138,21 @@ def register():
                             "response_message" : valid.json().get("message", "Sowwy >:3")}), valid.status_code
         break
     
-    response: dict = valid.json()
-    subject = response["sub"]
-    aToken = tokenManager.issueAccessToken(sub = subject)
-    rToken = tokenManager.issueRefreshToken(sub = subject,
-                                            firstTime=True)
+    rsResponse: dict[str, Any] = valid.json()
+    sub, sid = rsResponse.pop('sub'), rsResponse.pop('sid')
+    aToken = tokenManager.issueAccessToken(sub, sid)
+    rToken = tokenManager.issueRefreshToken(sub, sid, firstTime=True)
     epoch = time.time()
     response = jsonify({
-        "message" : response.get("message", "Registration complete."),
-        "alias" : response.get('alias', None),
-        "username" : response.get('sub'),
+        "message" : rsResponse.pop("message", "Registration complete."),
+        "alias" : rsResponse.pop('alias', None),
+        "username" : sub,
+        "email" : rsResponse.pop('email', None),
         "time_of_issuance" : epoch,
         "access_exp" : epoch + tokenManager.accessLifetime,
         "leeway" : tokenManager.leeway,
         "issuer" : "babel-auth-service",
+        "_additional" : {**rsResponse}
     })
 
     response.set_cookie(key="access",
