@@ -94,17 +94,18 @@ class TokenManager:
 
         # issue tokens here
         refreshToken = self.issueRefreshToken(decodedRefreshToken["sub"],
+                                              decodedRefreshToken['sid'],
                                               firstTime=False,
                                               jti=decodedRefreshToken["jti"],
                                               familyID=decodedRefreshToken["fid"],
                                               exp=decodedRefreshToken["exp"])
         self.revokeTokenWithIDs(decodedRefreshToken["jti"], decodedRefreshToken['fid'])
-        accessToken = self.issueAccessToken(decodedRefreshToken['sub'],
+        accessToken = self.issueAccessToken(decodedRefreshToken['sub'], decodedRefreshToken['sid'],
                                             additionalClaims={"fid" : decodedRefreshToken["fid"]})
         
         return refreshToken, accessToken
 
-    def issueRefreshToken(self, sub : str,
+    def issueRefreshToken(self, sub: str, sid: int,
                           additionalClaims : Optional[dict] = None,
                           firstTime : bool = False,
                           jti : Optional[str] = None,
@@ -115,6 +116,8 @@ class TokenManager:
         params:
         
         sub: subject of the JWT
+
+        sid: DB ID of subject
         
         additionalClaims: Additional claims to attach to the JWT body
         
@@ -144,6 +147,7 @@ class TokenManager:
                           "nbf" : time.time() + self.accessLifetime - self.leeway,
 
                           "sub" : sub,
+                          "sid" : sid,
                           "jti" : self.generate_unique_identifier()}
         payload.update(self.uClaims)
         if additionalClaims:
@@ -163,13 +167,14 @@ class TokenManager:
                           algorithm=self.uHeader["alg"],
                           headers=self.uHeader)
 
-    def issueAccessToken(self, sub : str, 
+    def issueAccessToken(self, sub : str, sid: int,
                          additionalClaims : Optional[dict] = None) -> str:
         payload : dict = {"iat" : time.time(),
                           "exp" : time.time() + self.accessLifetime,
                           "iss" : "babel-auth-service",
                           
                           "sub" : sub,
+                          "sid" : sid,
                           "jti" : self.generate_unique_identifier()}
         payload.update(self.uClaims)
         if additionalClaims:
