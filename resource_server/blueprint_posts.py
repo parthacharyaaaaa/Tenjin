@@ -112,3 +112,85 @@ def edit_post(post_id : int) -> tuple[Response, int]:
 @token_required
 def delete_post(post_id : int) -> Response:
     ...
+
+@post.route("/vote/<int:post_id>", methods=["OPTIONS", "PATCH"])
+@token_required
+def vote_post(post_id: int) -> tuple[Response, int]:
+    try:
+        vote: int = int(request.args['type'])
+        if vote != 0  or vote != 1:
+            raise ValueError
+    except KeyError:
+        raise BadRequest("Vote type (upvote/downvote) not specified")
+    except ValueError:
+        raise BadRequest("Invalid vote value (Should be 0 (downvote) or 1 (upvote))")
+
+    voteCounterKey: int = RedisInterface.hget(f"{Post.__tablename__}:score", post_id)
+    if voteCounterKey:
+        RedisInterface.incr(voteCounterKey)
+        return jsonify({"message" : "Voted!"}), 202
+    
+    pScore: int = db.session.execute(select(Post.score).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
+    if not pScore:
+        raise NotFound("No such post exists")
+
+    voteCounterKey: str = uuid4().hex
+    op = RedisInterface.set(voteCounterKey, pScore+1, nx=True)
+    if not op:
+        RedisInterface.incr(voteCounterKey)
+        return jsonify({"message" : "Voted!"}), 202
+
+    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_JSON['sub'], "post_id" : post_id, 'table' : Post.__tablename__})
+    RedisInterface.hset(f"{Post.__tablename__}:score", post_id, voteCounterKey)
+    return jsonify({"message" : "Voted!"}), 202
+
+@post.route("/save/<int:post_id>", methods=["OPTIONS", "PATCH"])
+@token_required
+def save_post(post_id: int) -> tuple[Response, int]:
+    saveCounterKey: int = RedisInterface.hget(f"{Post.__tablename__}:saves", post_id)
+    if saveCounterKey:
+        RedisInterface.incr(saveCounterKey)
+        return jsonify({"message" : "Saved!"}), 202
+    
+    try:
+        pSaves: int = db.session.execute(select(Post.score).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
+    except:
+        exc: Exception = Exception()
+        exc.__setattr__("description", 'An error occured when fetching this post')
+        raise exc
+
+    if not pSaves:
+        raise NotFound("No such post exists")
+
+    saveCounterKey: str = uuid4().hex
+    op = RedisInterface.set(saveCounterKey, pSaves+1, nx=True)
+    if not op:
+        RedisInterface.incr(saveCounterKey)
+        return jsonify({"message" : "Saved!"}), 202
+
+    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_JSON['sub'], "post_id" : post_id, 'table' : Post.__tablename__})
+    RedisInterface.hset(f"{Post.__tablename__}:saves", post_id, saveCounterKey)
+
+    return jsonify({"message" : "Saved!"}), 202
+
+@post.route("/report/<int:post_id>", methods=["OPTIONS", "PATCH"])
+@token_required
+def report_post(post_id: int) -> tuple[Response, int]:
+    reportCounterKey: int = RedisInterface.hget(f"{Post.__tablename__}:reports", post_id)
+    if reportCounterKey:
+        RedisInterface.incr(reportCounterKey)
+        return jsonify({"message" : "Reported!"}), 202
+    
+    pReports: int = db.session.execute(select(Post.score).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
+    if not pReports:
+        raise NotFound("No such post exists")
+
+    reportCounterKey: str = uuid4().hex
+    op = RedisInterface.set(reportCounterKey, pReports+1, nx=True)
+    if not op:
+        RedisInterface.incr(reportCounterKey)
+        return jsonify({"message" : "Reported!"}), 202
+    
+    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_TOKEN['sub'], "post_id" : post_id, 'table' : Post.__tablename__})
+    RedisInterface.hset(f"{Post.__tablename__}:reports", post_id, reportCounterKey)
+    return jsonify({"message" : "Reported!"}), 202
