@@ -30,6 +30,9 @@ class FlaskConfig:
         SQLALCHEMY_POOL_TIMEOUT = int(os.environ.get("SQLALCHEMY_POOL_TIMEOUT", 30))
         SQLALCHEMY_TRACK_MODIFICATIONS = bool(int(os.environ.get("SQLALCHEMY_TRACK_MODIFICATIONS", 0)))
 
+        ### JWT ###
+        SIGNING_KEY = os.environ['JWT_SIGNING_KEY']
+
         ### Application-specific configurations ###
         ACCOUNT_RECOVERY_PERIOD = timedelta(days=int(os.environ["ACCOUNT_RECOVERY_PERIOD"]))
 
