@@ -2,11 +2,13 @@ from flask import Blueprint, Response, jsonify, g, url_for, request
 post = Blueprint("post", "post", url_prefix="/posts")
 
 from sqlalchemy import select, update
-from resource_server.models import db, Post, User, Forum, forum_flairs
+from sqlalchemy.exc import SQLAlchemyError
+
+from resource_server.models import db, Post, User, Forum, forum_flairs, PostSave
 from uuid import uuid4
 from auxillary.decorators import enforce_json, token_required
 from resource_server.external_extensions import RedisInterface
-from auxillary.utils import rediserialize
+from auxillary.utils import rediserialize, genericDBFetchException
 
 from werkzeug.exceptions import NotFound, BadRequest
 
@@ -140,38 +142,87 @@ def vote_post(post_id: int) -> tuple[Response, int]:
         RedisInterface.incr(voteCounterKey)
         return jsonify({"message" : "Voted!"}), 202
 
-    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_JSON['sub'], "post_id" : post_id, 'table' : Post.__tablename__})
+    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_JSON['sid'], "post_id" : post_id, 'table' : Post.__tablename__})
     RedisInterface.hset(f"{Post.__tablename__}:score", post_id, voteCounterKey)
     return jsonify({"message" : "Voted!"}), 202
 
 @post.route("/save/<int:post_id>", methods=["OPTIONS", "PATCH"])
 @token_required
-def save_post(post_id: int) -> tuple[Response, int]:
+def save_post(post_id: int) -> tuple[Response, int]:    
+    try:
+        # First check to see if the user has already saved this post. If yes, then do nothing
+        savedPost: PostSave = db.session.execute(select(PostSave).where((PostSave.user_id == g.REQUEST_JSON['sid']) & (PostSave.post_id == post_id))).scalar_one_or_none()
+        if savedPost:
+            return jsonify({'message' : 'post already saved'}), 200
+    except SQLAlchemyError: genericDBFetchException()
+    
+    # If post counter exists, update directly
     saveCounterKey: int = RedisInterface.hget(f"{Post.__tablename__}:saves", post_id)
     if saveCounterKey:
         RedisInterface.incr(saveCounterKey)
+        RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_JSON['sid'], "post_id" : post_id, 'table' : Post.__tablename__})
         return jsonify({"message" : "Saved!"}), 202
-    
+        
+    # Post counter does NOT exist
     try:
+        # Fetch current post saves
         pSaves: int = db.session.execute(select(Post.score).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
-    except:
-        exc: Exception = Exception()
-        exc.__setattr__("description", 'An error occured when fetching this post')
-        raise exc
+        # 0 is falsy, so add extra check
+        if pSaves != 0 and not pSaves:      
+            raise NotFound("No such post exists")
+    except SQLAlchemyError: genericDBFetchException()
 
-    if not pSaves:
-        raise NotFound("No such post exists")
-
-    saveCounterKey: str = uuid4().hex
+    # Create a new counter for this post
+    saveCounterKey: str = f"post:{post_id}:saves"
     op = RedisInterface.set(saveCounterKey, pSaves+1, nx=True)
     if not op:
+        # Other Flask worker already made a counter while this request was being processed, update counter and end
         RedisInterface.incr(saveCounterKey)
         return jsonify({"message" : "Saved!"}), 202
 
-    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_JSON['sub'], "post_id" : post_id, 'table' : Post.__tablename__})
-    RedisInterface.hset(f"{Post.__tablename__}:saves", post_id, saveCounterKey)
+    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_JSON['sid'], "post_id" : post_id, 'table' : Post.__tablename__})  # Add post_saves entry to db
+    RedisInterface.hset(f"{Post.__tablename__}:saves", post_id, saveCounterKey) # Add post's counter to saves hashmap for this table
 
     return jsonify({"message" : "Saved!"}), 202
+
+@post.route("/unsave/<int:post_id>", methods=["OPTIONS", "PATCH"])
+@token_required
+def unsave_post(post_id: int) -> tuple[Response, int]:
+    try:
+        # First check to see if the user hasn't saved this post. If yes, then do nothing
+        savedPost: PostSave = db.session.execute(select(PostSave).where((PostSave.user_id == g.REQUEST_JSON['sid']) & (PostSave.post_id == post_id))).scalar_one_or_none()
+        if not savedPost:
+            return jsonify({'message' : 'post not saved'}), 200
+    except SQLAlchemyError: genericDBFetchException()
+
+    # If post counter exists, decrement directly
+    saveCounterKey: int = RedisInterface.hget(f"{Post.__tablename__}:saves", post_id)
+    if saveCounterKey:
+        RedisInterface.decr(saveCounterKey)
+        RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.REQUEST_JSON['sid'], "post_id" : post_id, 'table' : Post.__tablename__})
+        return jsonify({"message" : "Removed from saved posts"}), 202
+        
+    # Post counter does NOT exist
+    try:
+        # Fetch current post saves
+        pSaves: int = db.session.execute(select(Post.score).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
+        # 0 is falsy, so add extra check
+        if pSaves != 0 and not pSaves: 
+            raise NotFound("No such post exists")
+    except SQLAlchemyError: genericDBFetchException()
+
+    # Create a new counter for this post
+    saveCounterKey: str = f"post:{post_id}:saves"
+    op = RedisInterface.set(saveCounterKey, pSaves-1, nx=True)
+    if not op:
+        # Other Flask worker already made a counter while this request was being processed, decrement counter and end
+        RedisInterface.decr(saveCounterKey)
+        return jsonify({"message" : "Removed from saved posts"}), 202
+
+    RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.REQUEST_JSON['sid'], "post_id" : post_id, 'table' : Post.__tablename__})  # Add post_saves entry to db
+    RedisInterface.hset(f"{Post.__tablename__}:saves", post_id, saveCounterKey) # Add post's counter to saves hashmap for this table
+
+    return jsonify({"message" : "Removed from saved posts"}), 202
 
 @post.route("/report/<int:post_id>", methods=["OPTIONS", "PATCH"])
 @token_required
@@ -191,6 +242,6 @@ def report_post(post_id: int) -> tuple[Response, int]:
         RedisInterface.incr(reportCounterKey)
         return jsonify({"message" : "Reported!"}), 202
     
-    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_TOKEN['sub'], "post_id" : post_id, 'table' : Post.__tablename__})
+    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_TOKEN['sid'], "post_id" : post_id, 'table' : Post.__tablename__})
     RedisInterface.hset(f"{Post.__tablename__}:reports", post_id, reportCounterKey)
     return jsonify({"message" : "Reported!"}), 202
