@@ -4,7 +4,7 @@ post = Blueprint("post", "post", url_prefix="/posts")
 from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 
-from resource_server.models import db, Post, User, Forum, forum_flairs, PostSave, PostVote
+from resource_server.models import db, Post, User, Forum, forum_flairs, PostSave, PostVote, PostReport
 from uuid import uuid4
 from auxillary.decorators import enforce_json, token_required
 from resource_server.external_extensions import RedisInterface
@@ -274,11 +274,14 @@ def save_post(post_id: int) -> tuple[Response, int]:
     # Post counter does NOT exist
     try:
         # Fetch current post saves
-        pSaves: int = db.session.execute(select(Post.score).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
+        pSaves: int = db.session.execute(select(Post.saves).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
         # 0 is falsy, so add extra check
         if pSaves != 0 and not pSaves:      
             raise NotFound("No such post exists")
     except SQLAlchemyError: genericDBFetchException()
+
+    # Insert WE in advance
+    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_JSON['sid'], "post_id" : post_id, 'table' : Post.__tablename__})  # Add post_saves entry to db
 
     # Create a new counter for this post
     saveCounterKey: str = f"post:{post_id}:saves"
@@ -286,12 +289,9 @@ def save_post(post_id: int) -> tuple[Response, int]:
     if not op:
         # Other Flask worker already made a counter while this request was being processed, update counter and end
         RedisInterface.incr(saveCounterKey)
-        RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_JSON['sid'], "post_id" : post_id, 'table' : Post.__tablename__})  # Add post_saves entry to db
         return jsonify({"message" : "Saved!"}), 202
 
-    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_JSON['sid'], "post_id" : post_id, 'table' : Post.__tablename__})  # Add post_saves entry to db
     RedisInterface.hset(f"{Post.__tablename__}:saves", post_id, saveCounterKey) # Add post's counter to saves hashmap for this table
-
     return jsonify({"message" : "Saved!"}), 202
 
 @post.route("/<int:post_id>/unsave", methods=["OPTIONS", "PATCH"])
@@ -314,11 +314,14 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
     # Post counter does NOT exist
     try:
         # Fetch current post saves
-        pSaves: int = db.session.execute(select(Post.score).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
+        pSaves: int = db.session.execute(select(Post.saves).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
         # 0 is falsy, so add extra check
         if pSaves != 0 and not pSaves: 
             raise NotFound("No such post exists")
     except SQLAlchemyError: genericDBFetchException()
+
+    # Add WE in advance
+    RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.REQUEST_JSON['sid'], "post_id" : post_id, 'table' : Post.__tablename__})  # Add post_saves entry to db
 
     # Create a new counter for this post
     saveCounterKey: str = f"post:{post_id}:saves"
@@ -326,32 +329,44 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
     if not op:
         # Other Flask worker already made a counter while this request was being processed, decrement counter and end
         RedisInterface.decr(saveCounterKey)
-        RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.REQUEST_JSON['sid'], "post_id" : post_id, 'table' : Post.__tablename__})  # Add post_saves entry to db
         return jsonify({"message" : "Removed from saved posts"}), 202
 
-    RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.REQUEST_JSON['sid'], "post_id" : post_id, 'table' : Post.__tablename__})  # Add post_saves entry to db
     RedisInterface.hset(f"{Post.__tablename__}:saves", post_id, saveCounterKey) # Add post's counter to saves hashmap for this table
-
     return jsonify({"message" : "Removed from saved posts"}), 202
 
-@post.route("/report/<int:post_id>", methods=["OPTIONS", "PATCH"])
+@post.route("/<int:post_id>/report", methods=["OPTIONS", "PATCH"])
 @token_required
 def report_post(post_id: int) -> tuple[Response, int]:
+    # Check if user has reported this post already. If so, do nothing
+    try:
+        reportedPost: PostReport = db.session.execute(select(PostReport).where((PostReport.user_id == g.decodedToken['sid']) & (PostReport.post_id == post_id))).scalar_one_or_none()
+        if reportedPost:
+            return jsonify({'message' : 'post reported already'}), 200
+    except SQLAlchemyError: genericDBFetchException()
+
+    # Request is for a new report on this post
+    # Check to see if a counter for this post already exists
     reportCounterKey: int = RedisInterface.hget(f"{Post.__tablename__}:reports", post_id)
+
+    # Exists
     if reportCounterKey:
         RedisInterface.incr(reportCounterKey)
         return jsonify({"message" : "Reported!"}), 202
     
-    pReports: int = db.session.execute(select(Post.score).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
+    # Does not exist
+    pReports: int = db.session.execute(select(Post.reports).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
     if not pReports:
         raise NotFound("No such post exists")
 
-    reportCounterKey: str = uuid4().hex
+    # Insert WE in advance
+    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.decodedToken['sid'], "post_id" : post_id, 'table' : Post.__tablename__})
+
+    reportCounterKey: str = f'post:{post_id}:reports'
     op = RedisInterface.set(reportCounterKey, pReports+1, nx=True)
     if not op:
+        # Other Flask worker already made a counter while this request was being processed, increment counter and end
         RedisInterface.incr(reportCounterKey)
         return jsonify({"message" : "Reported!"}), 202
     
-    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.REQUEST_TOKEN['sid'], "post_id" : post_id, 'table' : Post.__tablename__})
     RedisInterface.hset(f"{Post.__tablename__}:reports", post_id, reportCounterKey)
     return jsonify({"message" : "Reported!"}), 202
