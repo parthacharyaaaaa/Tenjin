@@ -18,88 +18,77 @@ with open(os.path.join(os.path.dirname(__file__), "instance", "config.json"), 'r
 db = SQLAlchemy()
 
 ### Assosciation Tables ###
-forum_flairs = db.Table(
-    "forum_flairs",
-    db.Column("forum_id", INTEGER, db.ForeignKey("forums.id"), nullable = False),
-    db.Column("flair_name", VARCHAR(32), nullable = False),
-    db.PrimaryKeyConstraint("forum_id", "flair_name", name="pk_forum_flairs")
-)
+class ForumFlair(db.Model):
+    __tablename__ = "forum_flairs"
+    forum_id = db.Column(db.Integer, db.ForeignKey("forums.id"), primary_key=True, nullable=False)
+    flair_name = db.Column(db.String(32), primary_key=True, nullable=False)
 
-forum_subscriptions = db.Table(
-    "forum_subscriptions",
-    db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
-    db.Column("forum_id", INTEGER, db.ForeignKey("forums.id")),
-    db.Column("time_subscribed", TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")),
-    db.PrimaryKeyConstraint("user_id", "forum_id", name="pk_forum_subscriptions")
-)
 
-anime_subscriptions = db.Table(
-    "anime_subscriptions",
-    db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
-    db.Column("anime_id", INTEGER, db.ForeignKey("animes.id")),
-    db.PrimaryKeyConstraint("user_id", "anime_id", name="pk_anime_subscriptions")
-)
+class ForumSubscription(db.Model):
+    __tablename__ = "forum_subscriptions"
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
+    forum_id = db.Column(db.Integer, db.ForeignKey("forums.id"), primary_key=True)
+    time_subscribed = db.Column(db.TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
-comment_votes = db.Table(
-    "comment_votes",
-    db.Column("voter_id", BIGINT, db.ForeignKey("users.id")),
-    db.Column("comment_id", BIGINT, db.ForeignKey("comments.id")),
-    db.Column("vote", BOOLEAN, nullable=False),
-    db.PrimaryKeyConstraint("voter_id", "comment_id", name="pk_comment_votes")
-)
 
-comment_reports = db.Table(
-    "comment_reports",
-    db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
-    db.Column("comment_id", BIGINT, db.ForeignKey("comments.id")),
-    db.PrimaryKeyConstraint("user_id", "comment_id", name="pk_comment_reports")
-)
+class AnimeSubscription(db.Model):
+    __tablename__ = "anime_subscriptions"
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
+    anime_id = db.Column(db.Integer, db.ForeignKey("animes.id"), primary_key=True)
 
-post_votes = db.Table(
-    "post_votes",
-    db.Column("voter_id", BIGINT, db.ForeignKey("users.id")),
-    db.Column("post_id", BIGINT, db.ForeignKey("posts.id")),
-    db.Column("vote", BOOLEAN, nullable=False),
-    db.PrimaryKeyConstraint("voter_id", "post_id", name="pk_post_votes")
-)
 
-post_saves = db.Table(
-    "post_saves",
-    db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
-    db.Column("post_id", BIGINT, db.ForeignKey("posts.id")),
-    db.PrimaryKeyConstraint("user_id", "post_id", name="pk_post_saves")
-)
+class CommentVote(db.Model):
+    __tablename__ = "comment_votes"
+    voter_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
+    comment_id = db.Column(db.BigInteger, db.ForeignKey("comments.id"), primary_key=True)
+    vote = db.Column(db.Boolean, nullable=False)
 
-post_reports = db.Table(
-    "post_reports",
-    db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
-    db.Column("post_id", BIGINT, db.ForeignKey("posts.id")),
-    db.PrimaryKeyConstraint("user_id", "post_id", name="pk_post_reports")
-)
 
-stream_links = db.Table(
-    "stream_links",
-    db.Column("anime_id", INTEGER, db.ForeignKey("animes.id")),
-    db.Column("url", VARCHAR(256), nullable = False),
-    db.Column("website", VARCHAR(128), nullable = False),
-    db.PrimaryKeyConstraint("anime_id", "url", name="pk_stream_links")
-)
+class CommentReport(db.Model):
+    __tablename__ = "comment_reports"
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
+    comment_id = db.Column(db.BigInteger, db.ForeignKey("comments.id"), primary_key=True)
 
-anime_genres = db.Table(
-    "anime_genres",
-    db.Column("anime_id", INTEGER, db.ForeignKey("animes.id")),
-    db.Column("genre_id", SMALLINT, db.ForeignKey("genres.id")),
-    db.PrimaryKeyConstraint("anime_id", "genre_id", name="pk_anime_genres")
-)
+
+class PostVote(db.Model):
+    __tablename__ = "post_votes"
+    voter_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
+    post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id"), primary_key=True)
+    vote = db.Column(db.Boolean, nullable=False)
+
+
+class PostSave(db.Model):
+    __tablename__ = "post_saves"
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
+    post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id"), primary_key=True)
+
+
+class PostReport(db.Model):
+    __tablename__ = "post_reports"
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
+    post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id"), primary_key=True)
+
+
+class StreamLink(db.Model):
+    __tablename__ = "stream_links"
+    anime_id = db.Column(db.Integer, db.ForeignKey("animes.id"), primary_key=True)
+    url = db.Column(db.String(256), primary_key=True, nullable=False)
+    website = db.Column(db.String(128), nullable=False)
+
+
+class AnimeGenre(db.Model):
+    __tablename__ = "anime_genres"
+    anime_id = db.Column(db.Integer, db.ForeignKey("animes.id"), primary_key=True)
+    genre_id = db.Column(db.SmallInteger, db.ForeignKey("genres.id"), primary_key=True)
+
 
 ADMIN_ROLES = ENUM("admin", "super", "owner", name="ADMIN_ROLES", create_type=True)
-forum_admins = db.Table(
-    "forum_admins",
-    db.Column("forum_id", INTEGER, db.ForeignKey("forums.id")),
-    db.Column("user_id", BIGINT, db.ForeignKey("users.id")),
-    db.Column("role", ADMIN_ROLES, nullable = False, server_default = text(f"'{ADMIN_ROLES.enums[0]}'")),         # Awful hack alert
-    db.PrimaryKeyConstraint("forum_id", "user_id", name = "pk_forum_admins")
-)
+class ForumAdmin(db.Model):
+    __tablename__ = "forum_admins"
+    forum_id = db.Column(db.Integer, db.ForeignKey("forums.id"), primary_key=True)
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
+    role = db.Column(ADMIN_ROLES, nullable=False, server_default=text(f"'{ADMIN_ROLES.enums[0]}'"))
+
 
 ### Tables ###
 db.Model.__attrdict__ = lambda x : {k : v for k,v in x.__dict__.items() if k != '_sa_instance_state'}
