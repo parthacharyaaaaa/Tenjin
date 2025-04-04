@@ -10,7 +10,7 @@ from auxillary.decorators import enforce_json, token_required
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException
 
-from werkzeug.exceptions import NotFound, BadRequest
+from werkzeug.exceptions import NotFound, BadRequest, Forbidden
 
 from datetime import datetime
 
@@ -112,8 +112,31 @@ def edit_post(post_id : int) -> tuple[Response, int]:
 
 @post.route("/<int:post_id>", methods=["DELETE", "OPTIONS"])
 @token_required
-def delete_post(post_id : int) -> Response:
-    ...
+def delete_post(post_id: int) -> Response:
+    try:
+        # Ensure post exists in the first place
+        post: Post = db.session.update(select(Post).where(Post.id == post_id)).scalar_one_or_none()
+        if not post:
+            raise NotFound('Post does not exist')
+        
+        # Ensure post author is the issuer of this request
+        if post.author_id != g.decodedToken['sid']:
+            raise Forbidden('You do not have the rights to alter this post as you are not its author')
+        
+        # If post already deleted, ignore
+        if post.deleted:
+            return jsonify({"Post already queued for deleted"}), 200
+    except SQLAlchemyError: genericDBFetchException()
+
+    # Post good to go for deletion
+    try:
+        db.session.execute(update(Post).where(Post.id == post_id).values(deleted = True, time_deleted = datetime.now()))
+    except:
+        exc: Exception = Exception()
+        exc.__setattr__('description', 'Failed to delete post')
+        raise exc
+    
+    return jsonify({'message' : 'post deleted'}), 200
 
 @post.route("/<int:post_id>/vote", methods=["OPTIONS", "PATCH"])
 @token_required
