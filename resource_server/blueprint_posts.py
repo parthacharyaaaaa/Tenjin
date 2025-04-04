@@ -1,23 +1,24 @@
 from flask import Blueprint, Response, jsonify, g, url_for, request
 post = Blueprint("post", "post", url_prefix="/posts")
 
-from sqlalchemy import select, update
+from sqlalchemy import select, update, asc, desc
 from sqlalchemy.exc import SQLAlchemyError
 
-from resource_server.models import db, Post, User, Forum, forum_flairs, PostSave, PostVote, PostReport
-from uuid import uuid4
+from resource_server.models import db, Post, User, Forum, forum_flairs, PostSave, PostVote, PostReport, Comment
 from auxillary.decorators import enforce_json, token_required
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException
 
 from werkzeug.exceptions import NotFound, BadRequest, Forbidden
 
+from typing import Any
 from datetime import datetime
+import ujson
 
 @post.route("/", methods=["POST", "OPTIONS"])
 @enforce_json
 @token_required
-def create_post() -> Response:
+def create_post() -> tuple[Response, int]:
     if not (g.REQUEST_JSON.get('forum') and 
             g.REQUEST_JSON.get('title') and
             g.REQUEST_JSON.get('body')):
@@ -57,11 +58,44 @@ def create_post() -> Response:
     return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
 
 @post.route("/<int:post_id>", methods=["GET", "OPTIONS"])
-def get_post(post_id : int) -> Response:
+def get_post(post_id : int) -> tuple[Response, int]:
+    sortByTop: bool =  request.args.get('sf', 'top') == 'top'   # Top/New comment flag
+    includeComments: bool = request.args.get('include_comments', '0') == '1'
+    try:
+        postKey: str = f'post:{post_id}'
+        commentsKey: str = f'post:{post_id}:comments:{sortByTop}'
+        cachedPost: str = RedisInterface.get(postKey)
+        cachedComments: str = None if not includeComments else RedisInterface.get(commentsKey) 
+        if cachedPost:
+            # Update ttl on cache hit
+            RedisInterface.expire(postKey, 300)
+            RedisInterface.expire(commentsKey, 300)     # Refresh comments' ttl regardless of it being requested. Since post is being requested nonetheless, it is likely that subsequent requests may ask for comment as well
+
+            serializedResult = {'post' : ujson.loads(cachedPost), 'comments' : cachedComments}
+            return jsonify(serializedResult), 200
+    except:
+        ...
+    
     post : Post | None = db.session.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
     if not post:
         raise NotFound(f"Post with id {post_id} could not be found :(")
-    return jsonify(post.__json_like__()), 200
+
+    res = post.__json_like__()
+    # TODO: Have pre-defined values for cached items' TTLs
+    RedisInterface.set(f'post:{post_id}', ujson.dumps(res), ex=300)
+    if not includeComments:
+        return jsonify({'post' : res}), 200
+    
+    # Return post with comments
+    comments: list[Comment]= db.session.execute(select(Comment)
+                                                .where(Comment.parent_post == post_id)
+                                                .order_by(desc(Comment.score) if sortByTop else asc(Comment.time_created))).scalars().all()
+    if not comments:
+        return jsonify({'post' : res}), 200
+    
+    serializedCommentSet: list[dict[str, Any]] = [comment.__json_like__() for comment in comments]
+    RedisInterface.set(f'post:{post_id}:comments:{sortByTop}', ujson.dumps(serializedCommentSet))
+    return jsonify({'post' : res, 'comments' : serializedCommentSet})
 
 @post.route("/<int:post_id>", methods=["PATCH", "OPTIONS"])
 @enforce_json
