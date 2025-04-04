@@ -83,3 +83,9 @@ def rediserialize(mapping: dict,
                                                           datetime.datetime: lambda dt : dt.isoformat()}) -> dict:
     '''Serialize a Python dictionary to a Redis hashmap'''
     return {k : typeMapping.get(type(v), lambda x : x)(v) for k,v in mapping.items()}
+
+def genericDBFetchException():
+    '''Generic fetch exception handler'''
+    exc = Exception()
+    exc.__setattr__("description", 'An error occurred when fetching this resource')
+    raise exc
