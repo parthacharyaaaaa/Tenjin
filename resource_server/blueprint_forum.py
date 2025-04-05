@@ -33,17 +33,16 @@ def create_forum() -> tuple[Response, int]:
         raise BadRequest("Mandatory details for forum creation missing")
     except (TypeError, ValueError):
         raise BadRequest("Malformmatted values provided for forum creation")
-
-    user: User = db.session.execute(select(User).where((User.id == userID) & (User.deleted == False))).scalar_one_or_none()
-    if not user:
-        raise NotFound("No user with this ID exists")
     
     # All checks passed, push >:3
     newForum: Forum = Forum(forumName, forumAnimeID, colorTheme, description)
     try:
-        print(newForum.__attrdict__())
+        db.session.add(newForum)
+        db.session.flush()
         RedisInterface.xadd("INSERTIONS", rediserialize(newForum.__attrdict__()) | {'table' : Forum.__tablename__})
+        RedisInterface.xadd("WEAK_INSERTIONS", {'table' : ForumAdmin.__tablename__, 'forum_id' : newForum.id, 'user_id' : userID, 'role' : 'owner'})
     except:
+        db.session.rollback()
         cErr = ConnectionError()
         cErr.__setattr__("description", "An error occured while trying to create the forum. This is most likely an issue with our servers")
         raise cErr
