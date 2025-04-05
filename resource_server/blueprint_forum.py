@@ -53,11 +53,6 @@ def create_forum() -> tuple[Response, int]:
 @token_required
 def delete_forum(forum_id: int) -> Response:
     try:
-        # Check to see if forum exists
-        forum: Forum = db.session.execute(select(Forum).where(Forum.id == forum_id).with_for_update()).scalar_one_or_none()
-        if not forum:
-            raise NotFound(f"Failed to find a forum with this id ({forum_id})")
-        
         # Check to see if user is owner or superuser
         userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
         if not userAdmin or userAdmin.role != 'owner' and userAdmin.role != 'super':
@@ -90,12 +85,7 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
     if newAdminRole not in ('admin', 'super'):
         raise BadRequest("Forum administrators can only have 2 roles: admin and super")
     # Request details valid at a surface level.
-    try:
-        # Check if forum exists
-        forum: Forum = db.session.execute(select(Forum).where(Forum.id == forum_id).with_for_update(nowait=True)).scalar_one_or_none()
-        if not forum:
-            raise NotFound(f'No forum with id {forum_id} exists')
-        
+    try:        
         # Check to see if new admin actually exists is users table
         newAdmin: int = db.session.execute(select(User.id).where(User.id == newAdminID)).scalar_one_or_none()
         if not newAdmin:
@@ -141,12 +131,7 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
         raise BadRequest('Missing user id for new admin')
 
     # Request details valid at a surface level.
-    try:
-        # Check if forum exists
-        forum: Forum = db.session.execute(select(Forum).where(Forum.id == forum_id).with_for_update(nowait=True)).scalar_one_or_none()
-        if not forum:
-            raise NotFound(f'No forum with id {forum_id} exists')
-        
+    try:        
         # Check to see if given user is actually an admin
         targetAdminRole: str = db.session.execute(select(ForumAdmin.role).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetAdminID))).scalar_one_or_none()
         if not targetAdminRole:
