@@ -250,4 +250,38 @@ def add_highlight_post(forum_id: int) -> tuple[Response, int]:
         raise e
     
     return jsonify({'message' : 'Post highlighted'}), 200
+
+@forum.route("/<int:forum_id>/highlight-post", methods=['DELETE', 'OPTIONS'])
+@token_required
+def add_highlight_post(forum_id: int) -> tuple[Response, int]:
+    postID: str = request.args.get('post')
+    if not postID:
+        raise BadRequest("No post specified")
+    if not postID.isnumeric():
+        raise BadRequest("Invalid post specified")
     
+    postID: int = int(postID)
+    try:
+        userAdminRole: str = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+        if not userAdminRole or userAdminRole not in ('super', 'owner'):
+            raise Forbidden('You do not have access rights to edit this forum')
+
+        requestedPostID: int = db.session.execute(select(Post.id).where(Post.id == postID)).scalar_one_or_none()
+        if not requestedPostID:
+            raise NotFound("This post could not be found")
+        
+    except SQLAlchemyError: genericDBFetchException()
+    except KeyError: raise BadRequest('Invalid token, missing mandatory field: sid. Please login again')
+
+    try:
+        forum: Forum = db.session.execute(select(Forum).where(Forum.id == forum_id).with_for_update(nowait=True)).scalar_one_or_none()
+        idx: int = [forum.highlight_post_1, forum.highlight_post_2, forum.highlight_post_3].index(postID) + 1
+
+        db.session.execute(update(Forum).where(Forum.id == forum_id).values(**{f'highlight_post_{idx}' : None}))
+        db.session.commit()        
+    except ValueError: raise BadRequest("This post is not highlighted")
+    except SQLAlchemyError as e:
+        e.__setattr__('description', 'An error occured when removing this highlighted post. Please try again later')
+        raise e
+    
+    return jsonify({'message' : 'Post removed from forum highlights'}), 200
