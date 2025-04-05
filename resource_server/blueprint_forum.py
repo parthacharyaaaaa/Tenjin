@@ -184,3 +184,42 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
         
     RedisInterface.hset(f'{Forum.__tablename__}:admins', forum_id, adminCounterKey)
     return jsonify({"message" : "Removed admin", "userID" : targetAdminID}), 202
+
+@forum.route("/<int:forum_id>/edit", methods=["PATCH", "OPTIONS"])
+@enforce_json
+@token_required
+def edit_forum(forum_id: int) -> tuple[Response, int]:
+    colorTheme: str | int = g.REQUEST_JSON.get('color_theme')
+    if colorTheme and isinstance(colorTheme, str):
+         if not colorTheme.isnumeric():
+            raise BadRequest("Invalid color theme")
+         colorTheme = int(colorTheme)
+        
+    description: str = g.REQUEST_JSON.pop('descriptions')
+
+    if not (colorTheme or description):
+        raise BadRequest("No changes provided")
+    
+    try:
+        # Ensure user has access rights for this action
+        userRole: str = db.session.execute(select(ForumAdmin.role).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+        if not userRole or userRole != 'super' or userRole != 'owner':
+            raise Forbidden('You do not have access rights to edit this forum')
+        
+        # Lock forum
+        forum: Forum = db.session.execute(select(Forum).where(Forum.id == forum_id).with_for_update(nowait=True)).scalar_one_or_none()
+    except SQLAlchemyError: genericDBFetchException()
+    except KeyError: raise BadRequest('Invalid token, missing mandatory field: sid. Please login again')
+
+    updateClauses: dict = {}
+    if colorTheme:
+        updateClauses['color_theme'] = colorTheme
+    if description:
+        updateClauses['description'] = description.strip()
+    
+    try:
+        db.session.execute(update(Forum).where(Forum.id == forum_id).values(**updateClauses))
+        db.session.commit()
+    except SQLAlchemyError as e:
+        e.__setattr__('description', 'Failed to update this forum. Please try again later')
+        raise e
