@@ -131,3 +131,56 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
         
     RedisInterface.hset(f'{Forum.__tablename__}:admins', forum_id, adminCounterKey)
     return jsonify({"message" : "Added new admin", "userID" : newAdminID, "role" : newAdminRole}), 202
+
+@forum.route("/<int:forum_id>/admins", methods=['DELETE', 'OPTIONS'])
+@enforce_json
+@token_required
+def remove_admin(forum_id: int) -> tuple[Response, int]:
+    targetAdminID: int = g.REQUEST_JSON.pop('user_id', None)
+    if not targetAdminID:
+        raise BadRequest('Missing user id for new admin')
+
+    # Request details valid at a surface level.
+    try:
+        # Check if forum exists
+        forum: Forum = db.session.execute(select(Forum).where(Forum.id == forum_id).with_for_update(nowait=True)).scalar_one_or_none()
+        if not forum:
+            raise NotFound(f'No forum with id {forum_id} exists')
+        
+        # Check to see if given user is actually an admin
+        targetAdminRole: str = db.session.execute(select(ForumAdmin.role).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetAdminID))).scalar_one_or_none()
+        if not targetAdminRole:
+            raise NotFound("This user is not an admin")
+        
+        # Check if user has necessary permissions
+        userAdminRole: str = db.session.execute(select(ForumAdmin.role).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+        rolePriority: dict = {'owner' : 2, 'super' : 1} #NOTE: Have a proper enum here later
+
+        if not userAdminRole or rolePriority[userAdminRole] <= rolePriority[targetAdminRole]:
+            raise Forbidden(f"You do not have the necessary permissions to remove this admin from: {forum._name}")
+        
+    except SQLAlchemyError: genericDBFetchException()
+    except KeyError: raise BadRequest('Mandatory claim "sid" missing in token. Please login again')
+
+    # Add WE entry in advance
+    RedisInterface.xadd('WEAK_DELETIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : targetAdminID})
+
+    # Decrement admin counter
+    adminCounterKey: str = RedisInterface.hget(f'{Forum.__tablename__}:admins', forum_id)
+    if adminCounterKey:
+        # Counter exists, decrement and finish
+        RedisInterface.decr(adminCounterKey)
+        return jsonify({"message" : "Removed admin", "userID" : targetAdminID}), 202
+    
+    # Counter does not exist yet
+    adminCounterKey: str = f"forum:{forum_id}:admins"
+    fAdminCount: int = db.session.execute(select(Forum.admin_count).where(Forum.id == forum_id)).scalar_one()
+
+    op = RedisInterface.set(adminCounterKey, fAdminCount-1, nx=True)
+    if not op:
+        # Other Flask worker already made a counter while this request was being processed, update counter and end
+        RedisInterface.decr(adminCounterKey)
+        return jsonify({"message" : "Removed admin", "userID" : targetAdminID}), 202
+        
+    RedisInterface.hset(f'{Forum.__tablename__}:admins', forum_id, adminCounterKey)
+    return jsonify({"message" : "Removed admin", "userID" : targetAdminID}), 202
