@@ -3,14 +3,14 @@ from auxillary.decorators import enforce_json, token_required
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException
 
-from resource_server.models import db, Forum, User, ForumAdmin
+from resource_server.models import db, Forum, User, ForumAdmin, Post
 from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from datetime import datetime
 
 from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict
-from flask import Blueprint, Response, g, jsonify
+from flask import Blueprint, Response, g, jsonify, request
 forum = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/forums")
 
 @forum.route("/", methods=["GET", "HEAD", "OPTIONS"])
@@ -208,3 +208,46 @@ def edit_forum(forum_id: int) -> tuple[Response, int]:
     except SQLAlchemyError as e:
         e.__setattr__('description', 'Failed to update this forum. Please try again later')
         raise e
+
+    return jsonify({'message' : 'Edited forum'}), 200
+
+@forum.route("/<int:forum_id>/highlight-post", methods=['PATCH', 'OPTIONS'])
+@token_required
+def add_highlight_post(forum_id: int) -> tuple[Response, int]:
+    postID: str = request.args.get('post')
+    if not postID:
+        raise BadRequest("No post specified")
+    if not postID.isnumeric():
+        raise BadRequest("Invalid post specified")
+    
+    postID: int = int(postID)
+    try:
+        userAdminRole: str = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+        if not userAdminRole or userAdminRole not in ('super', 'owner'):
+            raise Forbidden('You do not have access rights to edit this forum')
+
+        requestedPostID: int = db.session.execute(select(Post.id).where(Post.id == postID)).scalar_one_or_none()
+        if not requestedPostID:
+            raise NotFound("This post could not be found")
+        
+    except SQLAlchemyError: genericDBFetchException()
+    except KeyError: raise BadRequest('Invalid token, missing mandatory field: sid. Please login again')
+
+    try:
+        forum: Forum = db.session.execute(select(Forum).where(Forum.id == forum_id).with_for_update(nowait=True)).scalar_one_or_none()
+        for idx, highlight_post in enumerate((forum.highlight_post_1, forum.highlight_post_2, forum.highlight_post_3), 1):
+            if postID == highlight_post:
+                raise Conflict("This post is already highlighted in this forum")
+            if not highlight_post:
+                db.session.execute(update(Forum).where(Forum.id == forum_id).values(**{f'highlight_post_{idx}' : postID}))
+                db.session.commit()
+                break
+        else:
+            raise Conflict("This forum already has 3 highlighted post. Please remove one of them to accomodate this one")
+        
+    except SQLAlchemyError as e:
+        e.__setattr__('description', 'An error occured when adding this highlighted post. Please try again later')
+        raise e
+    
+    return jsonify({'message' : 'Post highlighted'}), 200
+    
