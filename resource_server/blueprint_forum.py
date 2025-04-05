@@ -9,7 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from datetime import datetime
 
-from werkzeug.exceptions import BadRequest, NotFound, Forbidden
+from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict
 from flask import Blueprint, Response, g, jsonify
 forum = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/forums")
 
@@ -76,3 +76,58 @@ def delete_forum(forum_id: int) -> Response:
         raise exc
     
     return jsonify({'message' : 'forum deleted'}), 200
+
+@forum.route("/<int:forum_id>/admins", methods=['POST', 'OPTIONS'])
+@enforce_json
+@token_required
+def add_admin(forum_id: int) -> tuple[Response, int]:
+    newAdminID: int = g.REQUEST_JSON.pop('user_id', None)
+    if not newAdminID:
+        raise BadRequest('Missing user id for new admin')
+    if g.decodedToken['sid'] == newAdminID:
+        raise Conflict("You are already an admin in this forum")
+    newAdminRole: str = g.REQUEST_JSON.pop('role', 'admin')
+    if newAdminRole not in ('admin', 'super'):
+        raise BadRequest("Forum administrators can only have 2 roles: admin and super")
+    # Request details valid at a surface level.
+    try:
+        # Check if forum exists
+        forum: Forum = db.session.execute(select(Forum).where(Forum.id == forum_id).with_for_update(nowait=True)).scalar_one_or_none()
+        if not forum:
+            raise NotFound(f'No forum with id {forum_id} exists')
+        
+        # Check to see if new admin actually exists is users table
+        newAdmin: int = db.session.execute(select(User.id).where(User.id == newAdminID)).scalar_one_or_none()
+        if not newAdmin:
+            raise NotFound('No user with this user id was found')
+        
+        # Check if user has necessary permissions
+        userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+        if not userAdmin or userAdmin.role not in ('admin', 'super'):
+            raise Forbidden(f"You do not have the necessary permissions to add admins to: {forum._name}")
+        
+    except SQLAlchemyError: genericDBFetchException()
+    except KeyError: raise BadRequest('Mandatory claim "sid" missing in token. Please login again')
+
+    # Add WE entry in advance
+    RedisInterface.xadd('WEAK_INSERTIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : newAdminID, 'role' : newAdminRole})
+
+    # Increment admin counter
+    adminCounterKey: str = RedisInterface.hget(f'{Forum.__tablename__}:admins', forum_id)
+    if adminCounterKey:
+        # Counter exists, increment and finish
+        RedisInterface.incr(adminCounterKey)
+        return jsonify({"message" : "Added new admin", "userID" : newAdminID, "role" : newAdminRole}), 202
+    
+    # Counter does not exist yet
+    adminCounterKey: str = f"forum:{forum_id}:admins"
+    fAdminCount: int = db.session.execute(select(Forum.admin_count).where(Forum.id == forum_id)).scalar_one()
+
+    op = RedisInterface.set(adminCounterKey, fAdminCount+1, nx=True)
+    if not op:
+        # Other Flask worker already made a counter while this request was being processed, update counter and end
+        RedisInterface.incr(adminCounterKey)
+        return jsonify({"message" : "Added new admin", "userID" : newAdminID, "role" : newAdminRole}), 202
+        
+    RedisInterface.hset(f'{Forum.__tablename__}:admins', forum_id, adminCounterKey)
+    return jsonify({"message" : "Added new admin", "userID" : newAdminID, "role" : newAdminRole}), 202
