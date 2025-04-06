@@ -3,8 +3,12 @@
     "backoff_seq" : [0.1, 0.5, 1, 2, 3],
     "insert_stream" : "INSERTIONS",
     "insert_batch_size" : 100,
+    "weak_insert_stream" : "WEAK_INSERTIONS",
+    "weak_insert_batch_size" : 100,
     "delete_stream" : "DELETIONS",
     "delete_batch_size" : 100,
+    "weak_delete_stream" : "DELETIONS",
+    "weak_delete_batch_size" : 100,
     "update_stream" : "UPDATIONS",
     "update_batch_size" : 100
 }
