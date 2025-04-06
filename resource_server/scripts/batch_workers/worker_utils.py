@@ -18,7 +18,7 @@ MAPPED_DTYPES: MappingProxyType[str, type] = MappingProxyType({'integer': int,
                                                                'date': str,
                                                                'time without time zone': str,
                                                                'time with time zone': str,
-                                                               'boolean': bool,
+                                                               'boolean': lambda val : bool(int(val)),
                                                                'json': str,
                                                                'jsonb': str,
                                                                'uuid': str,
@@ -41,7 +41,7 @@ def fetchPKColNames(cursor: pg.extensions.cursor, tableName: str) -> list[str]:
                     (tableName,))
     return [str(res[0]) for res in cursor.fetchall()]
 
-def derediserialize(mapping: Mapping) -> Mapping:
+def derediserialize(mapping: Mapping, typeMapping: dict = {'' : None}) -> Mapping:
     '''Deserialize a Redis hashmap to its original Python mapping, compatible with Postgres'''
     return {k : None if v == '' else v for k,v in mapping.items()}
 
