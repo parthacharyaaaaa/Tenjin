@@ -101,6 +101,11 @@ def get_post(post_id : int) -> tuple[Response, int]:
 @enforce_json
 @token_required
 def edit_post(post_id : int) -> tuple[Response, int]:
+    # Ensure user is owner of this post
+    owner: User = db.session.execute(select(User).join(Post, Post.author_id == User.id).where(Post.id == post_id)).scalar_one_or_none()
+    if not owner:
+        raise Forbidden('You do not have the rights to edit this post')
+    
     if not (g.REQUEST_JSON.get('title') or 
             g.REQUEST_JSON.get('body') or 
             g.REQUEST_JSON.get('flair') or 
@@ -109,39 +114,48 @@ def edit_post(post_id : int) -> tuple[Response, int]:
     
     update_kw = {}
     additional_kw = {}
-    if g.REQUEST_JSON.get('title'):
+    if title := g.REQUEST_JSON.pop('title', None):
         title: str = g.REQUEST_JSON.pop('title').strip()
         if title:
             update_kw['title'] = title
         else:
             additional_kw['title_err'] = "Invalid title"
 
-    if g.REQUEST_JSON.get('body'):
+    if body := g.REQUEST_JSON.pop('body', None):
         body: str = g.REQUEST_JSON.pop('body').strip()
         if body:
             update_kw["body"] = body
         else:
             additional_kw["body_err"] = "Invalid body"
-    if g.REQUEST_JSON.get('closed'):
-        g.REQUEST_JSON.pop('closed')
+
+    if g.REQUEST_JSON.pop('closed', None):
         update_kw["closed"] = True
 
-    if not update_kw:
-        raise BadRequest("Empty request for updating post")
-
-    if g.REQUEST_JSON.get('flair'):
-        flair: str = g.REQUEST_JSON.pop('flair').strip()
-        if flair:
-            # Again, check if flair is valid
-            forumID: int = db.session.execute(select(Forum.id).join(Post, Post.forum_id == Forum.id).where(Post.id == post_id)).scalar_one_or_none()
-            if not forumID:
-                flair = None
-                additional_kw["flair_err"] = "Invalid flair for this forum"
+    if flair := g.REQUEST_JSON.pop('flair', None):
+        flair: str = flair.strip()
+        if not flair:
+            additional_kw['flair_err'] = "Flair cannot be empty/whitespace only"
         else:
-            additional_kw["flair_err"] = "Invalid flair for this forum"
+            # Get forum ID
+            forum: Forum = db.session.execute(select(Forum).join(Post, Post.forum_id == Forum.id).where(Post.id == post_id)).scalar_one_or_none()
+            if not forum:
+                raise NotFound("This forum does not exist")
+            
+            # Check if this flair exists for the queried Forum
+            _flair: str = db.session.execute(select(ForumFlair).where((ForumFlair.forum_id == forum.id) & (ForumFlair.flair_name == flair))).scalar_one_or_none()
+            if not _flair:
+                flair = None
+                additional_kw['flair_err'] = f'{forum._name} does not have any flair named {flair}'
+            else:
+                update_kw['flair'] = flair
+        
+    if not update_kw:
+        badReq = BadRequest("Empty request for updating post")
+        badReq.__setattr__('kwargs', additional_kw)
+        raise badReq
     
     db.session.execute(update(Post).where(Post.id == post_id).values(**update_kw))
-    return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected", "post_id" : post_id}), 202
+    return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected", "post_id" : post_id, **additional_kw}), 202
 
 
 @post.route("/<int:post_id>", methods=["DELETE", "OPTIONS"])
