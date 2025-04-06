@@ -2,6 +2,7 @@ from auth_server import auth, tokenManager
 from auxillary.decorators import enforce_json, private
 from auth_server.token_manager import TOKEN_STORE_INTEGRITY_ERROR
 from flask import request, jsonify, Response, make_response, g
+from flask_cors import cross_origin
 from werkzeug.exceptions import BadRequest, MethodNotAllowed, NotFound, Unauthorized, Forbidden, InternalServerError, HTTPException
 import requests
 import jwt.exceptions as JWT_exc
@@ -64,6 +65,7 @@ def internalServerError(e : Exception):
 
 @auth.route("/login", methods = ["POST", "OPTIONS"])
 # @CSRF_protect
+@cross_origin()
 @enforce_json
 def login():
     if not ("identity" in g.REQUEST_JSON and "password" in g.REQUEST_JSON):
@@ -116,6 +118,7 @@ def login():
 
 @auth.route("/register", methods = ["POST", "OPTIONS"])
 # @CSRF_protect
+@cross_origin()
 @enforce_json
 def register():    
     if not ("username" in g.REQUEST_JSON and
@@ -186,6 +189,7 @@ def deleteAccount():
 
 @auth.route("/reissue", methods = ["GET", "OPTIONS"])
 # @CSRF_protect
+@cross_origin()
 def reissue():
     refreshToken = request.cookies.get("refresh", request.cookies.get("Refresh"))
 
@@ -246,6 +250,7 @@ def purgeFamily():
 
 
 @auth.route("/get-csrf", methods = ["OPTIONS", "GET"])
+@cross_origin()
 def issueCSRF():
     response = make_response()
     response.headers["X-CSRF-TOKEN"] = secrets.token_urlsafe(32)
