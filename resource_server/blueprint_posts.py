@@ -55,6 +55,22 @@ def create_post() -> tuple[Response, int]:
     post: Post = Post(author.id, forum.id, title, body, datetime.now(), flair)
     RedisInterface.xadd("INSERTIONS", rediserialize(post.__attrdict__()) | {'table' : Post.__tablename__})
 
+    # Increment posts counter for this forum
+    postsCounterKey: str = RedisInterface.hget(f"{Forum.__tablename__}:posts", forumID)
+    if postsCounterKey:
+        RedisInterface.incr(postsCounterKey)
+        return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
+
+    # No counter, create one
+    currentForumPosts: int = db.session.execute(select(Forum.posts).where(Forum.id == forumID)).scalar_one()
+    postsCounterKey = f'forum:{forumID}:posts'
+    op = RedisInterface.set(postsCounterKey, currentForumPosts, nx=True)
+    if not op:
+        # Counter made by another Flask worker
+        RedisInterface.incr(postsCounterKey)
+    else:
+        RedisInterface.hset(f'{Forum.__tablename__}:posts', forumID, postsCounterKey)
+
     return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
 
 @post.route("/<int:post_id>", methods=["GET", "OPTIONS"])
