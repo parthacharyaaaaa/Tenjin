@@ -4,7 +4,7 @@ post = Blueprint("post", "post", url_prefix="/posts")
 from sqlalchemy import select, update, asc, desc
 from sqlalchemy.exc import SQLAlchemyError
 
-from resource_server.models import db, Post, User, Forum, ForumFlair, PostSave, PostVote, PostReport, Comment
+from resource_server.models import db, Post, User, Forum, ForumFlair, ForumAdmin, PostSave, PostVote, PostReport, Comment
 from auxillary.decorators import enforce_json, token_required
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException
@@ -185,7 +185,10 @@ def delete_post(post_id: int) -> Response:
         
         # Ensure post author is the issuer of this request
         if post.author_id != g.decodedToken['sid']:
-            raise Forbidden('You do not have the rights to alter this post as you are not its author')
+            # Check if admin of this forum
+            forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == post.forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+            if not forumAdmin:
+                raise Forbidden('You do not have the rights to alter this post as you are not its author')
         
         # If post already deleted, ignore
         if post.deleted:
