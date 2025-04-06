@@ -69,6 +69,10 @@ if __name__ == "__main__":
             # print(_streamd_queries)
             if not _streamd_queries:
                 sleep(wait)
+                continue
+
+            trimUBs: str = _streamd_queries[-1][0].split("-")
+            trimUB: str = '-'.join((trimUBs[0], str(int(trimUBs[1]) + 1)))
             
             for queryData in _streamd_queries:
                 try:
@@ -79,10 +83,11 @@ if __name__ == "__main__":
                     else:
                         dTypesList = getDtypes(dbCursor, table, includePrimaryKey=True)
                         dtypes_cache[table] = dTypesList
-                        print(f"{dTypesList=}")
-                        print(f"{tableData.keys()=}")
+                        # print(f"{dTypesList=}")
+                        # print(f"{tableData.values()=}")
 
                         tableData = {k : dTypesList[idx](v) if v else v for idx, (k,v) in enumerate(tableData.items())}
+                        print(tableData)
 
                     if query_groups.get(table):
                         query_groups[table].append(tableData)
@@ -107,10 +112,6 @@ if __name__ == "__main__":
                                                             template=template,
                                                             fetch=True)
                     CONNECTION.commit()
-                    if _res:
-                        execute_batch(cur=dbCursor,
-                                    sql=ERROR_SQL,
-                                    argslist=[t[0] for t in _res])
 
                 except (pg.errors.ModifyingSqlDataNotPermitted):
                     print(f"[{ID}]: Permission error, aborting script...")
@@ -127,5 +128,7 @@ if __name__ == "__main__":
                     print(f"[{ID}]: Error details: {format_exc()}")
                     dbCursor.execute(f"ROLLBACK TO SAVEPOINT s{ID}")
 
+            interface.xtrim(streamName, minid=trimUB)
+            query_groups.clear()
             # Good night >:3
             sleep(wait)
