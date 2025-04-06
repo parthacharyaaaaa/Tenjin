@@ -310,11 +310,14 @@ def get_posts(forum_id: int) -> tuple[Response, int]:
                                                     .order_by(Post.time_posted if not sortOption else Post.score)
                                                    .limit(5)
                                                    ).scalars().all()
+        if not nextPosts:
+            return jsonify({'posts' : None, 'cursor' : None}), 204
+        
+        authorsMap: dict[int, str] = dict(db.session.execute(select(User.id, User.username).where(User.id.in_([post.author_id for post in nextPosts]))).all())
+        print(authorsMap)
     except SQLAlchemyError: genericDBFetchException()
 
-    if not nextPosts:
-        return jsonify({'posts' : None, 'cursor' : None}), 204
 
     cursor = base64.b64encode(str(nextPosts[-1].id).encode('utf-8')).decode()
-    nextPosts: list[dict[str, Any]] = [post.__json_like__() for post in nextPosts]
+    nextPosts: list[dict[str, Any]] = [post.__json_like__() | {'author' : authorsMap[post.author_id]} for post in nextPosts]
     return jsonify({'posts' : nextPosts, 'cursor' : cursor}), 200

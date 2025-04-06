@@ -51,11 +51,12 @@
 
     <!-- Right Sidebar -->
     <div class="sidebar">
-        <div class="card">
-            <h2 style="font-family: var(--FONT-SIGNATURE);">About This Forum</h2>
-            <p><strong>Followers:</strong> {{ forum.followers }}</p>
-            <p><strong>Created:</strong> {{ forum.created }}</p>
-            <p><strong>Created By:</strong> {{ forum.created_by }}</p>
+        <div class="card" style="border-bottom: 1px solid var(--FCOLOR-PRIMARY); border-radius: 2px; padding-bottom: 10px;">
+            <h2>About This Forum</h2>
+            <br>
+            <p><strong>Followers:</strong> {{ forum.subscribers }}</p>
+            <p><strong>Posts:</strong> {{ forum.posts }}</p>
+            <p><strong>Created:</strong> {{ forum.created_at.strftime('%b %d, %Y') }}</p>
             <p><strong>Admins:</strong> {{ forum.admin_count }}</p>
         </div>
         <div class="forum-rules">
