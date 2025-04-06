@@ -1,0 +1,43 @@
+@font-face {
+    font-family: 'Manga Temple';
+    src: url("../assets/manga_temple/mangatb.ttf");
+    color: var(--FCOLOR-HIGHLIGHT);
+}
+
+@font-face {
+    font-family: 'Main';
+    src: url("../assets/spacegrotesk/spacegrotesk/SpaceGrotesk-VariableFont_wght.ttf");
+    color: var(--FCOLOR-PRIMARY);
+}
+
+:root{
+    --BGCOLOR-PRIMARY: #0b0b0d;
+    --BGCOLOR-SECONDARY: #0a1a2f;
+    --BGCOLOR-TERTIARY: #1c2b3a;
+    --FCOLOR-PRIMARY: #ffffff;
+    --FCOLOR-HIGHLIGHT: #7a8ca5;
+    --BDRCOLOR: #c5d6e0;
+
+    --FSIZE-XXL: 3rem;
+    --FSIIZE-XL: 2rem;
+    --FSIZE-L: 1.5rem;
+    --FSIZE: 1rem;
+    --FSIZE-S: 10px;
+    --FSIZE-XS: 8px;
+    --FSIZE-XXS: 6px;
+
+    --FONT-SIGNATURE: 'Manga Temple';
+    --FONT-BODY: 'Main';
+}
+
+@media (prefers-color-scheme: light){
+    :root {
+        --BGCOLOR-PRIMARY: #ffffff;
+        --BGCOLOR-SECONDARY: #f0f4f8;
+        --BGCOLOR-TERTIARY: #e1e8f0;
+        
+        --FCOLOR-PRIMARY: #0b0b0d;
+        --FCOLOR-HIGHLIGHT: #2c3e50;     
+        --BDRCOLOR: #7a8ca5;
+    }
+}

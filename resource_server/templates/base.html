@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tenjin | Base Template</title>
+
+    <!-- Global stylesheets -->
+     <link rel="stylesheet" type="text/css" href="{{url_for('static', filename='stylesheets/variables.css')}}">
+     <link rel="stylesheet" type="text/css" href="{{url_for('static', filename='stylesheets/globals.css')}}">
+     <!-- Child specific dependencies -->
+     {% block depends %}
+
+     {% endblock %}
+</head>
+<body>
+    <header class="site-header">
+        <div class="logo">Tenjin</div>
+      
+        <div class="search-container">
+          <input type="text" placeholder="Search..." class="search-bar" />
+        </div>
+      
+        <nav class="nav-links">
+          {% if auth %}
+            <img class="header-icon" src="{{url_for('static', filename='assets/user_icon.png')}}">
+            {% else %}
+            <button class="btn-primary">Login</button>
+            <button class="btn-primary">Sign Up</button>
+          {% endif %}
+        </nav>
+      </header>
+    <main>
+        {% block content %}
+    
+        {% endblock %}
+    </main>
+
+    <footer>
+        <div class="logo">
+            <span>Tenjin</span>
+            <!-- <div class="f-symbols" style="display: flex; flex-direction: row; gap: 1rem;">
+                <span>&copy;</span>
+                <span>&trade;</span>
+            </div> -->
+        </div>
+        <div class="links">
+            <div>
+                <a href="#about" class="footer-link">About Tenjin</a>
+                <a href="#contact" class="footer-link">Contact Us</a>
+                <a href="#privacy" class="footer-link">Privacy Policy</a>
+            </div>
+            <div>
+                <a href="#user_agreement" class="footer-link">User Agreement</a>
+                <a href="#cookies" class="footer-link">Cookie Policy</a>
+                <a href="#legal" class="footer-link">Legal Notices</a>
+            </div>
+        </div>
+    </footer>
+    <scripts-section>
+        <!-- Global scripts -->
+
+        <!-- Child specific scripts -->
+        {% block scripts %}
+
+        {% endblock %}
+    </scripts-section>
+</body>
+</html>
