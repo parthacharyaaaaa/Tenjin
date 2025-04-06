@@ -7,6 +7,7 @@ user = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/us
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized
 from auxillary.decorators import enforce_json, private
 from auxillary.utils import processUserInfo, hash_password, verify_password, genericDBFetchException
+from resource_server.external_extensions import RedisInterface
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
@@ -14,6 +15,7 @@ from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum
 
 from datetime import datetime
 from uuid import uuid4
+import ujson
 import base64
 from hashlib import sha256
 
@@ -235,17 +237,23 @@ def update_password(token : str) -> Response:
 @user.route("/<int:user_id>", methods=["GET"])
 def get_users(user_id: int) -> tuple[Response, int]:
     try:
+        cachedResult: str = RedisInterface.get(f'users:{user_id}')
+        if cachedResult:
+            return jsonify({'user' : ujson.loads(cachedResult)}), 200
+    except:
+        ...
+    try:
         user: User = db.session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
         if not user:
             raise NotFound('No user with this ID exists')
     except SQLAlchemyError: genericDBFetchException()
 
-    return jsonify({'user' : user.__json_like__()})
+    return jsonify({'user' : user.__json_like__()}), 200
 
 @user.route("/profile/<int:user_id>", methods=["GET"])
-def get_users(user_id: int) -> tuple[Response, int]:
+def get_user_profile(user_id: int) -> tuple[Response, int]:
     try:
-        rawCursor = request.args.get('cursor').strip()
+        rawCursor = request.args.get('cursor', '0').strip()
         if rawCursor == '0':
             cursor = 0
         elif not rawCursor:
@@ -254,6 +262,14 @@ def get_users(user_id: int) -> tuple[Response, int]:
             cursor = int(base64.b64decode(rawCursor).decode())
     except (ValueError, TypeError):
             raise BadRequest("Failed to load more posts. Please refresh this page")
+    
+    try:
+        cachedResult: str = RedisInterface.get(f'profile:{user_id}:{cursor}')
+        if cachedResult:
+            return jsonify(ujson.loads(cachedResult)), 200
+    except:
+        ...
+
     try:
         user: User = db.session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
         if not user:
@@ -261,17 +277,19 @@ def get_users(user_id: int) -> tuple[Response, int]:
         
         # Fetch recent activity too
         recentPosts: list[Post] = db.session.execute(select(Post)
-                                                     .where(Post.author_id == user_id)
+                                                     .where((Post.author_id == user_id) & (Post.id > cursor))
                                                      .order_by(Post.time_posted.desc())
                                                      .limit(5)).scalars().all()
         if not recentPosts:
-            return jsonify({'user': user.__json_like__(), 'posts': []})
+            return jsonify({'user': user.__json_like__(), 'posts': []}), 200
 
         recentForumsMap: dict[int, str] = dict(db.session.execute(select(Forum.id, Forum._name)
                                                              .where(Forum.id.in_(post.forum_id for post in recentPosts))).all())
+        
     except SQLAlchemyError: genericDBFetchException()
+    cursor = base64.b64encode(str(recentPosts[-1].id).encode('utf-8')).decode()
 
-    return jsonify({'user' : user.__json_like__(), 'posts' : [post.__json_like__() | {'forum_name' : recentForumsMap[post.forum_id]} for post in recentPosts]})
+    return jsonify({'user' : user.__json_like__(), 'posts' : [post.__json_like__() | {'forum_name' : recentForumsMap[post.forum_id]} for post in recentPosts], 'cursor' : cursor}), 200
 
 @user.route("/login", methods=["POST", "OPTIONS"])
 # @private
