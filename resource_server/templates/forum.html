@@ -1,0 +1,79 @@
+{% extends 'base.html' %}
+
+{% block title %} {{ name }} {% endblock %}
+
+{% block depends %}
+<meta name="forum-id" content="{{ forum.id }}">
+<link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='stylesheets/forum.css') }}">
+{% endblock %}
+
+{% block content %}
+<div class="container">
+
+    <!-- Middle Section -->
+    <div class="main-content">
+
+        <div class="controls">
+            <div>
+                <label for="sort">Sort by:</label>
+                <select id="sort">
+                    <option value="latest">Latest</option>
+                    <option value="top">Top</option>
+                </select>
+            </div>
+            <div>
+                <label for="timeframe">Time:</label>
+                <select id="timeframe">
+                    <option value="day">Today</option>
+                    <option value="week">This Week</option>
+                    <option value="month">This Month</option>
+                    <option value="year">This Year</option>
+                    <option value="all">All Time</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Highlighted Posts -->
+        {% for post in highlighted_posts %}
+        <div class="highlighted-posts">
+            <h3>{{ post.title }}</h3>
+            <p>{{ post.summary }}</p>
+            <small>By {{ post.author }} | {{ post.timestamp }}</small>
+        </div>
+        {% endfor %}
+
+        <!-- Placeholder for infinite scroll posts -->
+        <div id="infinite-posts">
+            <!-- JS will populate this -->
+        </div>
+
+    </div>
+
+    <!-- Right Sidebar -->
+    <div class="sidebar">
+        <div class="card">
+            <h2 style="font-family: var(--FONT-SIGNATURE);">About This Forum</h2>
+            <p><strong>Followers:</strong> {{ forum.followers }}</p>
+            <p><strong>Created:</strong> {{ forum.created }}</p>
+            <p><strong>Created By:</strong> {{ forum.created_by }}</p>
+            <p><strong>Admins:</strong> {{ forum.admin_count }}</p>
+        </div>
+        <div class="forum-rules">
+            <h3>Forum Rules</h3>
+            {% for rule in rules %}
+            <div class="rule-card">
+                <div class="rule-title">{{ rule.title }}</div>
+                <div class="rule-body">{{ rule.body }}</div>
+                <div class="rule-author">By user #{{ rule.author }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="text/javascript" src="{{url_for('static', filename='scripts/forum_scroll.js')}}"></script>
+{% endblock %}

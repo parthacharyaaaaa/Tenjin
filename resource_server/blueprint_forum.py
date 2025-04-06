@@ -8,6 +8,8 @@ from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from datetime import datetime
+import base64
+from typing import Any
 
 from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict
 from flask import Blueprint, Response, g, jsonify, request
@@ -284,3 +286,35 @@ def remove_highlight_post(forum_id: int) -> tuple[Response, int]:
         raise e
     
     return jsonify({'message' : 'Post removed from forum highlights'}), 200
+
+@forum.route('<int:forum_id>/posts', methods=['GET'])
+def get_posts(forum_id: int) -> tuple[Response, int]:
+    try:
+        rawCursor = request.args.get('cursor').strip()
+        if rawCursor == '0':
+            cursor = 0
+        elif not rawCursor:
+            raise BadRequest("Failed to load more posts. Please refresh this page")
+        else:
+            cursor = int(base64.b64decode(rawCursor).decode())
+        
+        sortOption = request.args.get('sort', 0)
+        if sortOption != 1:
+            sortOption = 0          # Either top or newest, if anything else is given fall back to newest
+    except (ValueError, TypeError):
+            raise BadRequest("Failed to load more posts. Please refresh this page")
+
+    try:
+        nextPosts: list[Post] = db.session.execute(select(Post)
+                                                   .where((Post.id > cursor) & (Post.forum_id == forum_id))
+                                                    .order_by(Post.time_posted if not sortOption else Post.score)
+                                                   .limit(5)
+                                                   ).scalars().all()
+    except SQLAlchemyError: genericDBFetchException()
+
+    if not nextPosts:
+        return jsonify({'posts' : None, 'cursor' : None}), 204
+
+    cursor = base64.b64encode(str(nextPosts[-1].id).encode('utf-8')).decode()
+    nextPosts: list[dict[str, Any]] = [post.__json_like__() for post in nextPosts]
+    return jsonify({'posts' : nextPosts, 'cursor' : cursor}), 200

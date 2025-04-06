@@ -1,8 +1,14 @@
 
 '''Blueprint for serving HTML files. No URL prefix for these endpoints is required'''
 from flask import Blueprint, render_template, request
+from werkzeug.exceptions import NotFound
 
 templates: Blueprint = Blueprint('templates', __name__, template_folder='templates')
+
+from resource_server.models import db, Post, User, Forum, ForumRules
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from auxillary.utils import genericDBFetchException
 
 ###========================= ENDPOINTS =========================###
 
@@ -18,3 +24,24 @@ def login() -> tuple[str, int]:
 @templates.route('/signup')
 def signup() -> tuple[str, int]:
     return render_template('signup.html', minHeader = True)
+
+@templates.route('/forum/<string:name>')
+def forum(name: str) -> tuple[str, int]:
+    try:
+        # Fetch forum details
+        forum: Forum = db.session.execute(select(Forum).where(Forum._name == name)).scalar_one_or_none()
+        if not forum:
+            raise NotFound('This forum does not exist')
+        
+        # Fetch highlighted posts
+        highlightedPosts: list[Post] = db.session.execute(select(Post).where(Post.id.in_([forum.highlight_post_1, forum.highlight_post_2, forum.highlight_post_3]))).scalars().all()
+
+        # Fetch rules
+        forumRules: list[ForumRules] = db.session.execute(select(ForumRules).where(ForumRules.forum_id == forum.id)).scalars().all()
+    except SQLAlchemyError: genericDBFetchException()
+
+    return render_template('forum.html', auth = True if request.cookies.get('access', request.cookies.get('Access')) else False,
+                           name = name,
+                           highlighted_posts=highlightedPosts,
+                           forum=forum,
+                           rules=forumRules)
