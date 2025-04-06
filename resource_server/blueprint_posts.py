@@ -200,6 +200,23 @@ def delete_post(post_id: int) -> Response:
         exc.__setattr__('description', 'Failed to delete post')
         raise exc
     
+    # Decrement posts counter for this forum
+    postsCounterKey: str = RedisInterface.hget(f"{Forum.__tablename__}:posts", post.forum_id)
+    if postsCounterKey:
+        RedisInterface.decr(postsCounterKey)
+        return jsonify({'message' : 'post deleted'}), 200
+
+
+    # No counter, create one
+    currentForumPosts: int = db.session.execute(select(Forum.posts).where(Forum.id == post.forum_id)).scalar_one()
+    postsCounterKey = f'forum:{post.forum_id}:posts'
+    op = RedisInterface.set(postsCounterKey, currentForumPosts, nx=True)
+    if not op:
+        # Counter made by another Flask worker
+        RedisInterface.decr(postsCounterKey)
+    else:
+        RedisInterface.hset(f'{Forum.__tablename__}:posts', post.forum_id, postsCounterKey)
+    
     return jsonify({'message' : 'post deleted'}), 200
 
 @post.route("/<int:post_id>/vote", methods=["OPTIONS", "PATCH"])
