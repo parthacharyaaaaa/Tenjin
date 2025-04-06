@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 postDiv.innerHTML = `
                     <h3>${post.title}</h3>
                     <p>${post.summary || post.body?.slice(0, 200) || "No summary"}</p>
-                    <small>By user #${post.author} | ${post.timestamp}</small>
+                    <small>By: ${post.author} | ${post.epoch}</small>
                 `;
                 postsContainer.appendChild(postDiv);
             }
@@ -62,12 +62,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    function onScroll() {
-        const nearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 300;
+    async function onScroll() {
+        const nearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 500;
         if (nearBottom) fetchMorePosts();
     }
 
     // Start listening and fetch first batch
-    window.addEventListener('scroll', onScroll);
+    document.body.addEventListener('scroll', onScroll);
     fetchMorePosts();
 });
