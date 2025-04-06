@@ -314,7 +314,6 @@ def get_posts(forum_id: int) -> tuple[Response, int]:
             return jsonify({'posts' : None, 'cursor' : None}), 204
         
         authorsMap: dict[int, str] = dict(db.session.execute(select(User.id, User.username).where(User.id.in_([post.author_id for post in nextPosts]))).all())
-        print(authorsMap)
     except SQLAlchemyError: genericDBFetchException()
 
 
