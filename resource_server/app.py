@@ -1,5 +1,5 @@
 import os
-from flask import Flask
+from flask import Flask, url_for
 from flask.cli import with_appcontext
 from flask_migrate import Migrate
 from traceback import format_exc
@@ -7,11 +7,11 @@ from resource_server.flask_config import FLASK_CONFIG_OBJECT
 from auxillary.utils import generic_error_handler
 
 APP_CTX_CWD : os.PathLike = os.path.dirname(__file__)
-
 def create_app() -> Flask:
     global APP_CTX_CWD
     app = Flask(import_name="RS",
-                instance_path=os.path.join(APP_CTX_CWD, "instance"))
+                instance_path=os.path.join(APP_CTX_CWD, "instance"),
+                static_folder=os.path.join(APP_CTX_CWD, 'static'))
     
     app.config.from_object(FLASK_CONFIG_OBJECT)
     app.cli.name = "RS"
@@ -32,11 +32,13 @@ def create_app() -> Flask:
     from resource_server.blueprint_user import user
     from resource_server.blueprint_config import config
     from resource_server.blueprint_posts import post
+    from resource_server.blueprint_templates import templates
     app.register_blueprint(forum)
     app.register_blueprint(admin)
     app.register_blueprint(user)
     app.register_blueprint(config)
     app.register_blueprint(post)
+    app.register_blueprint(templates)
 
     ### Additional CLI commands ###
    # Instantiate the database

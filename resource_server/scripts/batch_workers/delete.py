@@ -1,27 +1,12 @@
 from redis import Redis
 import psycopg2 as pg
-from psycopg2.extras import execute_values, execute_batch
+from psycopg2.extras import execute_batch
 from dotenv import load_dotenv
 import os
 import time
-from typing import Any
+from batch_workers.worker_utils import fetchPKColNames
 from traceback import format_exc
 import json
-
-def fetchPKColNames(cursor: pg.extensions.cursor, tableName: str) -> list[str]:
-    cursor.execute('''
-                    SELECT
-                    kcu.column_name AS key_column
-                    FROM information_schema.table_constraints tco
-                    JOIN information_schema.key_column_usage kcu 
-                    ON kcu.constraint_name = tco.constraint_name
-                    AND kcu.constraint_schema = tco.constraint_schema
-                    WHERE tco.constraint_type = 'PRIMARY KEY'
-                    AND tco.table_schema = 'public'
-                    AND kcu.table_name = %s
-                    ORDER BY kcu.ordinal_position;''', 
-                    (tableName,))
-    return [str(res[0]) for res in cursor.fetchall()]
 
 loaded = load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"))
 if not loaded:

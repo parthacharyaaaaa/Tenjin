@@ -26,8 +26,12 @@
             {% if auth %}
                 <img class="header-icon" src="{{url_for('static', filename='assets/user_icon.png')}}">
                 {% else %}
-                <button class="btn-primary">Login</button>
-                <button class="btn-primary">Sign Up</button>
+                <a href="{{url_for('templates.login')}}">
+                    <button class="btn-primary">Login</button>
+                </a>
+                <a href="{{url_for('templates.signup')}}">
+                    <button class="btn-primary">Sign Up</button>
+                </a>
           {% endif %}
         </nav>
         {% endif %}

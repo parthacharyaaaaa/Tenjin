@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block title %} Sign Up {% endblock %}
+{% block depends %}
+<link rel="stylesheet" type="text/css" href="{{url_for('static', filename='stylesheets/auth.css')}}" />
+{% endblock %}
+
+{% block content %}
+
+<form class="auth-form" novalidate>
+    <div>
+        <h3>Sign Up</h3>
+    </div>
+
+    <div class="input-wrapper">
+        <input type="text" name="username" id="username" class="form-text-input" placeholder="Username" >
+        <input type="email" name="email" id="email" class="form-text-input" placeholder="Email" >
+        <input type="password" name="password" id="password" class="form-text-input" placeholder="Password" >
+        <input type="password" name="confirm_password" id="cpassword" class="form-text-input" placeholder="Confirm Password" >
+        <input type="text" name="alias" id="alias" class="form-text-input" placeholder="Alias (optional)">
+
+        <button type="button" class="btn-primary" style="margin: 0 auto;">&nbsp;&nbsp; Sign Up &nbsp;&nbsp;</button>
+    </div>
+
+    <div id="login-signup">        
+        <span>Already have an account?</span>
+        <span><a href="{{ url_for('templates.login') }}">Log in</a></span>
+    </div>
+</form>
+
+{% endblock %}
