@@ -248,16 +248,14 @@ def login() -> Response:
     if "@" in identity:
         if not 5 < len(identity) < 320:
             raise BadRequest("Provided email must be between 5 and 320 characters long")
-        query = [User.email == identity]
         isEmail = True
     else:
         if not 5 < len(identity) <= 64:
             raise BadRequest("Provided username must be between 5 and 64 characters long")
-        query = [User.username == identity]
 
-    user : User | None = db.session.execute(select(User).where(query[0]).with_for_update()).scalar_one_or_none()
+    user : User | None = db.session.execute(select(User).where(User.email == identity if isEmail else User.username == identity).with_for_update()).scalar_one_or_none()
     if not user:
-        raise NotFound(f"No user with {'email' if isEmail else 'username'} could be found")
+        raise NotFound(f"No user with {'email' if isEmail else 'username'} {identity} could be found")
     if not verify_password(g.REQUEST_JSON['password'], user.pw_hash, user.pw_salt):
         raise Unauthorized("Incorrect password")
     
