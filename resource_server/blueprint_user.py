@@ -6,14 +6,15 @@ user = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/us
 
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized
 from auxillary.decorators import enforce_json, private
-from auxillary.utils import processUserInfo, hash_password, verify_password
+from auxillary.utils import processUserInfo, hash_password, verify_password, genericDBFetchException
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from resource_server.models import db, User, PasswordRecoveryToken
+from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum
 
 from datetime import datetime
 from uuid import uuid4
+import base64
 from hashlib import sha256
 
 @user.route("/", methods=["POST", "OPTIONS"])
@@ -231,9 +232,46 @@ def update_password(token : str) -> Response:
     return jsonify({"message" : "password updated succesfully",
                     "_links" : {"login" : {"href" : url_for(".login")}}})
 
-@user.route("/", methods=["GET", "HEAD", "OPTIONS"])
-def get_users() -> Response:
-    ...
+@user.route("/<int:user_id>", methods=["GET"])
+def get_users(user_id: int) -> tuple[Response, int]:
+    try:
+        user: User = db.session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+        if not user:
+            raise NotFound('No user with this ID exists')
+    except SQLAlchemyError: genericDBFetchException()
+
+    return jsonify({'user' : user.__json_like__()})
+
+@user.route("/profile/<int:user_id>", methods=["GET"])
+def get_users(user_id: int) -> tuple[Response, int]:
+    try:
+        rawCursor = request.args.get('cursor').strip()
+        if rawCursor == '0':
+            cursor = 0
+        elif not rawCursor:
+            raise BadRequest("Failed to load more posts. Please refresh this page")
+        else:
+            cursor = int(base64.b64decode(rawCursor).decode())
+    except (ValueError, TypeError):
+            raise BadRequest("Failed to load more posts. Please refresh this page")
+    try:
+        user: User = db.session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+        if not user:
+            raise NotFound('No user with this ID exists')
+        
+        # Fetch recent activity too
+        recentPosts: list[Post] = db.session.execute(select(Post)
+                                                     .where(Post.author_id == user_id)
+                                                     .order_by(Post.time_posted.desc())
+                                                     .limit(5)).scalars().all()
+        if not recentPosts:
+            return jsonify({'user': user.__json_like__(), 'posts': []})
+
+        recentForumsMap: dict[int, str] = dict(db.session.execute(select(Forum.id, Forum._name)
+                                                             .where(Forum.id.in_(post.forum_id for post in recentPosts))).all())
+    except SQLAlchemyError: genericDBFetchException()
+
+    return jsonify({'user' : user.__json_like__(), 'posts' : [post.__json_like__() | {'forum_name' : recentForumsMap[post.forum_id]} for post in recentPosts]})
 
 @user.route("/login", methods=["POST", "OPTIONS"])
 # @private
