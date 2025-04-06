@@ -27,7 +27,6 @@ def create_forum() -> tuple[Response, int]:
         if not forumName:
             raise ValueError()
         forumAnimeID: int = int(g.REQUEST_JSON.pop('anime_id'))
-        colorTheme: int = int(g.REQUEST_JSON.pop('color_theme', 1))
         description: str | None = None if 'desc' not in g.REQUEST_JSON else str(g.REQUEST_JSON.pop('desc')).strip()
     except KeyError:
         raise BadRequest("Mandatory details for forum creation missing")
@@ -35,7 +34,7 @@ def create_forum() -> tuple[Response, int]:
         raise BadRequest("Malformmatted values provided for forum creation")
     
     # All checks passed, push >:3
-    newForum: Forum = Forum(forumName, forumAnimeID, colorTheme, description)
+    newForum: Forum = Forum(forumName, forumAnimeID, description)
     try:
         db.session.add(newForum)
         db.session.flush()
@@ -253,7 +252,7 @@ def add_highlight_post(forum_id: int) -> tuple[Response, int]:
 
 @forum.route("/<int:forum_id>/highlight-post", methods=['DELETE', 'OPTIONS'])
 @token_required
-def add_highlight_post(forum_id: int) -> tuple[Response, int]:
+def remove_highlight_post(forum_id: int) -> tuple[Response, int]:
     postID: str = request.args.get('post')
     if not postID:
         raise BadRequest("No post specified")

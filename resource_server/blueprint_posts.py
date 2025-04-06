@@ -4,7 +4,7 @@ post = Blueprint("post", "post", url_prefix="/posts")
 from sqlalchemy import select, update, asc, desc
 from sqlalchemy.exc import SQLAlchemyError
 
-from resource_server.models import db, Post, User, Forum, forum_flairs, PostSave, PostVote, PostReport, Comment
+from resource_server.models import db, Post, User, Forum, ForumFlair, PostSave, PostVote, PostReport, Comment
 from auxillary.decorators import enforce_json, token_required
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException
@@ -46,7 +46,7 @@ def create_post() -> tuple[Response, int]:
     additional_kw = {}
     if flair:
         # Ensure flair is valid for this forum
-        validFlair = db.session.execute(select(forum_flairs).where((forum_flairs.forum_id == forum.id) & (forum_flairs.flair_name == flair))).scalar_one_or_none()
+        validFlair = db.session.execute(select(ForumFlair).where((ForumFlair.forum_id == forum.id) & (ForumFlair.flair_name == flair))).scalar_one_or_none()
         if not validFlair:
             flair = None
             additional_kw.update["flair_err"] = f"Invalid flair for {forum._name}, defaulting to None."

@@ -220,7 +220,6 @@ class Forum(db.Model):
     anime: int | None = db.Column(INTEGER, db.ForeignKey("animes.id"), index = True)
  
     # Appearance
-    color_theme: int = db.Column(SMALLINT, nullable = False, server_default = "1")
     description: str = db.Column(VARCHAR(256), nullable = True)
 
     # Activity stats
@@ -246,10 +245,9 @@ class Forum(db.Model):
         UniqueConstraint("_name", "anime", name="uq_name_anime"),
     )
     
-    def __init__(self, name: str, anime: int, ctheme: int, desc: str, epoch: datetime | None = None) -> None:
+    def __init__(self, name: str, anime: int, desc: str, epoch: datetime | None = None) -> None:
         self._name = name
         self.anime = anime
-        self.color_theme = ctheme
         self.description = desc
         self.subscribers = 0
         self.posts = 0
@@ -259,13 +257,12 @@ class Forum(db.Model):
         self.deleted = False; self.time_deleted = None
     
     def __repr__(self) -> str:
-        return f"<Forum({self.id}, {self._name}, {self.color_theme}, {self.pfp}, {self.description}, {self.subscribers}, {self.posts}, {self.highlight_post_1}, {self.highlight_post_2}, {self.highlight_post_3}, {self.created_at.strftime('%d/%m/%y, %H:%M:%S'), {self.admin_count}})>"
+        return f"<Forum({self.id}, {self._name}, {self.pfp}, {self.description}, {self.subscribers}, {self.posts}, {self.highlight_post_1}, {self.highlight_post_2}, {self.highlight_post_3}, {self.created_at.strftime('%d/%m/%y, %H:%M:%S'), {self.admin_count}})>"
     
     def __json_like__(self) -> str:
         return {"id": self.id,
                 "name": self.name,
                 "pfp": self.pfp,
-                "color_theme": self.color_theme,
                 "description": self.description,
                 "posts": self.posts,
                 "highlights": [self.highlight_post_1, self.highlight_post_2, self.highlight_post_3],
