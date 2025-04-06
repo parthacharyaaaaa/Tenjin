@@ -70,6 +70,7 @@ if __name__ == "__main__":
                 sleep(wait)
                 continue
             
+            print(_streamd_queries)
             trimUBs: str = _streamd_queries[-1][0].split("-")
             trimUB: str = '-'.join((trimUBs[0], str(int(trimUBs[1]) + 1)))
             
@@ -100,6 +101,7 @@ if __name__ == "__main__":
             dbCursor.execute(f"SAVEPOINT s{ID}")
             for qidx, (table, qargs) in enumerate(query_groups.items()):
                 try:
+                    print(qargs)
                     template: str =  templates_cache.get(table)
                     if not template:
                         columns = tuple(qargs[0].keys())
@@ -112,8 +114,6 @@ if __name__ == "__main__":
                                    argslist=qargs,
                                    template=template)
                     CONNECTION.commit()
-
-                    interface.xtrim(streamName, minid=trimUB)
 
                 except (pg.errors.ModifyingSqlDataNotPermitted):
                     print(f"[{ID}]: Permission error, aborting script...")
@@ -130,5 +130,8 @@ if __name__ == "__main__":
                     print(f"[{ID}]: Error details: {format_exc()}")
                     dbCursor.execute(f"ROLLBACK TO SAVEPOINT s{ID}")
 
+
+            interface.xtrim(streamName, minid=trimUB)
+            query_groups.clear()
             # Good night >:3
             sleep(wait)
