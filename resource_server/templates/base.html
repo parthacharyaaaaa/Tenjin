@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tenjin | Base Template</title>
+    <title>Tenjin | {% block title %} {% endblock %}</title>
 
     <!-- Global stylesheets -->
      <link rel="stylesheet" type="text/css" href="{{url_for('static', filename='stylesheets/variables.css')}}">
@@ -17,18 +17,20 @@
     <header class="site-header">
         <div class="logo">Tenjin</div>
       
-        <div class="search-container">
-          <input type="text" placeholder="Search..." class="search-bar" />
-        </div>
-      
-        <nav class="nav-links">
-          {% if auth %}
-            <img class="header-icon" src="{{url_for('static', filename='assets/user_icon.png')}}">
-            {% else %}
-            <button class="btn-primary">Login</button>
-            <button class="btn-primary">Sign Up</button>
+        {% if not minHeader %}
+            <div class="search-container">
+            <input type="text" placeholder="Search..." class="search-bar" />
+            </div>
+        
+            <nav class="nav-links">
+            {% if auth %}
+                <img class="header-icon" src="{{url_for('static', filename='assets/user_icon.png')}}">
+                {% else %}
+                <button class="btn-primary">Login</button>
+                <button class="btn-primary">Sign Up</button>
           {% endif %}
         </nav>
+        {% endif %}
       </header>
     <main>
         {% block content %}

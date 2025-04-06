@@ -88,6 +88,8 @@ header {
   
 main{
     flex: 1;
+    font: var(--FONT-BODY);
+
 }
 /* Footer */
 footer{
@@ -195,3 +197,22 @@ html, body{
   .search-bar::placeholder {
     color: var(--FCOLOR-HIGHLIGHT);
   }
+
+.form-text-input{
+    background-color: rgba(0, 0, 0, 0.25);
+    border: 1pt solid var(--FCOLOR-PRIMARY);
+    border-radius: 10px;
+    min-height: 1.5rem;
+    min-width: fit-content;
+    padding: 10px;
+    color: var(--FCOLOR-PRIMARY);
+
+    &::placeholder{
+        color: var(--FCOLOR-HIGHLIGHT);
+    }
+
+    &:focus,
+    &:autofill{
+        background-color: rgba(0, 0, 0, 0.25);
+    }
+}
