@@ -20,21 +20,21 @@ db = SQLAlchemy()
 ### Assosciation Tables ###
 class ForumFlair(db.Model):
     __tablename__ = "forum_flairs"
-    forum_id = db.Column(db.Integer, db.ForeignKey("forums.id"), primary_key=True, nullable=False)
+    forum_id = db.Column(db.Integer, db.ForeignKey("forums.id", ondelete='CASCADE'), primary_key=True, nullable=False)
     flair_name = db.Column(db.String(32), primary_key=True, nullable=False)
 
 
 class ForumSubscription(db.Model):
     __tablename__ = "forum_subscriptions"
-    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
-    forum_id = db.Column(db.Integer, db.ForeignKey("forums.id"), primary_key=True)
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
+    forum_id = db.Column(db.Integer, db.ForeignKey("forums.id", ondelete='CASCADE'), primary_key=True)
     time_subscribed = db.Column(db.TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
 
 class AnimeSubscription(db.Model):
     __tablename__ = "anime_subscriptions"
-    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
-    anime_id = db.Column(db.Integer, db.ForeignKey("animes.id"), primary_key=True)
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
+    anime_id = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
 
 
 class CommentVote(db.Model):
@@ -47,46 +47,46 @@ class CommentVote(db.Model):
 class CommentReport(db.Model):
     __tablename__ = "comment_reports"
     user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
-    comment_id = db.Column(db.BigInteger, db.ForeignKey("comments.id"), primary_key=True)
+    comment_id = db.Column(db.BigInteger, db.ForeignKey("comments.id", ondelete='CASCADE'), primary_key=True)
 
 
 class PostVote(db.Model):
     __tablename__ = "post_votes"
     voter_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
-    post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id"), primary_key=True)
+    post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id", ondelete='CASCADE'), primary_key=True)
     vote = db.Column(db.Boolean, nullable=False)
 
 
 class PostSave(db.Model):
     __tablename__ = "post_saves"
-    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
-    post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id"), primary_key=True)
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
+    post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id", ondelete='CASCADE'), primary_key=True)
 
 
 class PostReport(db.Model):
     __tablename__ = "post_reports"
-    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
-    post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id"), primary_key=True)
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
+    post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id", ondelete='CASCADE'), primary_key=True)
 
 
 class StreamLink(db.Model):
     __tablename__ = "stream_links"
-    anime_id = db.Column(db.Integer, db.ForeignKey("animes.id"), primary_key=True)
+    anime_id = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
     url = db.Column(db.String(256), primary_key=True, nullable=False)
     website = db.Column(db.String(128), nullable=False)
 
 
 class AnimeGenre(db.Model):
     __tablename__ = "anime_genres"
-    anime_id = db.Column(db.Integer, db.ForeignKey("animes.id"), primary_key=True)
-    genre_id = db.Column(db.SmallInteger, db.ForeignKey("genres.id"), primary_key=True)
+    anime_id = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
+    genre_id = db.Column(db.SmallInteger, db.ForeignKey("genres.id", ondelete='CASCADE'), primary_key=True)
 
 
 ADMIN_ROLES = ENUM("admin", "super", "owner", name="ADMIN_ROLES", create_type=True)
 class ForumAdmin(db.Model):
     __tablename__ = "forum_admins"
-    forum_id = db.Column(db.Integer, db.ForeignKey("forums.id"), primary_key=True)
-    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
+    forum_id = db.Column(db.Integer, db.ForeignKey("forums.id", ondelete='CASCADE'), primary_key=True)
+    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
     role = db.Column(ADMIN_ROLES, nullable=False, server_default=text(f"'{ADMIN_ROLES.enums[0]}'"))
 
 
@@ -273,7 +273,7 @@ class ForumRules(db.Model):
     __tablename__ = "forum_rules"
 
     #Identification
-    forum_id: int = db.Column(INTEGER, db.ForeignKey("forums.id"), nullable = False)
+    forum_id: int = db.Column(INTEGER, db.ForeignKey("forums.id", ondelete='CASCADE'), nullable = False)
     
     # Data
     rule_number: int = db.Column(SMALLINT, nullable = False, unique=True, autoincrement=True)
@@ -314,7 +314,7 @@ class Post(db.Model):
     # Basic identification
     id: int = db.Column(BIGINT, nullable = False, autoincrement = True)
     author_id: int = db.Column(BIGINT, db.ForeignKey("users.id"), nullable = False, index=True)
-    forum_id: int = db.Column(INTEGER, db.ForeignKey("forums.id"), nullable = False)
+    forum_id: int = db.Column(INTEGER, db.ForeignKey("forums.id", ondelete='CASCADE'), nullable = False)
 
     # Post statistics
     score: int = db.Column(INTEGER, default = 0)
@@ -377,12 +377,12 @@ class Comment(db.Model):
     # Basic identification
     id: int = db.Column(BIGINT, nullable=False, autoincrement = True)
     author_id: int = db.Column(BIGINT, db.ForeignKey("users.id"), nullable = False, index=True)
-    parent_forum: int = db.Column(INTEGER, nullable = False)
+    parent_forum: int = db.Column(INTEGER, db.ForeignKey("forums.id", ondelete='CASCADE'), nullable = False)
 
     # Comment details
     time_created: datetime = db.Column(TIMESTAMP, nullable = False, server_default=text("CURRENT_TIMESTAMP"))
     body: str = db.Column(VARCHAR(512), nullable=False)
-    parent_post: int = db.Column(BIGINT, db.ForeignKey("posts.id"), nullable=False, index=True)
+    parent_post: int = db.Column(BIGINT, db.ForeignKey("posts.id", ondelete='CASCADE'), nullable=False, index=True)
     parent_thread: int = db.Column(BIGINT, db.ForeignKey("comments.id"))
     replying_to: int = db.Column(BIGINT, db.ForeignKey("comments.id"))
     score: int = db.Column(INTEGER, default = 0)
