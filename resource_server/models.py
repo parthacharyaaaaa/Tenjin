@@ -190,9 +190,10 @@ class Anime(db.Model):
         return {"id": self.id,
                 "title": self.title,
                 "rating": self.rating,
+                "banner" : None, 
                 "mal_ranking": self.mal_ranking,
                 "members": self.members,
-                "synopsis": self.synposis[:16] + "..."}
+                "synopsis": self.synopsis}
     
     __table_args__ = (
         PrimaryKeyConstraint("id"),
@@ -261,8 +262,9 @@ class Forum(db.Model):
     
     def __json_like__(self) -> str:
         return {"id": self.id,
-                "name": self.name,
-                "pfp": self.pfp,
+                "name": self._name,
+                # "pfp": self.pfp,
+                "subscribers" : self.subscribers,
                 "description": self.description,
                 "posts": self.posts,
                 "highlights": [self.highlight_post_1, self.highlight_post_2, self.highlight_post_3],
