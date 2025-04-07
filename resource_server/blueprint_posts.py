@@ -178,7 +178,7 @@ def edit_post(post_id : int) -> tuple[Response, int]:
 def delete_post(post_id: int) -> Response:
     try:
         # Ensure post exists in the first place
-        post: Post = db.session.update(select(Post).where(Post.id == post_id)).scalar_one_or_none()
+        post: Post = db.session.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
         if not post:
             raise NotFound('Post does not exist')
         
@@ -191,7 +191,7 @@ def delete_post(post_id: int) -> Response:
         
         # If post already deleted, ignore
         if post.deleted:
-            return jsonify({"Post already queued for deleted"}), 200
+            return jsonify({"message" :"Post already queued for deleted"}), 200
     except SQLAlchemyError: genericDBFetchException()
 
     # Post good to go for deletion
@@ -430,7 +430,7 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
 
     # Add WE in advance
-    RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.REQUEST_JSON['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})  # Add post_saves entry to db
+    RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.decodedToken['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})  # Add post_saves entry to db
 
     # Create a new counter for this post
     saveCounterKey: str = f"post:{post_id}:saves"
