@@ -7,7 +7,7 @@
     "weak_insert_batch_size" : 100,
     "delete_stream" : "DELETIONS",
     "delete_batch_size" : 100,
-    "weak_delete_stream" : "DELETIONS",
+    "weak_delete_stream" : "WEAK_DELETIONS",
     "weak_delete_batch_size" : 100,
     "update_stream" : "UPDATIONS",
     "update_batch_size" : 100
