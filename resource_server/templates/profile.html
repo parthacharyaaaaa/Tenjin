@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ user.username }}'s Profile{% endblock %}
+
+{% block depends %}
+<link rel="stylesheet" type="text/css" href="{{url_for('static', filename='stylesheets/profile.css')}}" />
+<meta name="user" value="{{ user.id }}">
+<meta name="username" value="{{ user.username }}">
+
+{% endblock %}
+{% block content %}
+<div class="profile-wrapper">
+    <div class="profile-card">
+        <img src="{{ user.pfp or url_for('static', filename='assets/default_pfp.png') }}" class="pfp-img" />
+        <div class="profile-meta">
+            <h2>{{ user.username }}</h2>
+            {% if user._alias %}<p class="alias">{{ user._alias }}</p>{% endif %}
+            <p class="meta">Joined: {{ user.time_joined.strftime('%b %Y') }}</p>
+            <p class="meta">Aura: {{ user.aura }} | Posts: {{ user.total_posts }} | Comments: {{ user.total_comments }}
+            </p>
+        </div>
+    </div>
+
+    {% for section in ['posts', 'animes', 'forums'] %}
+    <div class="profile-section" id="{{ section }}-section">
+        <h3 class="section-title">{{ section.capitalize() }}</h3>
+        <div class="card-row" id="{{ section }}-cards"></div>
+        <button class="btn-outline show-more" data-type="{{ section }}">Show More</button>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="text/javascript" src="{{ url_for('static', filename='scripts/profile.js') }}"></script>
+{% endblock %}
