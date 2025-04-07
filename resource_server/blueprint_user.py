@@ -11,7 +11,7 @@ from resource_server.external_extensions import RedisInterface
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum
+from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum, ForumSubscription, Anime, AnimeSubscription
 
 from datetime import datetime
 from uuid import uuid4
@@ -250,21 +250,19 @@ def get_users(user_id: int) -> tuple[Response, int]:
 
     return jsonify({'user' : user.__json_like__()}), 200
 
-@user.route("/profile/<int:user_id>", methods=["GET"])
-def get_user_profile(user_id: int) -> tuple[Response, int]:
+@user.route('profile/<int:user_id>/posts')
+def get_user_posts(user_id: int) -> tuple[Response, int]:
     try:
         rawCursor = request.args.get('cursor', '0').strip()
         if rawCursor == '0':
-            cursor = 0
-        elif not rawCursor:
-            raise BadRequest("Failed to load more posts. Please refresh this page")
+            cursor: int = 0
         else:
             cursor = int(base64.b64decode(rawCursor).decode())
     except (ValueError, TypeError):
             raise BadRequest("Failed to load more posts. Please refresh this page")
     
     try:
-        cachedResult: str = RedisInterface.get(f'profile:{user_id}:{cursor}')
+        cachedResult: str = RedisInterface.get(f'profile:{user_id}:posts:{cursor}')
         if cachedResult:
             return jsonify(ujson.loads(cachedResult)), 200
     except:
@@ -275,21 +273,107 @@ def get_user_profile(user_id: int) -> tuple[Response, int]:
         if not user:
             raise NotFound('No user with this ID exists')
         
-        # Fetch recent activity too
         recentPosts: list[Post] = db.session.execute(select(Post)
-                                                     .where((Post.author_id == user_id) & (Post.id > cursor))
-                                                     .order_by(Post.time_posted.desc())
-                                                     .limit(5)).scalars().all()
+                                                        .where((Post.author_id == user_id) & (Post.id > cursor))
+                                                        .order_by(Post.time_posted.desc())
+                                                        .limit(6)).scalars().all()
         if not recentPosts:
-            return jsonify({'user': user.__json_like__(), 'posts': []}), 200
-
-        recentForumsMap: dict[int, str] = dict(db.session.execute(select(Forum.id, Forum._name)
-                                                             .where(Forum.id.in_(post.forum_id for post in recentPosts))).all())
+            return jsonify({'posts' : None, 'cursor' : cursor, 'end' : True})
         
-    except SQLAlchemyError: genericDBFetchException()
-    cursor = base64.b64encode(str(recentPosts[-1].id).encode('utf-8')).decode()
+        if len(recentPosts) < 6:
+            end = True
+        else:
+            end = False
+            recentPosts.pop(-1)
 
-    return jsonify({'user' : user.__json_like__(), 'posts' : [post.__json_like__() | {'forum_name' : recentForumsMap[post.forum_id]} for post in recentPosts], 'cursor' : cursor}), 200
+    except SQLAlchemyError: genericDBFetchException()
+
+    cursor = base64.b64encode(str(recentPosts[-1].id).encode('utf-8')).decode()
+    _posts = [post.__json_like__() for post in recentPosts]
+    return jsonify({'posts' : _posts, 'cursor' : cursor, 'end' : end})
+
+@user.route('profile/<int:user_id>/forums')
+def get_user_forums(user_id: int) -> tuple[Response, int]:
+    try:
+        rawCursor = request.args.get('cursor', '0').strip()
+        if rawCursor == '0':
+            cursor: int = 0
+        else:
+            cursor = int(base64.b64decode(rawCursor).decode())
+    except (ValueError, TypeError):
+            raise BadRequest("Failed to load more Forums. Please refresh this page")
+    
+    try:
+        cachedResult: str = RedisInterface.get(f'profile:{user_id}:forums:{cursor}')
+        if cachedResult:
+            return jsonify(ujson.loads(cachedResult)), 200
+    except:
+        ...
+
+    try:
+        user: User = db.session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+        if not user:
+            raise NotFound('No user with this ID exists')
+        
+        forums: list[Forum] = db.session.execute(select(Forum)
+                                            .where((Forum.id == ForumSubscription.forum_id) & (Forum.id > cursor))
+                                            .join(ForumSubscription, ForumSubscription.user_id == user.id)
+                                            .limit(6)).scalars().all()
+        if not forums:
+            return jsonify({'forums' : None, 'cursor' : cursor, 'end' : True})
+        if len(forums) < 6:
+            end = True
+        else:
+            end = False
+            forums.pop(-1)
+    except SQLAlchemyError: genericDBFetchException()
+
+    cursor = base64.b64encode(str(forums[-1].id).encode('utf-8')).decode()
+    _forums = [forum.__json_like__() for forum in forums]
+    return jsonify({'forums' : _forums, 'cursor' : cursor, 'end' : True})
+
+
+@user.route('profile/<int:user_id>/animes')
+def get_user_animes(user_id: int) -> tuple[Response, int]:
+    try:
+        rawCursor = request.args.get('cursor', '0').strip()
+        if rawCursor == '0':
+            cursor: int = 0
+        else:
+            cursor = int(base64.b64decode(rawCursor).decode())
+    except (ValueError, TypeError):
+            raise BadRequest("Failed to load more animes. Please refresh this page")
+    
+    try:
+        cachedResult: str = RedisInterface.get(f'profile:{user_id}:animes:{cursor}')
+        if cachedResult:
+            return jsonify(ujson.loads(cachedResult)), 200
+    except:
+        ...
+
+    try:
+        user: User = db.session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+        if not user:
+            raise NotFound('No user with this ID exists')
+        
+        animes: list[Anime] = db.session.execute(select(Anime)
+                                                .where((Anime.id == AnimeSubscription.anime_id) & (Anime.id > cursor))
+                                                .join(AnimeSubscription, AnimeSubscription.user_id == user.id)
+                                                .limit(6)).scalars().all()
+        if not animes:
+            return jsonify({'animes' : None, 'cursor' : cursor, 'end' : True})
+        
+        if len(animes) < 6:
+            end = True
+        else:
+            end = False
+            animes.pop(-1)
+    except SQLAlchemyError: genericDBFetchException()
+
+    cursor = base64.b64encode(str(animes[-1].id).encode('utf-8')).decode()
+    _animes = [forum.__json_like__() for forum in animes]
+    return jsonify({'animes' : _animes, 'cursor' : cursor, 'end' : end})
+
 
 @user.route("/login", methods=["POST", "OPTIONS"])
 # @private
