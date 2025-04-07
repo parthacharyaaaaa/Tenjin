@@ -3,11 +3,15 @@ import base64
 import binascii
 from collections import defaultdict
 
-from resource_server.models import db, Anime, AnimeGenre, Genre, StreamLink, Forum
+from resource_server.models import db, Anime, AnimeGenre, Genre, StreamLink, Forum, AnimeSubscription
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from auxillary.utils import genericDBFetchException
+from auxillary.decorators import token_required
+
+from resource_server.external_extensions import RedisInterface
+
 
 from flask import Blueprint, Response, g, jsonify, request
 anime = Blueprint('animes', 'animes', url_prefix="/animes")
@@ -27,6 +31,53 @@ def get_anime(anime_id: int) -> tuple[Response, int]:
     _res = anime.__json_like__() | {'genres' : genres}
     return jsonify({'anime' : _res}), 200
 
+@anime.route("/<int:anime_id>/subscribe", methods=["PATCH"])
+@token_required
+def sub_anime(anime_id: int) -> tuple[Response, int]:
+    try:
+        anime = db.session.execute(select(Anime).where(Anime.id == anime_id)).scalar_one_or_none()
+        if not anime:
+            raise NotFound('No anime found with this ID')
+    except SQLAlchemyError: genericDBFetchException()
+    subCounterKey: str = RedisInterface.hget(f'{Anime.__tablename__}:subscribers', anime_id)
+    RedisInterface.xadd("WEAK_INSERTIONS", {'user_id' : g.decodedToken['sid'], 'anime_id' : anime_id, 'table' : AnimeSubscription.__tablename__})
+    if subCounterKey:
+        RedisInterface.incr(subCounterKey)
+        return jsonify({'message' : 'subscribed!'})
+    
+    subCounterKey = f'anime:{anime.id}:saves' 
+    op = RedisInterface.set(subCounterKey, anime.members+1, nx=True)
+    if not op:
+        RedisInterface.incr(subCounterKey)
+        return jsonify({'message' : 'subscribed!'})
+    
+    RedisInterface.hset(f"{Anime.__tablename__}:subscribers", anime_id, subCounterKey)
+    return jsonify({'message' : 'subscribed!'})
+
+@anime.route("/<int:anime_id>/unsubscribe", methods=["PATCH"])
+@token_required
+def unsub_anime(anime_id: int) -> tuple[Response, int]:
+    try:
+        anime = db.session.execute(select(Anime).where(Anime.id == anime_id)).scalar_one_or_none()
+        if not anime:
+            raise NotFound('No anime found with this ID')
+    except SQLAlchemyError: genericDBFetchException()
+
+    subCounterKey: str = RedisInterface.hget(f'{Anime.__tablename__}:subscribers', anime_id)
+    RedisInterface.xadd("WEAK_DELETIONS", {'user_id' : g.decodedToken['sid'], 'anime_id' : anime_id, 'table' : AnimeSubscription.__tablename__})
+    if subCounterKey:
+        RedisInterface.decr(subCounterKey)
+        return jsonify({'message' : 'unsubscribed!'})
+    
+    subCounterKey = f'anime:{anime.id}:saves' 
+    op = RedisInterface.set(subCounterKey, anime.members-1, nx=True)
+    if not op:
+        RedisInterface.decr(subCounterKey)
+        return jsonify({'message' : 'unsubscribed!'})
+    
+    RedisInterface.hset(f"{Anime.__tablename__}:subscribers", anime_id, subCounterKey)
+    return jsonify({'message' : 'unsubscribed!'})
+    
 
 @anime.route("/")
 def get_animes() -> tuple[Response, int]:
@@ -87,6 +138,8 @@ def get_anime_forums(anime_id: int) -> tuple[Response, int]:
         forums: list[Forum] = db.session.execute(select(Forum)
                                                  .where((Forum.id > cursor) & (Forum.anime == anime_id))
                                                  .limit(10)).scalars().all()
+        if not forums:
+            return jsonify({'forums' : [], 'cursor' : rawCursor})
     except SQLAlchemyError: genericDBFetchException()
 
     cursor = base64.b64encode(str(forums[-1].id).encode('utf-8')).decode()

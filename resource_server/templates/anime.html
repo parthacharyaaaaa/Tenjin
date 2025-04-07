@@ -33,11 +33,23 @@
         <div class="anime-stats-card" id="anime-stats">
             <!-- Stats populated by JS -->
         </div>
-        <button class="btn-primary" id="forum-make-btn">Create a forum</button>
+        <button class="btn-primary" type="button" id="forum-make-btn">Create a forum</button>
+        <button class="btn-primary" type="button" id="anime-sub-btn" value="{{auth}}">
+            {% if auth %}
+                {% if not subbed %}
+                Subscribe to this anime
+                {% else %}
+                Unsubscribe from this anime
+                {% endif %}
+            {% else %}
+            Log in to subscribe to this anime
+            {% endif %}
+        </button>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script type="text/javascript" src="{{ url_for('static', filename='scripts/anime.js') }}"></script>
+<script type="text/javascript" src="{{ url_for('static', filename='scripts/sub_anime.js') }}"></script>
 {% endblock %}
