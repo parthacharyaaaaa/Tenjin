@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+
+{% block title %} Animes {% endblock %}
+
+{% block depends %}
+<link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='stylesheets/animes.css') }}"/>
+{% endblock %}
+
+{% block content %}
+<div class="preface">
+    Discover your next favorite anime. Browse trending series, explore genres, and dive into stories waiting to be loved.
+</div>
+
+<div class="top-bar">
+    <input type="text" id="search-bar" placeholder="Search animes..." />
+</div>
+
+<div id="posts-container" class="content-wrapper">
+    <!-- Anime cards will be injected here -->
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="text/javascript" src="{{ url_for('static', filename='scripts/fetch_animes.js') }}"></script>
+{% endblock %}

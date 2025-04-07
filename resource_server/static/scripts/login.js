@@ -9,8 +9,6 @@ document.addEventListener("DOMContentLoaded", async () => {
         const identity = document.getElementById('identity').value;
         const password = document.getElementById('password').value;
 
-        // Some validation logic
-
         try{
             const response = await fetch('http://192.168.0.103:8000/login', {
                 method : 'POST',

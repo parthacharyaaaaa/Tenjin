@@ -1,0 +1,102 @@
+.anime-banner {
+    width: 100%;
+    height: 220px;
+    background-size: cover;
+    background-position: center;
+    filter: blur(4px) brightness(0.5);
+    margin-bottom: -120px;
+    position: relative;
+    z-index: 0;
+}
+
+.anime-detail-layout {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    padding: 2rem;
+    margin-top: -80px;
+    gap: 2rem;
+    max-width: 1200px;
+    margin-inline: auto;
+}
+
+.forum-section {
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+}
+
+.anime-sidebar {
+    position: sticky;
+    top: 2rem;
+    height: fit-content;
+}
+
+.anime-stats-card {
+    background-color: var(--BGCOLOR-SECONDARY);
+    padding: 1.5rem;
+    border-radius: 1rem;
+    border: 1px solid var(--BDRCOLOR);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.anime-stats-card h2 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    font-size: var(--FSIZE-XL);
+    color: var(--FCOLOR-HIGHLIGHT);
+}
+
+.stat-line {
+    display: flex;
+    justify-content: space-between;
+    font-size: var(--FSIZE);
+    margin-bottom: 0.8rem;
+    opacity: 0.9;
+}
+
+.stream-links-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-top: 0.4rem;
+}
+
+.stream-link a {
+    color: var(--FCOLOR-HIGHLIGHT);
+    font-weight: 500;
+    font-size: 0.95rem;
+    transition: color 0.2s ease;
+}
+
+.stream-link a:hover {
+    color: var(--FCOLOR);
+    text-decoration: underline;
+}
+
+.forum-post {
+    background-color: var(--BGCOLOR-SECONDARY);
+    border: 1px solid var(--BDRCOLOR);
+    border-radius: 1rem;
+    padding: 1.2rem;
+    box-shadow: 0 0 6px rgba(0, 0, 0, 0.4);
+    transition: transform 0.2s ease;
+}
+
+.forum-post:hover {
+    transform: translateY(-3px);
+}
+
+.forum-post h3 {
+    margin: 0 0 0.4rem;
+    font-size: var(--FSIZE-L);
+    color: var(--FCOLOR-HIGHLIGHT);
+}
+
+.forum-meta {
+    margin-top: 0.5rem;
+    font-size: var(--FSIZE);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    opacity: 0.85;
+}

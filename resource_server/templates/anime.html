@@ -1,0 +1,27 @@
+{% extends 'base.html' %}
+
+{% block title %} Anime Details {% endblock %}
+
+{% block depends %}
+<link rel="stylesheet" type="text/css" href="{{ url_for('static', filename='stylesheets/anime.css') }}"/>
+{% endblock %}
+
+{% block content %}
+<div class="anime-banner" id="anime-banner"></div>
+
+<div class="anime-detail-layout">
+    <div class="forum-section">
+        <h2>Discussions</h2>
+        <div id="forum-container"></div>
+    </div>
+    <div class="anime-sidebar">
+        <div class="anime-stats-card" id="anime-stats">
+            <!-- Stats populated by JS -->
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="text/javascript" src="{{ url_for('static', filename='scripts/anime.js') }}"></script>
+{% endblock %}

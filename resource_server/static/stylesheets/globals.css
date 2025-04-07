@@ -128,6 +128,9 @@ html, body{
     display: flex;
     flex-direction: column;
     font: var(--FONT-BODY);
+    font-family: var(--FONT-BODY), sans-serif;
+    background-color: var(--BGCOLOR-PRIMARY);
+    color: var(--FCOLOR-PRIMARY);
 }
 
 /* Utilities */
