@@ -4,7 +4,7 @@ from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException
 
 from resource_server.models import db, Forum, User, ForumAdmin, Post
-from sqlalchemy import select, update
+from sqlalchemy import select, update, insert
 from sqlalchemy.exc import SQLAlchemyError
 
 from datetime import datetime
@@ -35,18 +35,25 @@ def create_forum() -> tuple[Response, int]:
     except (TypeError, ValueError):
         raise BadRequest("Malformmatted values provided for forum creation")
     
-    # All checks passed, push >:3
-    newForum: Forum = Forum(forumName, forumAnimeID, description)
     try:
-        db.session.add(newForum)
-        db.session.flush()
-        RedisInterface.xadd("INSERTIONS", rediserialize(newForum.__attrdict__()) | {'table' : Forum.__tablename__})
-        RedisInterface.xadd("WEAK_INSERTIONS", {'table' : ForumAdmin.__tablename__, 'forum_id' : newForum.id, 'user_id' : userID, 'role' : 'owner'})
-    except:
+        forumExisting: Forum = db.session.execute(select(Forum).where(Forum._name == forumName)).scalar_one_or_none()
+        if forumExisting:
+            raise Conflict("A forum with this name already exists")
+        anime: Anime = db.session.execute(select(Anime).where(Anime.id == forumAnimeID)).scalar_one_or_none()
+        if not anime:
+            raise NotFound(f"No anime with ID: {forumAnimeID} could be found")
+    except SQLAlchemyError: genericDBFetchException()
+
+    # All checks passed, push >:3
+    try:
+        fID = db.session.execute(insert(Forum).values(_name = forumName, anime=forumAnimeID, description=description, created_at=datetime.now()).returning(Forum.id)).scalar_one_or_none()
+        db.session.commit()
+        db.session.execute(insert(ForumAdmin).values(forum_id=fID, user_id=userID, role='owner'))
+        db.session.commit()
+    except SQLAlchemyError as sqlErr:
         db.session.rollback()
-        cErr = ConnectionError()
-        cErr.__setattr__("description", "An error occured while trying to create the forum. This is most likely an issue with our servers")
-        raise cErr
+        sqlErr.__setattr__("description", "An error occured while trying to create the forum. This is most likely an issue with our servers")
+        raise sqlErr
 
     return jsonify({"message" : "Forum created succesfully"}), 202
 
