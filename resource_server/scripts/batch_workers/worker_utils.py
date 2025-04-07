@@ -1,6 +1,6 @@
 '''Auxillary functions for batch workers'''
 import psycopg2 as pg
-from typing import Mapping, Sequence
+from typing import Mapping
 from types import MappingProxyType
 
 # We got reinvented SQLAlchemy before GTA VI

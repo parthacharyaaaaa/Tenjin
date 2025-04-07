@@ -5,7 +5,7 @@ from redis import Redis
 from redis import Redis, exceptions as redisExceptions
 
 import psycopg2 as pg
-from psycopg2.extras import execute_values, execute_batch
+from psycopg2.extras import execute_values
 
 from typing import Any
 import json

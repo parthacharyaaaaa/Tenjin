@@ -5,14 +5,14 @@ from redis import Redis
 from redis import Redis, exceptions as redisExceptions
 
 import psycopg2 as pg
-from psycopg2.extras import execute_values, execute_batch
+from psycopg2.extras import execute_values
 
 from typing import Any
 import json
 from time import sleep
 from traceback import format_exc
 
-from worker_utils import fetchPKColNames, getDtypes
+from worker_utils import getDtypes
 
 loaded = load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"))
 if not loaded:
@@ -70,11 +70,9 @@ if __name__ == "__main__":
                 sleep(wait)
                 continue
             
-            print(_streamd_queries)
             trimUBs: str = _streamd_queries[-1][0].split("-")
             trimUB: str = '-'.join((trimUBs[0], str(int(trimUBs[1]) + 1)))
             
-            print(trimUB)
             for queryData in _streamd_queries:
                 try:
                     tableData = {k : None if v == '' else v for k,v in queryData[1].items()}

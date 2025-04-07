@@ -6,14 +6,14 @@ from redis import Redis
 from redis import Redis, exceptions as redisExceptions
 
 import psycopg2 as pg
-from psycopg2.extras import execute_values, execute_batch
+from psycopg2.extras import execute_batch
 
 from typing import Any
 import json
 from time import sleep
 from traceback import format_exc
 
-from worker_utils import  getDtypes
+from worker_utils import getDtypes
 
 loaded = load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"))
 if not loaded:
