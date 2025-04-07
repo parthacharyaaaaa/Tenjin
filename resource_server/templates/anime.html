@@ -7,17 +7,33 @@
 {% endblock %}
 
 {% block content %}
-<div class="anime-banner" id="anime-banner"></div>
+<div class="anime-top">
+    <div class="anime-banner" id="anime-banner"></div>
+    <div class="anime-description" id="anime-description"></div>
+</div>
 
-<div class="anime-detail-layout">
-    <div class="forum-section">
+<div class="anime-detail-layout" id="anime-detail-layout">
+    <div class="forum-section" id="forum-section">
         <h2>Discussions</h2>
         <div id="forum-container"></div>
     </div>
+    <div id="forum-modal" class="forum-modal hidden">
+        <div class="forum-modal-box">
+          <button class="forum-close-btn">&times;</button>
+          <h2>Create Forum</h2>
+          <input id="forum-name" type="text" placeholder="Forum Title" />
+          <textarea id="forum-desc" placeholder="Optional Description..."></textarea>
+          <button id="forum-submit">Make Forum</button>
+        </div>
+      </div>
+      
+      <div id="forum-toast" class="forum-toast hidden">Forum created!</div>
+      
     <div class="anime-sidebar">
         <div class="anime-stats-card" id="anime-stats">
             <!-- Stats populated by JS -->
         </div>
+        <button class="btn-primary" id="forum-make-btn">Create a forum</button>
     </div>
 </div>
 {% endblock %}

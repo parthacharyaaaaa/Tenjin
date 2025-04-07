@@ -35,6 +35,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (bannerEl) {
         bannerEl.style.backgroundImage = `url('${selectedAnime.banner || ""}')`;
     }
+    const description = document.getElementById('anime-description');
+    description.innerText = selectedAnime.synopsis || "Failed to fetch this anime's synopsis"
 
     // Populate stats and links
     function populateStats(anime) {
@@ -88,7 +90,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const res = await fetch(`/animes/${selectedAnime.id}/forums?cursor=${cursorParam}`);
             if (!res.ok) throw new Error(`Failed to fetch forums: ${res.status}`);
             const data = await res.json();
-            dbCursor = data.next_cursor;
+            dbCursor = data.cursor;
             appendForums(data.forums);
         } catch (e) {
             console.error("Error fetching forums", e);
@@ -113,6 +115,11 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <span><strong>Admins:</strong> ${forum.admin_count || 'N/A'}</span>
                 </div>
             `;
+
+            div.addEventListener('click', async () => {
+                sessionStorage.setItem('selectedForum', JSON.stringify(forum));
+                window.location.href = `/forum/${forum.name}`;
+            })
             container.appendChild(div);
         });
     }
@@ -123,5 +130,65 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     window.addEventListener('scroll', onScroll);
+    // document.getElementById("forum-section").addEventListener('scroll', onScroll);
+
     fetchMoreForums();
+
+    const makeForumBtn = document.getElementById('forum-make-btn');
+
+    const modal = document.getElementById('forum-modal');
+    const closeBtn = document.querySelector('.forum-close-btn');
+    const submitBtn = document.getElementById('forum-submit');
+    const toast = document.getElementById('forum-toast');
+    
+    makeForumBtn.addEventListener('click', () => {
+        modal.classList.remove('hidden');
+    });
+    
+    closeBtn.addEventListener('click', () => {
+        modal.classList.add('hidden');
+    });
+    
+    submitBtn.addEventListener('click', async () => {
+        const name = document.getElementById('forum-name').value.trim();
+        const desc = document.getElementById('forum-desc').value.trim();
+    
+        if (!name) {
+            alert("Forum name is required.");
+            return;
+        }
+    
+        try {
+            const response = await fetch("/forums", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    forum_name: name,
+                    anime_id: animeId,
+                    ...(desc ? { desc } : {})
+                })
+            });
+    
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.description || "Something went wrong.");
+            }
+    
+            // success
+            modal.classList.add('hidden');
+            showToast();
+    
+        } catch (error) {
+            alert(error.message);
+        }
+    });
+    
+    function showToast() {
+        toast.classList.remove('hidden');
+        setTimeout(() => {
+            toast.classList.add('hidden');
+        }, 2500);
+    }
 });

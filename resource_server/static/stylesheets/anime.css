@@ -1,3 +1,9 @@
+body,
+html {
+    height: auto;
+    overflow-y: auto;
+}
+
 .anime-banner {
     width: 100%;
     height: 220px;
@@ -5,53 +11,90 @@
     background-position: center;
     filter: blur(4px) brightness(0.5);
     margin-bottom: -120px;
-    position: relative;
+    /* position: relative; */
     z-index: 0;
 }
 
+.anime-description {
+    max-width: 1000px;
+    margin: 2rem auto;
+    font-size: var(--FSIZE-L);
+    line-height: 1.7;
+    color: var(--FCOLOR);
+    padding: 0 2rem;
+    text-align: justify;
+}
+
+
 .anime-detail-layout {
+    border-top: 1px solid var(--BDRCOLOR);
     display: grid;
-    grid-template-columns: 2fr 1fr;
+    grid-template-columns: 3fr 1.2fr;
+    /* wider forums */
     padding: 2rem;
-    margin-top: -80px;
-    gap: 2rem;
-    max-width: 1200px;
+    margin-top: 1rem;
+    gap: 2.5rem;
+    max-width: 1300px;
     margin-inline: auto;
+    position: relative;
 }
 
 .forum-section {
     display: flex;
     flex-direction: column;
     gap: 1.2rem;
+    /* position: fixed; */
+    
+}
+
+
+#forum-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.2rem;
+    border: var(--BDRCOLOR);
+}
+
+.forum-post:hover {
+    cursor: pointer;
 }
 
 .anime-sidebar {
-    position: sticky;
+    position: relative;
     top: 2rem;
+    align-self: start;
     height: fit-content;
 }
 
+
 .anime-stats-card {
+    position: sticky;
     background-color: var(--BGCOLOR-SECONDARY);
     padding: 1.5rem;
     border-radius: 1rem;
     border: 1px solid var(--BDRCOLOR);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    top: 0; /* sticks to top of the scroll container */
+    z-index: 10;
 }
 
 .anime-stats-card h2 {
     margin-top: 0;
-    margin-bottom: 1rem;
+    margin-bottom: 1.2rem;
     font-size: var(--FSIZE-XL);
     color: var(--FCOLOR-HIGHLIGHT);
+    text-align: center;
+    letter-spacing: 0.5px;
 }
 
 .stat-line {
     display: flex;
     justify-content: space-between;
     font-size: var(--FSIZE);
-    margin-bottom: 0.8rem;
-    opacity: 0.9;
+    margin-bottom: 1rem;
+    opacity: 0.95;
+    border-bottom: 1px dashed var(--BDRCOLOR);
+    padding-bottom: 0.5rem;
 }
 
 .stream-links-list {
@@ -66,11 +109,24 @@
     font-weight: 500;
     font-size: 0.95rem;
     transition: color 0.2s ease;
+    word-break: break-all;
 }
 
 .stream-link a:hover {
     color: var(--FCOLOR);
     text-decoration: underline;
+}
+
+.forum-post h3 {
+    font-size: 1.4rem;
+    margin-bottom: 0.6rem;
+    font-weight: 600;
+}
+
+.forum-post p {
+    margin-bottom: 0.8rem;
+    line-height: 1.6;
+    color: var(--FCOLOR);
 }
 
 .forum-post {
@@ -99,4 +155,82 @@
     flex-wrap: wrap;
     gap: 1rem;
     opacity: 0.85;
+}
+
+#forum-make-btn{
+    margin: 1rem auto;
+    width: 100%;
+}
+
+.forum-modal {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.forum-modal-box {
+    background: #111;
+    padding: 2rem;
+    border-radius: 1rem;
+    width: 400px;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    position: relative;
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.1);
+}
+
+.forum-modal-box input,
+.forum-modal-box textarea {
+    background: #222;
+    border: 1px solid #444;
+    color: #fff;
+    border-radius: 0.5rem;
+    padding: 0.8rem;
+    font-size: 1rem;
+    resize: vertical;
+}
+
+.forum-modal-box button#forum-submit {
+    background: var(--FCOLOR-HIGHLIGHT);
+    color: #000;
+    border: none;
+    padding: 0.7rem 1rem;
+    border-radius: 0.5rem;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.forum-close-btn {
+    position: absolute;
+    top: 0.6rem;
+    right: 0.8rem;
+    background: transparent;
+    color: #fff;
+    font-size: 1.5rem;
+    border: none;
+    cursor: pointer;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* Toast */
+.forum-toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #222;
+    color: #0f0;
+    padding: 1rem 1.5rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 0 10px rgba(0,255,0,0.2);
+    z-index: 9999;
+    font-weight: bold;
 }
