@@ -5,7 +5,7 @@ from werkzeug.exceptions import NotFound
 
 templates: Blueprint = Blueprint('templates', __name__, template_folder='templates')
 
-from resource_server.models import db, Post, User, Forum, ForumRules
+from resource_server.models import db, Post, User, Forum, ForumRules, Anime, StreamLink
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from auxillary.utils import genericDBFetchException
@@ -45,3 +45,19 @@ def forum(name: str) -> tuple[str, int]:
                            highlighted_posts=highlightedPosts,
                            forum=forum,
                            rules=forumRules)
+
+@templates.route('/catalogue/animes')
+def get_anime() -> tuple[str, int]:
+    return render_template('animes.html', auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)
+
+@templates.route('/view/anime/<int:anime_id>')
+def view_anime(anime_id) -> tuple[str, int]:
+    try:
+        anime = db.session.execute(select(Anime).where(Anime.id == anime_id)).scalar_one_or_none()
+        if not anime:
+            raise NotFound("No anime with this ID could be found")
+        
+        
+    except SQLAlchemyError: genericDBFetchException()
+    return render_template('anime.html',
+                           auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)

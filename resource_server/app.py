@@ -32,6 +32,7 @@ def create_app() -> Flask:
     from resource_server.blueprint_user import user
     from resource_server.blueprint_config import config
     from resource_server.blueprint_posts import post
+    from resource_server.blueprint_animes import anime
     from resource_server.blueprint_templates import templates
     app.register_blueprint(forum)
     app.register_blueprint(admin)
@@ -39,6 +40,7 @@ def create_app() -> Flask:
     app.register_blueprint(config)
     app.register_blueprint(post)
     app.register_blueprint(templates)
+    app.register_blueprint(anime)
 
     ### Additional CLI commands ###
    # Instantiate the database
