@@ -3,7 +3,7 @@ from auxillary.decorators import enforce_json, token_required
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException
 
-from resource_server.models import db, Forum, User, ForumAdmin, Post
+from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime
 from sqlalchemy import select, update, insert
 from sqlalchemy.exc import SQLAlchemyError
 
