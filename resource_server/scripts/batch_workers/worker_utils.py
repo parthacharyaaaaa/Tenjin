@@ -1,6 +1,6 @@
 '''Auxillary functions for batch workers'''
 import psycopg2 as pg
-from typing import Mapping, Generator
+from typing import Mapping, Sequence
 from types import MappingProxyType
 
 # We got reinvented SQLAlchemy before GTA VI
@@ -59,3 +59,12 @@ def getDtypes(cursor: pg.extensions.cursor, table: str, includePrimaryKey: bool 
                        JOIN pg_class t ON t.oid = i.indrelid
                        WHERE i.indisprimary AND t.relname = %s);''', (table, table))
     return [MAPPED_DTYPES.get(x[0], str) for x in cursor.fetchall()]
+
+def fetchDeletions(cursor: pg.extensions.cursor, table: str, castStr: bool = True):
+    '''Fetch flagged rows from a given table, returing their primary key'''
+    cursor.execute(f"SELECT id FROM {table} WHERE deleted = true FOR UPDATE SKIP LOCKED;")
+    result = cursor.fetchall()
+    if not result:
+        return []
+    
+    return [str(pk[0]) for pk in result] if castStr else [pk[0] for pk in result]
