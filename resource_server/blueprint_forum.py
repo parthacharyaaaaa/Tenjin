@@ -3,7 +3,7 @@ from auxillary.decorators import enforce_json, token_required
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException
 
-from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime
+from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription
 from sqlalchemy import select, update, insert
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -177,6 +177,65 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
         
     RedisInterface.hset(f'{Forum.__tablename__}:admins', forum_id, adminCounterKey)
     return jsonify({"message" : "Removed admin", "userID" : targetAdminID}), 202
+
+
+@forum.route("/<int:forum_id>/subscribe", methods=['PATCH'])
+@token_required
+def subscribe_forum(forum_id: int) -> tuple[Response, int]:
+    try:
+        subbedForum: ForumSubscription = db.session.execute(select(ForumSubscription)
+                                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+        if subbedForum:
+            print(1)
+            return jsonify({'message' : 'Already subscribed to this forum'}), 204
+        _forum = db.session.execute(select(Forum).where(Forum.id == forum_id)).scalar_one()
+
+    except SQLAlchemyError: genericDBFetchException()
+    except KeyError: raise BadRequest('Invalid token, please login again')
+
+    subCounterKey: str = RedisInterface.hget(f'{Forum.__tablename__}:subscribers', forum_id)
+    RedisInterface.xadd("WEAK_INSERTIONS", {'user_id' : g.decodedToken['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
+    if subCounterKey:
+        RedisInterface.incr(subCounterKey)
+        return jsonify({'message' : 'subscribed!'}), 200
+    
+    subCounterKey = f'forum:{forum_id}:subscribers' 
+    op = RedisInterface.set(subCounterKey, _forum.subscribers+1, nx=True)
+    if not op:
+        RedisInterface.incr(subCounterKey)
+        return jsonify({'message' : 'subscribed!'}), 200
+    
+    RedisInterface.hset(f"{Forum.__tablename__}:subscribers", forum_id, subCounterKey)
+    return jsonify({'message' : 'subscribed!'}), 200
+
+
+@forum.route("/<int:forum_id>/unsubscribe", methods=['PATCH'])
+@token_required
+def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
+    try:
+        subbedForum: ForumSubscription = db.session.execute(select(ForumSubscription)
+                                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+        if not subbedForum:
+            return jsonify({'message' : 'You have not subscribed to this forum'}), 204
+        _forum = db.session.execute(select(Forum).where(Forum.id == forum_id)).scalar_one()
+        
+    except SQLAlchemyError: genericDBFetchException()
+    except KeyError: raise BadRequest('Invalid token, please login again')
+
+    subCounterKey: str = RedisInterface.hget(f'{Forum.__tablename__}:subscribers', forum_id)
+    RedisInterface.xadd("WEAK_DELETIONS", {'user_id' : g.decodedToken['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
+    if subCounterKey:
+        RedisInterface.decr(subCounterKey)
+        return jsonify({'message' : 'unsubscribed!'}), 200
+    
+    subCounterKey = f'forum:{forum_id}:subscribers' 
+    op = RedisInterface.set(subCounterKey, _forum.subscribers-1, nx=True)
+    if not op:
+        RedisInterface.decr(subCounterKey)
+        return jsonify({'message' : 'unsubscribed!'}), 200
+    
+    RedisInterface.hset(f"{Forum.__tablename__}:subscribers", forum_id, subCounterKey)
+    return jsonify({'message' : 'unsubscribed!'}), 200
 
 @forum.route("/<int:forum_id>/edit", methods=["PATCH", "OPTIONS"])
 @enforce_json
