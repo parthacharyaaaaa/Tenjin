@@ -125,7 +125,7 @@ def get_anime_links(anime_id: int) -> tuple[Response, int]:
 @anime.route("<int:anime_id>/forums")
 def get_anime_forums(anime_id: int) -> tuple[Response, int]:
     try:
-        rawCursor = request.args.get('cursor').strip()
+        rawCursor = request.args.get('cursor', '0').strip()
         if rawCursor == '0':
             cursor = 0
         elif not rawCursor:
