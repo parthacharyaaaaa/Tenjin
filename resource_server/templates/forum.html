@@ -7,6 +7,7 @@
 {% block depends %}
 <link rel="stylesheet" href="{{ url_for('static', filename='stylesheets/forum.css') }}">
 <meta name="forumID" value={{forum.id}}>
+<meta name="auth" value={{auth}}>
 {% endblock %}
 
 {% block content %}
@@ -16,8 +17,14 @@
             <h2>{{name}}</h2>
         </div>
         <div class="right">
-            <button class = 'btn-primary'>Subscribe</button>
-            <button class = 'btn-primary'>Create a post</button>
+            <button class = 'btn-primary' id="sub-btn" subscribed={{subbed}}>
+                {% if subbed %}
+                    Unsubscribe
+                {% else %}
+                    Subscribe
+                {% endif %}
+            </button>
+            <button class = 'btn-primary' id="create-post-btn">Create a post</button>
         </div>
     </div>
     <div class="forum-main">
@@ -112,4 +119,5 @@
 
 {% block scripts %}
 <script src="{{ url_for('static', filename='scripts/forum.js') }}"></script>
+<script src="{{ url_for('static', filename='scripts/forum_options.js') }}"></script>
 {% endblock %}
