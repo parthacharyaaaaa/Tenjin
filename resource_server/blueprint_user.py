@@ -256,8 +256,10 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
         rawCursor = request.args.get('cursor', '0').strip()
         if rawCursor == '0':
             cursor: int = 0
+            init: bool = True
         else:
             cursor = int(base64.b64decode(rawCursor).decode())
+            init: bool = False
     except (ValueError, TypeError):
             raise BadRequest("Failed to load more posts. Please refresh this page")
     
@@ -273,8 +275,12 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
         if not user:
             raise NotFound('No user with this ID exists')
         
+        whereClause = (Post.author_id == user_id)
+        if not init:
+            whereClause &= (Post.id < cursor)
+        
         recentPosts: list[Post] = db.session.execute(select(Post)
-                                                        .where((Post.author_id == user_id) & (Post.id > cursor))
+                                                        .where(whereClause)
                                                         .order_by(Post.time_posted.desc())
                                                         .limit(6)).scalars().all()
         if not recentPosts:
