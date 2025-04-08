@@ -23,8 +23,8 @@ class TokenManager:
 
     def __init__(self, signingKey : str,
                  host: str, port: int, db: int,
-                 refreshLifetime : int = 180,
-                 accessLifetime : int = 15, 
+                 refreshLifetime : int = 60*60*3,
+                 accessLifetime : int = 60*30, 
                  alg : str = "HS256",
                  typ : str = "JWT",
                  uClaims : dict = {"iss" : "babel-auth-service"},

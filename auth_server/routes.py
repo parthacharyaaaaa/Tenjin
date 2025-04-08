@@ -65,7 +65,7 @@ def internalServerError(e : Exception):
 
 @auth.route("/login", methods = ["POST", "OPTIONS"])
 # @CSRF_protect
-@cross_origin()
+@cross_origin(supports_credentials=True)
 @enforce_json
 def login():
     if not ("identity" in g.REQUEST_JSON and "password" in g.REQUEST_JSON):
@@ -118,7 +118,7 @@ def login():
 
 @auth.route("/register", methods = ["POST", "OPTIONS"])
 # @CSRF_protect
-@cross_origin()
+@cross_origin(supports_credentials=True)
 @enforce_json
 def register():    
     if not ("username" in g.REQUEST_JSON and
@@ -189,7 +189,7 @@ def deleteAccount():
 
 @auth.route("/reissue", methods = ["GET", "OPTIONS"])
 # @CSRF_protect
-@cross_origin()
+@cross_origin(supports_credentials=True)
 def reissue():
     refreshToken = request.cookies.get("refresh", request.cookies.get("Refresh"))
 
@@ -250,7 +250,7 @@ def purgeFamily():
 
 
 @auth.route("/get-csrf", methods = ["OPTIONS", "GET"])
-@cross_origin()
+@cross_origin(supports_credentials=True)
 def issueCSRF():
     response = make_response()
     response.headers["X-CSRF-TOKEN"] = secrets.token_urlsafe(32)
