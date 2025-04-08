@@ -12,8 +12,18 @@ from auxillary.utils import rediserialize, genericDBFetchException
 from werkzeug.exceptions import NotFound, BadRequest, Forbidden
 
 from typing import Any
-from datetime import datetime
+from types import MappingProxyType
+from datetime import datetime, timedelta
+import base64
+import binascii
 import ujson
+
+TIMEFRAMES: MappingProxyType = MappingProxyType({0 : lambda dt : dt - timedelta(hours=1),
+                                                 1 : lambda dt : dt - timedelta(days=1),
+                                                 2 : lambda dt : dt - timedelta(weeks=1),
+                                                 3 : lambda dt : dt - timedelta(days=30),
+                                                 4 : lambda dt : dt - timedelta(days=364),
+                                                 5 : lambda _ : datetime.min})
 
 @post.route("/", methods=["POST", "OPTIONS"])
 @enforce_json
@@ -72,6 +82,51 @@ def create_post() -> tuple[Response, int]:
         RedisInterface.hset(f'{Forum.__tablename__}:posts', forumID, postsCounterKey)
 
     return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
+
+@post.route("/<int:forum_id>")
+def get_posts(forum_id: int) -> tuple[Response, int]:
+    try:
+        rawCursor = request.args.get('cursor', '0').strip()
+        if rawCursor == '0':
+            cursor = 0
+            init: bool = True
+        else:
+            init: bool = False
+            cursor = int(base64.b64decode(rawCursor).decode())
+
+        sortOption: str = request.args.get('sort', '0').strip()
+        if not sortOption.isnumeric() or sortOption not in ('0', '1'):
+            sortOption = '0'
+        
+        timeFrame: str = request.args.get('timeframe', '5').strip()
+        if not timeFrame.isnumeric() or not (0 <= int(timeFrame) <= 5):
+            timeFrame = 5
+        else:
+            timeFrame = int(timeFrame)
+        
+    except (ValueError, TypeError, binascii.Error):
+            raise BadRequest("Failed to load more posts. Please refresh this page")
+    
+    whereClause = (Post.forum_id == forum_id) & (Post.time_posted >= TIMEFRAMES[timeFrame](datetime.now()))
+    if not init:
+        whereClause &= (Post.id < cursor)
+
+    query = (select(Post, User.username)
+             .join(User, Post.author_id == User.id)
+             .where(whereClause)
+             .order_by(desc(Post.score if sortOption == '1' else Post.time_posted))
+             .limit(6))
+    
+    nextPosts: list[Post] = db.session.execute(query).all()
+    if not nextPosts:
+        return jsonify({'posts' : None, 'cursor' : cursor}), 200
+    end = False
+    if len(nextPosts) != 6:
+        end = True
+    postsJSON: list[dict[str, Any]] = [post.__json_like__() | {'username' : username} for post, username in nextPosts]
+    cursor = base64.b64encode(str(nextPosts[-1][0].id).encode('utf-8')).decode()
+
+    return jsonify({'posts' : postsJSON, 'cursor' : cursor, 'end' : end}), 200
 
 @post.route("/<int:post_id>", methods=["GET", "OPTIONS"])
 def get_post(post_id : int) -> tuple[Response, int]:
