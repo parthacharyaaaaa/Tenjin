@@ -1,6 +1,6 @@
 
 '''Blueprint for serving HTML files. No URL prefix for these endpoints is required'''
-from flask import Blueprint, render_template, request
+from flask import Blueprint, render_template, request, g
 from werkzeug.exceptions import NotFound
 
 templates: Blueprint = Blueprint('templates', __name__, template_folder='templates')
@@ -9,6 +9,7 @@ from resource_server.models import db, Post, User, Forum, ForumRules, Anime, Ani
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from auxillary.utils import genericDBFetchException
+from auxillary.decorators import pass_user_details
 
 ###========================= ENDPOINTS =========================###
 
@@ -26,6 +27,7 @@ def signup() -> tuple[str, int]:
     return render_template('signup.html', minHeader = True)
 
 @templates.route('/view/forum/<string:name>')
+@pass_user_details
 def forum(name: str) -> tuple[str, int]:
     try:
         # Fetch forum details
@@ -47,7 +49,16 @@ def forum(name: str) -> tuple[str, int]:
         
         # Fetch related forums (if any)
         relatedForums: list[Forum] = db.session.execute(select(Forum._name).where(Forum.anime == forum.anime).limit(3)).scalars().all()
+
+        # Fetch if subscribed
+        if g.requestUser:
+            subbedForum = db.session.execute(select(ForumSubscription)
+                                             .where((ForumSubscription.forum_id == forum.id) & (ForumSubscription.user_id == g.requestUser['sid']))).scalar_one_or_none()
+        # Check if admin
         
+            
+        else:
+            subbedForum = None
         if len(forumAdmins) == 6:
             forumAdmins.pop(-1)
             showAllAdminsLink: bool = True
@@ -59,6 +70,7 @@ def forum(name: str) -> tuple[str, int]:
     return render_template('forum.html', auth = True if request.cookies.get('access', request.cookies.get('Access')) else False,
                            name = name,
                            highlighted_posts=highlightedPosts,
+                           subbed=bool(subbedForum),
                            forum=forum,
                            rules=forumRules,
                            relatedForums=relatedForums,
