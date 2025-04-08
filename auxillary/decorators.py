@@ -59,6 +59,32 @@ def token_required(endpoint):
         return endpoint(*args, **kwargs)
     return decorated
 
+def pass_user_details(endpoint):
+    '''
+    Pass user details by parssing an access token. Requires the header "Authorization: Bearer <credentials>". 
+    Furthermore, sets global data (flask.g : _AppCtxGlobals) for usage of token details in the decorated endpoint
+    In case of any errors, fall backs to None
+    '''
+    @wraps(endpoint)
+    def decorated(*args, **kwargs):
+        auth_metadata = request.cookies.get("access", request.cookies.get("Access"))
+        if not auth_metadata:
+            g.requestUser = None
+        else:
+            try:
+                decodedToken = decode(
+                                    jwt=auth_metadata.split()[-1],
+                                    key=current_app.config["SIGNING_KEY"],
+                                    algorithms=["HS256"],
+                                    issuer="babel-auth-service",
+                                    leeway=timedelta(minutes=3))
+                g.requestUser = decodedToken
+            except Exception:
+                g.requestUser = None
+        
+        return endpoint(*args, **kwargs)
+    return decorated
+
 def private(endpoint):
     @wraps(endpoint)
     def decorated(*args, **kwargs):
