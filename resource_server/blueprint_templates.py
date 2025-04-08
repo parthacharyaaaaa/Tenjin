@@ -5,7 +5,7 @@ from werkzeug.exceptions import NotFound
 
 templates: Blueprint = Blueprint('templates', __name__, template_folder='templates')
 
-from resource_server.models import db, Post, User, Forum, ForumRules, Anime, AnimeSubscription, ForumSubscription
+from resource_server.models import db, Post, User, Forum, ForumRules, Anime, AnimeSubscription, ForumSubscription, ForumAdmin
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from auxillary.utils import genericDBFetchException
@@ -38,13 +38,32 @@ def forum(name: str) -> tuple[str, int]:
 
         # Fetch rules
         forumRules: list[ForumRules] = db.session.execute(select(ForumRules).where(ForumRules.forum_id == forum.id)).scalars().all()
+
+        # Fetch admins
+        forumAdmins: list[ForumAdmin] = db.session.execute(select(User.username)
+                                                           .where(User.id == ForumAdmin.user_id)
+                                                           .join(ForumAdmin, User.id == ForumAdmin.user_id)
+                                                           .limit(6)).scalars().all()
+        
+        # Fetch related forums (if any)
+        relatedForums: list[Forum] = db.session.execute(select(Forum._name).where(Forum.anime == forum.anime).limit(3)).scalars().all()
+        
+        if len(forumAdmins) == 6:
+            forumAdmins.pop(-1)
+            showAllAdminsLink: bool = True
+        else:
+            showAllAdminsLink: bool = False
+
     except SQLAlchemyError: genericDBFetchException()
 
     return render_template('forum.html', auth = True if request.cookies.get('access', request.cookies.get('Access')) else False,
                            name = name,
                            highlighted_posts=highlightedPosts,
                            forum=forum,
-                           rules=forumRules)
+                           rules=forumRules,
+                           relatedForums=relatedForums,
+                           forumAdmins=forumAdmins,
+                           showAllAdminsLink=showAllAdminsLink)
 
 @templates.route('/catalogue/animes')
 def get_anime() -> tuple[str, int]:
