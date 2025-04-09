@@ -18,10 +18,6 @@
         <div class="logo">Tenjin</div>
       
         {% if not minHeader %}
-            <div class="search-container">
-            <input type="text" placeholder="Search..." class="search-bar" />
-            </div>
-        
             <nav class="nav-links">
             {% if auth %}
                 <img class="header-icon" src="{{url_for('static', filename='assets/user_icon.png')}}">

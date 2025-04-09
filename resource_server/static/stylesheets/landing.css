@@ -1,0 +1,261 @@
+.hero {
+    position: relative;
+    height: 70vh;
+    width: 100%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: var(--FCOLOR-PRIMARY);
+    font-family: var(--FONT-BODY);
+    margin-bottom: 3rem;
+}
+
+.hero-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: blur(4px) brightness(0.7);
+    z-index: -1;
+}
+
+.hero-text {
+    z-index: 1;
+    padding: 2rem;
+    background: rgba(0, 0, 0, 0.4);
+    border-radius: 1rem;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(3px);
+}
+
+.hero-text h1 {
+    font-size: var(--FSIZE-XXL);
+    font-family: var(--FONT-SIGNATURE);
+    color: var(--FCOLOR-HIGHLIGHT);
+    margin-bottom: 0.5rem;
+}
+
+.hero-text p {
+    font-size: var(--FSIZE-L);
+    max-width: 700px;
+    margin: 0 auto;
+    line-height: 1.6;
+}
+
+
+.features {
+    padding: 3rem 2rem;
+    background-color: var(--BGCOLOR-SECONDARY);
+    text-align: center;
+}
+
+.card-container {
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    margin-top: 2rem;
+}
+
+.feature-card, .anime-card, .review-card {
+    background-color: var(--BGCOLOR-TERTIARY);
+    padding: 1.5rem;
+    border-radius: 1rem;
+    transition: transform 0.3s, box-shadow 0.3s;
+    width: 260px;
+}
+
+.feature-card:hover, .anime-card:hover, .review-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+
+.anime-showcase {
+    padding: 4rem 2rem;
+    background-color: var(--BGCOLOR-SECONDARY);
+    color: var(--FCOLOR-PRIMARY);
+    text-align: center;
+}
+
+.anime-showcase h2 {
+    font-size: var(--FSIZE-XXL);
+    margin-bottom: 2rem;
+    font-family: var(--FONT-SIGNATURE);
+    color: var(--FCOLOR-HIGHLIGHT);
+}
+
+.card-container {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 2rem;
+}
+
+.anime-card {
+    position: relative;
+    width: 220px;
+    height: 320px;
+    border-radius: 1rem;
+    overflow: hidden;
+    text-decoration: none;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);   
+    transition: transform 0.3s ease;
+}
+
+.anime-card:hover {
+    transform: scale(1.03);
+}
+
+.anime-card img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: filter 0.3s ease;
+}
+
+.anime-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.anime-card:hover::before {
+    opacity: 1;
+}
+
+.anime-title {
+    position: absolute;
+    bottom: 1rem;
+    left: 1rem;
+    right: 1rem;
+    color: var(--FCOLOR-PRIMARY);
+    font-size: var(--FSIZE);
+    font-weight: bold;
+    text-align: center;
+    opacity: 0;
+    z-index: 2;
+    transition: opacity 0.5s ease, transform 0.3s ease;
+    transform: translateY(20px);
+    font-family: var(--FONT-BODY);
+}
+
+.anime-card:hover .anime-title {
+    opacity: 1;
+    transform: translateY(0);
+    top: 50%;
+    bottom: auto;
+    transform: translateY(-50%);
+}
+
+
+.about, .catalogue {
+    position: relative;
+    padding: 4rem 2rem;
+    color: white;
+    text-align: center;
+    overflow: hidden;
+}
+
+.about-backdrop, .catalogue-backdrop {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background-image: url('../assets/community.jpg');
+    background-size: cover;
+    background-position: center;
+    filter: blur(5px) brightness(0.4);
+    z-index: -1;
+}
+
+.about-content, .catalogue-content {
+    max-width: 700px;
+    margin: auto;
+    font-size: var(--FSIZE);
+    line-height: 1.6;
+    font-family: var(--FONT-BODY);
+}
+
+.cta {
+    padding: 5rem 2rem;
+    text-align: center;
+    background: linear-gradient(rgba(0, 0, 0, 0.8), rgba(0, 0, 0)), 
+                url('../assets/auth_wallpaper.jpg') center/cover no-repeat;
+    color: var(--FCOLOR-PRIMARY);
+    font-family: var(--FONT-BODY);
+    border-radius: 1rem;
+    margin: 4rem 2rem;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.cta h2 {
+    font-size: var(--FSIZE-XL);
+    margin-bottom: 1rem;
+    font-family: var(--FONT-SIGNATURE);
+    color: var(--FCOLOR-HIGHLIGHT);
+}
+
+.cta p {
+    font-size: var(--FSIZE);
+    margin-bottom: 2rem;
+    line-height: 1.6;
+    max-width: 600px;
+    margin-inline: auto;
+}
+
+.cta div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    justify-content: center;
+    align-items: center;
+}
+
+/* Buttons */
+.btn-outline {
+    padding: 0.75rem 2rem;
+    border: 2px solid var(--FCOLOR-HIGHLIGHT);
+    color: var(--FCOLOR-HIGHLIGHT);
+    background: transparent;
+    font-weight: bold;
+    border-radius: 2rem;
+    text-decoration: none;
+    transition: all 0.3s ease;
+    font-family: var(--FONT-BODY);
+}
+
+.btn-outline:hover {
+    background-color: var(--FCOLOR-HIGHLIGHT);
+    color: var(--BGCOLOR-PRIMARY);
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
+}
+
+
+.reviews {
+    padding: 3rem 2rem;
+    background-color: var(--BGCOLOR-TERTIARY);
+    color: var(--FCOLOR-PRIMARY);
+    text-align: center;
+}
+
+.review-cards {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-top: 2rem;
+}
+
+.review-card span {
+    font-size: var(--FSIZE-S);
+    color: var(--FCOLOR-HIGHLIGHT);
+    display: block;
+    margin-top: 1rem;
+}
