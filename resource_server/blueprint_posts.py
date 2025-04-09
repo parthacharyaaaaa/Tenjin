@@ -535,3 +535,8 @@ def report_post(post_id: int) -> tuple[Response, int]:
     
     RedisInterface.hset(f"{Post.__tablename__}:reports", post_id, reportCounterKey)
     return jsonify({"message" : "Reported!"}), 202
+
+
+# @post.route("/<int:post_id>/comment", methods=['POST'])
+# @token_required
+# def comment_on_post(post_id: int) -> tuple[Response, int]:
