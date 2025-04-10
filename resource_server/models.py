@@ -1,4 +1,5 @@
 from flask_sqlalchemy import SQLAlchemy
+from flask import url_for
 
 from sqlalchemy import PrimaryKeyConstraint, CheckConstraint, UniqueConstraint, MetaData
 from sqlalchemy.sql import text, DDL
@@ -182,6 +183,7 @@ class Anime(db.Model):
     mal_ranking: int = db.Column(INTEGER, nullable = True)
     members: int = db.Column(BIGINT, nullable = False, server_default = text("0"))
     synopsis: str = db.Column(TEXT, nullable = False)
+    banner: str = db.Column(VARCHAR(128), nullable=True)
     # Genres is multi-valued, made into separate table
     # Stream links are multi-valued, made into separate table
 
@@ -190,7 +192,7 @@ class Anime(db.Model):
         return {"id": self.id,
                 "title": self.title,
                 "rating": self.rating,
-                "banner" : None, 
+                "banner" : self.banner, 
                 "mal_ranking": self.mal_ranking,
                 "members": self.members,
                 "synopsis": self.synopsis}
@@ -385,7 +387,7 @@ class Comment(db.Model):
     time_created: datetime = db.Column(TIMESTAMP, nullable = False, server_default=text("CURRENT_TIMESTAMP"))
     body: str = db.Column(VARCHAR(512), nullable=False)
     parent_post: int = db.Column(BIGINT, db.ForeignKey("posts.id", ondelete='CASCADE'), nullable=False, index=True)
-    parent_thread: int = db.Column(BIGINT, db.ForeignKey("comments.id"))
+    parent_thread: int = db.Column(BIGINT, db.ForeignKey("comments.id"), nullable=True)
     replying_to: int = db.Column(BIGINT, db.ForeignKey("comments.id"))
     score: int = db.Column(INTEGER, default = 0)
     reports: int= db.Column(INTEGER, default = 0)
