@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{%block title%} Privacy policy {% endblock %}
+{% block depends %}
+<link rel="stylesheet" type="text/css" href="{{url_for('static', filename='stylesheets/about.css')}}"/>
+<link rel="stylesheet" type="text/css" href="{{url_for('static', filename='stylesheets/legal.css')}}"/>
+{% endblock %}
+{% block content %}
+  <main class="about-container">
+    <h1 class="about-title">About TENJIN</h1>
+    <p class="about-section">
+      <strong>TENJIN</strong> is a community-driven platform dedicated to anime lovers, built as a Reddit-style forum tailored exclusively for anime content. Whether you're into shonen, shojo, mecha, slice-of-life, or the obscure indie gems — TENJIN is your digital home.
+    </p>
+
+    <p class="about-section">
+      Our mission is to provide a clean, modern, and passionate space where fans can share memes, reviews, recommendations, theories, and opinions — all while connecting with fellow otakus across the globe.
+    </p>
+
+    <p class="about-section">
+      TENJIN was inspired by the spirit of Reddit, but we took a step further to bring anime to the forefront. No distractions, no off-topic clutter — just pure anime discussions.
+    </p>
+
+    <h2 class="about-subtitle">What We Offer</h2>
+    <ul class="about-list">
+      <li>Anime-focused subforums</li>
+      <li>Clean UI/UX with dark/light mode</li>
+      <li>User-driven discussions and voting</li>
+      <li>Fan art showcases and AMV threads</li>
+      <li>Upcoming episode discussions and reviews</li>
+    </ul>
+
+    <h2 class="about-subtitle">Join the TENJIN Community</h2>
+    <p class="about-section">
+      Whether you're a seasoned weeb or new to the anime scene, TENJIN welcomes you. Create an account, find your people, and let the otaku vibes thrive.
+    </p>
+
+    <a href="{{url_for('.index')}}" class="btn-primary about-cta">Get Started</a>
+  </main>
+
+  {% endblock %}

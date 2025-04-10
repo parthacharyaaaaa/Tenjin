@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+{%block title%} Privacy policy {% endblock %}
+{% block depends %}
+<link rel="stylesheet" type="text/css" href="{{url_for('static', filename='stylesheets/about.css')}}"/>
+<link rel="stylesheet" type="text/css" href="{{url_for('static', filename='stylesheets/legal.css')}}"/>
+{% endblock %}
+{% block content %}
+ 
+<main class="legal-wrapper">
+    <section class="legal-content">
+      <h1>Contact Us</h1>
+      <p>Have questions, feedback, or suggestions? Fill out the form below and we’ll get back to you!</p>
+
+      <form id="contactForm" class="contact-form" novalidate>
+        <label for="name">Name*</label>
+        <input type="text" id="name" class="form-text-input" placeholder="Your full name" required />
+
+        <label for="email">Email*</label>
+        <input type="email" id="email" class="form-text-input" placeholder="you@example.com" required />
+
+        <label for="subject">Subject</label>
+        <input type="text" id="subject" class="form-text-input" placeholder="Topic (optional)" />
+
+        <label for="message">Message*</label>
+        <textarea id="message" class="form-text-input" placeholder="Write your message here..." rows="5" required></textarea>
+
+        <button type="submit" class="btn-primary">Send Message</button>
+
+        <p id="formMessage" style="margin-top: 1rem;"></p>
+      </form>
+    </section>
+  </main>
+
+  {% endblock %}
+  <script>
+    const form = document.getElementById("contactForm");
+    const messageDisplay = document.getElementById("formMessage");
+
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+
+      const name = document.getElementById("name").value.trim();
+      const email = document.getElementById("email").value.trim();
+      const message = document.getElementById("message").value.trim();
+
+      if (!name || !email || !message) {
+        messageDisplay.textContent = "Please fill in all required fields.";
+        messageDisplay.style.color = "red";
+        return;
+      }
+
+      const emailPattern = /^[^@]+@[^@]+\.[^@]+$/;
+      if (!emailPattern.test(email)) {
+        messageDisplay.textContent = "Please enter a valid email address.";
+        messageDisplay.style.color = "red";
+        return;
+      }
+
+      // Simulate successful submission
+      messageDisplay.textContent = "Thank you! Your message has been sent.";
+      messageDisplay.style.color = "lightgreen";
+      form.reset();
+    });
+  </script>
+

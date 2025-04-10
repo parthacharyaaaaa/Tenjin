@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{%block title%} Privacy policy {% endblock %}
+{% block depends %}
+<link rel="stylesheet" type="text/css" href="{{url_for('static', filename='stylesheets/about.css')}}"/>
+<link rel="stylesheet" type="text/css" href="{{url_for('static', filename='stylesheets/legal.css')}}"/>
+{% endblock %}
+{% block content %}
+  <main class="legal-wrapper">
+    <section class="legal-content">
+      <h1>Legal Notice</h1>
+      <p>This Legal Notice applies to the TENJIN platform and outlines the identity of the site owner and relevant legal obligations.</p>
+
+      <h2>1. Site Ownership</h2>
+      <p><strong>Website:</strong> www.tenjin.com (or your actual domain)</p>
+      <p><strong>Owner:</strong> TENJIN Anime Community</p>
+      <p><strong>Contact Email:</strong> contact@tenjin.com</p>
+
+      <h2>2. Intellectual Property</h2>
+      <p>All content, including logos, graphics, and site structure, is the intellectual property of TENJIN unless otherwise stated. Unauthorized use or reproduction is strictly prohibited.</p>
+
+      <h2>3. Liability Disclaimer</h2>
+      <p>TENJIN provides content for informational and entertainment purposes. While we strive for accuracy, we are not responsible for any errors or omissions, nor for any damages arising from usage of this site.</p>
+
+      <h2>4. External Links</h2>
+      <p>This site may contain links to third-party websites. TENJIN is not responsible for the content or privacy practices of those sites.</p>
+
+      <h2>5. Applicable Law</h2>
+      <p>This legal notice is governed by the laws of your local jurisdiction. By using TENJIN, you agree to these terms and applicable legal obligations.</p>
+
+      <p>If you have questions, please <a href="{{url_for('.contact')}}">contact us</a>.</p>
+
+    </section>
+  </main>
+
+  {% endblock %}
