@@ -15,8 +15,8 @@ from auxillary.decorators import pass_user_details
 
 @templates.route("/")
 def index() -> tuple[str, int]:
-    print(request.cookies)
-    return render_template('base.html', auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)
+    print(request.cookies)  
+    return render_template('index.html', auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)
 
 @templates.route('/login')
 def login() -> tuple[str, int]:
@@ -55,7 +55,7 @@ def forum(name: str) -> tuple[str, int]:
             subbedForum = db.session.execute(select(ForumSubscription)
                                              .where((ForumSubscription.forum_id == forum.id) & (ForumSubscription.user_id == g.requestUser['sid']))).scalar_one_or_none()
         # Check if admin
-        
+
             
         else:
             subbedForum = None
@@ -93,6 +93,11 @@ def view_anime(anime_id) -> tuple[str, int]:
     return render_template('anime.html',
                            auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)
 
+@templates.route('/view/post/<int:post_id>')
+def view_post(post_id: int) -> tuple[str, int]:
+    return render_template('post.html',
+                           auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)
+
 @templates.route("/profile/<string:username>")
 def get_user(username: str) -> tuple[str, int]:
     try:
@@ -101,4 +106,35 @@ def get_user(username: str) -> tuple[str, int]:
             raise NotFound('No user found with this username')
     except SQLAlchemyError: genericDBFetchException()
     
-    return render_template('profile.html', user=user), 200    
+    return render_template('profile.html', user=user), 200
+
+@templates.route('/about')
+def about_us() -> tuple[str, int]:
+    return render_template('about.html',
+                           auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)
+
+
+@templates.route('/legal')
+def legal() -> tuple[str, int]:
+    return render_template('legal_notice.html',
+                           auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)
+
+@templates.route('/privacy')
+def privacy() -> tuple[str, int]:
+    return render_template('privacy_policy.html',
+                           auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)
+
+@templates.route('/user-agreement')
+def user_agreement() -> tuple[str, int]:
+    return render_template('user_agreement.html',
+                           auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)
+
+@templates.route('/cookies')
+def cookies() -> tuple[str, int]:
+    return render_template('cookie_policy.html',
+                           auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)
+
+@templates.route('/contact')
+def contact() -> tuple[str, int]:
+    return render_template('contact_us.html',
+                           auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)
