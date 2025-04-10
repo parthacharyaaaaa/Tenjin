@@ -33,17 +33,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Set banner
     const bannerEl = document.getElementById('anime-banner');
     if (bannerEl) {
-        bannerEl.style.backgroundImage = `url('${selectedAnime.banner || ""}')`;
+        bannerEl.src = `/static/${selectedAnime.banner}`;
     }
     const description = document.getElementById('anime-description');
-    description.innerText = selectedAnime.synopsis || "Failed to fetch this anime's synopsis"
+    console.log(selectedAnime)
+    description.innerHTML = `<h1>${selectedAnime.title}</h1> <hr>` + selectedAnime.synopsis || "Failed to fetch this anime's synopsis"
 
     // Populate stats and links
     function populateStats(anime) {
         const statsEl = document.getElementById('anime-stats');
         if (!statsEl) return;
         statsEl.innerHTML = `
-            <h2>${anime.title}</h2>
+            <h2>${anime.title}</h2>     
             <div class="stat-line"><span>Rating:</span><span>${anime.rating}</span></div>
             <div class="stat-line"><span>Ranking:</span><span>#${anime.mal_ranking}</span></div>
             <div class="stat-line"><span>Members:</span><span>${anime.members?.toLocaleString() || 'N/A'}</span></div>
@@ -118,7 +119,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             div.addEventListener('click', async () => {
                 sessionStorage.setItem('selectedForum', JSON.stringify(forum));
-                window.location.href = `/forum/${forum.name}`;
+                window.location.href = `/view/forum/${forum.name}`;
             })
             container.appendChild(div);
         });
