@@ -1,29 +1,21 @@
 from flask import Blueprint, Response, jsonify, g, url_for, request
 post = Blueprint("post", "post", url_prefix="/posts")
 
-from sqlalchemy import select, update, asc, desc
+from sqlalchemy import select, update, delete
 from sqlalchemy.exc import SQLAlchemyError
 
 from resource_server.models import db, Post, User, Forum, ForumFlair, ForumAdmin, PostSave, PostVote, PostReport, Comment
-from auxillary.decorators import enforce_json, token_required
+from auxillary.decorators import enforce_json, token_required, pass_user_details
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException
 
 from werkzeug.exceptions import NotFound, BadRequest, Forbidden
 
 from typing import Any
-from types import MappingProxyType
-from datetime import datetime, timedelta
+import ujson
 import base64
 import binascii
-import ujson
-
-TIMEFRAMES: MappingProxyType = MappingProxyType({0 : lambda dt : dt - timedelta(hours=1),
-                                                 1 : lambda dt : dt - timedelta(days=1),
-                                                 2 : lambda dt : dt - timedelta(weeks=1),
-                                                 3 : lambda dt : dt - timedelta(days=30),
-                                                 4 : lambda dt : dt - timedelta(days=364),
-                                                 5 : lambda _ : datetime.min})
+from datetime import datetime
 
 @post.route("/", methods=["POST", "OPTIONS"])
 @enforce_json
@@ -83,90 +75,45 @@ def create_post() -> tuple[Response, int]:
 
     return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
 
-@post.route("/<int:forum_id>")
-def get_posts(forum_id: int) -> tuple[Response, int]:
-    try:
-        rawCursor = request.args.get('cursor', '0').strip()
-        if rawCursor == '0':
-            cursor = 0
-            init: bool = True
-        else:
-            init: bool = False
-            cursor = int(base64.b64decode(rawCursor).decode())
-
-        sortOption: str = request.args.get('sort', '0').strip()
-        if not sortOption.isnumeric() or sortOption not in ('0', '1'):
-            sortOption = '0'
-        
-        timeFrame: str = request.args.get('timeframe', '5').strip()
-        if not timeFrame.isnumeric() or not (0 <= int(timeFrame) <= 5):
-            timeFrame = 5
-        else:
-            timeFrame = int(timeFrame)
-        
-    except (ValueError, TypeError, binascii.Error):
-            raise BadRequest("Failed to load more posts. Please refresh this page")
-    
-    whereClause = (Post.forum_id == forum_id) & (Post.time_posted >= TIMEFRAMES[timeFrame](datetime.now()))
-    if not init:
-        whereClause &= (Post.id < cursor)
-
-    query = (select(Post, User.username)
-             .join(User, Post.author_id == User.id)
-             .where(whereClause)
-             .order_by(desc(Post.score if sortOption == '1' else Post.time_posted))
-             .limit(6))
-    
-    nextPosts: list[Post] = db.session.execute(query).all()
-    if not nextPosts:
-        return jsonify({'posts' : None, 'cursor' : cursor}), 200
-    end = False
-    if len(nextPosts) != 6:
-        end = True
-    postsJSON: list[dict[str, Any]] = [post.__json_like__() | {'username' : username} for post, username in nextPosts]
-    cursor = base64.b64encode(str(nextPosts[-1][0].id).encode('utf-8')).decode()
-
-    return jsonify({'posts' : postsJSON, 'cursor' : cursor, 'end' : end}), 200
-
 @post.route("/<int:post_id>", methods=["GET", "OPTIONS"])
+@pass_user_details
 def get_post(post_id : int) -> tuple[Response, int]:
     sortByTop: bool =  request.args.get('sf', 'top') == 'top'   # Top/New comment flag
     includeComments: bool = request.args.get('include_comments', '0') == '1'
-    try:
-        postKey: str = f'post:{post_id}'
-        commentsKey: str = f'post:{post_id}:comments:{sortByTop}'
-        cachedPost: str = RedisInterface.get(postKey)
-        cachedComments: str = None if not includeComments else RedisInterface.get(commentsKey) 
-        if cachedPost:
-            # Update ttl on cache hit
-            RedisInterface.expire(postKey, 300)
-            RedisInterface.expire(commentsKey, 300)     # Refresh comments' ttl regardless of it being requested. Since post is being requested nonetheless, it is likely that subsequent requests may ask for comment as well
+    # try:
+    #     postKey: str = f'post:{post_id}'
+    #     commentsKey: str = f'post:{post_id}:comments:{sortByTop}'
+    #     cachedPost: str = RedisInterface.get(postKey)
+    #     cachedComments: str = None if not includeComments else RedisInterface.get(commentsKey) 
+    #     if cachedPost:
+    #         # Update ttl on cache hit
+    #         RedisInterface.expire(postKey, 300)
+    #         RedisInterface.expire(commentsKey, 300)     # Refresh comments' ttl regardless of it being requested. Since post is being requested nonetheless, it is likely that subsequent requests may ask for comment as well
 
-            serializedResult = {'post' : ujson.loads(cachedPost), 'comments' : cachedComments}
-            return jsonify(serializedResult), 200
-    except:
-        ...
+    #         serializedResult = {'post' : ujson.loads(cachedPost), 'comments' : cachedComments}
+    #         return jsonify(serializedResult), 200
+    # except:
+    #     ...
     
-    post : Post | None = db.session.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
+    fetchedPost : Post | None = db.session.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
     if not post:
         raise NotFound(f"Post with id {post_id} could not be found :(")
+    
+    isOwner, postSaved, postVoted = False, False, None
+    if g.requestUser:
+        # Check if user is owner of this post
+        isOwner: bool = g.requestUser.get('sid') == fetchedPost.author_id
 
-    res = post.__json_like__()
+        # Check if saved, voted
+        postSaved = db.session.execute(select(PostSave).where((PostSave.post_id == post_id) & (PostSave.user_id == g.requestUser.get('sid')))).scalar_one_or_none()
+        postVoted = db.session.execute(select(PostVote.vote).where((PostVote.post_id == post_id) & (PostVote.voter_id == g.requestUser.get('sid')))).scalar_one_or_none()
+        print(g.requestUser.get('sid'))
+        print(postSaved, postVoted)
+    res = {'post' : fetchedPost.__json_like__(), 'saved' : bool(postSaved), 'vote' : postVoted, 'owner' : isOwner}
     # TODO: Have pre-defined values for cached items' TTLs
-    RedisInterface.set(f'post:{post_id}', ujson.dumps(res), ex=300)
-    if not includeComments:
-        return jsonify({'post' : res}), 200
+    # RedisInterface.set(f'post:{post_id}', ujson.dumps(res), ex=300)
+    return jsonify(res), 200
     
-    # Return post with comments
-    comments: list[Comment]= db.session.execute(select(Comment)
-                                                .where(Comment.parent_post == post_id)
-                                                .order_by(desc(Comment.score) if sortByTop else asc(Comment.time_created))).scalars().all()
-    if not comments:
-        return jsonify({'post' : res}), 200
-    
-    serializedCommentSet: list[dict[str, Any]] = [comment.__json_like__() for comment in comments]
-    RedisInterface.set(f'post:{post_id}:comments:{sortByTop}', ujson.dumps(serializedCommentSet))
-    return jsonify({'post' : res, 'comments' : serializedCommentSet})
 
 @post.route("/<int:post_id>", methods=["PATCH", "OPTIONS"])
 @enforce_json
@@ -186,16 +133,16 @@ def edit_post(post_id : int) -> tuple[Response, int]:
     update_kw = {}
     additional_kw = {}
     if title := g.REQUEST_JSON.pop('title', None):
-        title: str = g.REQUEST_JSON.pop('title').strip()
+        title: str = title.strip()
         if title:
             update_kw['title'] = title
         else:
             additional_kw['title_err'] = "Invalid title"
 
     if body := g.REQUEST_JSON.pop('body', None):
-        body: str = g.REQUEST_JSON.pop('body').strip()
+        body: str = body.strip()
         if body:
-            update_kw["body"] = body
+            update_kw["body_text"] = body
         else:
             additional_kw["body_err"] = "Invalid body"
 
@@ -224,8 +171,9 @@ def edit_post(post_id : int) -> tuple[Response, int]:
         badReq = BadRequest("Empty request for updating post")
         badReq.__setattr__('kwargs', additional_kw)
         raise badReq
-    
+
     db.session.execute(update(Post).where(Post.id == post_id).values(**update_kw))
+    db.session.commit()
     return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected", "post_id" : post_id, **additional_kw}), 202
 
 @post.route("/<int:post_id>", methods=["DELETE", "OPTIONS"])
@@ -252,16 +200,21 @@ def delete_post(post_id: int) -> Response:
     # Post good to go for deletion
     try:
         db.session.execute(update(Post).where(Post.id == post_id).values(deleted = True, time_deleted = datetime.now()))
+        db.session.commit()
     except:
         exc: Exception = Exception()
         exc.__setattr__('description', 'Failed to delete post')
         raise exc
     
+    redirect:bool =  'request_redirect' in request.args
+    if redirect:
+        redirectionForum: str = db.session.execute(select(Forum._name).where(Forum.id == post.forum_id)).scalar_one()
+    
     # Decrement posts counter for this forum
     postsCounterKey: str = RedisInterface.hget(f"{Forum.__tablename__}:posts", post.forum_id)
     if postsCounterKey:
         RedisInterface.decr(postsCounterKey)
-        return jsonify({'message' : 'post deleted'}), 200
+        return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else f'/view/forum/{redirectionForum}'}), 200
 
 
     # No counter, create one
@@ -274,7 +227,7 @@ def delete_post(post_id: int) -> Response:
     else:
         RedisInterface.hset(f'{Forum.__tablename__}:posts', post.forum_id, postsCounterKey)
     
-    return jsonify({'message' : 'post deleted'}), 200
+    return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else f'/view/forum/{redirectionForum}'}), 200
 
 @post.route("/<int:post_id>/vote", methods=["OPTIONS", "PATCH"])
 @token_required
@@ -301,10 +254,11 @@ def vote_post(post_id: int) -> tuple[Response, int]:
             else:
                 # Going from upvote to downvote, or vice-versa. Counter will be incremented or decremented by 2
                 bSwitchVote = True
+                RedisInterface.xadd("WEAK_DELETIONS", {'voter_id' : g.decodedToken['sid'], 'post_id' : post_id, 'table' : PostVote.__tablename__})
     except SQLAlchemyError: genericDBFetchException()
 
-    # Check if counter for this post's votes exists already
-    voteCounterKey: int = RedisInterface.hget(f"{Post.__tablename__}:votes", post_id)
+    # Check if counter for this post's score exists already
+    voteCounterKey: int = RedisInterface.hget(f"{Post.__tablename__}:score", post_id)
     if voteCounterKey:
         if vote:
             # Upvote
@@ -313,11 +267,6 @@ def vote_post(post_id: int) -> tuple[Response, int]:
             # Downvote
             RedisInterface.decr(voteCounterKey, 2 if bSwitchVote else 1) 
 
-        if bSwitchVote:
-            # Remove old weak entity for user VOTES ON posts
-            RedisInterface.xadd("WEAK_DELETIONS", {'voter_id' : g.decodedToken['sid'], 'post_id' : post_id, 'table' : PostVote.__tablename__})
-        RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.decodedToken['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__})
-        
         # Add new weak entity for user VOTES ON posts
         RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.decodedToken['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__})
         return jsonify({"message" : "Voted!"}), 202
@@ -335,13 +284,16 @@ def vote_post(post_id: int) -> tuple[Response, int]:
     # Handle insertion and deletion of weak entities in advance
     if bSwitchVote:
         # Remove old WE for user VOTES ON posts in advance
-        RedisInterface.xadd("WEAK_DELETIONS", {'voter_id' : g.decodedToken['sid'], 'post_id' : post_id, 'table' : PostVote.__tablename__})
+        db.session.execute(delete(PostVote).where((PostVote.post_id == post_id) & (PostVote.voter_id == g.decodedToken['sid'])))
+        db.session.commit()
+        # RedisInterface.xadd("WEAK_DELETIONS", {'voter_id' : g.decodedToken['sid'], 'post_id' : post_id, 'table' : PostVote.__tablename__})
 
     # Insert new WE
     RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.decodedToken['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__})
 
     # Finally, update counter
-    op = RedisInterface.set(voteCounterKey, pScore+1 if vote else pScore-1, nx=True)
+    delta = 2 if bSwitchVote else 1
+    op = RedisInterface.set(voteCounterKey, pScore+delta if vote else pScore-delta, nx=True)
     if not op:
         # Other Flask worker created a counter during handling of this request, update counter
         if vote:
@@ -378,7 +330,7 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
 
     # Check if counter for this post's votes exists already
-    voteCounterKey: str = RedisInterface.hget(f"{Post.__tablename__}:votes", post_id)
+    voteCounterKey: str = RedisInterface.hget(f"{Post.__tablename__}:score", post_id)
     if voteCounterKey:
         if vote:
             # Remove upvote
@@ -393,7 +345,7 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
     # No counter found
     try:
         # Fetch current score of post
-        pScore: int = db.session.execute(select(Post.score).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
+        pScore: int = db.session.execute(select(Post.score).where(Post.id == post_id)).scalar_one_or_none()
         if pScore == None:
             raise NotFound("No such post exists")
     except SQLAlchemyError: genericDBFetchException()
@@ -537,6 +489,77 @@ def report_post(post_id: int) -> tuple[Response, int]:
     return jsonify({"message" : "Reported!"}), 202
 
 
-# @post.route("/<int:post_id>/comment", methods=['POST'])
-# @token_required
-# def comment_on_post(post_id: int) -> tuple[Response, int]:
+@post.route("/<int:post_id>/comment", methods=['POST'])
+@enforce_json
+@token_required
+def comment_on_post(post_id: int) -> tuple[Response, int]:
+    commentBody = g.REQUEST_JSON.get('body')
+    if not commentBody:
+        raise BadRequest("Comment body missing")
+    
+    if not isinstance(commentBody, str):
+        try:
+            commentBody = str(commentBody)
+        except:
+            raise BadRequest('Invalid comment body')
+            
+    try:
+        post: Post = db.session.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
+        if not post:
+            raise NotFound('No such post exists')
+    except SQLAlchemyError: genericDBFetchException()
+    comment: Comment = Comment(g.decodedToken['sid'], post.forum_id, datetime.now(), commentBody.strip(), post_id, None, None)
+
+    RedisInterface.xadd('INSERTIONS', rediserialize(comment.__attrdict__()) | {'table' : Comment.__tablename__})
+
+    return jsonify({'message' : 'comment added!'}), 202
+
+@post.route('/<int:post_id>/comments')
+def get_post_comments(post_id: int) -> tuple[Response, int]:
+    try:
+        rawCursor = request.args.get('cursor', '0').strip()
+        if rawCursor == '0':
+            cursor = 0
+            init: bool = True
+        else:
+            init: bool = False
+            cursor = int(base64.b64decode(rawCursor).decode())
+    except (ValueError, TypeError, binascii.Error):
+        raise BadRequest("Failed to load more posts. Please refresh this page")
+
+    try:
+        commentsDetails: list[tuple[str, Comment]] = db.session.execute(
+            select(User.username, Comment)
+            .where((Comment.id > cursor) & (Comment.parent_post == post_id))
+            .join(User, Comment.author_id == User.id)
+            .order_by(Comment.id)
+            .limit(6)
+        ).all()
+    except SQLAlchemyError:
+        return jsonify({'comments': None, 'cursor': cursor, 'end': True}), 200
+
+    end: bool = False
+    if len(commentsDetails) < 6:
+        end = True
+    else:
+        commentsDetails.pop(-1)
+
+    comments: list[dict] = []
+    new_cursor = cursor
+
+    for username, comment in commentsDetails:
+        comments.append({
+            'id': comment.id,
+            'author': username,
+            'body': comment.body,
+            'created_at': comment.time_created.isoformat()
+        })
+        new_cursor = max(new_cursor, comment.id)
+
+    encoded_cursor = base64.b64encode(str(new_cursor).encode()).decode()
+
+    return jsonify({
+        'comments': comments,
+        'cursor': encoded_cursor,
+        'end': end
+    }), 200
