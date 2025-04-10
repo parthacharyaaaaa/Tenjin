@@ -39,7 +39,7 @@ def sub_anime(anime_id: int) -> tuple[Response, int]:
         if not anime:
             raise NotFound('No anime found with this ID')
     except SQLAlchemyError: genericDBFetchException()
-    subCounterKey: str = RedisInterface.hget(f'{Anime.__tablename__}:subscribers', anime_id)
+    subCounterKey: str = RedisInterface.hget(f'{Anime.__tablename__}:members', anime_id)
     RedisInterface.xadd("WEAK_INSERTIONS", {'user_id' : g.decodedToken['sid'], 'anime_id' : anime_id, 'table' : AnimeSubscription.__tablename__})
     if subCounterKey:
         RedisInterface.incr(subCounterKey)
@@ -51,7 +51,7 @@ def sub_anime(anime_id: int) -> tuple[Response, int]:
         RedisInterface.incr(subCounterKey)
         return jsonify({'message' : 'subscribed!'})
     
-    RedisInterface.hset(f"{Anime.__tablename__}:subscribers", anime_id, subCounterKey)
+    RedisInterface.hset(f"{Anime.__tablename__}:members", anime_id, subCounterKey)
     return jsonify({'message' : 'subscribed!'})
 
 @anime.route("/<int:anime_id>/unsubscribe", methods=["PATCH"])
@@ -63,7 +63,7 @@ def unsub_anime(anime_id: int) -> tuple[Response, int]:
             raise NotFound('No anime found with this ID')
     except SQLAlchemyError: genericDBFetchException()
 
-    subCounterKey: str = RedisInterface.hget(f'{Anime.__tablename__}:subscribers', anime_id)
+    subCounterKey: str = RedisInterface.hget(f'{Anime.__tablename__}:members', anime_id)
     RedisInterface.xadd("WEAK_DELETIONS", {'user_id' : g.decodedToken['sid'], 'anime_id' : anime_id, 'table' : AnimeSubscription.__tablename__})
     if subCounterKey:
         RedisInterface.decr(subCounterKey)
@@ -75,7 +75,7 @@ def unsub_anime(anime_id: int) -> tuple[Response, int]:
         RedisInterface.decr(subCounterKey)
         return jsonify({'message' : 'unsubscribed!'})
     
-    RedisInterface.hset(f"{Anime.__tablename__}:subscribers", anime_id, subCounterKey)
+    RedisInterface.hset(f"{Anime.__tablename__}:members", anime_id, subCounterKey)
     return jsonify({'message' : 'unsubscribed!'})
     
 
