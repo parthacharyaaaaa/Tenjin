@@ -56,6 +56,10 @@ document.addEventListener('DOMContentLoaded', async () => {
                 forum.appendChild(metaDiv);
                 forum.appendChild(desc);
 
+                forum.addEventListener('click', () => {
+                    window.location.href = `/view/forum/${f.name}`
+                })
+
                 forumContainer.appendChild(forum);
             })
 
