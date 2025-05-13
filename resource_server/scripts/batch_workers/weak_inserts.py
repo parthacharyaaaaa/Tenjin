@@ -83,11 +83,8 @@ if __name__ == "__main__":
                     else:
                         dTypesList = getDtypes(dbCursor, table, includePrimaryKey=True)
                         dtypes_cache[table] = dTypesList
-                        # print(f"{dTypesList=}")
-                        # print(f"{tableData.values()=}")
 
                         tableData = {k : dTypesList[idx](v) if v else v for idx, (k,v) in enumerate(tableData.items())}
-                        print(tableData)
 
                     if query_groups.get(table):
                         query_groups[table].append(tableData)
@@ -100,12 +97,15 @@ if __name__ == "__main__":
             for qidx, (table, qargs) in enumerate(query_groups.items()):
                 try:
                     template: str =  templates_cache.get(table)
+                    columns = tuple(qargs[0].keys())
+                    tColumns = '(' + ', '.join(columns) + ')'
                     if not template:
-                        columns = tuple(qargs[0].keys())
-                        tColumns = '(' + ', '.join(columns) + ')'
                         template: str = '(' + ', '.join(f"%({k})s" for k in columns) + ')'
                         templates_cache[table] = template
+                        print("Cached table: ", table)
+                        print("Current cache: ", templates_cache)
                     
+                    print(f'{template=}')
                     _res: tuple[tuple[int]] = execute_values(cur=dbCursor, 
                                                             sql=INSERTION_SQL.format(table_name = table, tColumns = tColumns, query_id = qidx),
                                                             argslist=qargs,
@@ -124,8 +124,13 @@ if __name__ == "__main__":
                     print(f"[{ID}]: Table not found")
                     dbCursor.execute(f"ROLLBACK TO s{ID}")
                 except pg.errors.Error as pg_error:
-                    print(f"[{ID}]: Error in executing batch isnert for table {table}, exception: {pg_error.__class__.__name__}")
+                    print(f"[{ID}]: Error in executing batch insert for table {table}, exception: {pg_error.__class__.__name__}")
                     print(f"[{ID}]: Error details: {format_exc()}")
+                    print("Current vars:")
+                    print(templates_cache)
+                    print(INSERTION_SQL.format(table_name = table, tColumns = tColumns, query_id = qidx))
+                    print(qargs)
+                    print(template)
                     dbCursor.execute(f"ROLLBACK TO SAVEPOINT s{ID}")
 
             interface.xtrim(streamName, minid=trimUB)

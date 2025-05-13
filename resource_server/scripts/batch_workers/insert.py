@@ -101,9 +101,9 @@ if __name__ == "__main__":
                 try:
                     print(qargs)
                     template: str =  templates_cache.get(table)
+                    columns = tuple(qargs[0].keys())
+                    tColumns = '(' + ', '.join(columns) + ')'
                     if not template:
-                        columns = tuple(qargs[0].keys())
-                        tColumns = '(' + ', '.join(columns) + ')'
                         template: str = '(' + ', '.join(f"%({k})s" for k in columns) + ')'
                         templates_cache[table] = template
                     
