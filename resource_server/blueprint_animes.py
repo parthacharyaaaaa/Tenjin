@@ -2,20 +2,26 @@ from werkzeug.exceptions import BadRequest, NotFound
 import base64
 import binascii
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 from resource_server.models import db, Anime, AnimeGenre, Genre, StreamLink, Forum, AnimeSubscription
-from sqlalchemy import select, and_, text
+from sqlalchemy import select, and_, func
 from sqlalchemy.exc import SQLAlchemyError
+from flask_sqlalchemy import SQLAlchemy
 
-from auxillary.utils import genericDBFetchException, getRandomChancesList
+from auxillary.utils import genericDBFetchException
 from auxillary.decorators import token_required
 
 from resource_server.external_extensions import RedisInterface
-
-RANDOM_SELECTION_SQL: str = text('SELECT * FROM animes WHERE id >= FLOOR(RANDOM() * (SELECT MAX(id) FROM animes)) ORDER BY ID LIMIT 1;')
-
 from flask import Blueprint, Response, g, jsonify, request, redirect, url_for
 anime = Blueprint('animes', 'animes', url_prefix="/animes")
+
+RANDOMIZER_SQL = (select(Anime).where(Anime.id >= func.floor(func.random() * select(func.max(Anime.id)).scalar_subquery())).order_by(Anime.id).limit(50))
+def getRandomAnimes(database: SQLAlchemy) -> list[Anime]:
+    return database.session.execute(RANDOMIZER_SQL).scalars().all()
+
+randomAnimes: list[Anime] = []
+executor = ThreadPoolExecutor(2)
 
 @anime.route("/<int:anime_id>")
 def get_anime(anime_id: int) -> tuple[Response, int]:
@@ -34,12 +40,19 @@ def get_anime(anime_id: int) -> tuple[Response, int]:
 
 @anime.route("/random")
 def get_random_anime():
-    print("CALLED")
+    global randomAnimes
     maxTries: int = 3
     found: bool = False
     try:
         for attempt in range(maxTries):
-            anime: Anime = db.session.execute(RANDOM_SELECTION_SQL).first()
+            if not randomAnimes:
+                randomAnimes = getRandomAnimes(db)
+            
+            anime: Anime = randomAnimes.pop()
+            if len(randomAnimes) < 10:
+                future = executor.submit(getRandomAnimes, db)
+                newRandomAnimes = future.result()
+                randomAnimes.extend(newRandomAnimes)
             if anime:
                 found = True
                 break
@@ -50,7 +63,6 @@ def get_random_anime():
                                             .order_by(Anime.id.asc())).scalar_one_or_none()
             
     
-        print(anime.random_chance)
     except SQLAlchemyError: genericDBFetchException()
     return redirect(url_for('templates.view_anime', _external=False, anime_id = anime.id, random_prefetch=anime))
 
