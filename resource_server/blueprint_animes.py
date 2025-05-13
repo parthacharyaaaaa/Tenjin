@@ -4,16 +4,17 @@ import binascii
 from collections import defaultdict
 
 from resource_server.models import db, Anime, AnimeGenre, Genre, StreamLink, Forum, AnimeSubscription
-from sqlalchemy import select
+from sqlalchemy import select, and_, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from auxillary.utils import genericDBFetchException
+from auxillary.utils import genericDBFetchException, getRandomChancesList
 from auxillary.decorators import token_required
 
 from resource_server.external_extensions import RedisInterface
 
+RANDOM_SELECTION_SQL: str = text('SELECT * FROM animes WHERE id >= FLOOR(RANDOM() * (SELECT MAX(id) FROM animes)) ORDER BY ID LIMIT 1;')
 
-from flask import Blueprint, Response, g, jsonify, request
+from flask import Blueprint, Response, g, jsonify, request, redirect, url_for
 anime = Blueprint('animes', 'animes', url_prefix="/animes")
 
 @anime.route("/<int:anime_id>")
@@ -30,6 +31,28 @@ def get_anime(anime_id: int) -> tuple[Response, int]:
 
     _res = anime.__json_like__() | {'genres' : genres}
     return jsonify({'anime' : _res}), 200
+
+@anime.route("/random")
+def get_random_anime():
+    print("CALLED")
+    maxTries: int = 3
+    found: bool = False
+    try:
+        for attempt in range(maxTries):
+            anime: Anime = db.session.execute(RANDOM_SELECTION_SQL).first()
+            if anime:
+                found = True
+                break
+        
+        if not found:
+            anime: Anime = db.session.execute(select(Anime)
+                                            .limit(1)
+                                            .order_by(Anime.id.asc())).scalar_one_or_none()
+            
+    
+        print(anime.random_chance)
+    except SQLAlchemyError: genericDBFetchException()
+    return redirect(url_for('templates.view_anime', _external=False, anime_id = anime.id, random_prefetch=anime))
 
 @anime.route("/<int:anime_id>/subscribe", methods=["PATCH"])
 @token_required
@@ -89,11 +112,17 @@ def get_animes() -> tuple[Response, int]:
             raise BadRequest("Failed to load more posts. Please refresh this page")
         else:
             cursor = int(base64.b64decode(rawCursor).decode())
+
+        searchParam: str = request.args.get('search', '').strip()
     except (ValueError, TypeError, binascii.Error):
             raise BadRequest("Failed to load more posts. Please refresh this page")
+    
     try:
+        whereClause = [Anime.id > cursor]
+        if searchParam:
+            whereClause.append(Anime.title.ilike(f"%{searchParam}%"))   # searchParam is a string anyways, so we can safely inject it in an expression >:3
         animes: list[Anime] = db.session.execute(select(Anime)
-                                                .where((Anime.id > cursor))
+                                                .where(and_(*whereClause))
                                                 .order_by(Anime.id.asc())
                                                 .limit(10)).scalars().all()
         if not animes:
