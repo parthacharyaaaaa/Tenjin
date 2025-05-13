@@ -82,7 +82,7 @@ def unsub_anime(anime_id: int) -> tuple[Response, int]:
 @anime.route("/")
 def get_animes() -> tuple[Response, int]:
     try:
-        rawCursor = request.args.get('cursor').strip()
+        rawCursor = request.args.get('cursor', '0').strip()
         if rawCursor == '0':
             cursor = 0
         elif not rawCursor:
@@ -94,6 +94,7 @@ def get_animes() -> tuple[Response, int]:
     try:
         animes: list[Anime] = db.session.execute(select(Anime)
                                                 .where((Anime.id > cursor))
+                                                .order_by(Anime.id.asc())
                                                 .limit(10)).scalars().all()
         if not animes:
             return jsonify({'animes' : None})
@@ -110,7 +111,6 @@ def get_animes() -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
 
     cursor = base64.b64encode(str(animes[-1].id).encode('utf-8')).decode()
-
     result = [anime.__json_like__() | {'genres': genres.get(anime.id, [])} for anime in animes]
     return jsonify({'animes' : result, 'cursor' : cursor}), 200
 
