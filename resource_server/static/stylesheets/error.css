@@ -1,0 +1,76 @@
+footer{
+    display: none;
+    overflow: hidden;
+}
+
+header #header-anime-link{
+    display: none;
+}
+
+.error-container{
+    display: flex;
+    padding: 1rem;
+}
+
+.error-info{
+    width: 40%;
+    & h3{
+        font-size: var(--FSIZE-XXL);
+    }
+
+    & p{
+        font-size: var(--FSIZE-L);
+    }
+
+    & .links{
+        display: flex;
+        flex-direction: column;
+
+        & a{
+            color: var(--FCOLOR-PRIMARY);
+            text-decoration: underline;
+
+            &:visited, &:focus, &:active{
+                color: var(--FCOLOR-HIGHLIGHT);
+            }
+
+            &:hover{
+                cursor: pointer;
+            }
+        }
+    }
+}
+
+.error-image{
+    width: 60%;
+    
+    & img{
+        /* float: right; */
+        margin-left: 8rem;
+        border-bottom: 5px solid var(--FCOLOR-PRIMARY);
+    }
+}
+
+@media (max-width: 1080px){
+    .error-container{
+        flex-direction: column;
+        justify-content: center;
+    }
+
+    .error-info{
+        text-align: center;
+        margin: 0 auto;
+        width: 100%;
+    }
+
+    .error-image{
+        width: 100%;
+
+        & > img{
+            margin: 0 17.5%;
+            /* margin-left: 10rem; */
+            width: 70%;
+            height: 100%;
+        }
+    }
+}
