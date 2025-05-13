@@ -5,7 +5,7 @@ from werkzeug.exceptions import NotFound
 
 templates: Blueprint = Blueprint('templates', __name__, template_folder='templates')
 
-from resource_server.models import db, Post, User, Forum, ForumRules, Anime, AnimeSubscription, ForumSubscription, ForumAdmin, StreamLink
+from resource_server.models import db, Post, User, Forum, ForumRules, Anime, AnimeSubscription, ForumSubscription, ForumAdmin, StreamLink, AnimeGenre, Genre
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from auxillary.utils import genericDBFetchException
@@ -100,18 +100,21 @@ def view_anime(anime_id) -> tuple[str, int]:
         anime: Anime | None = db.session.execute(select(Anime).where(Anime.id == anime_id)).scalar_one_or_none()
         if not anime:
             return render_template('error.html',
-                                   code = 400, 
-                                   msg = 'The anime you requested could not be found :(',
-                                   links = [('Back to home', url_for('.index')), ('Browse available animes', url_for('.get_anime'))])
+                                code = 400, 
+                                msg = 'The anime you requested could not be found :(',
+                                links = [('Back to home', url_for('.index')), ('Browse available animes', url_for('.get_anime'))])
         
         streamLinks: list[StreamLink] | None = db.session.execute(select(StreamLink)
                                                                   .where(StreamLink.anime_id == anime_id)).scalars().all()
         
-        animeMapping: dict = anime.__json_like__() | {'stream_links' : {link.website:link.url for link in streamLinks}}
+        genres: list[str] = db.session.execute(select(Genre._name)
+                        .join(AnimeGenre, Genre.id == AnimeGenre.genre_id)
+                        .where(AnimeGenre.anime_id == anime_id)).scalars().all()
+        
+        animeMapping: dict = anime.__json_like__() | {'stream_links' : {link.website:link.url for link in streamLinks}, 'genres' : genres}
 
     except SQLAlchemyError: genericDBFetchException()
 
-    # Cache found anime
     RedisInterface.set(f'anime:{anime_id}', ujson.dumps(animeMapping))
 
     isSubbed: bool = False
