@@ -121,27 +121,42 @@ html {
     opacity: 0.95;
     border-bottom: 1px dashed var(--BDRCOLOR);
     padding-bottom: 0.5rem;
+
+    & div{
+        display: flex;
+        flex-flow: column nowrap;
+        background-color: var(--BDRCOLOR);
+        padding: 8px;
+        border-radius: 5px;
+        text-align: center;
+
+        & span{
+            font-weight: bolder;
+            color: var(--FCOLOR-HIGHLIGHT)
+        }
+    }
 }
 
-.stream-links-list {
+.stream-links{
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
     margin-top: 0.4rem;
+
+    & a {
+        color: var(--FCOLOR-HIGHLIGHT);
+        font-weight: 500;
+        font-size: 0.95rem;
+        transition: color 0.2s ease;
+        word-break: break-all;
+    }
+    
+    & a:hover {
+        color: var(--FCOLOR);
+        text-decoration: underline;
+    }
 }
 
-.stream-link a {
-    color: var(--FCOLOR-HIGHLIGHT);
-    font-weight: 500;
-    font-size: 0.95rem;
-    transition: color 0.2s ease;
-    word-break: break-all;
-}
-
-.stream-link a:hover {
-    color: var(--FCOLOR);
-    text-decoration: underline;
-}
 
 .forum-post h3 {
     font-size: 1.4rem;

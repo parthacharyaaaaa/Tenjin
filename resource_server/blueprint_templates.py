@@ -1,15 +1,18 @@
 
 '''Blueprint for serving HTML files. No URL prefix for these endpoints is required'''
-from flask import Blueprint, render_template, request, g
+from flask import Blueprint, render_template, request, g, url_for
 from werkzeug.exceptions import NotFound
 
 templates: Blueprint = Blueprint('templates', __name__, template_folder='templates')
 
-from resource_server.models import db, Post, User, Forum, ForumRules, Anime, AnimeSubscription, ForumSubscription, ForumAdmin
+from resource_server.models import db, Post, User, Forum, ForumRules, Anime, AnimeSubscription, ForumSubscription, ForumAdmin, StreamLink
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from auxillary.utils import genericDBFetchException
 from auxillary.decorators import pass_user_details
+
+from resource_server.external_extensions import RedisInterface
+import ujson
 
 ###========================= ENDPOINTS =========================###
 
@@ -82,16 +85,46 @@ def get_anime() -> tuple[str, int]:
     return render_template('animes.html', auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)
 
 @templates.route('/view/anime/<int:anime_id>')
+@pass_user_details
 def view_anime(anime_id) -> tuple[str, int]:
     try:
-        anime = db.session.execute(select(Anime).where(Anime.id == anime_id)).scalar_one_or_none()
+        result: dict = RedisInterface.get(f"anime:{anime_id}")
+        if result:
+            return render_template('anime.html',
+                                anime=result,
+                                auth = request.cookies.get('access', request.cookies.get('Access')))
+    except:
+        ... #TODO: Add some logging logic for cache failures
+
+    try:
+        anime: Anime | None = db.session.execute(select(Anime).where(Anime.id == anime_id)).scalar_one_or_none()
         if not anime:
-            raise NotFound("No anime with this ID could be found")
+            return render_template('error.html',
+                                   code = 400, 
+                                   msg = 'The anime you requested could not be found :(',
+                                   links = [('Back to home', url_for('.index')), ('Browse available animes', url_for('.get_anime'))])
         
+        streamLinks: list[StreamLink] | None = db.session.execute(select(StreamLink)
+                                                                  .where(StreamLink.anime_id == anime_id)).scalars().all()
         
+        animeMapping: dict = anime.__json_like__() | {'stream_links' : {link.website:link.url for link in streamLinks}}
+
     except SQLAlchemyError: genericDBFetchException()
+
+    # Cache found anime
+    RedisInterface.set(f'anime:{anime_id}', ujson.dumps(animeMapping))
+
+    isSubbed: bool = False
+    try:
+        isSubbed = db.session.execute(select(AnimeSubscription)
+                                      .where((AnimeSubscription.anime_id == anime_id) & (AnimeSubscription.user_id == g.requestUser.get('sid')))
+                                      .limit(1)).scalar_one_or_none()
+    except: ... # Since anime has already been fetched, we can ignore a failure in a simple weak entity fetch for now
+
     return render_template('anime.html',
-                           auth = True if request.cookies.get('access', request.cookies.get('Access')) else False)
+                           anime=animeMapping,
+                           auth = request.cookies.get('access', request.cookies.get('Access')),
+                           subbed = isSubbed)
 
 @templates.route('/view/post/<int:post_id>')
 def view_post(post_id: int) -> tuple[str, int]:
