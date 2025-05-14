@@ -18,7 +18,7 @@
         <input type="password" name="confirm_password" id="cpassword" class="form-text-input" placeholder="Confirm Password" >
         <input type="text" name="alias" id="alias" class="form-text-input" placeholder="Alias (optional)">
 
-        <button type="button" class="btn-primary" style="margin: 0 auto;">&nbsp;&nbsp; Sign Up &nbsp;&nbsp;</button>
+        <button type="button" class="btn-primary" id="sign-up" style="margin: 0 auto;">&nbsp;&nbsp; Sign Up &nbsp;&nbsp;</button>
     </div>
 
     <div id="login-signup">        
@@ -27,4 +27,8 @@
     </div>
 </form>
 
+{% endblock %}
+
+{% block scripts %}
+<script type="text/javascript" src="{{url_for('static', filename='scripts/signup.js')}}"></script>
 {% endblock %}
