@@ -1,8 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
-from flask import url_for
 
 from sqlalchemy import PrimaryKeyConstraint, CheckConstraint, UniqueConstraint, MetaData
-from sqlalchemy.sql import text, DDL
+from sqlalchemy.sql import text
 from sqlalchemy.dialects.postgresql import TIMESTAMP, BYTEA, ENUM
 from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, NUMERIC, TEXT
 
