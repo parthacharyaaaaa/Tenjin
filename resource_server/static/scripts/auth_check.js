@@ -28,6 +28,33 @@ document.addEventListener('DOMContentLoaded', async () => {
             img_icon.classList.add('header-icon');
             img_icon.src = "/static/assets/user_icon.png";
             navLinks.appendChild(img_icon);
+
+            const logoutButton = document.createElement('button');
+            logoutButton.classList.add('btn-primary');
+            logoutButton.innerText = 'Logout';
+            logoutButton.addEventListener('click', async () => {
+                try{
+                    const response = await fetch('http://192.168.0.104:8000/purge-family', {
+                        method:'GET',
+                        credentials:'include'
+                    });
+
+                    if(!response.ok){
+                        throw new Error('Failed to logout correctly');
+                    }
+
+                    removeAuthDetails();
+                    window.location.href = '/';
+                    return;
+                }
+                
+                catch(error){
+                    removeAuthDetails();
+                    console.error(error);
+                }
+            });
+
+            navLinks.appendChild(logoutButton);
         }
         else{
             const loginButton = document.createElement('button');
@@ -48,6 +75,4 @@ document.addEventListener('DOMContentLoaded', async () => {
             navLinks.appendChild(signupButton);
         }
     }
-
-
 })

@@ -230,6 +230,7 @@ def reissue():
     return response, 201
 
 @auth.route("/purge-family", methods = ["GET", "OPTIONS"])
+@cross_origin(supports_credentials=True)
 def purgeFamily():
     '''
     Purges an entire token family in case of a reuse attack or a normal client logout
