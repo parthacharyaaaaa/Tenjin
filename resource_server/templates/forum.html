@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 
 {% block title %}
-{{ forum._name }}
+{{ name }}
 {% endblock %}
 
 {% block depends %}
 <link rel="stylesheet" href="{{ url_for('static', filename='stylesheets/forum.css') }}">
-<meta name="forumID" value={{forum.id}}>
+<meta name="forumID" value="{{forum_mapping['forum']['id']}}">
 <meta name="auth" value={{auth}}>
 {% endblock %}
 
@@ -32,43 +32,31 @@
             <div class="text-info">
                 <h4>{{name}}</h4>
                 <span id="forum_desc">
-                    {{forum.description}}
+                    {{forum_mapping['forum']['description']}}
                 </span>
-                <span id="epoch">{{forum.created_at}}</span>
+                <span id="epoch">{{forum_mapping['forum']['created_at']}}</span>
             </div>
             <div class="stats">
                 <div class="stat-block">
                     <span class="stat-header">Members</span>
-                    <span class="stat-item">{{forum.subscribers}}</span>
+                    <span class="stat-item" id="forum-subs">{{forum_mapping['forum']['subscribers']}}</span>
                 </div>
                 <div class="stat-block">
                     <span class="stat-header">Admins</span>
-                    <span class="stat-item">{{forum.admin_count}}</span>
+                    <span class="stat-item">{{forum_mapping['forum']['admin_count']}}</span>
                 </div>
                 <div class="stat-block">
                     <span class="stat-header">Posts</span>
-                    <span class="stat-item">{{forum.posts}}</span>
+                    <span class="stat-item" id="posts-count">{{forum_mapping['forum']['posts']}}</span>
                 </div>
             </div>
             <hr>
-            {% if rules %}
+            {% if rules in forum_mapping %}
             <div class="forum-rules">
                 {% for rule in rules %}
                 <div class="forum-rule">
-                    <h4>{{rule.title}}</h4>
-                    <p>{{rule.body}}</p>
-                </div>
-                {% endfor %}
-            </div>
-            {% endif %}
-
-            {% if relatedForums %}
-            <div class="related-forums">
-                {% for forum in relatedForums %}
-                <div class="related-forum">
-                    <a target="_blank" href="{{url_for('.forum', name=forum._name)}}">
-                        <h4>{{forum._name}}</h4>
-                    </a>
+                    <h4>{{rule['title']}}</h4>
+                    <p>{{rule['body']}}</p>
                 </div>
                 {% endfor %}
             </div>
@@ -109,7 +97,7 @@
                     </select>
                 </div>
             </div>
-            <div class="posts-scrollable">
+            <div class="posts-scrollable" id="posts-scrollable">
                 
             </div>
         </div>

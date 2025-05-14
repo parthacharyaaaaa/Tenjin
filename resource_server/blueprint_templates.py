@@ -37,57 +37,62 @@ def signup() -> tuple[str, int]:
 @templates.route('/view/forum/<string:name>')
 @pass_user_details
 def forum(name: str) -> tuple[str, int]:
+    cachedMapping: dict[str, Any] = None
     try:
-        # Fetch forum details
-        forum: Forum = db.session.execute(select(Forum).where(Forum._name == name)).scalar_one_or_none()
-        if not forum:
-            return render_template('error.html',
-                                   code=404,
-                                   message='No forum with this name could be find',
-                                   links = [('Back to home', url_for('.index'))])
-        
-        # Fetch highlighted posts
-        highlightedPosts: list[Post] = db.session.execute(select(Post).where(Post.id.in_([forum.highlight_post_1, forum.highlight_post_2, forum.highlight_post_3]))).scalars().all()
+        cachedMapping = ujson.loads(RedisInterface.get(f'view:forum:{name}'))
+    except: ...
 
-        # Fetch rules
-        forumRules: list[ForumRules] = db.session.execute(select(ForumRules).where(ForumRules.forum_id == forum.id)).scalars().all()
+    try:
+        if not cachedMapping:
+            # Fetch forum details
+            forum: Forum = db.session.execute(select(Forum).where(Forum._name == name)).scalar_one_or_none()
+            if not forum:
+                return render_template('error.html',
+                                    code=404,
+                                    message='No forum with this name could be found',
+                                    links = [('Back to home', url_for('.index'))])
+            
+            # Fetch highlighted posts
+            highlightedPosts: list[Post] = db.session.execute(select(Post).where(Post.id.in_([forum.highlight_post_1, forum.highlight_post_2, forum.highlight_post_3]))).scalars().all()
 
-        # Fetch admins
-        forumAdmins: list[ForumAdmin] = db.session.execute(select(User.username)
-                                                           .join(ForumAdmin, ForumAdmin.user_id == User.id)
-                                                           .join(Forum, Forum.id == ForumAdmin.forum_id)
-                                                           .where(Forum._name == name)
-                                                           ).scalars().all()
-        
-        # Fetch related forums (if any)
-        relatedForums: list[Forum] = db.session.execute(select(Forum._name).where(Forum.anime == forum.anime).limit(3)).scalars().all()
+            # Fetch rules
+            forumRules: list[ForumRules] = db.session.execute(select(ForumRules).where(ForumRules.forum_id == forum.id)).scalars().all()
+
+            # Fetch admins
+            forumAdmins: list[str] = db.session.execute(select(User.username)
+                                                            .join(ForumAdmin, ForumAdmin.forum_id == forum.id)
+                                                            .where(User.id == ForumAdmin.user_id)
+                                                            ).scalars().all()
 
         # Fetch if subscribed
         if g.requestUser:
             subbedForum = db.session.execute(select(ForumSubscription)
                                              .where((ForumSubscription.forum_id == forum.id) & (ForumSubscription.user_id == g.requestUser['sid']))).scalar_one_or_none()
         # Check if admin
-
-            
         else:
             subbedForum = None
+    except SQLAlchemyError: genericDBFetchException()
+
+    if not cachedMapping:
         if len(forumAdmins) == 6:
             forumAdmins.pop(-1)
             showAllAdminsLink: bool = True
         else:
             showAllAdminsLink: bool = False
 
-    except SQLAlchemyError: genericDBFetchException()
+        # Big boy query, needs to be cached
+        forumFullMapping = {'forum' : forum.__json_like__(),
+                            'forum_rules' : tuple(forumRule.__json_like__() for forumRule in forumRules),
+                            'forum_admins' : forumAdmins,
+                            'show_all_admins':showAllAdminsLink,
+                            'highlighted_posts' : tuple(highlightedPost.__json_like__() for highlightedPost in highlightedPosts)}
+        
+        RedisInterface.set(f'view:forum:{name}', ujson.dumps(forumFullMapping), ex=300)
 
     return render_template('forum.html',
                            name = name,
-                           highlighted_posts=highlightedPosts,
+                           forum_mapping = cachedMapping if cachedMapping else forumFullMapping,
                            subbed=bool(subbedForum),
-                           forum=forum,
-                           rules=forumRules,
-                           relatedForums=relatedForums,
-                           forumAdmins=forumAdmins,
-                           showAllAdminsLink=showAllAdminsLink,
                            userlink = None if not g.requestUser else g.requestUser['sub'])
 
 @templates.route('/catalogue/animes')
