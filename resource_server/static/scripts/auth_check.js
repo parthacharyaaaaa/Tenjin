@@ -51,6 +51,19 @@ window.dependencyReady = new Promise((resolve) => {
                 const img_icon = document.createElement('img');
                 img_icon.classList.add('header-icon');
                 img_icon.src = "/static/assets/user_icon.png";
+
+                const profileLink = document.querySelector('meta[name="user-profile-url"');
+                if(profileLink && profileLink !== undefined){
+                    img_icon.addEventListener('click', () => {
+                        window.location.href = profileLink.getAttribute('content');
+                    });
+                }
+                else{
+                    img_icon.addEventListener('click', () => {
+                        alert("We couldn't load your profile at the current time :(");
+                    });
+                }
+
                 navLinks.appendChild(img_icon);
 
                 const logoutButton = document.createElement('button');
