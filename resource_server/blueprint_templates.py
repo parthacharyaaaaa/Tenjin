@@ -54,9 +54,10 @@ def forum(name: str) -> tuple[str, int]:
 
         # Fetch admins
         forumAdmins: list[ForumAdmin] = db.session.execute(select(User.username)
-                                                           .where(User.id == ForumAdmin.user_id)
-                                                           .join(ForumAdmin, User.id == ForumAdmin.user_id)
-                                                           .limit(6)).scalars().all()
+                                                           .join(ForumAdmin, ForumAdmin.user_id == User.id)
+                                                           .join(Forum, Forum.id == ForumAdmin.forum_id)
+                                                           .where(Forum._name == name)
+                                                           ).scalars().all()
         
         # Fetch related forums (if any)
         relatedForums: list[Forum] = db.session.execute(select(Forum._name).where(Forum.anime == forum.anime).limit(3)).scalars().all()
