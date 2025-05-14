@@ -11,19 +11,21 @@
 }
 
 :root{
-    --BGCOLOR-PRIMARY: #000000;
-    --BGCOLOR-SECONDARY: #282828;
-    --BGCOLOR-TERTIARY: #4b4b4b;
-    --FCOLOR-PRIMARY: #ffffff;
-    --FCOLOR-HIGHLIGHT: #7a8ca5;
-    --BDRCOLOR: #c5d6e0;
+    --BGCOLOR-PRIMARY: #0d0d0d;         /* near-black for body bg */
+    --BGCOLOR-SECONDARY: #1a1a1a;       /* deep charcoal, card backgrounds */
+    --BGCOLOR-TERTIARY: #2a2a2a;        /* accent panel bg / modals */
 
-    --HOVER-TRANSLUCENT: rgb(0,0,0,0.9);
+    --FCOLOR-PRIMARY: #e0e0e0;          /* soft white for readable text */
+    --FCOLOR-HIGHLIGHT: #80b3ff;        /* soft but vibrant blue highlight */
+    
+    --BDRCOLOR: #3a3f4b;                /* subtle steel border color */
+
+    --HOVER-TRANSLUCENT: rgba(0, 0, 0, 0.85); /* soft hover bg for dark cards */
     
 
 
     --FSIZE-XXL: 3rem;
-    --FSIIZE-XL: 2rem;
+    --FSIZE-XL: 2.2rem;
     --FSIZE-L: 1.5rem;
     --FSIZE: 1rem;
     --FSIZE-S: 10px;

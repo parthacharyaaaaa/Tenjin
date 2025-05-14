@@ -20,8 +20,13 @@ body, html{
 
 .top-bar {
     display: flex;
+    gap: 1rem;
     justify-content: center;
     margin: 1rem auto 2rem;
+
+    & > #search-btn{
+        border-radius: 5px;
+    }
 }
 
 #search-bar {
@@ -43,8 +48,8 @@ body, html{
 
 .content-wrapper {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 0.8fr));
+    gap: 1.2rem;
     padding: 2rem;
     justify-items: center;
 }
@@ -56,23 +61,35 @@ body, html{
     border-radius: 1rem;
     overflow: hidden;
     width: 100%;
-    max-width: 420px;
+    max-width: 380px;
     height: 420px; /* compact height */
     display: flex;
     flex-direction: column;
     box-shadow: 0 0 10px #000;
     transition: transform 0.3s ease;
-}
-
-.anime-card:hover {
-    transform: scale(1.03);
+    
+        & img{
+            transition:inherit;
+            filter: grayscale(1) blur(5px) brightness(0.5);
+            transition: 400ms;
+        }
+    }
+    
+    .anime-card:hover {
+        transform: scale(1.03);
+        cursor: pointer;
+        
+        img{
+        transition: transform 0.3s ease;
+        filter: grayscale(0) brightness(0.6);
+    }
 }
 
 .banner {
     height: 45%;
     background-size: cover;
     background-position: center;
-    filter: blur(4px) brightness(0.6);
+    filter: blur(2px) brightness(0.4);
 }
 
 .anime-content {
@@ -118,4 +135,25 @@ body, html{
     -webkit-box-orient: vertical;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.message-div{
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    text-align: center;
+    padding: 1.5rem;
+    margin-bottom: 3rem;
+    grid-column: span 2;
+    background-color: var(--BGCOLOR-TERTIARY);
+    border: 1px solid var(--BDRCOLOR);
+    border-radius: 10px;
+    font-size: var(--FSIZE-L);
+    
+    & button{
+        margin: 1rem auto;
+        padding: 1.5rem;
+        font-size: var(--FSIZE-L);
+
+    }
 }

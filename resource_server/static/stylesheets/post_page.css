@@ -1,0 +1,353 @@
+/* post_page.css */
+
+#main-wrapper {
+  padding: 2rem;
+  background-color: var(--BGCOLOR-PRIMARY);
+  color: var(--FCOLOR-PRIMARY);
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  min-height: 100vh;
+  width: 80%;
+  margin: 0 auto;
+}
+
+.post-card {
+  background-color: var(--BGCOLOR-SECONDARY);
+  border-radius: 1.5rem;
+  padding: 2rem;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  border: 1px solid var(--BDRCOLOR);
+}
+
+.post-credentials {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: var(--FSIZE);
+  color: var(--FCOLOR-HIGHLIGHT);
+}
+
+#author {
+  font-weight: bold;
+}
+
+#time-posted {
+  margin-left: 1rem;
+  opacity: 0.7;
+}
+
+#post-settings {
+  cursor: pointer;
+}
+
+.post-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+#title {
+  font-size: var(--FSIZE-L);
+  font-weight: bold;
+  font-family: var(--FONT-SIGNATURE);
+}
+
+#body {
+  font-size: var(--FSIZE);
+  line-height: 1.6;
+  white-space: pre-line;
+  font-family: var(--FONT-BODY);
+}
+
+.post-options {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid var(--BGCOLOR-TERTIARY);
+  padding-top: 1rem;
+  font-size: var(--FSIZE);
+}
+
+.post-options div {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.post-options div > * {
+  cursor: pointer;
+  color: var(--FCOLOR-HIGHLIGHT);
+  transition: color 0.3s ease;
+}
+
+.post-options div > *:hover {
+  color: var(--FCOLOR-PRIMARY);
+}
+
+.comment-holder {
+  background-color: var(--BGCOLOR-SECONDARY);
+  border-radius: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--BDRCOLOR);
+}
+
+#comment-bar {
+  width: 100%;
+  background-color: var(--BGCOLOR-TERTIARY);
+  border: none;
+  padding: 0.8rem 1rem;
+  border-radius: 0.75rem;
+  font-size: var(--FSIZE);
+  color: var(--FCOLOR-PRIMARY);
+  outline: none;
+  font-family: var(--FONT-BODY);
+}
+
+#comment-bar::placeholder {
+  color: var(--FCOLOR-HIGHLIGHT);
+}
+
+.comments-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  margin-top: 1rem;
+}
+.post-options {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--BGCOLOR-SECONDARY);
+  padding: 1rem;
+  /* border-radius: 12px; */
+  margin-top: 1rem;
+  border-top: 1px dashed var(--BDRCOLOR);
+  /* box-shadow: 0 0 10px rgba(0, 0, 0, 0.5); */
+}
+
+.vote-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.vote-btn {
+  background: transparent;
+  color: var(--FCOLOR-PRIMARY);
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  transition: color 0.3s ease;
+}
+
+.vote-btn.upvote:hover {
+  color: limegreen;
+}
+
+.vote-btn.downvote:hover {
+  color: crimson;
+}
+
+.vote-count {
+  font-size: 1.2rem;
+  color: var(--FCOLOR-HIGHLIGHT);
+}
+
+.post-actions {
+  display: flex;
+  gap: 0.8rem;
+}
+
+.action-btn {
+  background-color: var(--BGCOLOR-TERTIARY);
+  border: 1px solid var(--BDRCOLOR);
+  color: var(--FCOLOR-PRIMARY);
+  padding: 0.4rem 0.8rem;
+  border-radius: 8px;
+  font-size: var(--FSIZE);
+  cursor: pointer;
+  transition: all 0.2s ease-in-out;
+}
+
+.action-btn:hover {
+  background-color: var(--HOVER-TRANSLUCENT);
+  transform: translateY(-2px);
+}
+
+.action-btn.save:hover {
+  color: #58d68d;
+}
+
+.action-btn.report:hover {
+  color: #ff6f61;
+}
+
+#post-settings .action-btn {
+  margin-left: 0.5rem;
+  background: transparent;
+  border: none;
+  color: var(--FCOLOR-PRIMARY);
+  cursor: pointer;
+  font-size: 1rem;
+  transition: color 0.2s ease;
+}
+
+#post-settings .edit:hover {
+  color: dodgerblue;
+}
+
+#post-settings .delete:hover {
+  color: red;
+}
+
+
+#popup-notification {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: var(--BCOLOR-DARK, #222);
+  color: var(--FCOLOR-PRIMARY, #fff);
+  padding: 0.75rem 1.5rem;
+  border-radius: 12px;
+  font-size: 1rem;
+  box-shadow: 0 0 10px rgba(0,0,0,0.3);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  z-index: 9999;
+}
+
+#popup-notification.show {
+  opacity: 1;
+}
+
+
+.vote-btn.active-upvote {
+  color: limegreen;
+  font-weight: bold;
+  text-shadow: 0 0 5px limegreen;
+}
+
+.vote-btn.active-downvote {
+  color: crimson;
+  font-weight: bold;
+  text-shadow: 0 0 5px crimson;
+}
+
+#modal-overlay {
+  position: fixed;
+  top: 0; left: 0;
+  width: 100vw; height: 100vh;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-window {
+  background: #111;
+  border-radius: 16px;
+  color: white;
+  padding: 1.5rem;
+  width: 400px;
+  max-width: 90vw;
+  box-shadow: 0 0 20px rgba(255,255,255,0.2);
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.modal-body label {
+  display: block;
+  margin: 0.5rem 0 0.25rem;
+}
+
+.modal-body input, .modal-body textarea {
+  width: 100%;
+  padding: 0.5rem;
+  background: #222;
+  color: white;
+  border: 1px solid #444;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+}
+
+.btn-primary {
+  background-color: #0d6efd;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.btn-danger {
+  background-color: #dc3545;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.btn-secondary {
+  background-color: #6c757d;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 1.2rem;
+  color: white;
+  cursor: pointer;
+}
+
+.comment-card {
+  background-color: #1a1a1a;
+  color: #eee;
+  padding: 1rem;
+  border-radius: 1rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 0 5px rgba(255,255,255,0.1);
+}
+.comment-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+.flair {
+  background: #444;
+  padding: 0.2rem 0.5rem;
+  border-radius: 0.5rem;
+  margin-left: 0.5rem;
+}
+.edited {
+  font-size: 0.8rem;
+  color: #aaa;
+  margin-left: 0.5rem;
+}
+.timestamp {
+  font-size: 0.75rem;
+  color: #888;
+}
