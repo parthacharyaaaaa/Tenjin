@@ -26,7 +26,7 @@
         </div>
     </div>
     <div id="forum-modal" class="forum-modal hidden">
-        <div class="forum-modal-box">
+        <div class="forum-modal-box" id="forum-modal-box">
             <button class="forum-close-btn">&times;</button>
             <h2>Create Forum</h2>
             <input id="forum-name" type="text" placeholder="Forum Title" />
@@ -83,4 +83,5 @@
 {% block scripts %}
 <script type="text/javascript" src="{{ url_for('static', filename='scripts/fetch_forums.js') }}"></script>
 <script type="text/javascript" src="{{ url_for('static', filename='scripts/sub_anime.js') }}"></script>
+<script type="text/javascript" src="{{ url_for('static', filename='scripts/create_forum.js') }}"></script>
 {% endblock %}
