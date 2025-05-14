@@ -21,7 +21,9 @@
 <div class="anime-detail-layout" id="anime-detail-layout">
     <div class="forum-section" id="forum-section">
         <h2>Discussions</h2>
-        <div id="forum-container"></div>
+        <div id="forum-container">
+            Hang tight while we fetch forums for {{anime['title']}} for you >:3
+        </div>
     </div>
     <div id="forum-modal" class="forum-modal hidden">
         <div class="forum-modal-box">
@@ -53,7 +55,7 @@
                 </div>
                 <div>
                     Members
-                    <span>
+                    <span id = 'members'>
                         {{anime.get('members', 'N/A')}}
                     </span>
                 </div>
@@ -73,22 +75,12 @@
             </div>
         </div>
         <button class="btn-primary" type="button" id="forum-make-btn">Create a forum</button>
-        <button class="btn-primary" type="button" id="anime-sub-btn" value="{{auth}}">
-            {% if auth %}
-            {% if not subbed %}
-            Subscribe to this anime
-            {% else %}
-            Unsubscribe from this anime
-            {% endif %}
-            {% else %}
-            Log in to subscribe to this anime
-            {% endif %}
-        </button>
+        <button class="btn-primary" type="button" id="anime-sub-btn" value="{{subbed | lower}}"></button>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<!-- <script type="text/javascript" src="{{ url_for('static', filename='scripts/anime.js') }}"></script> -->
+<script type="text/javascript" src="{{ url_for('static', filename='scripts/fetch_forums.js') }}"></script>
 <script type="text/javascript" src="{{ url_for('static', filename='scripts/sub_anime.js') }}"></script>
 {% endblock %}

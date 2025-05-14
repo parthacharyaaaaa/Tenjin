@@ -127,7 +127,7 @@ def view_anime(anime_id) -> tuple[str, int]:
     return render_template('anime.html',
                            anime=animeMapping,
                            auth = request.cookies.get('access', request.cookies.get('Access')),
-                           subbed = isSubbed)
+                           subbed = bool(isSubbed))
 
 @templates.route('/view/post/<int:post_id>')
 def view_post(post_id: int) -> tuple[str, int]:
