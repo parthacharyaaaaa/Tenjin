@@ -15,13 +15,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         createForumButton.addEventListener('click', () => {
             forumPromptWindow.classList.remove('hidden');
+            const outsideClickHandler = (event) => {
+                if (!forumPromptWindowBox.contains(event.target)) {
+                    forumPromptWindow.classList.add('hidden');
+                    document.removeEventListener('click', outsideClickHandler);
+                }
+            };
             setTimeout(() => {
-                const outsideClickHandler = (event) => {
-                    if (!forumPromptWindowBox.contains(event.target)) {
-                        forumPromptWindow.classList.add('hidden');
-                        document.removeEventListener('click', outsideClickHandler);
-                    }
-                };
 
                 document.addEventListener('click', outsideClickHandler);
             }, 0.1);
