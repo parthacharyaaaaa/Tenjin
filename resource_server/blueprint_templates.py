@@ -38,6 +38,7 @@ def signup() -> tuple[str, int]:
 @pass_user_details
 def forum(name: str) -> tuple[str, int]:
     cachedMapping: dict[str, Any] = None
+    forum = None
     try:
         cachedMapping = ujson.loads(RedisInterface.get(f'view:forum:{name}'))
     except: ...
@@ -66,8 +67,17 @@ def forum(name: str) -> tuple[str, int]:
 
         # Fetch if subscribed
         if g.requestUser:
-            subbedForum = db.session.execute(select(ForumSubscription)
-                                             .where((ForumSubscription.forum_id == forum.id) & (ForumSubscription.user_id == g.requestUser['sid']))).scalar_one_or_none()
+            if forum:
+                subbedForum = db.session.execute(select(ForumSubscription)
+                                                .where((ForumSubscription.forum_id == forum.id) & 
+                                                        (ForumSubscription.user_id == g.requestUser['sid']))
+                                                        ).scalar_one_or_none()
+            else:
+                subbedForum = db.session.execute(select(ForumSubscription)
+                                                .where((ForumSubscription.forum_id == cachedMapping['forum']['id']) & 
+                                                        (ForumSubscription.user_id == g.requestUser['sid']))
+                                                        ).scalar_one_or_none()
+
         # Check if admin
         else:
             subbedForum = None
@@ -89,6 +99,7 @@ def forum(name: str) -> tuple[str, int]:
         
         RedisInterface.set(f'view:forum:{name}', ujson.dumps(forumFullMapping), ex=300)
 
+    print(cachedMapping if cachedMapping else forumFullMapping)
     return render_template('forum.html',
                            name = name,
                            forum_mapping = cachedMapping if cachedMapping else forumFullMapping,
