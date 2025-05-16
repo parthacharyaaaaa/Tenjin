@@ -7,7 +7,7 @@ auth = Flask(__name__)
 auth.config.from_object(flaskconfig)
 
 cors = CORS(auth,
-     resources={r"/*": {"origins": [f"http://192.168.{i}.{j}:6090" for i in range(0, 256) for j in range(0, 256)]}},
+     resources={r"/*": {"origins": [f"http://127.0.{i}.{j}:6090" for i in range(0, 256) for j in range(0, 256)]}},
      supports_credentials=True)
 
 # Set up token manager
