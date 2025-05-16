@@ -1,10 +1,11 @@
 import os
-from flask import Flask, url_for
+from flask import Flask
 from flask.cli import with_appcontext
 from flask_migrate import Migrate
 from traceback import format_exc
 from resource_server.flask_config import FLASK_CONFIG_OBJECT
 from auxillary.utils import generic_error_handler
+from types import MappingProxyType
 
 APP_CTX_CWD : os.PathLike = os.path.dirname(__file__)
 def create_app() -> Flask:
@@ -34,6 +35,7 @@ def create_app() -> Flask:
     from resource_server.blueprint_posts import post
     from resource_server.blueprint_animes import anime
     from resource_server.blueprint_templates import templates
+    from resource_server.blueprint_misc import misc
     app.register_blueprint(forum)
     app.register_blueprint(admin)
     app.register_blueprint(user)
@@ -41,6 +43,16 @@ def create_app() -> Flask:
     app.register_blueprint(post)
     app.register_blueprint(templates)
     app.register_blueprint(anime)
+    app.register_blueprint(misc)
+
+    ### Additional commands ###
+    def fetch_genres(db: SQLAlchemy) -> None:
+        with app.app_context():
+            with db.engine.connect() as conn:
+                GENRES: tuple[str] = conn.execute(text('SELECT _name, id FROM genres;')).fetchall()
+
+                app.config['GENRES'] = MappingProxyType({genre[0] : genre[1] for genre in GENRES})
+                print(app.config['GENRES'])
 
     ### Additional CLI commands ###
    # Instantiate the database
@@ -102,6 +114,7 @@ def create_app() -> Flask:
                 print(f"[{app.name}] Exiting app factory...")
                 exit(500)     
 
+    fetch_genres(db)
     return app
 
 from resource_server.models import *

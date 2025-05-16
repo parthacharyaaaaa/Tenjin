@@ -12,6 +12,9 @@
 </div>
 
 <div class="top-bar">
+    <select id="genres" name="genres" class="btn-primary">
+        <option disabled selected value="-1">All</option>
+    </select>
     <input type="text" id="search-bar" placeholder="Search animes..." />
     <button type="button" id="search-btn" class="btn-primary">Search</button>
 </div>
@@ -21,4 +24,5 @@
 
 {% block scripts %}
 <script type="text/javascript" src="{{ url_for('static', filename='scripts/fetch_animes.js') }}"></script>
+<script type="text/javascript" src="{{ url_for('static', filename='scripts/fetch_genres.js') }}"></script>
 {% endblock %}
