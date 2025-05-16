@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch(searchParam && genreButton.value !== '-1' ?
                  `/animes?cursor=${dbCursor}&search=${searchParam}&genre=${genreButton.value}` : 
-                 genreButton.value !== -1 ? 
+                 genreButton.value !== "-1" ? 
                  `/animes?cursor=${dbCursor}&genre=${genreButton.value}` : 
                 searchParam ? `/animes?cursor=${dbCursor}&search=${searchParam}` : `/animes?cursor=${dbCursor}`);
 

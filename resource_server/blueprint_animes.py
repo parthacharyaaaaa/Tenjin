@@ -125,11 +125,13 @@ def get_animes() -> tuple[Response, int]:
             cursor = int(base64.b64decode(rawCursor).decode())
 
         searchParam: str = request.args.get('search', '').strip()
-        genreID: str = request.args.get('genre')
-        if genreID and not genreID.isnumeric():
-            genreID = None
-        else:
-            genreID = int(genreID)
+        genreID: str = request.args.get('genre', None)
+        if genreID:
+            if not genreID.isnumeric():
+                genreID = None
+            else:
+                genreID = int(genreID)
+
 
     except (ValueError, TypeError, binascii.Error):
             raise BadRequest("Failed to load more posts. Please refresh this page")
