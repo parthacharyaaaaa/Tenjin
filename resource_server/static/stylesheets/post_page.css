@@ -287,26 +287,8 @@
   gap: 1rem;
 }
 
-.btn-primary {
-  background-color: #0d6efd;
-  color: white;
-  border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
 .btn-danger {
   background-color: #dc3545;
-  color: white;
-  border: none;
-  padding: 0.5rem 1rem;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.btn-secondary {
-  background-color: #6c757d;
   color: white;
   border: none;
   padding: 0.5rem 1rem;
@@ -350,4 +332,12 @@
 .timestamp {
   font-size: 0.75rem;
   color: #888;
+}
+
+.upvote.casted {
+  color: green;
+}
+
+.downvote.casted {
+  color: red;
 }

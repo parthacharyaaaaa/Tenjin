@@ -158,7 +158,44 @@ def view_anime(anime_id) -> tuple[str, int]:
 @templates.route('/view/post/<int:post_id>')
 @pass_user_details
 def view_post(post_id: int) -> tuple[str, int]:
-    return render_template('post.html')
+    cachedPostMapping = RedisInterface.get(f'post:{post_id}')
+    if cachedPostMapping:
+        cachedPostMapping = ujson.loads(cachedPostMapping)
+    try:
+        if not cachedPostMapping:
+            post: Post = db.session.execute(select(Post)
+                                            .where(Post.id == post_id)
+                                            ).scalar_one_or_none()
+            if not post:
+                RedisInterface.set(f'post:{post_id}', -1, 60)
+                return render_template('error.html',
+                                    code = 400, 
+                                    msg = 'The post you requested could not be found :(',
+                                    links = [('Back to home', url_for('.index'))])
+            
+            username: str = db.session.execute(select(User.username).where(User.id == post.author_id)).scalars().one()
+        
+        permissionLevel: int = 0
+        if (g.requestUser):
+            if(g.requestUser.get('sid') == cachedPostMapping['author_id'] if cachedPostMapping else post.author_id):
+                # Author has highest permission level with edit access also
+                permissionLevel = 2
+            else:
+                # If admin, permission level is 1
+                permissionLevel = int(bool(db.session.execute(select(ForumAdmin)
+                                    .where((ForumAdmin.forum_id == post.forum_id) & (ForumAdmin.user_id == g.requestUser.get('sid')))
+                                    ).scalar_one_or_none()))
+            
+    except SQLAlchemyError: genericDBFetchException()
+
+
+    if not cachedPostMapping:
+        postMapping: dict = post.__json_like__() | {'username' : username}
+        RedisInterface.set(f'post:{post_id}', ujson.dumps(postMapping), 300)
+
+    return render_template('post.html',
+                           post_mapping = cachedPostMapping or postMapping,
+                           permission_level = permissionLevel)
 
 @templates.route("/profile/<string:username>")
 @pass_user_details

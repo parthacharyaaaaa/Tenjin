@@ -113,7 +113,6 @@ def get_post(post_id : int) -> tuple[Response, int]:
     # TODO: Have pre-defined values for cached items' TTLs
     # RedisInterface.set(f'post:{post_id}', ujson.dumps(res), ex=300)
     return jsonify(res), 200
-    
 
 @post.route("/<int:post_id>", methods=["PATCH", "OPTIONS"])
 @enforce_json
@@ -236,7 +235,6 @@ def vote_post(post_id: int) -> tuple[Response, int]:
         vote: int = int(request.args['type'])
         if vote != 0 and vote != 1:
             raise ValueError
-        print(vote)
     except KeyError:
         raise BadRequest("Vote type (upvote/downvote) not specified")
     except ValueError:
@@ -311,17 +309,7 @@ def vote_post(post_id: int) -> tuple[Response, int]:
 
 @post.route("/<int:post_id>/unvote", methods=["OPTIONS", "PATCH"])
 @token_required
-def unvote_post(post_id: int) -> tuple[Response, int]:
-    try:
-        vote: int = int(request.args['type'])
-        if vote != 0 and vote != 1:
-            raise ValueError
-    except KeyError:
-        raise BadRequest("Vote type (upvote/downvote) not specified")
-    except ValueError:
-        raise BadRequest("Invalid vote value (Should be 0 (downvote) or 1 (upvote))")
-    
-    # Request valid at the surface level, check for votes existence in db
+def unvote_post(post_id: int) -> tuple[Response, int]:    
     try:
         # Check if user has not casted a vote for this post, if yes then do nothing
         postVote: PostVote = db.session.execute(select(PostVote).where((PostVote.voter_id == g.decodedToken['sid']) & (PostVote.post_id == post_id))).scalar_one_or_none()
@@ -329,6 +317,7 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
             return jsonify({'message' : f'Post already voted'}), 200
     except SQLAlchemyError: genericDBFetchException()
 
+    vote = PostVote.vote
     # Check if counter for this post's votes exists already
     voteCounterKey: str = RedisInterface.hget(f"{Post.__tablename__}:score", post_id)
     if voteCounterKey:
@@ -369,6 +358,51 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
     # New counter set, add it to this post's score hashmap and finish
     RedisInterface.hset(f"{Post.__tablename__}:score", post_id, voteCounterKey)
     return jsonify({"message" : "Removed vote!"}), 202
+
+@post.route('/<int:post_id>/is-saved', methods=['GET'])
+@pass_user_details
+def check_post_saved(post_id: int) -> tuple[Response, int]:
+    if not (g.requestUser and g.requestUser.get('sid')):
+        return jsonify(False), 200
+    
+    isSaved = RedisInterface.get(f"saves:{post_id}:{g.requestUser['sid']}")
+    if isSaved:
+        return jsonify(int(isSaved)), 200
+    
+    try:
+        isSaved: int = int(bool(db.session.execute(select(PostSave)
+                                                .where((PostSave.post_id == post_id) & (PostSave.user_id == g.requestUser['sid']))
+                                                ).scalar_one_or_none()))
+        RedisInterface.set(f"saves:{post_id}:{g.requestUser['sid']}", isSaved, 60)
+        return jsonify(isSaved), 200
+    except SQLAlchemyError:
+        res = jsonify(False)
+        res.headers['Error'] = 'An error occured when trying to check if you have saved this post'
+        return res, 500
+
+@post.route('/<int:post_id>/is-voted', methods=['GET'])
+@pass_user_details
+def check_post_vote(post_id: int) -> tuple[Response, int]:
+    if not (g.requestUser and g.requestUser.get('sid')):
+        return jsonify(-1), 200
+    
+    postVote = RedisInterface.get(f'votes:{post_id}:{g.requestUser["sid"]}')
+    if postVote:
+        return jsonify(postVote), 200
+    
+    try:
+        postVote = db.session.execute(select(PostVote.voter_id)
+                                      .where((PostVote.post_id == post_id) & (PostVote.voter_id == g.requestUser['sid']))
+                                      ).scalars().one_or_none()
+        
+        # 0 is falsey, hence 'not postVote' won't work as intended here
+        if postVote == None:
+            return jsonify(-1), 200
+    except: genericDBFetchException()
+
+    postVote = int(postVote)
+    RedisInterface.set(f'votes:{post_id}:{g.requestUser["sid"]}', postVote, 60)
+    return jsonify(postVote), 200
 
 @post.route("/<int:post_id>/save", methods=["OPTIONS", "PATCH"])
 @token_required

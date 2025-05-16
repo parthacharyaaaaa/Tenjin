@@ -28,27 +28,37 @@
     </div>
   </div>
 
-  <div id="post-toast" class="post-toast hidden">Forum created!</div>
+  <div id="post-toast" class="post-toast hidden"></div>
 
   <div class="post-card">
     <div class="post-credentials">
       <div>
-        <span id="author"></span>
-        <span id="time-posted"></span>
+        <span id="author">{{post_mapping['username']}}</span>
+        <span id="time-posted">{{post_mapping['epoch']}}</span>
       </div>
       <div id="post-settings">
-        <!-- Conditionally rendered -->
+        {% if auth %}
+
+          {% if permission_level == 2 %}
+            <button class="btn-primary" id="delete-post">Delete</button>
+            <button class="btn-primary" id="edit-post">Edit</button>
+          {% endif %}
+          {% if permission_level == 1 %}
+            <button class="btn-primary" id="delete-post">Delete</button>
+          {% endif %}
+
+        {% endif %}
       </div>
     </div>
     <div class="post-main">
-      <div id="title"></div>
-      <div id="body"></div>
+      <div id="title">{{post_mapping['title']}}</div>
+      <div id="body">{{post_mapping['body']}}</div>
     </div>
     <div class="post-options">
       <div class="vote-controls">
-        <button class="vote-btn upvote" title="Upvote" id="upvote">▲</button>
-        <span class="vote-count">0</span>
-        <button class="vote-btn downvote" title="Downvote" id="downvote">▼</button>
+        <button class="vote-btn upvote" title="Upvote" id="upvote-btn">▲</button>
+        <span class="vote-count" id="vote-count">{{post_mapping['score']}}</span>
+        <button class="vote-btn downvote" title="Downvote" id="downvote-btn">▼</button>
       </div>
       <div class="post-actions">
         <button class="action-btn save" title="Save Post" id="save">💾 Save</button>
@@ -70,5 +80,6 @@
 {% block scripts %}
 <script type="text/javascript" src="{{url_for('static', filename='scripts/post_reports.js')}}"></script>
 <script type="text/javascript" src="{{url_for('static', filename='scripts/post_comments.js')}}"></script>
-<script type="text/javascript" src="{{url_for('static', filename='scripts/load_comments.js')}}"></script>
+<script type="text/javascript" src="{{url_for('static', filename='scripts/post_save.js')}}"></script>
+<script type="text/javascript" src="{{url_for('static', filename='scripts/post_vote.js')}}"></script>
 {% endblock %}
