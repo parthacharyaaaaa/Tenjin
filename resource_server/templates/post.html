@@ -28,6 +28,16 @@
     </div>
   </div>
 
+  <div id="epost-modal" class="forum-modal hidden">
+    <div class="forum-modal-box" id="epost-modal-box">
+      <button class="forum-close-btn">&times;</button>
+      <h2>Edit Post</h2>
+      <input type="text" id="etitle" placeholder="Change title">
+      <textarea id="edesc" placeholder="Change body"></textarea>
+      <button id="edit-submit" class="btn-primary">Commit changes</button>
+    </div>
+  </div>
+
   <div id="post-toast" class="post-toast hidden"></div>
 
   <div class="post-card">
@@ -83,4 +93,5 @@
 <script type="text/javascript" src="{{url_for('static', filename='scripts/post_save.js')}}"></script>
 <script type="text/javascript" src="{{url_for('static', filename='scripts/post_vote.js')}}"></script>
 <script type="text/javascript" src="{{url_for('static', filename='scripts/post_delete.js')}}"></script>
+<script type="text/javascript" src="{{url_for('static', filename='scripts/post_edit.js')}}"></script>
 {% endblock %}
