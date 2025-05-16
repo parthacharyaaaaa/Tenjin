@@ -178,9 +178,10 @@ def edit_post(post_id : int) -> tuple[Response, int]:
 @post.route("/<int:post_id>", methods=["DELETE", "OPTIONS"])
 @token_required
 def delete_post(post_id: int) -> Response:
+    redirect: bool = 'redirect' in request.args
     try:
         # Ensure post exists in the first place
-        post: Post = db.session.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
+        post: Post = db.session.execute(select(Post).where((Post.id == post_id) & (Post.deleted == False))).scalar_one_or_none()
         if not post:
             raise NotFound('Post does not exist')
         
@@ -205,7 +206,6 @@ def delete_post(post_id: int) -> Response:
         exc.__setattr__('description', 'Failed to delete post')
         raise exc
     
-    redirect:bool =  'request_redirect' in request.args
     if redirect:
         redirectionForum: str = db.session.execute(select(Forum._name).where(Forum.id == post.forum_id)).scalar_one()
     
@@ -213,8 +213,7 @@ def delete_post(post_id: int) -> Response:
     postsCounterKey: str = RedisInterface.hget(f"{Forum.__tablename__}:posts", post.forum_id)
     if postsCounterKey:
         RedisInterface.decr(postsCounterKey)
-        return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else f'/view/forum/{redirectionForum}'}), 200
-
+        return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, name = redirectionForum)}), 200
 
     # No counter, create one
     currentForumPosts: int = db.session.execute(select(Forum.posts).where(Forum.id == post.forum_id)).scalar_one()
@@ -226,7 +225,7 @@ def delete_post(post_id: int) -> Response:
     else:
         RedisInterface.hset(f'{Forum.__tablename__}:posts', post.forum_id, postsCounterKey)
     
-    return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else f'/view/forum/{redirectionForum}'}), 200
+    return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, name = redirectionForum)}), 200
 
 @post.route("/<int:post_id>/vote", methods=["OPTIONS", "PATCH"])
 @token_required
@@ -388,7 +387,7 @@ def check_post_vote(post_id: int) -> tuple[Response, int]:
     
     postVote = RedisInterface.get(f'votes:{post_id}:{g.requestUser["sid"]}')
     if postVote:
-        return jsonify(postVote), 200
+        return jsonify(int(postVote)), 200
     
     try:
         postVote = db.session.execute(select(PostVote.voter_id)
