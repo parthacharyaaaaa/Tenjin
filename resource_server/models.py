@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import TIMESTAMP, BYTEA, ENUM
 from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, NUMERIC, TEXT
 
 import orjson, os
+from enum import Enum
 from datetime import datetime
 
 from dataclasses import dataclass
@@ -62,11 +63,25 @@ class PostSave(db.Model):
     user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
     post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id", ondelete='CASCADE'), primary_key=True)
 
+REPORT_TAGS = ENUM('spam', 'harassment', 'hate', 'violence', 'other', name='REPORT_TAGS', create_type=True)
+class ReportTags(Enum):
+    spam = 'spam'
+    harassment = 'harassment'
+    hate = 'hate'
+    violence = 'violence'
+    other = 'other'
+
+    @staticmethod
+    def check_membership(arg: str) -> bool:
+        return arg in [v.value for v in ReportTags.__members__.values()]
 
 class PostReport(db.Model):
     __tablename__ = "post_reports"
     user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
     post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id", ondelete='CASCADE'), primary_key=True)
+    report_time = db.Column(TIMESTAMP, default = text('CURRENT_TIMESTAMP'))
+    report_description = db.Column(VARCHAR(256), nullable = False)
+    report_tag = db.Column(REPORT_TAGS, nullable=False)
 
 
 class StreamLink(db.Model):

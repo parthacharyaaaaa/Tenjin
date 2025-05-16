@@ -4,7 +4,7 @@ post = Blueprint("post", "post", url_prefix="/posts")
 from sqlalchemy import select, update, delete
 from sqlalchemy.exc import SQLAlchemyError
 
-from resource_server.models import db, Post, User, Forum, ForumFlair, ForumAdmin, PostSave, PostVote, PostReport, Comment
+from resource_server.models import db, Post, User, Forum, ForumFlair, ForumAdmin, PostSave, PostVote, PostReport, Comment, ReportTags
 from auxillary.decorators import enforce_json, token_required, pass_user_details
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException
@@ -66,7 +66,7 @@ def create_post() -> tuple[Response, int]:
     # No counter, create one
     currentForumPosts: int = db.session.execute(select(Forum.posts).where(Forum.id == forumID)).scalar_one()
     postsCounterKey = f'forum:{forumID}:posts'
-    op = RedisInterface.set(postsCounterKey, currentForumPosts, nx=True)
+    op = RedisInterface.set(postsCounterKey, currentForumPosts+1, nx=True)
     if not op:
         # Counter made by another Flask worker
         RedisInterface.incr(postsCounterKey)
@@ -452,12 +452,29 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
 
 @post.route("/<int:post_id>/report", methods=["OPTIONS", "PATCH"])
 @token_required
+@enforce_json
 def report_post(post_id: int) -> tuple[Response, int]:
+    try:
+        reportDescription: str = str(g.REQUEST_JSON.get('desc'))
+        reportTag: str = str(g.REQUEST_JSON.get('tag'))
+
+        if not (reportDescription and reportTag):
+            raise BadRequest('Report request must contain description and a valid report reason')
+        
+        reportDescription = reportDescription.strip()
+        reportTag = reportTag.strip().lower()
+
+        if not ReportTags.check_membership(reportTag):
+            raise BadRequest('Invalid report tag')
+
+    except (ValueError, TypeError) as e:
+        raise BadRequest("Malformatted report request")
+    
     # Check if user has reported this post already. If so, do nothing
     try:
         reportedPost: PostReport = db.session.execute(select(PostReport).where((PostReport.user_id == g.decodedToken['sid']) & (PostReport.post_id == post_id))).scalar_one_or_none()
         if reportedPost:
-            return jsonify({'message' : 'post reported already'}), 200
+            return jsonify({'message' : 'post reported already'}), 409
     except SQLAlchemyError: genericDBFetchException()
 
     # Request is for a new report on this post
@@ -466,7 +483,7 @@ def report_post(post_id: int) -> tuple[Response, int]:
 
     # Exists
     if reportCounterKey:
-        RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.decodedToken['sid'], "post_id" : post_id, 'table' : PostReport.__tablename__})
+        RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.decodedToken['sid'], "post_id" : post_id, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'report_tag' : reportTag, 'table' : PostReport.__tablename__})
         RedisInterface.incr(reportCounterKey)
         return jsonify({"message" : "Reported!"}), 202
     
@@ -476,7 +493,7 @@ def report_post(post_id: int) -> tuple[Response, int]:
         raise NotFound("No such post exists")
 
     # Insert WE in advance
-    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.decodedToken['sid'], "post_id" : post_id, 'table' : PostReport.__tablename__})
+    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.decodedToken['sid'], "post_id" : post_id, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'report_tag' : reportTag, 'table' : PostReport.__tablename__})
 
     reportCounterKey: str = f'post:{post_id}:reports'
     op = RedisInterface.set(reportCounterKey, pReports+1, nx=True)
@@ -512,7 +529,7 @@ def comment_on_post(post_id: int) -> tuple[Response, int]:
 
     RedisInterface.xadd('INSERTIONS', rediserialize(comment.__attrdict__()) | {'table' : Comment.__tablename__})
 
-    return jsonify({'message' : 'comment added!'}), 202
+    return jsonify({'message' : 'comment added!', 'body' : commentBody, 'author' : g.decodedToken['sub']}), 202
 
 @post.route('/<int:post_id>/comments')
 def get_post_comments(post_id: int) -> tuple[Response, int]:
