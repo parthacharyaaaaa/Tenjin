@@ -227,3 +227,82 @@ html, body{
         background-color: rgba(0, 0, 0, 0.25);
     }
 }
+
+.forum-modal {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.forum-modal-box {
+    background: #111;
+    padding: 2rem;
+    border-radius: 1rem;
+    width: 400px;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    position: relative;
+    box-shadow: 0 0 15px rgba(255, 255, 255, 0.1);
+}
+
+.forum-modal-box input,
+.forum-modal-box textarea {
+    background: #222;
+    border: 1px solid #444;
+    color: #fff;
+    border-radius: 0.5rem;
+    padding: 0.8rem;
+    font-size: 1rem;
+    resize: vertical;
+}
+
+.forum-modal-box button#forum-submit {
+    background: var(--FCOLOR-HIGHLIGHT);
+    color: #000;
+    border: none;
+    padding: 0.7rem 1rem;
+    border-radius: 0.5rem;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.forum-close-btn {
+    position: absolute;
+    top: 0.6rem;
+    right: 0.8rem;
+    background: transparent;
+    color: #fff;
+    font-size: 1.5rem;
+    border: none;
+    cursor: pointer;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* Toast */
+.forum-toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #222;
+    color: #0f0;
+    padding: 1rem 1.5rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 0 10px rgba(0,255,0,0.2);
+    z-index: 9999;
+    font-weight: bold;
+}
+
+.modal-dropdown{
+  padding: 5px;
+  background-color: var(--BGCOLOR-PRIMARY);
+  color: var(--FCOLOR-HIGHLIGHT);
+}
