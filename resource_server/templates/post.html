@@ -40,8 +40,8 @@
         {% if auth %}
 
           {% if permission_level == 2 %}
-            <button class="btn-primary" id="delete-post">Delete</button>
-            <button class="btn-primary" id="edit-post">Edit</button>
+            <button class="btn-primary" id="delete-btn">Delete</button>
+            <button class="btn-primary" id="edit-btn">Edit</button>
           {% endif %}
           {% if permission_level == 1 %}
             <button class="btn-primary" id="delete-post">Delete</button>
@@ -82,4 +82,5 @@
 <script type="text/javascript" src="{{url_for('static', filename='scripts/post_comments.js')}}"></script>
 <script type="text/javascript" src="{{url_for('static', filename='scripts/post_save.js')}}"></script>
 <script type="text/javascript" src="{{url_for('static', filename='scripts/post_vote.js')}}"></script>
+<script type="text/javascript" src="{{url_for('static', filename='scripts/post_delete.js')}}"></script>
 {% endblock %}
