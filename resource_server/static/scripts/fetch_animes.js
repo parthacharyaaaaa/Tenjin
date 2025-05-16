@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const contentWrapper = document.querySelector('.content-wrapper');
     const searchBar = document.getElementById('search-bar');
     const searchBtn = document.getElementById('search-btn');
+    const genreButton = document.getElementById('genres');
 
     let dbCursor = 0;
     let isFetching = false;
@@ -13,7 +14,11 @@ document.addEventListener('DOMContentLoaded', () => {
         isFetching = true;
 
         try {
-            const response = await fetch(searchParam ? `/animes?cursor=${dbCursor}&search=${searchParam}` : `/animes?cursor=${dbCursor}`);
+            const response = await fetch(searchParam && genreButton.value !== '-1' ?
+                 `/animes?cursor=${dbCursor}&search=${searchParam}&genre=${genreButton.value}` : 
+                 genreButton.value !== -1 ? 
+                 `/animes?cursor=${dbCursor}&genre=${genreButton.value}` : 
+                searchParam ? `/animes?cursor=${dbCursor}&search=${searchParam}` : `/animes?cursor=${dbCursor}`);
 
             if (!response.ok) {
                 const errorText = await response.text();
@@ -92,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     searchBtn.addEventListener('click', async () => {
         searchContents = searchBar.value;
-        if(!searchContents || searchContents === undefined || searchContents.trim() === ''){
+        if((!searchContents || searchContents === undefined || searchContents.trim() === '') && genreButton.value === '-1'){
             alert("Maybe enter a valid anime to search? Just a shot in the dark here though, don't let us limit you >:P");
             return;
         }
@@ -101,7 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
         dbCursor = 0;
         contentWrapper.innerHTML = '';
         fetchMoreAnimes();
-    })
+    });
 
     window.addEventListener('scroll', onScroll);
     fetchMoreAnimes();

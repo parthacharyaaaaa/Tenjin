@@ -13,7 +13,7 @@ from auxillary.utils import genericDBFetchException
 from auxillary.decorators import token_required
 
 from resource_server.external_extensions import RedisInterface
-from flask import Blueprint, Response, g, jsonify, request, redirect, url_for
+from flask import Blueprint, Response, g, jsonify, request, redirect, url_for, current_app
 anime = Blueprint('animes', 'animes', url_prefix="/animes")
 
 RANDOMIZER_SQL = (select(Anime).where(Anime.id >= func.floor(func.random() * select(func.max(Anime.id)).scalar_subquery())).order_by(Anime.id).limit(50))
@@ -113,7 +113,6 @@ def unsub_anime(anime_id: int) -> tuple[Response, int]:
     RedisInterface.hset(f"{Anime.__tablename__}:members", anime_id, subCounterKey)
     return jsonify({'message' : 'unsubscribed!'})
     
-
 @anime.route("/")
 def get_animes() -> tuple[Response, int]:
     try:
@@ -126,6 +125,12 @@ def get_animes() -> tuple[Response, int]:
             cursor = int(base64.b64decode(rawCursor).decode())
 
         searchParam: str = request.args.get('search', '').strip()
+        genreID: str = request.args.get('genre')
+        if genreID and not genreID.isnumeric():
+            genreID = None
+        else:
+            genreID = int(genreID)
+
     except (ValueError, TypeError, binascii.Error):
             raise BadRequest("Failed to load more posts. Please refresh this page")
     
@@ -133,10 +138,20 @@ def get_animes() -> tuple[Response, int]:
         whereClause = [Anime.id > cursor]
         if searchParam:
             whereClause.append(Anime.title.ilike(f"%{searchParam}%"))   # searchParam is a string anyways, so we can safely inject it in an expression >:3
-        animes: list[Anime] = db.session.execute(select(Anime)
-                                                .where(and_(*whereClause))
-                                                .order_by(Anime.id.asc())
-                                                .limit(10)).scalars().all()
+
+        if not genreID:
+            animes: list[Anime] = db.session.execute(select(Anime)
+                                                    .where(and_(*whereClause))
+                                                    .order_by(Anime.id.asc())
+                                                    .limit(10)).scalars().all()
+        else:
+            animes: list[Anime] = db.session.execute(select(Anime)
+                                                    .where(and_(*whereClause))
+                                                    .order_by(Anime.id.asc())
+                                                    .join(AnimeGenre, AnimeGenre.anime_id == Anime.id)
+                                                    .where(AnimeGenre.genre_id == genreID)
+                                                    .limit(10)).scalars().all()
+
         if not animes:
             return jsonify({'animes' : None})
          
