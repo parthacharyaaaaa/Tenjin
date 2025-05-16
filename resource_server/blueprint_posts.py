@@ -173,7 +173,9 @@ def edit_post(post_id : int) -> tuple[Response, int]:
 
     db.session.execute(update(Post).where(Post.id == post_id).values(**update_kw))
     db.session.commit()
-    return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected", "post_id" : post_id, **additional_kw}), 202
+    return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected",
+                    "post_id" : post_id,
+                    **update_kw, **additional_kw}), 202
 
 @post.route("/<int:post_id>", methods=["DELETE", "OPTIONS"])
 @token_required
