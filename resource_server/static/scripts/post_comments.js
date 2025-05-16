@@ -11,7 +11,9 @@ document.addEventListener('DOMContentLoaded', () => {
         card.classList.add('comment-card');
         card.innerHTML = `
             <div class="comment-header">
-                <strong>${author}</strong>
+                <a href='/profile/${author}' target="_blank">
+                    <strong>${author}</strong>
+                </a>
                 ${flair ? `<span class="flair">${flair}</span>` : ''}
                 ${edited ? `<em class="edited">(edited)</em>` : ''}
                 <span class="timestamp">${new Date(created_at).toLocaleString()}</span>
@@ -29,7 +31,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
 
             if (cursor === '0') {
-                commentsContainer.innerHTML = ''; // clear "No Comments" on first load
+                commentsContainer.innerHTML = '';
             }
 
             if (data.comments) {
