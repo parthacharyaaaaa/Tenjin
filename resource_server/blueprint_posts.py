@@ -227,10 +227,12 @@ def edit_post(post_id : int) -> tuple[Response, int]:
 @token_required
 def delete_post(post_id: int) -> Response:
     redirect: bool = 'redirect' in request.args
+    cacheKey: str = f'post:{post_id}'
     try:
         # Ensure post exists in the first place
         post: Post = db.session.execute(select(Post).where((Post.id == post_id) & (Post.deleted == False))).scalar_one_or_none()
         if not post:
+            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound('Post does not exist')
         
         # Ensure post author is the issuer of this request
@@ -239,10 +241,7 @@ def delete_post(post_id: int) -> Response:
             forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == post.forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
             if not forumAdmin:
                 raise Forbidden('You do not have the rights to alter this post as you are not its author')
-        
-        # If post already deleted, ignore
-        if post.deleted:
-            return jsonify({"message" :"Post already queued for deleted"}), 200
+
     except SQLAlchemyError: genericDBFetchException()
 
     # Post good to go for deletion
@@ -273,6 +272,8 @@ def delete_post(post_id: int) -> Response:
     else:
         RedisInterface.hset(f'{Forum.__tablename__}:posts', post.forum_id, postsCounterKey)
     
+    # Overwrite any existing cached entries for this post with 404 mapping, and then expire ephemerally
+    hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
     return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, name = redirectionForum)}), 200
 
 @post.route("/<int:post_id>/vote", methods=["PATCH"])
@@ -363,7 +364,7 @@ def vote_post(post_id: int) -> tuple[Response, int]:
         return jsonify({'message' : 'Voted!'}), 202
 
     RedisInterface.set(cacheKey, vote, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
-    
+
     # New counter set, add to this post's score hashmap and finish
     RedisInterface.hset(f"{Post.__tablename__}:score", post_id, voteCounterKey)
     return jsonify({"message" : "Voted!"}), 202
