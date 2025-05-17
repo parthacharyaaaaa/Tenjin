@@ -102,7 +102,7 @@ def get_post(post_id : int) -> tuple[Response, int]:
         ... #TODO: Add logging logic for cache failures
 
     if not cachedPost:
-        fetchedPost : Post | None = db.session.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
+        fetchedPost : Post | None = db.session.execute(select(Post).where((Post.id == post_id) & (Post.deleted == False))).scalar_one_or_none()
         if not fetchedPost:
             hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound(f"Post with id {post_id} could not be found :(")
@@ -155,7 +155,7 @@ def get_post(post_id : int) -> tuple[Response, int]:
 @token_required
 def edit_post(post_id : int) -> tuple[Response, int]:
     # Ensure user is owner of this post
-    owner: User = db.session.execute(select(User).join(Post, Post.author_id == User.id).where(Post.id == post_id)).scalar_one_or_none()
+    owner: User = db.session.execute(select(User).join(Post, Post.author_id == User.id).where((Post.id == post_id) & (Post.deleted == False))).scalar_one_or_none()
     if not owner:
         raise Forbidden('You do not have the rights to edit this post')
     
@@ -412,16 +412,20 @@ def check_post_saved(post_id: int) -> tuple[Response, int]:
     if not (g.requestUser and g.requestUser.get('sid')):
         return jsonify(False), 200
     
-    isSaved = RedisInterface.get(f"saves:{post_id}:{g.requestUser['sid']}")
+    cacheKey: str = f"saves:{post_id}:{g.requestUser['sid']}"
+    isSaved = RedisInterface.get(cacheKey)
     if isSaved:
+        RedisInterface.set(cacheKey, int(isSaved), current_app.config['REDIS_TTL_EPHEMERAL'])
         return jsonify(int(isSaved)), 200
     
     try:
         isSaved: int = int(bool(db.session.execute(select(PostSave)
                                                 .where((PostSave.post_id == post_id) & (PostSave.user_id == g.requestUser['sid']))
                                                 ).scalar_one_or_none()))
-        RedisInterface.set(f"saves:{post_id}:{g.requestUser['sid']}", isSaved, 60)
+
+        RedisInterface.set(cacheKey, isSaved, current_app.config['REDIS_TTL_EPHEMERAL'])
         return jsonify(isSaved), 200
+    
     except SQLAlchemyError:
         res = jsonify(False)
         res.headers['Error'] = 'An error occured when trying to check if you have saved this post'
@@ -430,11 +434,18 @@ def check_post_saved(post_id: int) -> tuple[Response, int]:
 @post.route('/<int:post_id>/is-voted', methods=['GET'])
 @pass_user_details
 def check_post_vote(post_id: int) -> tuple[Response, int]:
+    # Flags:
+    # -1: Not voted
+    #  0: Downvoted
+    #  1: Upvoted
+
     if not (g.requestUser and g.requestUser.get('sid')):
         return jsonify(-1), 200
     
-    postVote = RedisInterface.get(f'votes:{post_id}:{g.requestUser["sid"]}')
+    cacheKey: str = f'votes:{post_id}:{g.requestUser["sid"]}'
+    postVote = RedisInterface.get(cacheKey)
     if postVote:
+        RedisInterface.set(cacheKey, postVote, current_app.config['REDIS_TTL_EPHEMERAL'])   # No promotion for an ephemeral key, just reset TTL
         return jsonify(int(postVote)), 200
     
     try:
@@ -444,11 +455,12 @@ def check_post_vote(post_id: int) -> tuple[Response, int]:
         
         # 0 is falsey, hence 'not postVote' won't work as intended here
         if postVote == None:
+            RedisInterface.set(cacheKey, -1, current_app.config['REDIS_TTL_EPHEMERAL'])
             return jsonify(-1), 200
     except: genericDBFetchException()
 
     postVote = int(postVote)
-    RedisInterface.set(f'votes:{post_id}:{g.requestUser["sid"]}', postVote, 60)
+    RedisInterface.set(cacheKey, postVote, current_app.config['REDIS_TTL_EPHEMERAL'])
     return jsonify(postVote), 200
 
 @post.route("/<int:post_id>/save", methods=["PATCH"])
@@ -489,6 +501,9 @@ def save_post(post_id: int) -> tuple[Response, int]:
         return jsonify({"message" : "Saved!"}), 202
 
     RedisInterface.hset(f"{Post.__tablename__}:saves", post_id, saveCounterKey) # Add post's counter to saves hashmap for this table
+
+    # Ephemerally set save flag
+    RedisInterface.set(f"saves:{post_id}:{g.decodedToken['sid']}", 1, current_app.config['REDIS_TTL_EPHEMERAL'])
     return jsonify({"message" : "Saved!"}), 202
 
 @post.route("/<int:post_id>/unsave", methods=["PATCH"])
@@ -529,6 +544,9 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
         return jsonify({"message" : "Removed from saved posts"}), 202
 
     RedisInterface.hset(f"{Post.__tablename__}:saves", post_id, saveCounterKey) # Add post's counter to saves hashmap for this table
+
+    # Ephemerally set save flag to False
+    RedisInterface.set(f"saves:{post_id}:{g.decodedToken['sid']}", 0, current_app.config['REDIS_TTL_EPHEMERAL'])
     return jsonify({"message" : "Removed from saved posts"}), 202
 
 @post.route("/<int:post_id>/report", methods=[])
