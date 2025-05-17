@@ -207,7 +207,7 @@ def edit_post(post_id : int) -> tuple[Response, int]:
         badReq.__setattr__('kwargs', additional_kw)
         raise badReq
 
-    db.session.execute(update(Post)
+    updatedPost: Post = db.session.execute(update(Post)
                        .where(Post.id == post_id)
                        .values(**update_kw)
                        .returning(Post))
@@ -217,8 +217,7 @@ def edit_post(post_id : int) -> tuple[Response, int]:
     cacheKey: str = f'post:{post_id}'
     if RedisInterface.hgetall(cacheKey):
         #NOTE: The hashmap for 404 ({'__NF__' : '-1'}) would logically never be encountered since control reaching here indicates that the post obviously exists, hence we can directly check for empty maps
-        RedisInterface.hset(cacheKey, mapping=update_kw)
-        RedisInterface.expire(cacheKey, current_app.config['REDIS_TTL_STRONG'])
+        hset_with_ttl(RedisInterface, cacheKey, updatedPost.__json_like__(), current_app.config['REDIS_TTL_STRONG'])
 
     return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected",
                     "post_id" : post_id,
