@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from types import MappingProxyType
 from resource_server.external_extensions import hset_with_ttl
 from datetime import datetime, timedelta
+from redis.exceptions import RedisError
 import base64
 import binascii
 from typing import Any
@@ -323,29 +324,46 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
     RedisInterface.hset(f"{Forum.__tablename__}:subscribers", forum_id, subCounterKey)
     return jsonify({'message' : 'unsubscribed!'}), 200
 
-@forum.route("/<int:forum_id>/edit", methods=["PATCH"])
+@forum.route("/<int:forum_id>", methods=["PATCH"])
 @enforce_json
 @token_required
 def edit_forum(forum_id: int) -> tuple[Response, int]:
+    # Ensure forum existence via Redis first >:3
+    cacheKey: str = f'forum:{forum_id}'
+    try:
+        op = RedisInterface.hgetall(cacheKey)
+        if '__NF__' in op:
+            # Not 404, if __NF__ mapping is in cache then the forum was deleted very recently
+            raise Conflict('This forum was just deleted')
+        
+    except RedisError: ...
+
     colorTheme: str | int = g.REQUEST_JSON.get('color_theme')
     if colorTheme and isinstance(colorTheme, str):
          if not colorTheme.isnumeric():
             raise BadRequest("Invalid color theme")
          colorTheme = int(colorTheme)
         
-    description: str = g.REQUEST_JSON.pop('descriptions')
+    description: str = g.REQUEST_JSON.pop('description', None)
 
     if not (colorTheme or description):
         raise BadRequest("No changes provided")
     
     try:
         # Ensure user has access rights for this action
-        userRole: str = db.session.execute(select(ForumAdmin.role).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
-        if not userRole or userRole != 'super' or userRole != 'owner':
+        userRole: str = db.session.execute(select(ForumAdmin.role)
+                                           .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))
+                                           ).scalar_one_or_none()
+
+        if userRole not in ('super', 'owner'):
             raise Forbidden('You do not have access rights to edit this forum')
         
         # Lock forum
-        forum: Forum = db.session.execute(select(Forum).where(Forum.id == forum_id).with_for_update(nowait=True)).scalar_one_or_none()
+        forum: Forum = db.session.execute(select(Forum)
+                                          .where(Forum.id == forum_id)
+                                          .with_for_update(nowait=True)
+                                          ).scalar_one()    # Forum existence is guaranteed if access control check is passed
+
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Invalid token, missing mandatory field: sid. Please login again')
 
@@ -356,12 +374,17 @@ def edit_forum(forum_id: int) -> tuple[Response, int]:
         updateClauses['description'] = description.strip()
     
     try:
-        db.session.execute(update(Forum).where(Forum.id == forum_id).values(**updateClauses))
+        updatedForum: Forum = db.session.execute(update(Forum)
+                                                 .where(Forum.id == forum_id)
+                                                 .values(**updateClauses)
+                                                 .returning(Forum)
+                                                 ).scalar_one()
         db.session.commit()
     except SQLAlchemyError as e:
         e.__setattr__('description', 'Failed to update this forum. Please try again later')
         raise e
 
+    hset_with_ttl(RedisInterface, cacheKey, updatedForum.__json_like__(), current_app.config['REDIS_TTL_WEAK'])
     return jsonify({'message' : 'Edited forum'}), 200
 
 @forum.route("/<int:forum_id>/highlight-post", methods=['PATCH'])
