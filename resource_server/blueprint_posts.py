@@ -17,7 +17,7 @@ import base64
 import binascii
 from datetime import datetime
 
-@post.route("/", methods=["POST", "OPTIONS"])
+@post.route("/", methods=["POST", ])
 @enforce_json
 @token_required
 def create_post() -> tuple[Response, int]:
@@ -75,7 +75,7 @@ def create_post() -> tuple[Response, int]:
 
     return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
 
-@post.route("/<int:post_id>", methods=["GET", "OPTIONS"])
+@post.route("/<int:post_id>", methods=["GET"])
 @pass_user_details
 def get_post(post_id : int) -> tuple[Response, int]:
     sortByTop: bool =  request.args.get('sf', 'top') == 'top'   # Top/New comment flag
@@ -114,7 +114,7 @@ def get_post(post_id : int) -> tuple[Response, int]:
     # RedisInterface.set(f'post:{post_id}', ujson.dumps(res), ex=300)
     return jsonify(res), 200
 
-@post.route("/<int:post_id>", methods=["PATCH", "OPTIONS"])
+@post.route("/<int:post_id>", methods=["PATCH"])
 @enforce_json
 @token_required
 def edit_post(post_id : int) -> tuple[Response, int]:
@@ -177,7 +177,7 @@ def edit_post(post_id : int) -> tuple[Response, int]:
                     "post_id" : post_id,
                     **update_kw, **additional_kw}), 202
 
-@post.route("/<int:post_id>", methods=["DELETE", "OPTIONS"])
+@post.route("/<int:post_id>", methods=["DELETE", ])
 @token_required
 def delete_post(post_id: int) -> Response:
     redirect: bool = 'redirect' in request.args
@@ -229,7 +229,7 @@ def delete_post(post_id: int) -> Response:
     
     return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, name = redirectionForum)}), 200
 
-@post.route("/<int:post_id>/vote", methods=["OPTIONS", "PATCH"])
+@post.route("/<int:post_id>/vote", methods=["PATCH"])
 @token_required
 def vote_post(post_id: int) -> tuple[Response, int]:
     try:
@@ -308,7 +308,7 @@ def vote_post(post_id: int) -> tuple[Response, int]:
     RedisInterface.hset(f"{Post.__tablename__}:score", post_id, voteCounterKey)
     return jsonify({"message" : "Voted!"}), 202
 
-@post.route("/<int:post_id>/unvote", methods=["OPTIONS", "PATCH"])
+@post.route("/<int:post_id>/unvote", methods=["PATCH"])
 @token_required
 def unvote_post(post_id: int) -> tuple[Response, int]:    
     try:
@@ -405,7 +405,7 @@ def check_post_vote(post_id: int) -> tuple[Response, int]:
     RedisInterface.set(f'votes:{post_id}:{g.requestUser["sid"]}', postVote, 60)
     return jsonify(postVote), 200
 
-@post.route("/<int:post_id>/save", methods=["OPTIONS", "PATCH"])
+@post.route("/<int:post_id>/save", methods=["PATCH"])
 @token_required
 def save_post(post_id: int) -> tuple[Response, int]:    
     try:
@@ -445,7 +445,7 @@ def save_post(post_id: int) -> tuple[Response, int]:
     RedisInterface.hset(f"{Post.__tablename__}:saves", post_id, saveCounterKey) # Add post's counter to saves hashmap for this table
     return jsonify({"message" : "Saved!"}), 202
 
-@post.route("/<int:post_id>/unsave", methods=["OPTIONS", "PATCH"])
+@post.route("/<int:post_id>/unsave", methods=["PATCH"])
 @token_required
 def unsave_post(post_id: int) -> tuple[Response, int]:
     try:
@@ -485,7 +485,7 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
     RedisInterface.hset(f"{Post.__tablename__}:saves", post_id, saveCounterKey) # Add post's counter to saves hashmap for this table
     return jsonify({"message" : "Removed from saved posts"}), 202
 
-@post.route("/<int:post_id>/report", methods=["OPTIONS", "PATCH"])
+@post.route("/<int:post_id>/report", methods=[])
 @token_required
 @enforce_json
 def report_post(post_id: int) -> tuple[Response, int]:

@@ -19,7 +19,7 @@ import ujson
 import base64
 from hashlib import sha256
 
-@user.route("/", methods=["POST", "OPTIONS"])
+@user.route("/", methods=["POST"])
 # @private
 @enforce_json
 def register() -> tuple[Response, int]:
@@ -96,7 +96,7 @@ def register() -> tuple[Response, int]:
                     **response_kwargs}), 201
 
     
-@user.route("/", methods=["OPTIONS", "DELETE"])
+@user.route("/", methods=["DELETE"])
 @enforce_json
 def delete_user() -> Response:
     if not (g.REQUEST_JSON.get("username") and
@@ -120,7 +120,7 @@ def delete_user() -> Response:
     #TODO: Add logic for purging user's JWTs from auth server
     return jsonify({"message" : "account deleted succesfully", "username" : user.username, "time_deleted" : user.time_deleted}), 203
 
-@user.route("/recover", methods=["OPTIONS", "PATCH"])
+@user.route("/recover", methods=["PATCH"])
 @enforce_json
 def recover_user() -> Response:
     if not (g.REQUEST_JSON.get("identity") and g.REQUEST_JSON.get("password")):
@@ -166,7 +166,7 @@ def recover_user() -> Response:
                    "email" : deadAccount.email,
                    "_links" : {"login" : {"href" : url_for(".login")}}}), 200
 
-@user.route("/recover-password", methods = ["OPTIONS", "POST"])
+@user.route("/recover-password", methods = ["POST"])
 @enforce_json
 def recover_password() -> Response:
     if not g.REQUEST_JSON.get('identity'):
@@ -198,7 +198,7 @@ def recover_password() -> Response:
     #TODO: Invoke RedisManager method to send recovery email to recoveryAccount.email with a temp link
     return jsonify({"message" : "An email has been sent to account"}), 200    
 
-@user.route("/update-password/<string:token>", methods=["OPTIONS", "PATCH"])
+@user.route("/update-password/<string:token>", methods=["PATCH"])
 @enforce_json
 def update_password(token : str) -> Response:
     if len(token < 15):
@@ -381,7 +381,7 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
     return jsonify({'animes' : _animes, 'cursor' : cursor, 'end' : end})
 
 
-@user.route("/login", methods=["POST", "OPTIONS"])
+@user.route("/login", methods=["POST"])
 # @private
 @enforce_json
 def login() -> Response:

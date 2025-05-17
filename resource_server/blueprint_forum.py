@@ -69,7 +69,7 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
 
     return jsonify({'posts' : postsJSON, 'cursor' : cursor, 'end' : end}), 200
 
-@forum.route("/", methods=["POST", "OPTIONS"])
+@forum.route("/", methods=["POST"])
 @enforce_json
 @token_required
 def create_forum() -> tuple[Response, int]:
@@ -107,7 +107,7 @@ def create_forum() -> tuple[Response, int]:
 
     return jsonify({"message" : "Forum created succesfully"}), 202
 
-@forum.route("/<int:forum_id>", methods = ["DELETE", "OPTIONS"])
+@forum.route("/<int:forum_id>", methods = ["DELETE"])
 @token_required
 def delete_forum(forum_id: int) -> Response:
     try:
@@ -130,7 +130,7 @@ def delete_forum(forum_id: int) -> Response:
     
     return jsonify({'message' : 'forum deleted'}), 200
 
-@forum.route("/<int:forum_id>/admins", methods=['POST', 'OPTIONS'])
+@forum.route("/<int:forum_id>/admins", methods=['POST'])
 @enforce_json
 @token_required
 def add_admin(forum_id: int) -> tuple[Response, int]:
@@ -180,7 +180,7 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
     RedisInterface.hset(f'{Forum.__tablename__}:admins', forum_id, adminCounterKey)
     return jsonify({"message" : "Added new admin", "userID" : newAdminID, "role" : newAdminRole}), 202
 
-@forum.route("/<int:forum_id>/admins", methods=['DELETE', 'OPTIONS'])
+@forum.route("/<int:forum_id>/admins", methods=['DELETE'])
 @enforce_json
 @token_required
 def remove_admin(forum_id: int) -> tuple[Response, int]:
@@ -287,7 +287,7 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
     RedisInterface.hset(f"{Forum.__tablename__}:subscribers", forum_id, subCounterKey)
     return jsonify({'message' : 'unsubscribed!'}), 200
 
-@forum.route("/<int:forum_id>/edit", methods=["PATCH", "OPTIONS"])
+@forum.route("/<int:forum_id>/edit", methods=["PATCH"])
 @enforce_json
 @token_required
 def edit_forum(forum_id: int) -> tuple[Response, int]:
@@ -328,7 +328,7 @@ def edit_forum(forum_id: int) -> tuple[Response, int]:
 
     return jsonify({'message' : 'Edited forum'}), 200
 
-@forum.route("/<int:forum_id>/highlight-post", methods=['PATCH', 'OPTIONS'])
+@forum.route("/<int:forum_id>/highlight-post", methods=['PATCH'])
 @token_required
 def add_highlight_post(forum_id: int) -> tuple[Response, int]:
     postID: str = request.args.get('post')
@@ -368,7 +368,7 @@ def add_highlight_post(forum_id: int) -> tuple[Response, int]:
     
     return jsonify({'message' : 'Post highlighted'}), 200
 
-@forum.route("/<int:forum_id>/highlight-post", methods=['DELETE', 'OPTIONS'])
+@forum.route("/<int:forum_id>/highlight-post", methods=['DELETE'])
 @token_required
 def remove_highlight_post(forum_id: int) -> tuple[Response, int]:
     postID: str = request.args.get('post')
