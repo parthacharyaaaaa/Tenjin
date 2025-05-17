@@ -289,13 +289,24 @@ def vote_post(post_id: int) -> tuple[Response, int]:
     
     # Request valid at the surface level, check for votes existence in db
     bSwitchVote: bool = False
+    postVote: int = None
+    cacheKey: str = f'votes:{post_id}:{g.decodedToken["str"]}'
+
+    # 1: Consult cache
+    try:
+        postVote = RedisInterface.get(cacheKey)
+        if postVote:
+            postVote = int(postVote)
+    except RedisError: ...
+    
+    # 2: Fall back to DB
     try:
         # Check if user has already casted a vote for this post
-        postVote: PostVote = db.session.execute(select(PostVote).where((PostVote.voter_id == g.decodedToken['sid']) & (PostVote.post_id == post_id))).scalar_one_or_none()
+        postVote: int = db.session.execute(select(PostVote.vote).where((PostVote.voter_id == g.decodedToken['sid']) & (PostVote.post_id == post_id))).scalar()
         if postVote:
-            if int(postVote.vote) == vote:
+            if int(postVote) == vote:
                 # Casting the same vote twice, do nothing
-                return jsonify({'message' : f'Post already {"upvoted" if postVote.vote else "downvoted"}'}), 200
+                return jsonify({'message' : f'Post already {"upvoted" if postVote else "downvoted"}'}), 200
             else:
                 # Going from upvote to downvote, or vice-versa. Counter will be incremented or decremented by 2
                 bSwitchVote = True
@@ -314,6 +325,7 @@ def vote_post(post_id: int) -> tuple[Response, int]:
 
         # Add new weak entity for user VOTES ON posts
         RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.decodedToken['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__})
+        RedisInterface.set(cacheKey, vote, ex=current_app.config['REDIS_TTL_EPHEMERAL'])    # Ephemerally cache that bad boy
         return jsonify({"message" : "Voted!"}), 202
     
     # No counter found
@@ -331,7 +343,6 @@ def vote_post(post_id: int) -> tuple[Response, int]:
         # Remove old WE for user VOTES ON posts in advance
         db.session.execute(delete(PostVote).where((PostVote.post_id == post_id) & (PostVote.voter_id == g.decodedToken['sid'])))
         db.session.commit()
-        # RedisInterface.xadd("WEAK_DELETIONS", {'voter_id' : g.decodedToken['sid'], 'post_id' : post_id, 'table' : PostVote.__tablename__})
 
     # Insert new WE
     RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.decodedToken['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__})
@@ -348,8 +359,11 @@ def vote_post(post_id: int) -> tuple[Response, int]:
             # Downvote
             RedisInterface.decr(voteCounterKey, 2 if bSwitchVote else 1)
 
+        RedisInterface.set(cacheKey, vote, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
         return jsonify({'message' : 'Voted!'}), 202
 
+    RedisInterface.set(cacheKey, vote, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
+    
     # New counter set, add to this post's score hashmap and finish
     RedisInterface.hset(f"{Post.__tablename__}:score", post_id, voteCounterKey)
     return jsonify({"message" : "Voted!"}), 202
