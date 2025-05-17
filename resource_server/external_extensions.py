@@ -1,8 +1,13 @@
 from redis import Redis
 from flask import Flask
-from enum import Enum
 
 RedisInterface = None
+
+def hset_with_ttl(interface: Redis, name: str, mapping: dict, ttl: int, transaction: bool = True):
+    with interface.pipeline(transaction) as pp:
+        pp.hset(name=name, mapping=mapping)
+        pp.expire(name=name, time=ttl)
+        pp.execute()
 
 def init_redis(app: Flask):
     global RedisInterface

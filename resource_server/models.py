@@ -382,7 +382,7 @@ class Post(db.Model):
                 "score": self.score,
                 "comments": self.total_comments,
                 "title": self.title,
-                "body": self.body_text,
+                "body_text": self.body_text,
                 "flair": self.flair,
                 "closed": self.closed,
                 "epoch": self.time_posted.strftime("%d/%m/%y, %H:%M:%S"),

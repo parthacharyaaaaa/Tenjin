@@ -13,7 +13,7 @@ from werkzeug.exceptions import NotFound, BadRequest, Forbidden
 
 from typing import Any, Optional
 from redis.exceptions import RedisError
-import orjson
+from resource_server.external_extensions import hset_with_ttl
 import base64
 import binascii
 from datetime import datetime
@@ -89,10 +89,7 @@ def get_post(post_id : int) -> tuple[Response, int]:
             _res = pp.execute()
         print(_res[0])
         if '__NF__' in _res[0]:
-            with RedisInterface.pipeline(transaction=False) as pp:
-                pp.hset(cacheKey, mapping={'__NF__' : -1})
-                pp.expire(cacheKey, current_app.config['REDIS_TTL_EPHEMERAL'])
-                pp.execute()
+            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
 
             raise NotFound(f"Post with id {post_id} could not be found :(")
         elif(_res[0]):
@@ -107,10 +104,7 @@ def get_post(post_id : int) -> tuple[Response, int]:
     if not cachedPost:
         fetchedPost : Post | None = db.session.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
         if not fetchedPost:
-            with RedisInterface.pipeline(transaction=False) as pp:
-                pp.hset(cacheKey, mapping={'__NF__' : -1})
-                pp.expire(cacheKey, current_app.config['REDIS_TTL_EPHEMERAL'])
-                pp.execute()
+            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound(f"Post with id {post_id} could not be found :(")
         
     post_mapping = cachedPost or fetchedPost.__json_like__()
@@ -118,10 +112,7 @@ def get_post(post_id : int) -> tuple[Response, int]:
 
     # Cache if not cached already
     if not cachedPost:
-        with RedisInterface.pipeline() as pp:
-            pp.hset(cacheKey, mapping = rediserialize(post_mapping))
-            pp.expire(cacheKey, current_app.config['REDIS_TTL_STRONG'])
-            pp.execute()
+        hset_with_ttl(RedisInterface, cacheKey, rediserialize(post_mapping), current_app.config['REDIS_TTL_STRONG'])
     
     # No auth
     if not g.requestUser:
@@ -216,8 +207,19 @@ def edit_post(post_id : int) -> tuple[Response, int]:
         badReq.__setattr__('kwargs', additional_kw)
         raise badReq
 
-    db.session.execute(update(Post).where(Post.id == post_id).values(**update_kw))
+    db.session.execute(update(Post)
+                       .where(Post.id == post_id)
+                       .values(**update_kw)
+                       .returning(Post))
     db.session.commit()
+
+    # Enforce write-through
+    cacheKey: str = f'post:{post_id}'
+    if RedisInterface.hgetall(cacheKey):
+        #NOTE: The hashmap for 404 ({'__NF__' : '-1'}) would logically never be encountered since control reaching here indicates that the post obviously exists, hence we can directly check for empty maps
+        RedisInterface.hset(cacheKey, mapping=update_kw)
+        RedisInterface.expire(cacheKey, current_app.config['REDIS_TTL_STRONG'])
+
     return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected",
                     "post_id" : post_id,
                     **update_kw, **additional_kw}), 202
