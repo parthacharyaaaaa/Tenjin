@@ -41,7 +41,7 @@ class FlaskConfig:
         REDIS_PORT: int = int(os.environ["REDIS_PORT"])
         REDIS_DB: int = int(os.environ.get("REDIS_DB", 0))
         REDIS_TTL_CAP: int = int(os.environ["TTL_CAP"])
-        REDIS_PROMOTION: int = int(os.environ["TTL_PROMOTION"])
+        REDIS_TTL_PROMOTION: int = int(os.environ["TTL_PROMOTION"])
         REDIS_TTL_STRONG: int = int(os.environ["TTL_STRONG"])
         REDIS_TTL_WEAK: int = int(os.environ["TTL_WEAK"])
         REDIS_TTL_EPHEMERAL: int = int(os.environ["TTL_EPHEMERAL"])

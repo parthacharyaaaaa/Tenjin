@@ -1,4 +1,4 @@
-from flask import Blueprint, Response, jsonify, g, url_for, request
+from flask import Blueprint, Response, jsonify, g, url_for, request, current_app
 post = Blueprint("post", "post", url_prefix="/posts")
 
 from sqlalchemy import select, update, delete
@@ -11,8 +11,9 @@ from auxillary.utils import rediserialize, genericDBFetchException
 
 from werkzeug.exceptions import NotFound, BadRequest, Forbidden
 
-from typing import Any
-import ujson
+from typing import Any, Optional
+from redis.exceptions import RedisError
+import orjson
 import base64
 import binascii
 from datetime import datetime
@@ -78,40 +79,84 @@ def create_post() -> tuple[Response, int]:
 @post.route("/<int:post_id>", methods=["GET"])
 @pass_user_details
 def get_post(post_id : int) -> tuple[Response, int]:
-    sortByTop: bool =  request.args.get('sf', 'top') == 'top'   # Top/New comment flag
-    includeComments: bool = request.args.get('include_comments', '0') == '1'
-    # try:
-    #     postKey: str = f'post:{post_id}'
-    #     commentsKey: str = f'post:{post_id}:comments:{sortByTop}'
-    #     cachedPost: str = RedisInterface.get(postKey)
-    #     cachedComments: str = None if not includeComments else RedisInterface.get(commentsKey) 
-    #     if cachedPost:
-    #         # Update ttl on cache hit
-    #         RedisInterface.expire(postKey, 300)
-    #         RedisInterface.expire(commentsKey, 300)     # Refresh comments' ttl regardless of it being requested. Since post is being requested nonetheless, it is likely that subsequent requests may ask for comment as well
+    cacheKey: str = f'post:{post_id}'
+    cachedPost: Optional[dict[str, Any]] = None
+    cachedPostTTL: int = 0
+    try:
+        with RedisInterface.pipeline() as pp:
+            pp.hgetall(cacheKey)
+            pp.ttl(cacheKey)
+            _res = pp.execute()
+        print(_res[0])
+        if '__NF__' in _res[0]:
+            with RedisInterface.pipeline(transaction=False) as pp:
+                pp.hset(cacheKey, mapping={'__NF__' : -1})
+                pp.expire(cacheKey, current_app.config['REDIS_TTL_EPHEMERAL'])
+                pp.execute()
 
-    #         serializedResult = {'post' : ujson.loads(cachedPost), 'comments' : cachedComments}
-    #         return jsonify(serializedResult), 200
-    # except:
-    #     ...
-    
-    fetchedPost : Post | None = db.session.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
-    if not post:
-        raise NotFound(f"Post with id {post_id} could not be found :(")
-    
-    isOwner, postSaved, postVoted = False, False, None
-    if g.requestUser:
-        # Check if user is owner of this post
-        isOwner: bool = g.requestUser.get('sid') == fetchedPost.author_id
+            raise NotFound(f"Post with id {post_id} could not be found :(")
+        elif(_res[0]):
+            cachedPost = _res[0]
+            cachedPostTTL = _res[1]
+            # Promote TTL
+            RedisInterface.expire(cacheKey, min(current_app.config['REDIS_TTL_CAP'], cachedPostTTL+current_app.config['REDIS_TTL_PROMOTION']))
 
-        # Check if saved, voted
+    except RedisError: 
+        ... #TODO: Add logging logic for cache failures
+
+    if not cachedPost:
+        fetchedPost : Post | None = db.session.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
+        if not fetchedPost:
+            with RedisInterface.pipeline(transaction=False) as pp:
+                pp.hset(cacheKey, mapping={'__NF__' : -1})
+                pp.expire(cacheKey, current_app.config['REDIS_TTL_EPHEMERAL'])
+                pp.execute()
+            raise NotFound(f"Post with id {post_id} could not be found :(")
+        
+    post_mapping = cachedPost or fetchedPost.__json_like__()
+    res = {'post' : post_mapping}
+
+    # Cache if not cached already
+    if not cachedPost:
+        with RedisInterface.pipeline() as pp:
+            pp.hset(cacheKey, mapping = rediserialize(post_mapping))
+            pp.expire(cacheKey, current_app.config['REDIS_TTL_STRONG'])
+            pp.execute()
+    
+    # No auth
+    if not g.requestUser:
+        return jsonify(res), 200
+
+    # Auth, check for user's relationships to the post as well
+    postSaved, postVoted = False, None
+
+    # Check if user is owner of this post
+    res['owner'] = g.requestUser.get('sid') == fetchedPost.author_id
+
+    # Check if saved, voted
+    # 1: Consult cache
+    with RedisInterface.pipeline(transaction=False) as pp:  # Get operation need not be constrained by atomicity
+        pp.get(f'saves:{post_id}:{g.requestUser["sid"]}')
+        pp.get(f'votes:{post_id}:{g.requestUser["sid"]}')
+        pp.execute()
+    postSaved, postVoted = pp
+
+    # 2: Fall back to db
+    if not postSaved:
         postSaved = db.session.execute(select(PostSave).where((PostSave.post_id == post_id) & (PostSave.user_id == g.requestUser.get('sid')))).scalar_one_or_none()
+    if not postVoted:
         postVoted = db.session.execute(select(PostVote.vote).where((PostVote.post_id == post_id) & (PostVote.voter_id == g.requestUser.get('sid')))).scalar_one_or_none()
-        print(g.requestUser.get('sid'))
-        print(postSaved, postVoted)
-    res = {'post' : fetchedPost.__json_like__(), 'saved' : bool(postSaved), 'vote' : postVoted, 'owner' : isOwner}
-    # TODO: Have pre-defined values for cached items' TTLs
-    # RedisInterface.set(f'post:{post_id}', ujson.dumps(res), ex=300)
+
+    res['saved'] = bool(postSaved)
+    res['voted'] = postVoted
+
+    # No promotion logic for ephemral keys
+    with RedisInterface.pipeline(transaction=False) as pp:  # Ephemeral set operation need not be constrained by atomicity
+        pp.set(f'saves:{post_id}:{g.requestUser["sid"]}', postSaved, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
+        pp.set(f'votes:{post_id}:{g.requestUser["sid"]}', postVoted, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
+        pp.execute()
+
+    # Post mapping was already cached
     return jsonify(res), 200
 
 @post.route("/<int:post_id>", methods=["PATCH"])
@@ -539,7 +584,6 @@ def report_post(post_id: int) -> tuple[Response, int]:
     
     RedisInterface.hset(f"{Post.__tablename__}:reports", post_id, reportCounterKey)
     return jsonify({"message" : "Reported!"}), 202
-
 
 @post.route("/<int:post_id>/comment", methods=['POST'])
 @enforce_json
