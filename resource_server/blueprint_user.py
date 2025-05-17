@@ -14,6 +14,8 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum, ForumSubscription, Anime, AnimeSubscription
 
 from datetime import datetime
+from redis.exceptions import RedisError
+from resource_server.external_extensions import hset_with_ttl
 from uuid import uuid4
 import ujson
 import base64
@@ -236,18 +238,35 @@ def update_password(token : str) -> Response:
 
 @user.route("/<int:user_id>", methods=["GET"])
 def get_users(user_id: int) -> tuple[Response, int]:
+    cacheKey: str = f'users:{user_id}'
     try:
-        cachedResult: str = RedisInterface.get(f'users:{user_id}')
-        if cachedResult:
-            return jsonify({'user' : ujson.loads(cachedResult)}), 200
-    except:
-        ...
+        with RedisInterface.pipeline() as pp:
+            pp.hgetall(cacheKey)
+            pp.ttl(cacheKey)
+            _res = pp.execute()
+        print(_res[0])
+        if '__NF__' in _res[0]:
+            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+
+            raise NotFound(f"User with id {user_id} could not be found :(")
+        elif(_res[0]):
+            cachedPost = _res[0]
+            cachedPostTTL = _res[1]
+            # Promote TTL
+            RedisInterface.expire(cacheKey, min(current_app.config['REDIS_TTL_CAP'], cachedPostTTL+current_app.config['REDIS_TTL_PROMOTION']))
+
+    except RedisError: 
+        ... #TODO: Add logging logic for cache failures
+
     try:
         user: User = db.session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
         if not user:
+            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound('No user with this ID exists')
     except SQLAlchemyError: genericDBFetchException()
 
+
+    hset_with_ttl(RedisInterface, cacheKey, user.__json_like__(), current_app.config['REDIS_TTL_STRONG'])
     return jsonify({'user' : user.__json_like__()}), 200
 
 @user.route('profile/<int:user_id>/posts')
