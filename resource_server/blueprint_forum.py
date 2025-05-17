@@ -130,24 +130,40 @@ def create_forum() -> tuple[Response, int]:
 @forum.route("/<int:forum_id>", methods = ["DELETE"])
 @token_required
 def delete_forum(forum_id: int) -> Response:
+    cacheKey: str = f'forum:{forum_id}'
     try:
+        # Check existence of this forum
+        forum: Forum = db.session.execute(select(Forum)
+                                          .where((Forum.id == forum_id) & (Forum.deleted == False))
+                                          ).scalar_one_or_none()
+        if not forum:
+            # Broadcast non-existence
+            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            raise NotFound(f'No forum with id {forum_id} found. Perhaps you already deleted it?')
+        
         # Check to see if user is owner or superuser
-        userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+        userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
+                                                   .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))
+                                                   ).scalar_one_or_none()
         if not userAdmin or userAdmin.role != 'owner' and userAdmin.role != 'super':
             raise Forbidden("You do not have the necessary permissions to delete this forum")
-        
+
     except SQLAlchemyError: raise genericDBFetchException()
     except KeyError: raise BadRequest("Missing mandatory field 'sid', please login again")
 
     # Request carries the necessary permissions to delete this forum
     try:
-        db.session.execute(update(Forum).where(Forum.id == forum_id).values(deleted=True, time_deleted=datetime.now()))
+        db.session.execute(update(Forum)
+                           .where(Forum.id == forum_id)
+                           .values(deleted=True, time_deleted=datetime.now()))
         db.session.commit()
     except: 
         exc: Exception = Exception()
         exc.__setattr__('description', 'Failed to delete this forum. Please try again later')
         raise exc
     
+    # Broadcast deletion
+    hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK'])
     return jsonify({'message' : 'forum deleted'}), 200
 
 @forum.route("/<int:forum_id>/admins", methods=['POST'])
