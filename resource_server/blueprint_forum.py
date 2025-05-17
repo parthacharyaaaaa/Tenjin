@@ -8,13 +8,14 @@ from sqlalchemy import select, update, insert, desc
 from sqlalchemy.exc import SQLAlchemyError
 
 from types import MappingProxyType
+from resource_server.external_extensions import hset_with_ttl
 from datetime import datetime, timedelta
 import base64
 import binascii
 from typing import Any
 
 from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict
-from flask import Blueprint, Response, g, jsonify, request
+from flask import Blueprint, Response, g, jsonify, request, current_app
 forum = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/forums")
 
 TIMEFRAMES: MappingProxyType = MappingProxyType({0 : lambda dt : dt - timedelta(hours=1),
@@ -85,26 +86,45 @@ def create_forum() -> tuple[Response, int]:
     except (TypeError, ValueError):
         raise BadRequest("Malformmatted values provided for forum creation")
     
+    # 1: Consult cache
+    cacheKey: str = f'forum:{forumName}:{forumAnimeID}'
     try:
-        forumExisting: Forum = db.session.execute(select(Forum).where(Forum._name == forumName)).scalar_one_or_none()
+        exists: bool = bool(RedisInterface.hget(cacheKey))
+        if exists:
+            raise Conflict("A forum with this name for this anime already exists")
+    except: ...
+    
+    # 2: Fallback to DB
+    try:
+        forumExisting: Forum = db.session.execute(select(Forum)
+                                                  .where((Forum._name == forumName) & (Forum.anime == forumAnimeID))
+                                                  ).scalar_one_or_none()
         if forumExisting:
-            raise Conflict("A forum with this name already exists")
-        anime: Anime = db.session.execute(select(Anime).where(Anime.id == forumAnimeID)).scalar_one_or_none()
+            raise Conflict("A forum with this name for this anime already exists")
+        anime: Anime = db.session.execute(select(Anime)
+                                          .where(Anime.id == forumAnimeID)
+                                          ).scalar_one_or_none()
         if not anime:
+            # Set 404 mapping ephemerally for this anime ID
+            hset_with_ttl(RedisInterface, f'anime:{forumAnimeID}', {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound(f"No anime with ID: {forumAnimeID} could be found")
     except SQLAlchemyError: genericDBFetchException()
 
     # All checks passed, push >:3
     try:
-        fID = db.session.execute(insert(Forum).values(_name = forumName, anime=forumAnimeID, description=description, created_at=datetime.now()).returning(Forum.id)).scalar_one_or_none()
+        newForum: Forum = db.session.execute(insert(Forum)
+                                 .values(_name = forumName, anime=forumAnimeID, description=description, created_at=datetime.now())
+                                 .returning(Forum)).scalar_one_or_none()
         db.session.commit()
-        db.session.execute(insert(ForumAdmin).values(forum_id=fID, user_id=userID, role='owner'))
+        db.session.execute(insert(ForumAdmin)
+                           .values(forum_id=newForum.id, user_id=userID, role='owner'))
         db.session.commit()
     except SQLAlchemyError as sqlErr:
         db.session.rollback()
         sqlErr.__setattr__("description", "An error occured while trying to create the forum. This is most likely an issue with our servers")
         raise sqlErr
 
+    hset_with_ttl(RedisInterface, cacheKey, rediserialize(newForum.__json_like__()), current_app.config['REDIS_TTL_STRONG'])
     return jsonify({"message" : "Forum created succesfully"}), 202
 
 @forum.route("/<int:forum_id>", methods = ["DELETE"])

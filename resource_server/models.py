@@ -283,7 +283,9 @@ class Forum(db.Model):
                 "subscribers" : self.subscribers,
                 "description": self.description,
                 "posts": self.posts,
-                "highlights": [self.highlight_post_1, self.highlight_post_2, self.highlight_post_3],
+                "highlight_1": self.highlight_post_1,
+                "highlight_2": self.highlight_post_2,
+                "highlight_3": self.highlight_post_3,
                 "epoch": self.created_at.strftime('%d/%m/%y, %H:%M:%S'), 
                 "admin_count": self.admin_count}
 
