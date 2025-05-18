@@ -1,6 +1,7 @@
 from auth_server.token_manager import tokenManager
+from auth_server.redis_manager import RedisInterface
 from auxillary.decorators import enforce_json, private
-from flask import Blueprint, request, jsonify, Response, make_response, g, current_app
+from flask import Blueprint, request, jsonify, Response, make_response, g, current_app, send_from_directory
 from flask_cors import cross_origin
 from werkzeug.exceptions import BadRequest
 import requests
@@ -8,7 +9,7 @@ import time
 import secrets
 from typing import Any
 
-auth: Blueprint = Blueprint('auth', 'auth', url_prefix='/')
+auth: Blueprint = Blueprint('auth', 'auth', url_prefix='/auth')
 
 @auth.after_request
 def enforceMinCSP(response):
@@ -16,7 +17,12 @@ def enforceMinCSP(response):
         response.headers["Content-Security-Policy"] = current_app.config["CSP"]
 
     return response
+
 ### Endpoints ###
+@auth.route('/jwks.json')
+def jwks() -> tuple[Response, int]:
+    return send_from_directory(current_app.instance_path, current_app.config['JWKS_FILENAME'], mimetype='application/json')
+    
 
 @auth.route("/login", methods = ["POST", "OPTIONS"])
 # @CSRF_protect
