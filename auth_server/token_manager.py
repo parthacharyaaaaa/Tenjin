@@ -2,7 +2,7 @@ import jwt
 from typing import Optional, Literal
 from redis import Redis
 from werkzeug.exceptions import InternalServerError
-import os
+from flask import Flask
 import uuid
 import time
 from typing import TypeAlias
@@ -22,9 +22,9 @@ class TokenManager:
     activeRefreshTokens : int = 0
 
     def __init__(self, signingKey : str,
-                 host: str, port: int, db: int,
+                 interface: Redis,
                  refreshLifetime : int = 60*60*3,
-                 accessLifetime : int = 60*30, 
+                 accessLifetime : int = 60*30,
                  alg : str = "HS256",
                  typ : str = "JWT",
                  uClaims : dict = {"iss" : "babel-auth-service"},
@@ -45,7 +45,7 @@ class TokenManager:
         additonalHeaders (dict-like): Additional header information, universal to all tokens'''
 
         try:
-            self._TokenStore = Redis(host, port, db)
+            self._TokenStore = interface
             self.max_llen = max_tokens_per_fid
         except Exception as e:
             raise ValueError("Mandatory configurations missing for _TokenStore") from e
@@ -81,7 +81,7 @@ class TokenManager:
         except (JWTexc.ImmatureSignatureError, JWTexc.InvalidIssuedAtError, JWTexc.InvalidIssuerError) as e:
             if tType == "refresh":
                 self.invalidateFamily(jwt.decode(token, options={"verify_signature":False})["fid"])
-            raise TOKEN_STORE_INTEGRITY_ERROR("PP")
+            raise ValueError("PP")
 
     def reissueTokenPair(self, rToken : str) -> tokenPair:
         '''Issue a new token pair from a given refresh token
@@ -132,15 +132,15 @@ class TokenManager:
             key = self._TokenStore.lindex(f"FID:{familyID}", 0)
             if not key:
                 self.invalidateFamily(familyID)
-                raise TOKEN_STORE_INTEGRITY_ERROR(f"Token family {familyID} is invalid or empty")
+                raise ValueError(f"Token family {familyID} is invalid or empty")
             key_metadata = key.split(b":")
             if str(key_metadata[0]) != jti or float(key_metadata[1]) != exp:
                 self.invalidateFamily(familyID)
-                raise TOKEN_STORE_INTEGRITY_ERROR(f"Replay attack detected or token metadata mismatch for family {familyID}")
+                raise ValueError(f"Replay attack detected or token metadata mismatch for family {familyID}")
 
         elif self._TokenStore.get(f"FID{familyID}"):
             self.invalidateFamily(familyID)
-            raise TOKEN_STORE_INTEGRITY_ERROR(f"Token family {familyID} already exists, cannot issue a new token with the same family")
+            raise ValueError(f"Token family {familyID} already exists, cannot issue a new token with the same family")
 
         payload : dict = {"iat" : time.time(),
                           "exp" : time.time() + self.refreshLifetime,
@@ -225,7 +225,7 @@ class TokenManager:
     def generate_unique_identifier():
         return uuid.uuid4().hex
     
-class TOKEN_STORE_INTEGRITY_ERROR(Exception):
-    def __init__(self, description : str = "Invalid token detected", *args, **kwargs):
-        self.description = description
-        super().__init__(*args, **kwargs)
+tokenManager: TokenManager = None
+def init_token_manager(app: Flask, redisinterface: Redis, **kwargs) -> None:
+    global tokenManager
+    tokenManager = TokenManager(app.config['SIGNING_KEY'], interface=redisinterface, **kwargs)
