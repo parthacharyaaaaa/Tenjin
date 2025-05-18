@@ -1,3 +1,5 @@
-from auth_server import auth
+from auth_server.auth_app import create_app
 
-auth.run(host=auth.config['HOST'], port=auth.config['PORT'], debug=True)
+if __name__ == '__main__':
+    auth_app = create_app()
+    auth_app.run(host=auth_app.config['HOST'], port=auth_app.config['PORT'], debug=True)
