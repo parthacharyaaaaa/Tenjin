@@ -2,29 +2,23 @@ import ecdsa
 from hashlib import sha512
 import os
 from cryptography.fernet import Fernet
-import base64
+import secrets
 import ujson
 
-def int_to_base64url(n: int) -> str:
-    byte_length = (n.bit_length() + 7) // 8
-    return base64.urlsafe_b64encode(n.to_bytes(byte_length, 'big')).rstrip(b'=').decode('ascii')
-
-def generate_ecdsa_pair() -> tuple[ecdsa.SigningKey, ecdsa.VerifyingKey]:
+def generate_ecdsa_pair() -> tuple[int, ecdsa.SigningKey, ecdsa.VerifyingKey]:
     '''Generate signing and verification ECDSA key pair'''
     signingKey: ecdsa.SigningKey = ecdsa.SigningKey.generate(curve=ecdsa.SECP256k1, hashfunc=sha512)
     verificiationKey: ecdsa.VerifyingKey = signingKey.get_verifying_key()
+    kid: int = secrets.randbelow(10_000_000)
 
-    return signingKey, verificiationKey
+    return kid, signingKey, verificiationKey
 
 def update_jwks(vk: ecdsa.VerifyingKey, kid: int,
                 jwks_json_filepath: os.PathLike,
                 enforce_capacity: bool = True,
                 capacity: int = 3) -> None:
     '''Updates the JWKS JSON file to include the given public key as the latest key'''
-    keyMapping: dict[str, str|int] = {'kty' : 'EC', 'alg' : 'ECDSA', 'crv' : ecdsa.SECP256k1.__str__(), 'use' :'sig', 'kid' : kid}
-    encodedX, encodedY = int_to_base64url(vk.pubkey.point.x()), int_to_base64url(vk.pubkey.point.y())
-
-    keyMapping.update({'x' : encodedX, 'y' : encodedY})
+    keyMapping: dict[str, str|int] = {'kty' : 'EC', 'alg' : 'ECDSA', 'crv' : ecdsa.SECP256k1.__str__(), 'use' :'sig', 'kid' : kid, 'x' : int(vk.pubkey.point.x()), 'y' : int(vk.pubkey.point.y())}
 
     with open(jwks_json_filepath, 'r+') as jwks_json_file:
         jwks_contents: list[dict[str, str|int]] = ujson.loads(jwks_json_file.read())['keys']
