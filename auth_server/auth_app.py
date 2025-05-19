@@ -17,10 +17,6 @@ def create_app() -> Flask:
     from auth_server.redis_manager import init_redis
     init_redis(auth_app)
     
-    from auth_server.token_manager import init_token_manager
-    from auth_server.redis_manager import RedisInterface
-    init_token_manager(auth_app, RedisInterface)
-
     # Blueprints
     from auth_server.blueprint_routes import auth
     from auth_server.blueprint_cmd import cmd
@@ -55,5 +51,9 @@ def create_app() -> Flask:
         
         else:
             auth_app.config['JWKS_KV_MAPPING'] = initialMap
+
+    from auth_server.token_manager import init_token_manager
+    from auth_server.redis_manager import RedisInterface
+    init_token_manager(auth_app, RedisInterface)
 
     return auth_app
