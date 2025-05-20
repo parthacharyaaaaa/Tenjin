@@ -115,36 +115,36 @@ def get_post(post_id : int) -> tuple[Response, int]:
         hset_with_ttl(RedisInterface, cacheKey, rediserialize(post_mapping), current_app.config['REDIS_TTL_STRONG'])
     
     # No auth
-    if not g.requestUser:
+    if not g.REQUESTING_USER:
         return jsonify(res), 200
 
     # Auth, check for user's relationships to the post as well
     postSaved, postVoted = False, None
 
     # Check if user is owner of this post
-    res['owner'] = g.requestUser.get('sid') == fetchedPost.author_id
+    res['owner'] = g.REQUESTING_USER.get('sid') == fetchedPost.author_id
 
     # Check if saved, voted
     # 1: Consult cache
     with RedisInterface.pipeline(transaction=False) as pp:  # Get operation need not be constrained by atomicity
-        pp.get(f'saves:{post_id}:{g.requestUser["sid"]}')
-        pp.get(f'votes:{post_id}:{g.requestUser["sid"]}')
+        pp.get(f'saves:{post_id}:{g.REQUESTING_USER["sid"]}')
+        pp.get(f'votes:{post_id}:{g.REQUESTING_USER["sid"]}')
         pp.execute()
     postSaved, postVoted = pp
 
     # 2: Fall back to db
     if not postSaved:
-        postSaved = db.session.execute(select(PostSave).where((PostSave.post_id == post_id) & (PostSave.user_id == g.requestUser.get('sid')))).scalar_one_or_none()
+        postSaved = db.session.execute(select(PostSave).where((PostSave.post_id == post_id) & (PostSave.user_id == g.REQUESTING_USER.get('sid')))).scalar_one_or_none()
     if not postVoted:
-        postVoted = db.session.execute(select(PostVote.vote).where((PostVote.post_id == post_id) & (PostVote.voter_id == g.requestUser.get('sid')))).scalar_one_or_none()
+        postVoted = db.session.execute(select(PostVote.vote).where((PostVote.post_id == post_id) & (PostVote.voter_id == g.REQUESTING_USER.get('sid')))).scalar_one_or_none()
 
     res['saved'] = bool(postSaved)
     res['voted'] = postVoted
 
     # No promotion logic for ephemral keys
     with RedisInterface.pipeline(transaction=False) as pp:  # Ephemeral set operation need not be constrained by atomicity
-        pp.set(f'saves:{post_id}:{g.requestUser["sid"]}', postSaved, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
-        pp.set(f'votes:{post_id}:{g.requestUser["sid"]}', postVoted, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
+        pp.set(f'saves:{post_id}:{g.REQUESTING_USER["sid"]}', postSaved, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
+        pp.set(f'votes:{post_id}:{g.REQUESTING_USER["sid"]}', postVoted, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
         pp.execute()
 
     # Post mapping was already cached
@@ -424,10 +424,10 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
 @post.route('/<int:post_id>/is-saved', methods=['GET'])
 @pass_user_details
 def check_post_saved(post_id: int) -> tuple[Response, int]:
-    if not (g.requestUser and g.requestUser.get('sid')):
+    if not (g.REQUESTING_USER and g.REQUESTING_USER.get('sid')):
         return jsonify(False), 200
     
-    cacheKey: str = f"saves:{post_id}:{g.requestUser['sid']}"
+    cacheKey: str = f"saves:{post_id}:{g.REQUESTING_USER['sid']}"
     isSaved = RedisInterface.get(cacheKey)
     if isSaved:
         RedisInterface.set(cacheKey, int(isSaved), current_app.config['REDIS_TTL_EPHEMERAL'])
@@ -435,7 +435,7 @@ def check_post_saved(post_id: int) -> tuple[Response, int]:
     
     try:
         isSaved: int = int(bool(db.session.execute(select(PostSave)
-                                                .where((PostSave.post_id == post_id) & (PostSave.user_id == g.requestUser['sid']))
+                                                .where((PostSave.post_id == post_id) & (PostSave.user_id == g.REQUESTING_USER['sid']))
                                                 ).scalar_one_or_none()))
 
         RedisInterface.set(cacheKey, isSaved, current_app.config['REDIS_TTL_EPHEMERAL'])
@@ -454,10 +454,10 @@ def check_post_vote(post_id: int) -> tuple[Response, int]:
     #  0: Downvoted
     #  1: Upvoted
 
-    if not (g.requestUser and g.requestUser.get('sid')):
+    if not (g.REQUESTING_USER and g.REQUESTING_USER.get('sid')):
         return jsonify(-1), 200
     
-    cacheKey: str = f'votes:{post_id}:{g.requestUser["sid"]}'
+    cacheKey: str = f'votes:{post_id}:{g.REQUESTING_USER["sid"]}'
     postVote = RedisInterface.get(cacheKey)
     if postVote:
         RedisInterface.set(cacheKey, postVote, current_app.config['REDIS_TTL_EPHEMERAL'])   # No promotion for an ephemeral key, just reset TTL
@@ -465,7 +465,7 @@ def check_post_vote(post_id: int) -> tuple[Response, int]:
     
     try:
         postVote = db.session.execute(select(PostVote.voter_id)
-                                      .where((PostVote.post_id == post_id) & (PostVote.voter_id == g.requestUser['sid']))
+                                      .where((PostVote.post_id == post_id) & (PostVote.voter_id == g.REQUESTING_USER['sid']))
                                       ).scalars().one_or_none()
         
         # 0 is falsey, hence 'not postVote' won't work as intended here

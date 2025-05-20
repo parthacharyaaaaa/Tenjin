@@ -15,11 +15,12 @@ from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum,
 
 from datetime import datetime
 from redis.exceptions import RedisError
-from resource_server.external_extensions import hset_with_ttl
+from resource_server.external_extensions import hset_with_ttl, batch_hset_with_ttl
 from uuid import uuid4
 import ujson
 import base64
 from hashlib import sha256
+import requests
 
 @user.route("/", methods=["POST"])
 # @private
@@ -108,18 +109,28 @@ def delete_user() -> Response:
     OP, USER_DETAILS = processUserInfo(username=g.REQUEST_JSON['username'], password=g.REQUEST_JSON['password'])
     if not OP:
         raise BadRequest(USER_DETAILS.get("error"))
-    user : User | None = db.session.execute(select(User).where(User.username == USER_DETAILS['username'],
-                                                               User.deleted == False).with_for_update()).scalar_one_or_none()
-    if not user:
+    userID : int | None = db.session.execute(select(User.id).where(User.username == USER_DETAILS['username'],
+                                                               User.deleted == False)
+                                                               .with_for_update(nowait=True)
+                                                               ).scalar_one_or_none()
+    if not userID:
         raise NotFound("Requested user could not be found")
     
     try:
-        db.session.execute(update(User).where(User.id == user.id).values(deleted=True, time_deleted=datetime.now()))
+        db.session.execute(update(User)
+                           .where(User.id == userID)
+                           .values(deleted=True, time_deleted=datetime.now()))
         db.session.commit()
-    except:
+
+        # Broadcast user deletion
+        hset_with_ttl(RedisInterface, f'user:{userID}', {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK']) # Non ephemeral timing? idk seems right
+    except SQLAlchemyError:
+        db.session.rollback()
         raise InternalServerError("Failed to perform account deletion, please try again. If the issue persists, please raise a ticket")
+    except RedisError: ...
     
-    #TODO: Add logic for purging user's JWTs from auth server
+    # requests.delete(f"{current_app.config['AUTH_BASE_URL']}/delete-account",
+    #                 headers={'refreshID' : })
     return jsonify({"message" : "account deleted succesfully", "username" : user.username, "time_deleted" : user.time_deleted}), 203
 
 @user.route("/recover", methods=["PATCH"])
@@ -282,16 +293,32 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
     except (ValueError, TypeError):
             raise BadRequest("Failed to load more posts. Please refresh this page")
     
+    cacheKey: str = f'profile:{user_id}:posts:{cursor}'
     try:
-        cachedResult: str = RedisInterface.get(f'profile:{user_id}:posts:{cursor}')
-        if cachedResult:
-            return jsonify(ujson.loads(cachedResult)), 200
-    except:
-        ...
+        with RedisInterface.pipeline() as pp:
+            pp.hgetall(cacheKey)
+            pp.ttl(cacheKey)
+            _res = pp.execute()
+        if '__NF__' in _res[0]:
+            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            return jsonify({'end' : True}), 200
+        
+        elif(_res[0]):
+            cachedPost = _res[0]
+            cachedPostTTL = _res[1]
+            # Promote TTL
+            RedisInterface.expire(cacheKey, min(current_app.config['REDIS_TTL_CAP'], cachedPostTTL+current_app.config['REDIS_TTL_PROMOTION']))
 
+    except RedisError: 
+        ... #TODO: Add logging logic for cache failures
+    
     try:
-        user: User = db.session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+        user: User = db.session.execute(select(User)
+                                        .where(User.id == user_id)
+                                        ).scalar_one_or_none()
         if not user:
+            # Broadcast non-existence
+            hset_with_ttl(RedisInterface, f'user:{user_id}', {"__NF__" : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound('No user with this ID exists')
         
         whereClause = (Post.author_id == user_id)
@@ -315,6 +342,10 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
 
     cursor = base64.b64encode(str(recentPosts[-1].id).encode('utf-8')).decode()
     _posts = [post.__json_like__() for post in recentPosts]
+    if cursor == 0:
+        # Batch cache only the posts that appear at the original, non-paginated profile of the user
+        batch_hset_with_ttl(RedisInterface, names=(f'post:{post.id}' for post in recentPosts), mappings=_posts, ttl=current_app.config['REDIS_TTL_STRONG'])
+
     return jsonify({'posts' : _posts, 'cursor' : cursor, 'end' : end})
 
 @user.route('profile/<int:user_id>/forums')
@@ -328,22 +359,45 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
     except (ValueError, TypeError):
             raise BadRequest("Failed to load more Forums. Please refresh this page")
     
+
+    cacheKey: str = f'profile:{user_id}:forums:{cursor}'
     try:
-        cachedResult: str = RedisInterface.get(f'profile:{user_id}:forums:{cursor}')
-        if cachedResult:
-            return jsonify(ujson.loads(cachedResult)), 200
-    except:
-        ...
+        with RedisInterface.pipeline() as pp:
+            pp.hgetall(cacheKey)
+            pp.ttl(cacheKey)
+            _res = pp.execute()
+        if '__NF__' in _res[0]:
+            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            return jsonify({'end' : True}), 200
+        
+        elif(_res[0]):
+            cachedForums = _res[0]
+            cachedForumTTL = _res[1]
+            # Promote TTL
+            RedisInterface.expire(cacheKey, min(current_app.config['REDIS_TTL_CAP'], cachedForumTTL+current_app.config['REDIS_TTL_PROMOTION']))
+
+            # Formatting response
+            isEnd: int = RedisInterface.get(f'cursor_end:{cachedForums[-1]["id"]}')
+            cursor: str = base64.b64encode(str(cachedForums[-1]["id"]).encode('utf-8')).decode()
+
+            return jsonify({'forums' : cachedForums, 'cursor' : cursor, 'end' : False if not isEnd else bool(isEnd)})   # Fallback to False, the user can press a button one extra time instead of costing us a query >:(
+
+    except RedisError: 
+        ... #TODO: Add logging logic for cache failures
 
     try:
-        user: User = db.session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
-        if not user:
-            raise NotFound('No user with this ID exists')
+        userID: User = db.session.execute(select(User.id)
+                                          .where(User.id == user_id)
+                                          ).scalar_one_or_none()
+        if not userID:
+            hset_with_ttl(RedisInterface, f'user:{user_id}', {"__NF__" : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            raise NotFound(f'No user with ID {userID} exists')
         
         forums: list[Forum] = db.session.execute(select(Forum)
-                                            .where((Forum.id == ForumSubscription.forum_id) & (Forum.id > cursor))
-                                            .join(ForumSubscription, ForumSubscription.user_id == user.id)
-                                            .limit(6)).scalars().all()
+                                                 .where((Forum.id == ForumSubscription.forum_id) & (Forum.id > cursor))
+                                                 .join(ForumSubscription, ForumSubscription.user_id == user.id)
+                                                 .limit(6)
+                                                 ).scalars().all()
         if not forums:
             return jsonify({'forums' : None, 'cursor' : cursor, 'end' : True})
         if len(forums) < 6:
@@ -353,9 +407,14 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
             forums.pop(-1)
     except SQLAlchemyError: genericDBFetchException()
 
-    cursor = base64.b64encode(str(forums[-1].id).encode('utf-8')).decode()
     _forums = [forum.__json_like__() for forum in forums]
-    return jsonify({'forums' : _forums, 'cursor' : cursor, 'end' : True})
+    
+    # Cache only if cursor is 0
+    if cursor == 0:
+        batch_hset_with_ttl(RedisInterface, names=tuple(f"forum:{forum.id}" for forum in forums), mappings=_forums, ttl=current_app.config['REDIS_TTL_STRONG'])
+    
+    cursor = base64.b64encode(str(forums[-1].id).encode('utf-8')).decode()
+    return jsonify({'forums' : _forums, 'cursor' : cursor, 'end' : end})
 
 
 @user.route('profile/<int:user_id>/animes')

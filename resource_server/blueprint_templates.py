@@ -19,7 +19,7 @@ from typing import Any
 @templates.context_processor
 def global_ctx_injector() -> dict[str, Any]:
     return {'auth' : request.cookies.get('access', request.cookies.get('Access')),
-            'user_link' : None if not getattr(g, 'requestUser', None) else url_for('.get_user', _external=False, username=g.requestUser.get('sub'))}
+            'user_link' : None if not getattr(g, 'REQUESTING_USER', None) else url_for('.get_user', _external=False, username=g.REQUESTING_USER.get('sub'))}
 
 @templates.route("/")
 @pass_user_details
@@ -66,16 +66,16 @@ def forum(name: str) -> tuple[str, int]:
                                                             ).scalars().all()
 
         # Fetch if subscribed
-        if g.requestUser:
+        if g.REQUESTING_USER:
             if forum:
                 subbedForum = db.session.execute(select(ForumSubscription)
                                                 .where((ForumSubscription.forum_id == forum.id) & 
-                                                        (ForumSubscription.user_id == g.requestUser['sid']))
+                                                        (ForumSubscription.user_id == g.REQUESTING_USER['sid']))
                                                         ).scalar_one_or_none()
             else:
                 subbedForum = db.session.execute(select(ForumSubscription)
                                                 .where((ForumSubscription.forum_id == cachedMapping['forum']['id']) & 
-                                                        (ForumSubscription.user_id == g.requestUser['sid']))
+                                                        (ForumSubscription.user_id == g.REQUESTING_USER['sid']))
                                                         ).scalar_one_or_none()
 
         # Check if admin
@@ -104,7 +104,7 @@ def forum(name: str) -> tuple[str, int]:
                            name = name,
                            forum_mapping = cachedMapping if cachedMapping else forumFullMapping,
                            subbed=bool(subbedForum),
-                           userlink = None if not g.requestUser else g.requestUser['sub'])
+                           userlink = None if not g.REQUESTING_USER else g.REQUESTING_USER['sub'])
 
 @templates.route('/catalogue/animes')
 @pass_user_details
@@ -146,7 +146,7 @@ def view_anime(anime_id) -> tuple[str, int]:
     isSubbed: bool = False
     try:
         isSubbed = db.session.execute(select(AnimeSubscription)
-                                      .where((AnimeSubscription.anime_id == anime_id) & (AnimeSubscription.user_id == g.requestUser.get('sid')))
+                                      .where((AnimeSubscription.anime_id == anime_id) & (AnimeSubscription.user_id == g.REQUESTING_USER.get('sid')))
                                       .limit(1)).scalar_one_or_none()
     except: ... # Since anime has already been fetched, we can ignore a failure in a simple weak entity fetch for now
 
@@ -176,14 +176,14 @@ def view_post(post_id: int) -> tuple[str, int]:
             username: str = db.session.execute(select(User.username).where(User.id == post.author_id)).scalars().one()
         
         permissionLevel: int = 0
-        if (g.requestUser):
-            if(g.requestUser.get('sid') == cachedPostMapping['author_id'] if cachedPostMapping else post.author_id):
+        if (g.REQUESTING_USER):
+            if(g.REQUESTING_USER.get('sid') == cachedPostMapping['author_id'] if cachedPostMapping else post.author_id):
                 # Author has highest permission level with edit access also
                 permissionLevel = 2
             else:
                 # If admin, permission level is 1
                 permissionLevel = int(bool(db.session.execute(select(ForumAdmin)
-                                    .where((ForumAdmin.forum_id == post.forum_id) & (ForumAdmin.user_id == g.requestUser.get('sid')))
+                                    .where((ForumAdmin.forum_id == post.forum_id) & (ForumAdmin.user_id == g.REQUESTING_USER.get('sid')))
                                     ).scalar_one_or_none()))
             
     except SQLAlchemyError: genericDBFetchException()
