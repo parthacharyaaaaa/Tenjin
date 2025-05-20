@@ -15,6 +15,7 @@ class FlaskConfig:
         PRIVATE_PEM_ENCRYPTION_KEY: bytes = bytes(os.environ["PEM_ENCRYPTION_KEY"], encoding='utf-8')
         SIGNING_KEY: str = os.environ["SIGNING_KEY"]
         JWKS_FILENAME: str = os.environ["JWKS_FILENAME"]
+        JWKS_CAP: int = int(os.environ['JWKS_CAP'])
         JWKS_KV_MAPPING: dict = None
         SESSION_COOKIE_SECURE: bool = bool(os.environ["SESSION_COOKIE_SECURE"])
         PRIVATE_COMM_KEYS: list = os.environ["PRIVATE_COMM_KEYS"].split(",")

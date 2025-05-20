@@ -11,10 +11,11 @@ if not bLoaded:
 class FlaskConfig:
     try:
         ### Flask Configurations ###
-        APP_PORT = int(os.environ["FLASK_PORT"])
-        APP_HOST = os.environ["FLASK_HOST"]
-        APP_DEBUG = bool(int(os.environ.get("FLASK_DEBUG", 0)))
-        SECRET_KEY = os.environ["FLASK_SECRET_KEY"]
+        APP_PORT: int = int(os.environ["FLASK_PORT"])
+        APP_HOST: str = os.environ["FLASK_HOST"]
+        APP_DEBUG: bool = bool(int(os.environ.get("FLASK_DEBUG", 0)))
+        SECRET_KEY: str = os.environ["FLASK_SECRET_KEY"]
+        KEY_VK_MAPPING: dict[str, bytes] = {}
 
         # TODO: Add JWT signing key, peer server metadata, and Redis data. (Maybe session configs too if we use a hybrid approach instead of pure REST?)
 
@@ -31,7 +32,7 @@ class FlaskConfig:
         SQLALCHEMY_TRACK_MODIFICATIONS = bool(int(os.environ.get("SQLALCHEMY_TRACK_MODIFICATIONS", 0)))
 
         ### JWT ###
-        SIGNING_KEY = os.environ['JWT_SIGNING_KEY']
+        AUTH_SERVER_URL: str = f'{os.environ["AUTH_SERVER_PROTOCOL"]}://{os.environ["AUTH_SERVER_HOSTNAME"]}:{os.environ["AUTH_SERVER_PORT"]}'
 
         ### Application-specific configurations ###
         ACCOUNT_RECOVERY_PERIOD = timedelta(days=int(os.environ["ACCOUNT_RECOVERY_PERIOD"]))
