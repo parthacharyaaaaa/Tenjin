@@ -8,6 +8,7 @@ import requests
 import time
 import secrets
 from typing import Any
+from hashlib import sha256
 
 auth: Blueprint = Blueprint('auth', 'auth', url_prefix='/auth')
 
@@ -44,8 +45,9 @@ def login():
     
     rsResponse: dict = valid.json()
     sub, sid = rsResponse.pop('sub'), rsResponse.pop('sid')
-    aToken = tokenManager.issueAccessToken(sub, sid)
-    rToken = tokenManager.issueRefreshToken(sub, sid, firstTime=True)
+    familyID: str = sha256(f'{sub}:{sid}:{int(time.time())}'.encode()).hexdigest()
+    aToken = tokenManager.issueAccessToken(sub, sid, familyID)
+    rToken = tokenManager.issueRefreshToken(sub, sid, familyID=familyID, reissuance=False)
 
     epoch = time.time()
     response = jsonify({
@@ -64,17 +66,17 @@ def login():
                         value=rToken,
                         max_age=tokenManager.refreshLifetime + tokenManager.leeway,
                         httponly=True,
-                        path="/reissue")
+                        path="/auth/reissue")
     response.set_cookie(key="refresh",
                     value=rToken,
                     max_age=tokenManager.refreshLifetime + tokenManager.leeway,
                     httponly=True,
-                    path="/delete-account")
+                    path="/auth/delete-account")
     response.set_cookie(key="refresh",
                     value=rToken,
                     max_age=tokenManager.refreshLifetime + tokenManager.leeway,
                     httponly=True,
-                    path="/purge-family")
+                    path="/auth/purge-family")
     return response, 201
 
 @auth.route("/register", methods = ["POST", "OPTIONS"])
@@ -104,8 +106,9 @@ def register():
     
     rsResponse: dict[str, Any] = valid.json()
     sub, sid = rsResponse.pop('sub'), rsResponse.pop('sid')
-    aToken = tokenManager.issueAccessToken(sub, sid)
-    rToken = tokenManager.issueRefreshToken(sub, sid, firstTime=True)
+    familyID: str = sha256(f'{sub}:{sid}:{int(time.time())}'.encode()).hexdigest()
+    aToken = tokenManager.issueAccessToken(sub, sid, familyID)
+    rToken = tokenManager.issueRefreshToken(sub, sid, familyID=familyID, reissuance=False)
     epoch = time.time()
     response = jsonify({
         "message" : rsResponse.pop("message", "Registration complete."),
@@ -127,17 +130,17 @@ def register():
                         value=rToken,
                         max_age=tokenManager.refreshLifetime + tokenManager.leeway,
                         httponly=True,
-                        path="/reissue")
+                        path="/auth/reissue")
     response.set_cookie(key="refresh",
                         value=rToken,
                         max_age=tokenManager.refreshLifetime + tokenManager.leeway,
                         httponly=True,
-                        path="/delete-account")
+                        path="/auth/delete-account")
     response.set_cookie(key="refresh",
                     value=rToken,
                     max_age=tokenManager.refreshLifetime + tokenManager.leeway,
                     httponly=True,
-                    path="/purge-family")
+                    path="/auth/purge-family")
 
     return response, 201
 
@@ -177,17 +180,17 @@ def reissue():
                         value=nRefreshToken,
                         max_age=tokenManager.refreshLifetime + tokenManager.leeway,
                         httponly=True,
-                        path="/reissue")
+                        path="/auth/reissue")
     response.set_cookie(key="refresh",
                     value=nRefreshToken,
                     max_age=tokenManager.refreshLifetime + tokenManager.leeway,
                     httponly=True,
-                    path="/delete-account")
+                    path="/auth/delete-account")
     response.set_cookie(key="refresh",
                     value=nRefreshToken,
                     max_age=tokenManager.refreshLifetime + tokenManager.leeway,
                     httponly=True,
-                    path="/purge-family")
+                    path="/auth/purge-family")
     return response, 201
 
 @auth.route("/purge-family", methods = ["GET", "OPTIONS"])
