@@ -5,15 +5,15 @@ from cryptography.fernet import Fernet
 import secrets
 import ujson
 
-def generate_ecdsa_pair() -> tuple[int, ecdsa.SigningKey, ecdsa.VerifyingKey]:
+def generate_ecdsa_pair() -> tuple[str, ecdsa.SigningKey, ecdsa.VerifyingKey]:
     '''Generate signing and verification ECDSA key pair'''
     signingKey: ecdsa.SigningKey = ecdsa.SigningKey.generate(curve=ecdsa.SECP256k1, hashfunc=sha512)
     verificiationKey: ecdsa.VerifyingKey = signingKey.get_verifying_key()
-    kid: int = secrets.randbelow(10_000_000)
+    kid: str = str(secrets.randbelow(10_000_000))
 
     return kid, signingKey, verificiationKey
 
-def update_jwks(vk: ecdsa.VerifyingKey, kid: int,
+def update_jwks(vk: ecdsa.VerifyingKey, kid: str,
                 jwks_json_filepath: os.PathLike,
                 enforce_capacity: bool = True,
                 capacity: int = 3) -> None:
