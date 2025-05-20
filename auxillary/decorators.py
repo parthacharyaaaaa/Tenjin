@@ -37,7 +37,7 @@ def require_intraservice_key(endpoint):
 def token_required(endpoint):
     '''
     Protect an endpoint by validating an access token. Requires the header "Authorization: Bearer <credentials>". 
-    Furthermore, sets global data (flask.g.decodedToken : _AppCtxGlobals) for usage of token details in the decorated endpoint
+    Furthermore, sets global data (flask.g.DECODED_TOKEN : _AppCtxGlobals) for usage of token details in the decorated endpoint
 
     Uses flask.current_app.config['key_mapping'] to check for valid verification keys. On failure, pings the JWKS endpoint to check for the key's existence. If found, updates the mapping with the new key and then performs verification
     '''
@@ -95,7 +95,7 @@ def token_required(endpoint):
                                                           algorithms=['ES256'],
                                                           leeway=timedelta(minutes=3))
 
-            g.decodedToken = decodedToken
+            g.DECODED_TOKEN = decodedToken
         except ExpiredSignatureError:
             raise Unauthorized("JWT token expired, begin refresh issuance")
         except PyJWTError as e:

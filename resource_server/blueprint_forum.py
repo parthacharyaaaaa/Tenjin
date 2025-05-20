@@ -76,7 +76,7 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
 @token_required
 def create_forum() -> tuple[Response, int]:
     try:
-        userID: int = g.decodedToken['sid']
+        userID: int = g.DECODED_TOKEN['sid']
         forumName: str = str(g.REQUEST_JSON.pop('forum_name')).strip()
         if not forumName:
             raise ValueError()
@@ -144,9 +144,9 @@ def delete_forum(forum_id: int) -> Response:
         
         # Check to see if user is owner or superuser
         userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
-                                                   .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))
+                                                   .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
                                                    ).scalar_one_or_none()
-        if not userAdmin or userAdmin.role != 'owner' and userAdmin.role != 'super':
+        if userAdmin.role not in ('owner', 'super'):
             raise Forbidden("You do not have the necessary permissions to delete this forum")
 
     except SQLAlchemyError: raise genericDBFetchException()
@@ -174,7 +174,7 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
     newAdminID: int = g.REQUEST_JSON.pop('user_id', None)
     if not newAdminID:
         raise BadRequest('Missing user id for new admin')
-    if g.decodedToken['sid'] == newAdminID:
+    if g.DECODED_TOKEN['sid'] == newAdminID:
         raise Conflict("You are already an admin in this forum")
     newAdminRole: str = g.REQUEST_JSON.pop('role', 'admin')
     if newAdminRole not in ('admin', 'super'):
@@ -187,7 +187,7 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
             raise NotFound('No user with this user id was found')
         
         # Check if user has necessary permissions
-        userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+        userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
         if not userAdmin or userAdmin.role not in ('admin', 'super'):
             raise Forbidden(f"You do not have the necessary permissions to add admins to: {forum._name}")
         
@@ -233,7 +233,7 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
             raise NotFound("This user is not an admin")
         
         # Check if user has necessary permissions
-        userAdminRole: str = db.session.execute(select(ForumAdmin.role).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+        userAdminRole: str = db.session.execute(select(ForumAdmin.role).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
         rolePriority: dict = {'owner' : 2, 'super' : 1} #NOTE: Have a proper enum here later
 
         if not userAdminRole or rolePriority[userAdminRole] <= rolePriority[targetAdminRole]:
@@ -271,7 +271,7 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
 def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     try:
         subbedForum: ForumSubscription = db.session.execute(select(ForumSubscription)
-                                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+                                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
         if subbedForum:
             print(1)
             return jsonify({'message' : 'Already subscribed to this forum'}), 204
@@ -281,7 +281,7 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     except KeyError: raise BadRequest('Invalid token, please login again')
 
     subCounterKey: str = RedisInterface.hget(f'{Forum.__tablename__}:subscribers', forum_id)
-    RedisInterface.xadd("WEAK_INSERTIONS", {'user_id' : g.decodedToken['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
+    RedisInterface.xadd("WEAK_INSERTIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
     if subCounterKey:
         RedisInterface.incr(subCounterKey)
         return jsonify({'message' : 'subscribed!'}), 200
@@ -301,7 +301,7 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
 def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
     try:
         subbedForum: ForumSubscription = db.session.execute(select(ForumSubscription)
-                                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+                                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
         if not subbedForum:
             return jsonify({'message' : 'You have not subscribed to this forum'}), 204
         _forum = db.session.execute(select(Forum).where(Forum.id == forum_id)).scalar_one()
@@ -310,7 +310,7 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
     except KeyError: raise BadRequest('Invalid token, please login again')
 
     subCounterKey: str = RedisInterface.hget(f'{Forum.__tablename__}:subscribers', forum_id)
-    RedisInterface.xadd("WEAK_DELETIONS", {'user_id' : g.decodedToken['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
+    RedisInterface.xadd("WEAK_DELETIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
     if subCounterKey:
         RedisInterface.decr(subCounterKey)
         return jsonify({'message' : 'unsubscribed!'}), 200
@@ -352,7 +352,7 @@ def edit_forum(forum_id: int) -> tuple[Response, int]:
     try:
         # Ensure user has access rights for this action
         userRole: str = db.session.execute(select(ForumAdmin.role)
-                                           .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))
+                                           .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
                                            ).scalar_one_or_none()
 
         if userRole not in ('super', 'owner'):
@@ -398,7 +398,7 @@ def add_highlight_post(forum_id: int) -> tuple[Response, int]:
     
     postID: int = int(postID)
     try:
-        userAdminRole: str = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+        userAdminRole: str = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
         if not userAdminRole or userAdminRole not in ('super', 'owner'):
             raise Forbidden('You do not have access rights to edit this forum')
 
@@ -438,7 +438,7 @@ def remove_highlight_post(forum_id: int) -> tuple[Response, int]:
     
     postID: int = int(postID)
     try:
-        userAdminRole: str = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.decodedToken['sid']))).scalar_one_or_none()
+        userAdminRole: str = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
         if not userAdminRole or userAdminRole not in ('super', 'owner'):
             raise Forbidden('You do not have access rights to edit this forum')
 
