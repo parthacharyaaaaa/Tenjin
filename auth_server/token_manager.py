@@ -7,42 +7,43 @@ import uuid
 import time
 from typing import TypeAlias
 import jwt.exceptions as JWTexc
+from auth_server.key_container import KeyMetadata
 
 # Aliases
 tokenPair : TypeAlias = tuple[str, str]
 
 class TokenManager:
-    '''### Class for issuing and verifying access and refresh tokens assosciated with authentication and authorization
-    
-    #### Usage
-    Instantiate TokenManager with a secret key, and use this instance to issue, verify, and revoke tokens.
-
-    Note: It is best if only a single instance of this class is active'''
+    '''### Class for issuing and verifying access and refresh tokens assosciated with authentication and authorization'''
 
     activeRefreshTokens : int = 0
 
-    def __init__(self, signingKey : str,
+    def __init__(self, kvsMapping: dict[str, KeyMetadata],
                  interface: Redis,
+                 dbConnString: str = None,
                  refreshLifetime : int = 60*60*3,
                  accessLifetime : int = 60*30,
-                 alg : str = "HS256",
+                 alg : str = "ES256",
                  typ : str = "JWT",
-                 uClaims : dict = {"iss" : "babel-auth-service"},
+                 uClaims : dict = {},
                  uHeaders : dict | None = None,
                  leeway : int = 180,
                  max_tokens_per_fid : int = 3):
-        '''Initialize the token manager and set universal headers and claims, common to both access and refresh tokens
-        
-        params:
-        
-        signingKey (str): secret credential for HMAC/RSA or any other encryption algorithm in place\n
-        _connString (str): Database URI string for establishing _connection to db\n
-        refreshSchema (dict-like): Schema of the refresh token\n
-        accessSchema (dict-like): Schema of the access token\n
-        alg (str): Algorithm to use for signing, universal to all tokens\n
-        typ (str): Type of token being issued, universal to all tokens\n
-        uClaims (dict-like): Universal claims to include for both access and refresh tokens\n
-        additonalHeaders (dict-like): Additional header information, universal to all tokens'''
+        '''
+        Args:
+            kvsMapping (dict): Mapping of key IDs to key metadata (see `KeyMetadata` class). Never expose private keys via endpoints.
+            interface (Redis): Redis interface instance for caching or blacklisting.
+            dbConnString (str): Database URI for persistent storage.
+            refreshLifetime (int): Lifetime of refresh tokens (default: 3 hours).
+            accessLifetime (int): Lifetime of access tokens (default: 30 minutes).
+            alg (str): JWT signing algorithm. Default is "ES256".
+            typ (str): Token type, usually "JWT".
+            uClaims (dict): Universal claims to include in all tokens.
+            uHeaders (dict, optional): Additional JWT headers.
+            leeway (int): Leeway time in seconds for token validation. Default is 180s.
+            max_tokens_per_fid (int): Max tokens allowed per user/session.
+        '''
+        self.kvsMapping = kvsMapping
+        self.latestKeyID, self.latestKeyMetadata = next(reversed(kvsMapping.items()))
 
         try:
             self._TokenStore = interface
@@ -52,8 +53,7 @@ class TokenManager:
 
         if not (self._TokenStore.ping()):
             raise ConnectionError()
-        # Initialize signing key
-        self.signingKey = signingKey
+
         # Initialize universal headers, common to all tokens issued in any context
         uHeader = {"typ" : typ, "alg" : alg}
         if uHeaders:
@@ -69,37 +69,46 @@ class TokenManager:
         # Set leeway for time-related claims
         self.leeway = leeway
 
-    def decodeToken(self, token : str, checkAdditionals : bool = True, tType : Literal["access", "refresh"] = "access", **kwargs) -> str:
-        '''Decodes token, raises error in case of failure'''
+    def decodeToken(self, token : str, tType : Literal["access", "refresh"] = "access", **kwargs) -> str:
+        '''Decodes token, raises error in case of failure
+        Args:
+        token: The token to decode
+        tType: Type of token. This is needed to invalidate token families for compromised refresh tokens
+        '''
         try:
+            kid: int = jwt.get_unverified_header(token)['kid']
+            if kid not in self.kvsMapping:
+                raise JWTexc.InvalidKeyError('This key is not recognised, meaning it is possibly tampered, forged, or simply expired a long time ago.')
+            
             return jwt.decode(jwt = token,
-                            key = self.signingKey,
-                            algorithms = self.uHeader['alg'],
+                            key = self.kvsMapping[kid].PUBLIC_PEM,
+                            algorithms = [self.kvsMapping[kid].ALGORITHM],
                             leeway = self.leeway,
-                            issuer="babel-auth-service",
                             options=kwargs.get('options'))
         except (JWTexc.ImmatureSignatureError, JWTexc.InvalidIssuedAtError, JWTexc.InvalidIssuerError) as e:
             if tType == "refresh":
                 self.invalidateFamily(jwt.decode(token, options={"verify_signature":False})["fid"])
             raise ValueError("PP")
+        except KeyError as e:
+            raise JWTexc.InvalidTokenError('Token headers missing key ID')
 
     def reissueTokenPair(self, rToken : str) -> tokenPair:
-        '''Issue a new token pair from a given refresh token
-        
-        params:
-        
-        aToken: JWT encoded access token\n
+        '''
+        Issue a new token pair from a given refresh token, and revoke the provided refresh token
+        Args:
         rToken: JWT encoded refresh token'''
         decodedRefreshToken = self.decodeToken(rToken, tType = "refresh")
 
         # issue tokens here
         refreshToken = self.issueRefreshToken(decodedRefreshToken["sub"],
                                               decodedRefreshToken['sid'],
-                                              firstTime=False,
+                                              reissuance=True,
                                               jti=decodedRefreshToken["jti"],
                                               familyID=decodedRefreshToken["fid"],
                                               exp=decodedRefreshToken["exp"])
-        self.revokeTokenWithIDs(decodedRefreshToken["jti"], decodedRefreshToken['fid'])
+        
+        self.shiftTokenWindow(decodedRefreshToken['fid'])
+
         accessToken = self.issueAccessToken(decodedRefreshToken['sub'], decodedRefreshToken['sid'],
                                             additionalClaims={"fid" : decodedRefreshToken["fid"]})
         
@@ -107,28 +116,25 @@ class TokenManager:
 
     def issueRefreshToken(self, sub: str, sid: int,
                           additionalClaims : Optional[dict] = None,
-                          firstTime : bool = False,
+                          reissuance : bool = False,
                           jti : Optional[str] = None,
                           familyID : Optional[str] = None,
                           exp : Optional[int] = None) -> str:
-        '''Issue a refresh token
-        
-        params:
-        
-        sub: subject of the JWT
-
-        sid: DB ID of subject
-        
-        additionalClaims: Additional claims to attach to the JWT body
-        
-        firstTime: Whether issuance is assosciated with a new authorization flow or not
-
-        jti: JTI claim of the current refresh token
-
-        familyID: FID claim of the current refresh token
         '''
-        # Check for replay attack
-        if not firstTime:
+        #### Issue a new refresh token
+        **Note**: This method will always encrypt the token with the newest available signing key
+        
+        Args:
+        sub: subject of the JWT
+        sid: DB ID of subject
+        additionalClaims: Additional claims to attach to the JWT body
+        reissuance: Whether issuance is assosciated with a new authorization flow or not
+        jti: JTI claim of the current refresh token
+        familyID: FID claim of the current refresh token
+
+        '''
+        if reissuance:
+            # Check for replay attack
             key = self._TokenStore.lindex(f"FID:{familyID}", 0)
             if not key:
                 self.invalidateFamily(familyID)
@@ -138,14 +144,16 @@ class TokenManager:
                 self.invalidateFamily(familyID)
                 raise ValueError(f"Replay attack detected or token metadata mismatch for family {familyID}")
 
-        elif self._TokenStore.get(f"FID{familyID}"):
+        elif self._TokenStore.lrange(f"FID:{familyID}", 0, -1):
+            # A new authorization attempt, but the family already exists. For this project, we only allow single logins per user, so just pull an Itachi and ask to login again
             self.invalidateFamily(familyID)
             raise ValueError(f"Token family {familyID} already exists, cannot issue a new token with the same family")
 
-        payload : dict = {"iat" : time.time(),
+        # All checks passed
+        payload: dict = {"iat" : time.time(),
                           "exp" : time.time() + self.refreshLifetime,
                           "nbf" : time.time() + self.accessLifetime - self.leeway,
-
+                          "fid" : familyID,
                           "sub" : sub,
                           "sid" : sid,
                           "jti" : self.generate_unique_identifier()}
@@ -153,50 +161,41 @@ class TokenManager:
         if additionalClaims:
             payload.update(additionalClaims)
 
-        if firstTime:
-            payload["fid"] = self.generate_unique_identifier()
-        else:
-            payload["fid"] = familyID
-
-        self._TokenStore.lpush(f"FID:{payload['fid']}", f"{payload['jti']}:{payload['exp']}")
-        self._TokenStore.expireat(f"FID:{payload['fid']}", int(payload["exp"]))
-        TokenManager.incrementActiveTokens()
+        with self._TokenStore.pipeline(transaction=False) as pipe:
+            pipe.lpush(f"FID:{familyID}", f"{payload['jti']}:{payload['exp']}")
+            pipe.expireat(f"FID:{familyID}", int(payload["exp"]))
 
         return jwt.encode(payload=payload,
-                          key=self.signingKey,
-                          algorithm=self.uHeader["alg"],
-                          headers=self.uHeader)
+                          key=self.latestKeyMetadata.PRIVATE_PEM,
+                          algorithm=self.latestKeyMetadata.ALGORITHM,
+                          headers=self.uHeader | {'kid' : self.latestKeyID})
 
-    def issueAccessToken(self, sub : str, sid: int,
-                         additionalClaims : Optional[dict] = None) -> str:
-        payload : dict = {"iat" : time.time(),
+    def issueAccessToken(self, sub : str, sid: int, familyID: str, additionalClaims : dict|None = None) -> str:
+        payload: dict = {"iat" : time.time(),
                           "exp" : time.time() + self.accessLifetime,
-                          "iss" : "babel-auth-service",
-                          
+                          "fid" : familyID,
                           "sub" : sub,
                           "sid" : sid,
                           "jti" : self.generate_unique_identifier()}
         payload.update(self.uClaims)
         if additionalClaims:
             payload.update(additionalClaims)
-        return jwt.encode(payload=payload,
-                          key=self.signingKey,
-                          algorithm=self.uHeader["alg"],
-                          headers=self.uHeader)
 
-    def revokeTokenWithIDs(self, jti : str, fID : str) -> None:
-        '''Revokes a refresh token using JTI and FID claims, without invalidating the family'''
+        return jwt.encode(payload=payload,
+                          key=self.latestKeyMetadata.PRIVATE_PEM,
+                          algorithm=self.latestKeyMetadata.ALGORITHM,
+                          headers=self.uHeader | {'kid': self.latestKeyID})
+
+    def shiftTokenWindow(self, fID : str) -> None:
+        '''Revokes the oldest refresh token from a family if capacity is reached, without invalidating the entire family'''
         try:
-            llen = self._TokenStore.llen(f"FID:{fID}")
+            llen: int = self._TokenStore.llen(f"FID:{fID}")
 
             if llen == 0:
                 return "Key does not exist"
             
             if llen >= self.max_llen:
                 self._TokenStore.rpop(f"FID:{fID}", max(1, llen-self.max_llen))
-            TokenManager.decrementActiveTokens()
-        except ValueError as e:
-            print("Number of active tokens must be non-negative integer")
         except Exception as e:
             raise InternalServerError("Failed to perform operation on token store")
 
@@ -205,27 +204,16 @@ class TokenManager:
         try:
             if self._TokenStore.lrange(f"FID:{fID}", 0, -1):
                 self._TokenStore.delete(f"FID:{fID}")
-                TokenManager.decrementActiveTokens()
             else:
                 print("No Family Found")
         except Exception as e:
             raise InternalServerError("Failed to perform operation on token store")
-
-    @classmethod
-    def decrementActiveTokens(cls):
-        if cls.activeRefreshTokens == 0:
-            raise ValueError("Active refresh tokens cannot be a negative number")
-        cls.activeRefreshTokens -= 1
-
-    @classmethod
-    def incrementActiveTokens(cls):
-        cls.activeRefreshTokens += 1
     
     @staticmethod
     def generate_unique_identifier():
         return uuid.uuid4().hex
     
 tokenManager: TokenManager = None
-def init_token_manager(app: Flask, redisinterface: Redis, **kwargs) -> None:
+def init_token_manager(kvsMapping: dict[int, KeyMetadata], redisinterface: Redis, **kwargs) -> None:
     global tokenManager
-    tokenManager = TokenManager(app.config['SIGNING_KEY'], interface=redisinterface, **kwargs)
+    tokenManager = TokenManager(kvsMapping=kvsMapping, interface=redisinterface, **kwargs)
