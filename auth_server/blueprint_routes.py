@@ -45,7 +45,7 @@ def login():
     
     rsResponse: dict = valid.json()
     sub, sid = rsResponse.pop('sub'), rsResponse.pop('sid')
-    familyID: str = sha256(f'{sub}:{sid}:{int(time.time())}'.encode()).hexdigest()
+    familyID: str = sha256(f'{sub}:{sid}'.encode()).hexdigest()
     aToken = tokenManager.issueAccessToken(sub, sid, familyID)
     rToken = tokenManager.issueRefreshToken(sub, sid, familyID=familyID, reissuance=False)
 
@@ -106,7 +106,7 @@ def register():
     
     rsResponse: dict[str, Any] = valid.json()
     sub, sid = rsResponse.pop('sub'), rsResponse.pop('sid')
-    familyID: str = sha256(f'{sub}:{sid}:{int(time.time())}'.encode()).hexdigest()
+    familyID: str = sha256(f'{sub}:{sid}'.encode()).hexdigest()
     aToken = tokenManager.issueAccessToken(sub, sid, familyID)
     rToken = tokenManager.issueRefreshToken(sub, sid, familyID=familyID, reissuance=False)
     epoch = time.time()
