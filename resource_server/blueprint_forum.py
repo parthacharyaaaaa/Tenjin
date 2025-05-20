@@ -1,4 +1,4 @@
-from auxillary.decorators import enforce_json, token_required
+from auxillary.decorators import enforce_json, token_required, pass_user_details
 
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException
@@ -333,6 +333,22 @@ def edit_admin_permissions(forum_id: int) -> tuple[Response, int]:
     except: raise InternalServerError('Failed to change admin role, please try again later')
     
     return jsonify({'message' : 'Admin role changed', 'admin_id' : targetID, 'new_role' : newRole}), 200
+
+@forum.route("/<int:forum_id>/admins")
+@pass_user_details
+def check_admin_permissions(forum_id: int) -> tuple[Response, int]:
+    if not g.REQUESTING_USER:
+        return jsonify(-1), 200
+    
+    try:
+        userRole: str = db.session.execute(select(ForumAdmin.role)
+                                           .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.REQUESTING_USER.get('sid')))
+                                           ).scalar_one()
+        if not userRole:
+            return jsonify(-1), 200
+    except: return jsonify(-1), 200
+
+    return jsonify(AdminRoles.getAdminAccessLevel(userRole)), 200
 
 @forum.route("/<int:forum_id>/subscribe", methods=['PATCH'])
 @token_required
