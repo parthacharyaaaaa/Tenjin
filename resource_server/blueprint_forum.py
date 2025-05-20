@@ -239,20 +239,26 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
 
     # Request details valid at a surface level.
     try:        
-        # Check to see if given user is actually an admin
-        targetAdminRole: str = db.session.execute(select(ForumAdmin.role).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetAdminID))).scalar_one_or_none()
-        if not targetAdminRole:
-            raise NotFound("This user is not an admin")
-        
         # Check if user has necessary permissions
         userAdminRole: str = db.session.execute(select(ForumAdmin.role)
                                                 .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
                                                 ).scalar_one_or_none()
-        rolePriority: dict = {'owner' : 2, 'super' : 1}
-
-        if not userAdminRole or rolePriority[userAdminRole] <= rolePriority[targetAdminRole]:
-            raise Forbidden(f"You do not have the necessary permissions to remove this admin from: {forum._name}")
+        requestingUserLevel: int = AdminRoles.getAdminAccessLevel(userAdminRole)
+        if requestingUserLevel < 2:
+            raise Forbidden('You do not have the necessary permissions to delete an admin from this forum')
         
+        # Check to see if given user is actually an admin
+        targetAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
+                                                  .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetAdminID))
+                                                  .with_for_update(nowait=True)
+                                                  ).scalar_one_or_none()
+        if not targetAdmin:
+            raise NotFound("This user is not an admin")
+        
+        targetAdminRole = AdminRoles.getAdminAccessLevel(targetAdmin.role)
+        # Must have higher access, pr same access but 
+        if (requestingUserLevel < targetAdminRole or not (requestingUserLevel == targetAdminRole and targetAdminID == g.DECODED_TOKEN['sid'])):
+            raise Forbidden('You do not have the necessary permissions to delete this admin from this forum')
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Mandatory claim "sid" missing in token. Please login again')
 
