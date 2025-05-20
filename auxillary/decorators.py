@@ -48,7 +48,9 @@ def token_required(endpoint):
             raise Unauthorized("Authentication details missing")
         
         headers: dict[str, str|int] = get_unverified_header(encodedAccessToken)
-        tokenKID, alg = headers.get('KID'), headers.get('alg')
+        tokenKID, alg = headers.get('kid'), headers.get('alg')
+
+        # Early exit on visibly invaalid tokens
         if not tokenKID:
             raise Unauthorized("Invalid token, key ID missing")
         
@@ -57,37 +59,41 @@ def token_required(endpoint):
         
         try: 
             decodedToken: dict = None
-            if tokenKID in current_app.config['KNOWN_KEYS']:
-                decodedToken = decode(jwt=encodedAccessToken,
-                                      key=current_app.config['KNOWN_KEYS'][tokenKID],
-                                      algorithms=["ES256"],
-                                      leeway=timedelta(minutes=3))
+            if tokenKID in current_app.config['KEY_VK_MAPPING']:
+                decodedToken: dict[str, str|int] = decode(jwt=encodedAccessToken,
+                                                          key=current_app.config['KEY_VK_MAPPING'][tokenKID],
+                                                          algorithms=["ES256"],
+                                                          leeway=timedelta(minutes=3))
                 
             # Possibly new KID, ping auth server
             else:
-                response = requests.get(f'{current_app.config["AUTH_SERVER_URL"]}/jwks.json', timeout=3)
+                response = requests.get(f'{current_app.config["AUTH_SERVER_URL"]}/auth/jwks.json', timeout=3)
                 if response.status_code != 200:
                     raise Unauthorized("Failed to validate JWT. This may be an issue with our authentication service")
                 
-                newMapping: dict[str, str|int] = response.json()['keys']
+                newMapping: dict[str, str|int] = response.json().get('keys')
+                if not newMapping:
+                    #TODO: Ping auth server to indicate malformatted JWKS response
+                    raise Unauthorized()
+                
                 # For any new items in newMapping, we'll need to construct a new dict entry with its public verificiation key
                 for keyMetadata in newMapping:
                     # New key found, welcome to the club >:3
-                    if keyMetadata['kid'] not in current_app.config['KNOWN_KEYS']:
-                        x = int.from_bytes(base64.urlsafe_b64decode(keyMetadata['x']).decode(), 'big', True)
-                        y = int.from_bytes(base64.urlsafe_b64decode(keyMetadata['y']), 'big', True)
+                    if keyMetadata['kid'] not in current_app.config['KEY_VK_MAPPING']:
+                        x = keyMetadata['x']
+                        y = keyMetadata['y']
                         point = ecdsa.ellipticcurve.Point(ecdsa.SECP256k1.curve, x, y)
                         vk = ecdsa.VerifyingKey.from_public_point(point, curve=ecdsa.SECP256k1)
 
-                        current_app.config['KNOWN_KEYS'][keyMetadata['kid']] = vk.to_pem()
+                        current_app.config['KEY_VK_MAPPING'][keyMetadata['kid']] = vk.to_pem()
 
-                if tokenKID not in current_app.config['KNOWN_KEYS']:
+                if tokenKID not in current_app.config['KEY_VK_MAPPING']:
                     raise Unauthorized('Invalid Key ID, no such key was found. Please login again')
                 
-                decodedToken = decode(jwt=encodedAccessToken,
-                                      key=current_app.config['KNOWN_KEYS'][tokenKID],
-                                      algorithms=['ES256'],
-                                      leeway=timedelta(minutes=3))
+                decodedToken: dict[str, str|int] = decode(jwt=encodedAccessToken,
+                                                          key=current_app.config['KEY_VK_MAPPING'][tokenKID],
+                                                          algorithms=['ES256'],
+                                                          leeway=timedelta(minutes=3))
 
             g.decodedToken = decodedToken
         except ExpiredSignatureError:
@@ -111,49 +117,58 @@ def pass_user_details(endpoint):
         encodedAccessToken = request.cookies.get("access", request.cookies.get("Access"))
         if not encodedAccessToken:
             return endpoint(*args, **kwargs)
-        
+
         headers: dict[str, str|int] = get_unverified_header(encodedAccessToken)
-        tokenKID, alg = headers.get('KID'), headers.get('alg')
+        tokenKID, alg = headers.get('kid'), headers.get('alg')
+
+        # Early exit on visibly invalid tokens
         if not tokenKID:
             return endpoint(*args, **kwargs)
         
         if alg != 'ES256':
             return endpoint(*args, **kwargs)
-        
+
         try: 
-            if tokenKID in current_app.config['KNOWN_KEYS']:
-                decode(jwt=encodedAccessToken,
-                                      key=current_app.config['KNOWN_KEYS'][tokenKID],
-                                      algorithms=["ES256"],
-                                      leeway=timedelta(minutes=3))
+            if tokenKID in current_app.config['KEY_VK_MAPPING']:
+                decodedToken: dict[str, str|int] = decode(jwt=encodedAccessToken,
+                                                          key=current_app.config['KEY_VK_MAPPING'][tokenKID],
+                                                          algorithms=["ES256"],
+                                                          leeway=timedelta(minutes=3))
                 
-            # Possibly new KID, ping auth server
+            # Possibly new KID, request auth server
             else:
-                response = requests.get(f'{current_app.config["AUTH_SERVER_URL"]}/jwks.json', timeout=3)
+                response = requests.get(f'{current_app.config["AUTH_SERVER_URL"]}/auth/jwks.json', timeout=3)
                 if response.status_code != 200:
                     return endpoint(*args, **kwargs)
                 
-                newMapping: dict[str, str|int] = response.json()['keys']
+                newMapping: dict[str, str|int] = response.json().get('keys')
+                if not newMapping:
+                    return endpoint(*args, **kwargs)
+                
                 # For any new items in newMapping, we'll need to construct a new dict entry with its public verificiation key
                 for keyMetadata in newMapping:
                     # New key found, welcome to the club >:3
-                    if keyMetadata['kid'] not in current_app.config['KNOWN_KEYS']:
-                        x = int.from_bytes(base64.urlsafe_b64decode(keyMetadata['x']).decode(), 'big', True)
-                        y = int.from_bytes(base64.urlsafe_b64decode(keyMetadata['y']), 'big', True)
+                    if keyMetadata['kid'] not in current_app.config['KEY_VK_MAPPING']:
+                        x = keyMetadata['x']
+                        y = keyMetadata['y']
                         point = ecdsa.ellipticcurve.Point(ecdsa.SECP256k1.curve, x, y)
                         vk = ecdsa.VerifyingKey.from_public_point(point, curve=ecdsa.SECP256k1)
 
-                        current_app.config['KNOWN_KEYS'][keyMetadata['kid']] = vk.to_pem()
+                        current_app.config['KEY_VK_MAPPING'][keyMetadata['kid']] = vk.to_pem()
 
-                if tokenKID not in current_app.config['KNOWN_KEYS']:
+                if tokenKID not in current_app.config['KEY_VK_MAPPING']:
                     return endpoint(*args, **kwargs)
                 
-                decode(jwt=encodedAccessToken,
-                                      key=current_app.config['KNOWN_KEYS'][tokenKID],
-                                      algorithms=['ES256'],
-                                      leeway=timedelta(minutes=3))
+                decodedToken: dict[str: str|int] = decode(jwt=encodedAccessToken,
+                                                          key=current_app.config['KEY_VK_MAPPING'][tokenKID],
+                                                          algorithms=['ES256'],
+                                                          leeway=timedelta(minutes=3))
+           
+            g.REQUESTING_USER = decodedToken
 
         except Exception:
+            import traceback
+            print(traceback.format_exc())
             return endpoint(*args, **kwargs)
         
         return endpoint(*args, **kwargs)
