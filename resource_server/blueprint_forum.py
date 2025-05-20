@@ -3,7 +3,7 @@ from auxillary.decorators import enforce_json, token_required
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException
 
-from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription
+from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from sqlalchemy import select, update, insert, desc
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -15,7 +15,7 @@ import base64
 import binascii
 from typing import Any
 
-from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict
+from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict, Unauthorized, InternalServerError
 from flask import Blueprint, Response, g, jsonify, request, current_app
 forum = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/forums")
 
@@ -146,7 +146,7 @@ def delete_forum(forum_id: int) -> Response:
         userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
                                                    .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
                                                    ).scalar_one_or_none()
-        if userAdmin.role not in ('owner', 'super'):
+        if not userAdmin or userAdmin.role not in ('owner', 'super'):
             raise Forbidden("You do not have the necessary permissions to delete this forum")
 
     except SQLAlchemyError: raise genericDBFetchException()
@@ -177,19 +177,31 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
     if g.DECODED_TOKEN['sid'] == newAdminID:
         raise Conflict("You are already an admin in this forum")
     newAdminRole: str = g.REQUEST_JSON.pop('role', 'admin')
-    if newAdminRole not in ('admin', 'super'):
+
+    newAdminLevel: int = AdminRoles.getAdminAccessLevel(newAdminRole)
+
+    if (newAdminLevel == -1 or newAdminLevel == AdminRoles.owner) :
         raise BadRequest("Forum administrators can only have 2 roles: admin and super")
+    
+    
     # Request details valid at a surface level.
     try:        
         # Check to see if new admin actually exists is users table
-        newAdmin: int = db.session.execute(select(User.id).where(User.id == newAdminID)).scalar_one_or_none()
+        newAdmin: int = db.session.execute(select(User.id)
+                                           .where(User.id == newAdminID)
+                                           ).scalar_one_or_none()
         if not newAdmin:
             raise NotFound('No user with this user id was found')
         
         # Check if user has necessary permissions
-        userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
-        if not userAdmin or userAdmin.role not in ('admin', 'super'):
+        userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
+                                                   .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
+                                                   ).scalar_one_or_none()
+        if not userAdmin:
             raise Forbidden(f"You do not have the necessary permissions to add admins to: {forum._name}")
+        
+        if AdminRoles.getAdminAccessLevel(userAdmin.role) <= newAdminLevel:
+            raise Unauthorized("You do not have the necessary permissions to add this type of admin")
         
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Mandatory claim "sid" missing in token. Please login again')
@@ -233,8 +245,10 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
             raise NotFound("This user is not an admin")
         
         # Check if user has necessary permissions
-        userAdminRole: str = db.session.execute(select(ForumAdmin.role).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
-        rolePriority: dict = {'owner' : 2, 'super' : 1} #NOTE: Have a proper enum here later
+        userAdminRole: str = db.session.execute(select(ForumAdmin.role)
+                                                .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
+                                                ).scalar_one_or_none()
+        rolePriority: dict = {'owner' : 2, 'super' : 1}
 
         if not userAdminRole or rolePriority[userAdminRole] <= rolePriority[targetAdminRole]:
             raise Forbidden(f"You do not have the necessary permissions to remove this admin from: {forum._name}")
@@ -265,6 +279,54 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
     RedisInterface.hset(f'{Forum.__tablename__}:admins', forum_id, adminCounterKey)
     return jsonify({"message" : "Removed admin", "userID" : targetAdminID}), 202
 
+@forum.route("/<int:forum_id>/admins", methods=['PATCH'])
+@enforce_json
+@token_required
+def edit_admin_permissions(forum_id: int) -> tuple[Response, int]:
+    # Inital check to see if admin exists
+    try:
+        # Check whether request is coming from owner
+        forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
+                                            .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
+                                            ).scalar_one()
+        
+        if forumAdmin.role != 'owner':
+            raise Forbidden('You must be the owner of this forum to edit admin permissions')
+        
+        targetID: int = g.REQUEST_JSON.pop('newAdmin', None)
+        newRole: str = g.REQUEST_JSON.pop('newRole', None)
+
+        if not targetID:
+            raise BadRequest('Admin whose permission needs to be changed must be included')
+        if not newRole:
+            raise BadRequest('A role needs to be provided for this admin')
+        if not AdminRoles.check_membership(newRole) or AdminRoles[newRole] == AdminRoles.owner:
+            raise BadRequest('Invalid role, can only be super or admin')
+        
+        if targetID == forumAdmin.user_id:
+            raise BadRequest('As owner, you cannot change your own permissions')
+        
+        # Check if target is admin of this forum
+        targetAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
+                                                     .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetID))
+                                                     .with_for_update(nowait=True)
+                                                     ).scalar_one()
+    except SQLAlchemyError: genericDBFetchException()
+
+    if not targetAdmin:
+        raise NotFound('No such admin could be found')
+    
+    if targetAdmin.role == newRole:
+        raise Conflict('This admin already has this role')
+    
+    # Finally, all checks passed.
+    try:
+        db.session.execute(update(ForumAdmin)
+                            .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetID))
+                            .values(role=newRole))
+    except: raise InternalServerError('Failed to change admin role, please try again later')
+    
+    return jsonify({'message' : 'Admin role changed', 'admin_id' : targetID, 'new_role' : newRole}), 200
 
 @forum.route("/<int:forum_id>/subscribe", methods=['PATCH'])
 @token_required

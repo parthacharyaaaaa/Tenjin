@@ -74,7 +74,6 @@ class ReportTags(Enum):
     @staticmethod
     def check_membership(arg: str) -> bool:
         return arg in [v.value for v in ReportTags.__members__.values()]
-
 class PostReport(db.Model):
     __tablename__ = "post_reports"
     user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
@@ -98,6 +97,24 @@ class AnimeGenre(db.Model):
 
 
 ADMIN_ROLES = ENUM("admin", "super", "owner", name="ADMIN_ROLES", create_type=True)
+class AdminRoles(Enum):
+    '''Python representation of ADMIN_ROLES Enum in Postgres'''
+    admin = 1
+    super = 2
+    owner = 3
+
+    @staticmethod
+    def check_membership(arg: str) -> bool:
+        return arg in [v.value for v in AdminRoles.__members__.values()]
+    
+    @staticmethod
+    def getAdminAccessLevel(role: str) -> int:
+        '''Get corresponding access level of admin role, return -1 on failure'''
+        try:
+            return AdminRoles[arg].value
+        except:
+            return -1
+
 class ForumAdmin(db.Model):
     __tablename__ = "forum_admins"
     forum_id = db.Column(db.Integer, db.ForeignKey("forums.id", ondelete='CASCADE'), primary_key=True)
