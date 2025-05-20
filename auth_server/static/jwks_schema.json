@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "JWKS Schema (Elliptic Curve Key)",
+  "type": "object",
+  "required": ["keys"],
+  "properties": {
+    "keys": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kty", "alg", "crv", "use", "kid", "x", "y"],
+        "properties": {
+          "kty": {
+            "type": "string",
+            "const": "EC"
+          },
+          "alg": {
+            "type": "string",
+            "const": "ECDSA"
+          },
+          "crv": {
+            "type": "string",
+            "const": "SECP256k1"
+          },
+          "use": {
+            "type": "string",
+            "const": "sig"
+          },
+          "kid": {
+            "type": "string"
+          },
+          "x": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "y": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

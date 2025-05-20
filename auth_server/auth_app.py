@@ -2,6 +2,7 @@ from flask import Flask
 from auth_server.config import flaskconfig
 import time
 import os, ujson
+from jsonschema import validate
 import ecdsa
 from auxillary.utils import generic_error_handler
 from auth_server.keygen import generate_ecdsa_pair, write_ecdsa_pair
@@ -37,8 +38,17 @@ def create_app() -> Flask:
         content: str = jwks_file.read()
         if content:
             initialMap: dict = ujson.loads(content)
+    
+    with open(os.path.join(auth_app.static_folder, 'jwks_schema.json')) as schemaFile:
+        schema: dict = ujson.loads(schemaFile.read())
 
-    print(initialMap)
+    validSchema: bool = True
+    try:
+        validate(initialMap, schema=schema)
+    except:
+        validSchema = False
+
+    # Exception for empty files
     if not initialMap:
         kid, sk, vk = generate_ecdsa_pair()
 
@@ -59,9 +69,8 @@ def create_app() -> Flask:
         init_token_manager(kvsMapping={kid:KeyMetadata(PUBLIC_PEM=vk.to_pem(), PRIVATE_PEM=sk.to_pem(), ALGORITHM='ES256', EPOCH=time.time())},
                            redisinterface=RedisInterface)
 
-    elif 'keys' not in initialMap:  # This is such a lazy condition, I'll fix later :P
-        # Exit early on invalid JWKS file
-        #TODO: Add more rigourous checking for all mappings before loading them into memory
+    elif not validSchema:  
+        # Exit early on invalid, non-empty JWKS file
         print("\n[AUTH] Malformmatted JWKS file found, exiting...")
         raise ValueError('Malformmatted JWKS file')
         
