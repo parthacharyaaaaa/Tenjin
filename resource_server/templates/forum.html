@@ -30,10 +30,18 @@
         <div id="forum-modal" class="forum-modal hidden">
         <div class="forum-modal-box" id="forum-modal-box">
             <button class="forum-close-btn">&times;</button>
-            <h2>Create Forum</h2>
+            <h2>Create Post</h2>
             <input id="title" type="text" placeholder="Title" />
             <textarea id="desc" placeholder="Body"></textarea>
-            <button id="forum-submit">Make Forum</button>
+            <button id="forum-submit" class="btn-primary">Create</button>
+        </div>
+    </div>
+        <div id="forum-modal-del" class="forum-modal hidden">
+        <div class="forum-modal-box" id="forum-modal-box-del">
+            <button class="forum-close-btn">&times;</button>
+            <h2>Delete Forum</h2>
+            <input id="confirmation" type="text" placeholder="Please type in the forum's name to confirm deletion" />
+            <button id="forum-delete" class="btn-primary">Delete</button>
         </div>
     </div>
 
@@ -120,4 +128,5 @@
 <script src="{{ url_for('static', filename='scripts/forum.js') }}"></script>
 <script src="{{ url_for('static', filename='scripts/forum_post.js') }}"></script>
 <script src="{{ url_for('static', filename='scripts/forum_sub.js') }}"></script>
+<script src="{{ url_for('static', filename='scripts/forum_admins.js') }}"></script>
 {% endblock %}

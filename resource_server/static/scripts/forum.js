@@ -20,7 +20,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             const cursorParam = dbCursor ? encodeURIComponent(dbCursor) : 0;
-            const url = `/posts/${forumID}?cursor=${cursorParam}&sort=${currentSort}&timeframe=${currentTime}`;
+            const url = `/forums/${forumID}/posts?cursor=${cursorParam}&sort=${currentSort}&timeframe=${currentTime}`;
 
             const response = await fetch(url);
             if (!response.ok) {
@@ -63,8 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <span class="post-date">${post.epoch}</span>
                 </div>
                 <h2 class="post-title">${post.title}</h2>
-                <p class="post-body">${post.body}</p>
-                <div class="post-flair">${post.flair ? `Ask r/Flask` : ''}</div>
+                <p class="post-body">${post.body_text}</p>
                 <div class="post-actions">
                     <button class="vote-btn">⬆️</button>
                     <span class="score-count">${post.score}</span>
