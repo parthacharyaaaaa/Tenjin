@@ -1,14 +1,13 @@
 
 '''Blueprint for serving HTML files. No URL prefix for these endpoints is required'''
 from flask import Blueprint, render_template, request, g, url_for, current_app
-from werkzeug.exceptions import NotFound
 
 templates: Blueprint = Blueprint('templates', __name__, template_folder='templates')
 
 from resource_server.models import db, Post, User, Forum, ForumRules, Anime, AnimeSubscription, ForumSubscription, ForumAdmin, StreamLink, AnimeGenre, Genre
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from auxillary.utils import genericDBFetchException, rediserialize
+from auxillary.utils import genericDBFetchException, rediserialize, consult_cache
 from auxillary.decorators import pass_user_details
 
 from resource_server.external_extensions import RedisInterface
@@ -117,51 +116,35 @@ def get_anime() -> tuple[str, int]:
 def view_anime(anime_id) -> tuple[str, int]:
     cacheKey: str = f'anime:{anime_id}'
     # 1: Redis
-    try:
-        # Check standard key in case of 
-        res: str = None
-        with RedisInterface.pipeline() as pipe:
-            pipe.get(cacheKey)
-            pipe.ttl(cacheKey)
-            res = pipe.execute()
-        
-        if res[0] == '__NF__':
-            RedisInterface.set(cacheKey, res[0], current_app.config['REDIS_TTL_EPHEMERAL'])  # Reannounce non-existence
-            raise NotFound('No anime with this ID could be located')
-        else:
-            cachedAnime: dict = ujson.loads(res[0])
-            cachedTTL: int = res[1]
-            # TTL Promotion
-            RedisInterface.expire(cacheKey, min(current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION']+cachedTTL))
+    animeMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'], dtype='string')
+
+    if animeMapping and not g.REQUESTING_USER:
+        # No auth, return early
+        return render_template('anime.html', anime=animeMapping, subbed=False)
+
+    if not animeMapping:
+        try:
+            anime: Anime = db.session.execute(select(Anime)
+                                            .where(Anime.id == anime_id)
+                                            ).scalar_one_or_none()
+            if not anime:
+                RedisInterface.set(cacheKey, '__NF__', current_app.config['REDIS_TTL_EPHEMERAL'])  # Announce non-existence
+                return render_template('error.html',
+                                    code = 400, 
+                                    msg = 'The anime you requested could not be found :(',
+                                    links = [('Back to home', url_for('.index')), ('Browse available animes', url_for('.get_anime'))])
             
-            if not g.REQUESTING_USER:
-                # No need to check whether user is subscribed
-                return render_template('anime.html', anime=cachedAnime, subbed=False)
-                                
-    except:
-        ... #TODO: Add some logging logic for cache failures
-
-    try:
-        anime: Anime = db.session.execute(select(Anime)
-                                          .where(Anime.id == anime_id)
-                                          ).scalar_one_or_none()
-        if not anime:
-            RedisInterface.set(cacheKey, '__NF__', current_app.config['REDIS_TTL_EPHEMERAL'])  # Announce non-existence
-            return render_template('error.html',
-                                   code = 400, 
-                                   msg = 'The anime you requested could not be found :(',
-                                   links = [('Back to home', url_for('.index')), ('Browse available animes', url_for('.get_anime'))])
-        
-        streamLinks: list[StreamLink] = db.session.execute(select(StreamLink)
-                                                           .where(StreamLink.anime_id == anime_id)
-                                                           ).scalars().all()
-        
-        genres: list[str] = db.session.execute(select(Genre._name)
-                                               .join(AnimeGenre, Genre.id == AnimeGenre.genre_id)
-                                               .where(AnimeGenre.anime_id == anime_id)).scalars().all()
-    except SQLAlchemyError: genericDBFetchException()
-
-    animeMapping: dict = rediserialize(anime.__json_like__()) | {'stream_links' : {link.website:link.url for link in streamLinks}, 'genres' : genres}
+            streamLinks: list[StreamLink] = db.session.execute(select(StreamLink)
+                                                            .where(StreamLink.anime_id == anime_id)
+                                                            ).scalars().all()
+            
+            genres: list[str] = db.session.execute(select(Genre._name)
+                                                .join(AnimeGenre, Genre.id == AnimeGenre.genre_id)
+                                                .where(AnimeGenre.anime_id == anime_id)).scalars().all()
+            
+            # Finally, write to animeMapping
+            animeMapping: dict = rediserialize(anime.__json_like__()) | {'stream_links' : {link.website:link.url for link in streamLinks}, 'genres' : genres}
+        except SQLAlchemyError: genericDBFetchException()
 
     if 'random_prefetch' not in request.args:
         # Only cache if user actually wanted to come here, and not randomly
