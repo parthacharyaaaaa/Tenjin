@@ -146,6 +146,9 @@ def consult_cache(interface: Redis, cache_key: str,
         dtype: Redis data structure assosciated with this item. Defaults to hashmap
         nf_repr: Representation of a key that does not exist. If dtype is mapping, then it is interpreted as {nf_val:-1}
         suppress_errors: Flag to allow silent failures. Ideally this should be set to True to allow graceful fallback to database
+
+    Returns
+        {"__NF__" : True} if nf_repr found, None on cache miss/suppressed failure, and cached mapping on cache hits
     '''
     res: list[dict|str, int] = [None]
     try:
@@ -169,7 +172,7 @@ def consult_cache(interface: Redis, cache_key: str,
                     pipe.execute()
             else:
                 interface.set(cache_key, nf_repr, ttl_ephemeral)
-            return None
+            return {'__NF__':True}
         
         # Cache hit, and resource actually exists
         cachedResource: dict = res[0] if dtype == 'mapping' else ujson.loads(res[0])

@@ -51,7 +51,7 @@ def forum(name: str) -> tuple[str, int]:
             cacheKey: str = f'forum:{forumID}'
             forumMapping = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'], dtype='string')
 
-            if '__NF__' in forumMapping:
+            if forumMapping and '__NF__' in forumMapping:
                 return render_template('error.html',
                                        code=404,
                                        message='No forum with this name could be found',
@@ -121,6 +121,7 @@ def forum(name: str) -> tuple[str, int]:
         except SQLAlchemyError: ... # Silent failure, very wasteful to let the entire cycle go to waste over 2 optional weak entities        
 
     return render_template('forum.html', forum_mapping = forumMapping, subbed=bool(subbedForum))
+
 @templates.route('/catalogue/animes')
 @pass_user_details
 def get_anime() -> tuple[str, int]:
@@ -132,12 +133,19 @@ def view_anime(anime_id) -> tuple[str, int]:
     cacheKey: str = f'anime:{anime_id}'
     # 1: Redis
     animeMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'], dtype='string')
+    
+    if animeMapping:
+        if '__NF__' in animeMapping:
+            return render_template('error.html',
+                                    code = 400, 
+                                    msg = 'The anime you requested could not be found :(',
+                                    links = [('Back to home', url_for('.index')), ('Browse available animes', url_for('.get_anime'))])
+    
+        if not g.REQUESTING_USER:
+            # No auth, return early
+            return render_template('anime.html', anime=animeMapping, subbed=False)
 
-    if animeMapping and not g.REQUESTING_USER:
-        # No auth, return early
-        return render_template('anime.html', anime=animeMapping, subbed=False)
-
-    if not animeMapping:
+    else:
         try:
             anime: Anime = db.session.execute(select(Anime)
                                             .where(Anime.id == anime_id)
@@ -184,21 +192,26 @@ def view_post(post_id: int) -> tuple[str, int]:
     cacheKey: str = f'post:{post_id}'
     postMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
 
-    if postMapping and not g.REQUESTING_USER:
-        return render_template('post.html',
-                               post_mapping =  postMapping,
-                               permission_level = 0)
-    if not postMapping:
+    if postMapping:
+        if '__NF__' in postMapping:
+            return render_template('error.html',
+                                    code = 400, 
+                                    msg = 'The post you requested could not be found :(',
+                                    links = [('Back to home', url_for('.index'))])
+
+
+        if not g.REQUESTING_USER:
+            return render_template('post.html',
+                                post_mapping =  postMapping,
+                                permission_level = 0)
+    
+    else:
         try:
             post: Post = db.session.execute(select(Post)
                                             .where(Post.id == post_id)
                                             ).scalar_one_or_none()
             if not post:
                 hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
-                return render_template('error.html',
-                                       code = 400, 
-                                       msg = 'The post you requested could not be found :(',
-                                       links = [('Back to home', url_for('.index'))])
             
             author, authorID = db.session.execute(select(User.username, User.id)
                                                   .where(User.id == post.author_id)
@@ -234,6 +247,11 @@ def get_user(username: str) -> tuple[str, int]:
     userMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
 
     if userMapping:
+        if '__NF__' in userMapping:
+            return render_template('error.html',
+                                    code=404,
+                                    msg='No user with this username could be found',
+                                    links = [('Back to home', url_for('.index'))])
         return render_template('profile.html', user_mapping=userMapping), 200
     
     try:
