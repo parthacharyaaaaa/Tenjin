@@ -1,7 +1,7 @@
 from auxillary.decorators import enforce_json, token_required, pass_user_details
 
 from resource_server.external_extensions import RedisInterface
-from auxillary.utils import rediserialize, genericDBFetchException
+from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from sqlalchemy import select, update, insert, desc
@@ -30,21 +30,12 @@ TIMEFRAMES: MappingProxyType = MappingProxyType({0 : lambda dt : dt - timedelta(
 @pass_user_details
 def get_forum(forum_id: int) -> tuple[Response, int]:
     cacheKey: str = f'forum:{forum_id}'
-    res = [None]
-    with RedisInterface.pipeline() as pipe:
-        pipe.hgetall(cacheKey)
-        pipe.ttl(cacheKey)
-        res = pipe.execute()
+    forumMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
     
-    if '__NF__' in res[0]:
-        hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
-        raise NotFound(f"No forum with ID {forum_id} could not be found :(")
-    elif res[0]:
-        cachedForum = res[0]
-        cachedForumTTL = res[1]
-        # Promote TTL
-        RedisInterface.expire(cacheKey, min(current_app.config['REDIS_TTL_CAP'], cachedForumTTL+current_app.config['REDIS_TTL_PROMOTION']))
-        return jsonify(cachedForum), 200
+    if forumMapping:
+        if '__NF__' in forumMapping:
+            raise NotFound('No forum with this ID exists')
+        return jsonify(forumMapping), 200
     
     # Fallback to DB
     try:
@@ -55,9 +46,9 @@ def get_forum(forum_id: int) -> tuple[Response, int]:
             hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound('No forum with this ID could be found')
         
-    except: genericDBFetchException()
-    res = rediserialize(fetchedForum.__json_like__())
-    hset_with_ttl(RedisInterface, cacheKey, res, current_app.config['REDIS_TTL_STRONG'])
+        forumMapping: dict = rediserialize(fetchedForum.__json_like__())
+        hset_with_ttl(RedisInterface, cacheKey, forumMapping, current_app.config['REDIS_TTL_STRONG'])
+    except SQLAlchemyError: genericDBFetchException()
 
     try:
         if g.REQUESTING_USER and 'user_relation' in request.args:
@@ -66,13 +57,13 @@ def get_forum(forum_id: int) -> tuple[Response, int]:
                                                 .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.REQUESTING_USER['sid']))
                                                 ).scalar_one_or_none()
             isSubbed = db.session.execute(select(ForumSubscription)
-                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.REQUESTIING_USER['sid']))
+                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.REQUESTING_USER['sid']))
                                             ).scalar_one_or_none()
-            res.update({'admin_role' : adminRole, 'subscribed' : bool(isSubbed)})
+            forumMapping.update({'admin_role' : adminRole, 'subscribed' : bool(isSubbed)})
     except SQLAlchemyError:
-        res.update({'error' : 'failed to fetch user subscriptions and admin roles in this forum'})
+        forumMapping.update({'error' : 'failed to fetch user subscriptions and admin roles in this forum'})
 
-    return jsonify(res), 200
+    return jsonify(forumMapping), 200
 
 @forum.route("/<int:forum_id>/posts")
 def get_forum_posts(forum_id: int) -> tuple[Response, int]:
