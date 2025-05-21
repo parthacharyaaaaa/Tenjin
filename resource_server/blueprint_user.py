@@ -6,7 +6,7 @@ user = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/us
 
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized
 from auxillary.decorators import enforce_json, private
-from auxillary.utils import processUserInfo, hash_password, verify_password, genericDBFetchException
+from auxillary.utils import processUserInfo, hash_password, verify_password, genericDBFetchException, rediserialize
 from resource_server.external_extensions import RedisInterface
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -341,7 +341,7 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
 
     cursor = base64.b64encode(str(recentPosts[-1].id).encode('utf-8')).decode()
-    _posts = [post.__json_like__() for post in recentPosts]
+    _posts = [rediserialize(post.__json_like__()) for post in recentPosts]
     if cursor == 0:
         # Batch cache only the posts that appear at the original, non-paginated profile of the user
         batch_hset_with_ttl(RedisInterface, names=(f'post:{post.id}' for post in recentPosts), mappings=_posts, ttl=current_app.config['REDIS_TTL_STRONG'])
@@ -386,7 +386,7 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
         ... #TODO: Add logging logic for cache failures
 
     try:
-        userID: User = db.session.execute(select(User.id)
+        userID: int = db.session.execute(select(User.id)
                                           .where(User.id == user_id)
                                           ).scalar_one_or_none()
         if not userID:
@@ -395,7 +395,7 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
         
         forums: list[Forum] = db.session.execute(select(Forum)
                                                  .where((Forum.id == ForumSubscription.forum_id) & (Forum.id > cursor))
-                                                 .join(ForumSubscription, ForumSubscription.user_id == user.id)
+                                                 .join(ForumSubscription, ForumSubscription.user_id == userID)
                                                  .limit(6)
                                                  ).scalars().all()
         if not forums:
@@ -407,7 +407,7 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
             forums.pop(-1)
     except SQLAlchemyError: genericDBFetchException()
 
-    _forums = [forum.__json_like__() for forum in forums]
+    _forums = [rediserialize(forum.__json_like__()) for forum in forums]
     
     # Cache only if cursor is 0
     if cursor == 0:
@@ -455,7 +455,7 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
 
     cursor = base64.b64encode(str(animes[-1].id).encode('utf-8')).decode()
-    _animes = [forum.__json_like__() for forum in animes]
+    _animes = [rediserialize(anime.__json_like__()) for anime in animes]
     return jsonify({'animes' : _animes, 'cursor' : cursor, 'end' : end})
 
 
