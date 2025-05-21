@@ -11,14 +11,6 @@ class KeyMetadata:
     EPOCH: float = field(default_factory=time.time)
     _ROTATED_AT: float|None = field(default=None, repr=False)
 
-
-    def __post_init__(self):
-        self.ALGORITHM = self.ALGORITHM.upper()
-        if not(self.PUBLIC_PEM.startswith(b"-----BEGIN PUBLIC KEY-----\n") and self.PUBLIC_PEM.endswith(b"-----END PUBLIC KEY-----\n")):
-            print(self.PRIVATE_PEM)
-            raise ValueError('Invalid public pem format')
-    
-        #TODO: Figure out proper regex for private keys
     @property
     def ROTATED_AT(self) -> float|None:
         return self._ROTATED_AT
