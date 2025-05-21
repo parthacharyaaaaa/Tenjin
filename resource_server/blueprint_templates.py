@@ -166,43 +166,51 @@ def view_anime(anime_id) -> tuple[str, int]:
 @templates.route('/view/post/<int:post_id>')
 @pass_user_details
 def view_post(post_id: int) -> tuple[str, int]:
-    cachedPostMapping = RedisInterface.get(f'post:{post_id}')
-    if cachedPostMapping:
-        cachedPostMapping = ujson.loads(cachedPostMapping)
-    try:
-        if not cachedPostMapping:
+    cacheKey: str = f'post:{post_id}'
+    postMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
+
+    if postMapping and not g.REQUESTING_USER:
+        return render_template('post.html',
+                               post_mapping =  postMapping,
+                               permission_level = 0)
+    authorID: int = postMapping.get('author_id')
+    if not postMapping:
+        try:
             post: Post = db.session.execute(select(Post)
                                             .where(Post.id == post_id)
                                             ).scalar_one_or_none()
             if not post:
-                RedisInterface.set(f'post:{post_id}', -1, 60)
+                hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
                 return render_template('error.html',
-                                    code = 400, 
-                                    msg = 'The post you requested could not be found :(',
-                                    links = [('Back to home', url_for('.index'))])
+                                       code = 400, 
+                                       msg = 'The post you requested could not be found :(',
+                                       links = [('Back to home', url_for('.index'))])
             
-            username: str = db.session.execute(select(User.username).where(User.id == post.author_id)).scalars().one()
+            author, authorID = db.session.execute(select(User.username, User.id)
+                                                  .where(User.id == post.author_id)
+                                                  ).all()[0]
+            postMapping: dict = rediserialize(post.__json_like__()) | {'author' : author, 'author_id' : authorID}
+            # Cache post
+            hset_with_ttl(RedisInterface, cacheKey, postMapping, current_app.config['REDIS_TTL_STRONG'])
+        except SQLAlchemyError: genericDBFetchException()
         
-        permissionLevel: int = 0
-        if (g.REQUESTING_USER):
-            if(g.REQUESTING_USER.get('sid') == cachedPostMapping['author_id'] if cachedPostMapping else post.author_id):
-                # Author has highest permission level with edit access also
-                permissionLevel = 2
-            else:
+    # Post fetched, now check to see user's relation to this post
+    permissionLevel: int = 0
+    if g.REQUESTING_USER:
+        if(g.REQUESTING_USER.get('sid') == authorID):
+            # Author has highest permission level with edit access also
+            permissionLevel = 2
+        else:
+            try:
                 # If admin, permission level is 1
                 permissionLevel = int(bool(db.session.execute(select(ForumAdmin)
-                                    .where((ForumAdmin.forum_id == post.forum_id) & (ForumAdmin.user_id == g.REQUESTING_USER.get('sid')))
-                                    ).scalar_one_or_none()))
+                                                            .where((ForumAdmin.forum_id == postMapping.get('forum')) & (ForumAdmin.user_id == g.REQUESTING_USER.get('sid')))
+                                                            ).scalar_one_or_none()))
+            except SQLAlchemyError: ... # No need to fail at this stage, just fallback to no permissions for now
             
-    except SQLAlchemyError: genericDBFetchException()
-
-
-    if not cachedPostMapping:
-        postMapping: dict = post.__json_like__() | {'username' : username}
-        RedisInterface.set(f'post:{post_id}', ujson.dumps(postMapping), 300)
 
     return render_template('post.html',
-                           post_mapping = cachedPostMapping or postMapping,
+                           post_mapping = postMapping,
                            permission_level = permissionLevel)
 
 @templates.route("/profile/<string:username>")
@@ -224,7 +232,7 @@ def get_user(username: str) -> tuple[str, int]:
                                    links = [('Back to home', url_for('.index'))])
                                    
     except SQLAlchemyError: genericDBFetchException()
-    
+
     userMapping: dict = rediserialize(user.__json_like__())
     hset_with_ttl(RedisInterface, cacheKey, userMapping, current_app.config['REDIS_TTL_STRONG'])
     return render_template('profile.html', user_mapping=userMapping), 200

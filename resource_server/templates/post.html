@@ -43,7 +43,9 @@
   <div class="post-card">
     <div class="post-credentials">
       <div>
-        <span id="author">{{post_mapping['username']}}</span>
+        <a target="_blank" href="{{ url_for('.get_user', username=post_mapping['author']) }}">
+          <span id="author">{{post_mapping['author']}}</span>
+        </a>
         <span id="time-posted">{{post_mapping['epoch']}}</span>
       </div>
       <div id="post-settings">
@@ -62,7 +64,7 @@
     </div>
     <div class="post-main">
       <div id="title">{{post_mapping['title']}}</div>
-      <div id="body">{{post_mapping['body']}}</div>
+      <div id="body">{{post_mapping['body_text']}}</div>
     </div>
     <div class="post-options">
       <div class="vote-controls">
