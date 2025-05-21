@@ -10,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from auxillary.utils import genericDBFetchException, rediserialize, consult_cache
 from auxillary.decorators import pass_user_details
 
-from resource_server.external_extensions import RedisInterface
+from resource_server.external_extensions import RedisInterface, hset_with_ttl
 import ujson
 from typing import Any
 ###========================= ENDPOINTS =========================###
@@ -208,9 +208,16 @@ def view_post(post_id: int) -> tuple[str, int]:
 @templates.route("/profile/<string:username>")
 @pass_user_details
 def get_user(username: str) -> tuple[str, int]:
+    cacheKey: str = f'user:{username}'
+    userMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
+
+    if userMapping:
+        return render_template('profile.html', user_mapping=userMapping), 200
+    
     try:
         user: User = db.session.execute(select(User).where(User.username == username)).scalar_one_or_none()
         if not user:
+            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL']) # Announce non-existence of this resource
             return render_template('error.html',
                                    code=404,
                                    msg='No user with this username could be found',
@@ -218,7 +225,9 @@ def get_user(username: str) -> tuple[str, int]:
                                    
     except SQLAlchemyError: genericDBFetchException()
     
-    return render_template('profile.html', user=user), 200
+    userMapping: dict = rediserialize(user.__json_like__())
+    hset_with_ttl(RedisInterface, cacheKey, userMapping, current_app.config['REDIS_TTL_STRONG'])
+    return render_template('profile.html', user_mapping=userMapping), 200
 
 @templates.route('/about')
 @pass_user_details
