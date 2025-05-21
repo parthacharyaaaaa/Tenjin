@@ -6,7 +6,7 @@ user = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/us
 
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized
 from auxillary.decorators import enforce_json, private
-from auxillary.utils import processUserInfo, hash_password, verify_password, genericDBFetchException, rediserialize
+from auxillary.utils import processUserInfo, hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache
 from resource_server.external_extensions import RedisInterface
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -97,8 +97,7 @@ def register() -> tuple[Response, int]:
                     "email" : USER_DETAILS["email"], 
                     "alias" : alias, 
                     **response_kwargs}), 201
-
-    
+ 
 @user.route("/", methods=["DELETE"])
 @enforce_json
 def delete_user() -> Response:
@@ -250,35 +249,27 @@ def update_password(token : str) -> Response:
 @user.route("/<int:user_id>", methods=["GET"])
 def get_users(user_id: int) -> tuple[Response, int]:
     cacheKey: str = f'users:{user_id}'
+    userMapping: dict[str, str|int] = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
+
+    if userMapping:
+        if '__NF__' in userMapping:
+            raise NotFound('No user with this ID exists')
+        return jsonify({'user' : userMapping})        
+
+    # Fallback to DB
     try:
-        with RedisInterface.pipeline() as pp:
-            pp.hgetall(cacheKey)
-            pp.ttl(cacheKey)
-            _res = pp.execute()
-        print(_res[0])
-        if '__NF__' in _res[0]:
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
-
-            raise NotFound(f"User with id {user_id} could not be found :(")
-        elif(_res[0]):
-            cachedPost = _res[0]
-            cachedPostTTL = _res[1]
-            # Promote TTL
-            RedisInterface.expire(cacheKey, min(current_app.config['REDIS_TTL_CAP'], cachedPostTTL+current_app.config['REDIS_TTL_PROMOTION']))
-
-    except RedisError: 
-        ... #TODO: Add logging logic for cache failures
-
-    try:
-        user: User = db.session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+        user: User = db.session.execute(select(User)
+                                        .where(User.id == user_id)
+                                        ).scalar_one_or_none()
         if not user:
             hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound('No user with this ID exists')
+        
+        userMapping = rediserialize(user.__json_like__())
     except SQLAlchemyError: genericDBFetchException()
 
-
-    hset_with_ttl(RedisInterface, cacheKey, user.__json_like__(), current_app.config['REDIS_TTL_STRONG'])
-    return jsonify({'user' : user.__json_like__()}), 200
+    hset_with_ttl(RedisInterface, cacheKey, userMapping, current_app.config['REDIS_TTL_STRONG'])
+    return jsonify({'user' : userMapping}), 200
 
 @user.route('profile/<int:user_id>/posts')
 def get_user_posts(user_id: int) -> tuple[Response, int]:
