@@ -25,6 +25,18 @@ class FlaskConfig:
         VALID_PROXIES : list = os.environ["VALID_PROXIES"].split(",")
         PRIVATE_IP_ADDRS : list = os.environ["PRIVATE_COMM_IP"].split(",")
 
+        ### Database Configurations ###
+        SQLALCHEMY_DATABASE_URI : str = "postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}".format(username=os.environ["POSTGRES_USERNAME"],
+                                                                                                                    password=os.environ["POSTGRES_PASSWORD"],
+                                                                                                                    host=os.environ["POSTGRES_HOST"],
+                                                                                                                    port=os.environ.get("POSTGRES_PORT", 5432),
+                                                                                                                    database=os.environ["POSTGRES_DATABASE"])
+        SQLALCHEMY_POOL_SIZE = int(os.environ.get("SQLALCHEMY_POOL_SIZE", 10))
+        SQLALCHEMY_MAX_OVERFLOW = int(os.environ.get("SQLALCHEMY_MAX_OVERFLOW", 5))
+        SQLALCHEMY_POOL_RECYCLE = int(os.environ.get("SQLALCHEMY_POOL_RECYCLE", 600))
+        SQLALCHEMY_POOL_TIMEOUT = int(os.environ.get("SQLALCHEMY_POOL_TIMEOUT", 30))
+        SQLALCHEMY_TRACK_MODIFICATIONS = bool(int(os.environ.get("SQLALCHEMY_TRACK_MODIFICATIONS", 0)))
+
         # Addressing metadata
         PORT: int = int(os.environ["PORT"])
         HOST: str = os.environ["HOST"]
@@ -37,6 +49,10 @@ class FlaskConfig:
         RELATIVE_PATH: os.PathLike = os.environ['REDIS_CONFIG_REL_FPATH']
         with open(os.path.join(CWD, RELATIVE_PATH)) as configFile:
             REDIS_KWARGS: dict[str, Any] = json.loads(configFile.read())
+
+        RELATIVE_PATH = os.environ['REDIS_SYNCED_STORE_CONFIG_REL_FPATH']
+        with open(os.path.join(CWD, RELATIVE_PATH)) as configFile:
+            REDIS_SYNCED_STORE_KWARGS: dict[str, Any] = json.loads(configFile.read())
 
     except KeyError as e:
         raise ValueError(f"FAILED TO SETUP CONFIGURATIONS FOR FLASK AUTH APPLICATION AS ENVIRONMENT VARIABLES WERE NOT FOUND (SEE: class Flask_Config at '{__file__}')")
