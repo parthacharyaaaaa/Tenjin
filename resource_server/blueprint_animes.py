@@ -1,6 +1,7 @@
 from werkzeug.exceptions import BadRequest, NotFound
 import base64
 import binascii
+import ujson
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
@@ -9,10 +10,11 @@ from sqlalchemy import select, and_, func
 from sqlalchemy.exc import SQLAlchemyError
 from flask_sqlalchemy import SQLAlchemy
 
-from auxillary.utils import genericDBFetchException
+from auxillary.utils import genericDBFetchException, rediserialize, consult_cache
 from auxillary.decorators import token_required
 
-from resource_server.external_extensions import RedisInterface
+from resource_server.external_extensions import RedisInterface, hset_with_ttl
+from redis.exceptions import RedisError
 from flask import Blueprint, Response, g, jsonify, request, redirect, url_for, current_app
 anime = Blueprint('animes', 'animes', url_prefix="/animes")
 
@@ -25,18 +27,35 @@ executor = ThreadPoolExecutor(2)
 
 @anime.route("/<int:anime_id>")
 def get_anime(anime_id: int) -> tuple[Response, int]:
+    # 1: Redis
+    cacheKey: str = f'anime:{anime_id}'
+    animeMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'], dtype='string')
+
+    if animeMapping:
+        if '__NF__' in animeMapping:
+            raise NotFound(f"No anime with id {anime_id} could be found")
+        return jsonify(animeMapping), 200            
+
+    # 2: Fallback to DB
     try:
         anime: Anime = db.session.execute(select(Anime).where(Anime.id == anime_id)).scalar_one_or_none()
         if not anime:
+            RedisInterface.set(cacheKey, '__NF__', current_app.config['REDIS_TTL_EPHEMERAL'])  # Announce non-existence
             raise NotFound(f"No anime with id {anime_id} could be found")
         
         genres: list[str] = db.session.execute(select(Genre._name)
-                                   .join(AnimeGenre, Genre.id == AnimeGenre.genre_id)
-                                   .where(AnimeGenre.anime_id == anime_id)).scalars().all()
+                                               .join(AnimeGenre, Genre.id == AnimeGenre.genre_id)
+                                               .where(AnimeGenre.anime_id == anime_id)
+                                               ).scalars().all()
+        streamLinks: list[StreamLink] = db.session.execute(select(StreamLink)
+                                                           .where(StreamLink.anime_id == anime_id)\
+                                                            ).scalars().all()
     except SQLAlchemyError: genericDBFetchException()
 
-    _res = anime.__json_like__() | {'genres' : genres}
-    return jsonify({'anime' : _res}), 200
+    animeMapping = rediserialize(anime.__json_like__()) | {'genres' : genres, 'stream_links' : {link.website:link.url for link in streamLinks}}
+    RedisInterface.set(cacheKey, ujson.dumps(animeMapping), current_app.config['REDIS_TTL_STRONG'])
+
+    return jsonify({'anime' : animeMapping}), 200
 
 @anime.route("/random")
 def get_random_anime():
