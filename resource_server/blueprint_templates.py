@@ -8,7 +8,7 @@ templates: Blueprint = Blueprint('templates', __name__, template_folder='templat
 from resource_server.models import db, Post, User, Forum, ForumRules, Anime, AnimeSubscription, ForumSubscription, ForumAdmin, StreamLink, AnimeGenre, Genre
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from auxillary.utils import genericDBFetchException
+from auxillary.utils import genericDBFetchException, rediserialize
 from auxillary.decorators import pass_user_details
 
 from resource_server.external_extensions import RedisInterface
@@ -48,6 +48,7 @@ def forum(name: str) -> tuple[str, int]:
             # Fetch forum details
             forum: Forum = db.session.execute(select(Forum).where(Forum._name == name)).scalar_one_or_none()
             if not forum:
+
                 return render_template('error.html',
                                     code=404,
                                     message='No forum with this name could be found',
@@ -114,45 +115,69 @@ def get_anime() -> tuple[str, int]:
 @templates.route('/view/anime/<int:anime_id>')
 @pass_user_details
 def view_anime(anime_id) -> tuple[str, int]:
+    cacheKey: str = f'anime:{anime_id}'
+    # 1: Redis
     try:
-        result: dict = RedisInterface.get(f"anime:{anime_id}")
-        if result:
-            return render_template('anime.html', anime=result)
+        # Check standard key in case of 
+        res: str = None
+        with RedisInterface.pipeline() as pipe:
+            pipe.get(cacheKey)
+            pipe.ttl(cacheKey)
+            res = pipe.execute()
+        
+        if res[0] == '__NF__':
+            RedisInterface.set(cacheKey, res[0], current_app.config['REDIS_TTL_EPHEMERAL'])  # Reannounce non-existence
+            raise NotFound('No anime with this ID could be located')
+        else:
+            cachedAnime: dict = ujson.loads(res[0])
+            cachedTTL: int = res[1]
+            # TTL Promotion
+            RedisInterface.expire(cacheKey, min(current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION']+cachedTTL))
+            
+            if not g.REQUESTING_USER:
+                # No need to check whether user is subscribed
+                return render_template('anime.html', anime=cachedAnime, subbed=False)
                                 
     except:
         ... #TODO: Add some logging logic for cache failures
 
     try:
-        anime: Anime | None = db.session.execute(select(Anime).where(Anime.id == anime_id)).scalar_one_or_none()
+        anime: Anime = db.session.execute(select(Anime)
+                                          .where(Anime.id == anime_id)
+                                          ).scalar_one_or_none()
         if not anime:
+            RedisInterface.set(cacheKey, '__NF__', current_app.config['REDIS_TTL_EPHEMERAL'])  # Announce non-existence
             return render_template('error.html',
-                                code = 400, 
-                                msg = 'The anime you requested could not be found :(',
-                                links = [('Back to home', url_for('.index')), ('Browse available animes', url_for('.get_anime'))])
+                                   code = 400, 
+                                   msg = 'The anime you requested could not be found :(',
+                                   links = [('Back to home', url_for('.index')), ('Browse available animes', url_for('.get_anime'))])
         
-        streamLinks: list[StreamLink] | None = db.session.execute(select(StreamLink)
-                                                                  .where(StreamLink.anime_id == anime_id)).scalars().all()
+        streamLinks: list[StreamLink] = db.session.execute(select(StreamLink)
+                                                           .where(StreamLink.anime_id == anime_id)
+                                                           ).scalars().all()
         
         genres: list[str] = db.session.execute(select(Genre._name)
-                        .join(AnimeGenre, Genre.id == AnimeGenre.genre_id)
-                        .where(AnimeGenre.anime_id == anime_id)).scalars().all()
-        
-        animeMapping: dict = anime.__json_like__() | {'stream_links' : {link.website:link.url for link in streamLinks}, 'genres' : genres}
-
+                                               .join(AnimeGenre, Genre.id == AnimeGenre.genre_id)
+                                               .where(AnimeGenre.anime_id == anime_id)).scalars().all()
     except SQLAlchemyError: genericDBFetchException()
 
-    RedisInterface.set(f'anime:{anime_id}', ujson.dumps(animeMapping))
+    animeMapping: dict = rediserialize(anime.__json_like__()) | {'stream_links' : {link.website:link.url for link in streamLinks}, 'genres' : genres}
 
+    if 'random_prefetch' not in request.args:
+        # Only cache if user actually wanted to come here, and not randomly
+        RedisInterface.set(cacheKey, ujson.dumps(animeMapping), current_app.config['REDIS_TTL_STRONG'])
+
+    # Check user's subscription to this anime
     isSubbed: bool = False
-    try:
-        isSubbed = db.session.execute(select(AnimeSubscription)
-                                      .where((AnimeSubscription.anime_id == anime_id) & (AnimeSubscription.user_id == g.REQUESTING_USER.get('sid')))
-                                      .limit(1)).scalar_one_or_none()
-    except: ... # Since anime has already been fetched, we can ignore a failure in a simple weak entity fetch for now
+    if g.REQUESTING_USER:
+        try:
+            isSubbed = db.session.execute(select(AnimeSubscription)
+                                        .where((AnimeSubscription.anime_id == anime_id) & (AnimeSubscription.user_id == g.REQUESTING_USER.get('sid')))
+                                        .limit(1)).scalar_one_or_none()
+        except: ... # Since anime has already been fetched, we can ignore a failure in a simple weak entity fetch for now. isSubbed will remain as False anyways, which is a safe fallback
 
     return render_template('anime.html',
                            anime=animeMapping,
-                           auth = request.cookies.get('access', request.cookies.get('Access')),
                            subbed = bool(isSubbed))
 
 @templates.route('/view/post/<int:post_id>')
