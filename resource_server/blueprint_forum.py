@@ -16,7 +16,7 @@ import binascii
 from typing import Any
 
 from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict, Unauthorized, InternalServerError
-from flask import Blueprint, Response, g, jsonify, request, current_app
+from flask import Blueprint, Response, g, jsonify, request, current_app, url_for
 forum = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/forums")
 
 TIMEFRAMES: MappingProxyType = MappingProxyType({0 : lambda dt : dt - timedelta(hours=1),
@@ -25,6 +25,54 @@ TIMEFRAMES: MappingProxyType = MappingProxyType({0 : lambda dt : dt - timedelta(
                                                  3 : lambda dt : dt - timedelta(days=30),
                                                  4 : lambda dt : dt - timedelta(days=364),
                                                  5 : lambda _ : datetime.min})
+
+@forum.route('/<int:forum_id>')
+@pass_user_details
+def get_forum(forum_id: int) -> tuple[Response, int]:
+    cacheKey: str = f'forum:{forum_id}'
+    res = [None]
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(cacheKey)
+        pipe.ttl(cacheKey)
+        res = pipe.execute()
+    
+    if '__NF__' in res[0]:
+        hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+        raise NotFound(f"No forum with ID {forum_id} could not be found :(")
+    elif res[0]:
+        cachedForum = res[0]
+        cachedForumTTL = res[1]
+        # Promote TTL
+        RedisInterface.expire(cacheKey, min(current_app.config['REDIS_TTL_CAP'], cachedForumTTL+current_app.config['REDIS_TTL_PROMOTION']))
+        return jsonify(cachedForum), 200
+    
+    # Fallback to DB
+    try:
+        fetchedForum: Forum = db.session.execute(select(Forum)
+                                                 .where(Forum.id== forum_id)
+                                                 ).scalar_one_or_none()
+        if not fetchedForum:
+            hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            raise NotFound('No forum with this ID could be found')
+        
+    except: genericDBFetchException()
+    res = rediserialize(fetchedForum.__json_like__())
+    hset_with_ttl(RedisInterface, cacheKey, res, current_app.config['REDIS_TTL_STRONG'])
+
+    try:
+        if g.REQUESTING_USER and 'user_relation' in request.args:
+            # Select forum admin/subscribed
+            adminRole: str = db.session.execute(select(ForumAdmin.role)
+                                                .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.REQUESTING_USER['sid']))
+                                                ).scalar_one_or_none()
+            isSubbed = db.session.execute(select(ForumSubscription)
+                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.REQUESTIING_USER['sid']))
+                                            ).scalar_one_or_none()
+            res.update({'admin_role' : adminRole, 'subscribed' : bool(isSubbed)})
+    except SQLAlchemyError:
+        res.update({'error' : 'failed to fetch user subscriptions and admin roles in this forum'})
+
+    return jsonify(res), 200
 
 @forum.route("/<int:forum_id>/posts")
 def get_forum_posts(forum_id: int) -> tuple[Response, int]:
@@ -130,23 +178,30 @@ def create_forum() -> tuple[Response, int]:
 
 @forum.route("/<int:forum_id>", methods = ["DELETE"])
 @token_required
+@enforce_json
 def delete_forum(forum_id: int) -> Response:
     cacheKey: str = f'forum:{forum_id}'
+    confirmationText: str = g.REQUEST_JSON.get('confirmation')
+    if not confirmationText:
+        raise BadRequest('Please enter the name of the forum to follow through with deletion')
     try:
         # Check existence of this forum
-        forum: Forum = db.session.execute(select(Forum)
+        delForum: Forum = db.session.execute(select(Forum)
                                           .where((Forum.id == forum_id) & (Forum.deleted == False))
                                           ).scalar_one_or_none()
-        if not forum:
+        if not delForum:
             # Broadcast non-existence
             hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound(f'No forum with id {forum_id} found. Perhaps you already deleted it?')
+        
+        if(delForum._name != confirmationText):
+            raise BadRequest('Please enter the forum title correctly, as it is')
         
         # Check to see if user is owner or superuser
         userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
                                                    .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
                                                    ).scalar_one_or_none()
-        if not userAdmin or userAdmin.role not in ('owner', 'super'):
+        if not userAdmin or userAdmin.role != 'owner':
             raise Forbidden("You do not have the necessary permissions to delete this forum")
 
     except SQLAlchemyError: raise genericDBFetchException()
@@ -165,7 +220,10 @@ def delete_forum(forum_id: int) -> Response:
     
     # Broadcast deletion
     hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK'])
-    return jsonify({'message' : 'forum deleted'}), 200
+    res = {'message' : 'forum deleted'}
+    if 'redirect' in request.args:
+        res['redirect'] = url_for('templates.view_anime', anime_id = delForum.anime)
+    return jsonify(res), 200
 
 @forum.route("/<int:forum_id>/admins", methods=['POST'])
 @enforce_json
@@ -348,6 +406,7 @@ def check_admin_permissions(forum_id: int) -> tuple[Response, int]:
             return jsonify(-1), 200
     except: return jsonify(-1), 200
 
+    print(AdminRoles.getAdminAccessLevel(userRole))
     return jsonify(AdminRoles.getAdminAccessLevel(userRole)), 200
 
 @forum.route("/<int:forum_id>/subscribe", methods=['PATCH'])
@@ -378,7 +437,6 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     
     RedisInterface.hset(f"{Forum.__tablename__}:subscribers", forum_id, subCounterKey)
     return jsonify({'message' : 'subscribed!'}), 200
-
 
 @forum.route("/<int:forum_id>/unsubscribe", methods=['PATCH'])
 @token_required
@@ -545,37 +603,3 @@ def remove_highlight_post(forum_id: int) -> tuple[Response, int]:
         raise e
     
     return jsonify({'message' : 'Post removed from forum highlights'}), 200
-
-@forum.route('<int:forum_id>/posts', methods=['GET'])
-def get_posts(forum_id: int) -> tuple[Response, int]:
-    try:
-        rawCursor = request.args.get('cursor').strip()
-        if rawCursor == '0':
-            cursor = 0
-        elif not rawCursor:
-            raise BadRequest("Failed to load more posts. Please refresh this page")
-        else:
-            cursor = int(base64.b64decode(rawCursor).decode())
-        
-        sortOption = request.args.get('sort', 0)
-        if sortOption != 1:
-            sortOption = 0          # Either top or newest, if anything else is given fall back to newest
-    except (ValueError, TypeError):
-            raise BadRequest("Failed to load more posts. Please refresh this page")
-
-    try:
-        nextPosts: list[Post] = db.session.execute(select(Post)
-                                                   .where((Post.id > cursor) & (Post.forum_id == forum_id))
-                                                    .order_by(Post.time_posted if not sortOption else Post.score)
-                                                   .limit(5)
-                                                   ).scalars().all()
-        if not nextPosts:
-            return jsonify({'posts' : None, 'cursor' : None}), 204
-        
-        authorsMap: dict[int, str] = dict(db.session.execute(select(User.id, User.username).where(User.id.in_([post.author_id for post in nextPosts]))).all())
-    except SQLAlchemyError: genericDBFetchException()
-
-
-    cursor = base64.b64encode(str(nextPosts[-1].id).encode('utf-8')).decode()
-    nextPosts: list[dict[str, Any]] = [post.__json_like__() | {'author' : authorsMap[post.author_id]} for post in nextPosts]
-    return jsonify({'posts' : nextPosts, 'cursor' : cursor}), 200
