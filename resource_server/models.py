@@ -111,7 +111,7 @@ class AdminRoles(Enum):
     def getAdminAccessLevel(role: str) -> int:
         '''Get corresponding access level of admin role, return -1 on failure'''
         try:
-            return AdminRoles[arg].value
+            return AdminRoles[role].value
         except:
             return -1
 

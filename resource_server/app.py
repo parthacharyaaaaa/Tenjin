@@ -52,7 +52,6 @@ def create_app() -> Flask:
                 GENRES: tuple[str] = conn.execute(text('SELECT _name, id FROM genres;')).fetchall()
 
                 app.config['GENRES'] = MappingProxyType({genre[0] : genre[1] for genre in GENRES})
-                print(app.config['GENRES'])
 
     ### Additional CLI commands ###
    # Instantiate the database
