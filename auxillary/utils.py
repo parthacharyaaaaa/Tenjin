@@ -7,6 +7,9 @@ import os
 import traceback
 from typing import Mapping, Callable
 from types import NoneType
+import base64
+import requests
+import ecdsa
 
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
 
@@ -27,6 +30,43 @@ def generic_error_handler(e : Exception):
         response.headers.update(e.header_kwargs)
 
     return response, getattr(e, "code", 500)
+
+def to_base64url(n: int, length: int = 32) -> str:
+    return base64.urlsafe_b64encode(n.to_bytes(length, byteorder='big')).rstrip(b'=').decode('utf-8')
+
+def from_base64url(b64url: str) -> int:
+    # Add back padding if needed
+    padding = '=' * ((4 - len(b64url) % 4) % 4)
+    padded_b64url = b64url + padding
+    byte_data = base64.urlsafe_b64decode(padded_b64url)
+    return int.from_bytes(byte_data, byteorder='big')
+
+def update_jwks(endpoint: str, currentMapping: dict[str, str|int], timeout: int = 3) -> dict[str, str|int]:
+    '''Function to fetch JWKS from auth server and load any new key mappings into currentMapping'''
+    try:
+        response: requests.Response = requests.get(endpoint, timeout=timeout)
+        if response.status_code != 200:
+            return currentMapping
+        
+        newMapping: dict[str, str|int] = response.json().get('keys')
+        if not newMapping:
+            #TODO: Ping auth server to indicate malformatted JWKS response
+            return currentMapping
+    
+        # For any new items in newMapping, we'll need to construct a new dict entry with its public verificiation key
+        for keyMetadata in newMapping:
+            # New key found, welcome to the club >:3
+            if keyMetadata['kid'] not in currentMapping:
+                x = from_base64url(keyMetadata['x'])
+                y = from_base64url(keyMetadata['y'])
+                point = ecdsa.ellipticcurve.Point(ecdsa.SECP256k1.curve, x, y)
+                vk = ecdsa.VerifyingKey.from_public_point(point, curve=ecdsa.SECP256k1)
+
+                currentMapping[keyMetadata['kid']] = vk.to_pem()
+        return currentMapping
+    except:
+        return currentMapping
+
 
 def hash_password(password: str, salt: bytes = None) -> tuple[bytes, bytes]:
     '''

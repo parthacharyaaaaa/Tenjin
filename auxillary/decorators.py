@@ -5,9 +5,7 @@ from werkzeug.exceptions import BadRequest, Unauthorized, InternalServerError
 from datetime import timedelta
 from jwt import decode, get_unverified_header
 from jwt.exceptions import PyJWTError, ExpiredSignatureError
-import requests
-import base64
-import ecdsa
+from auxillary.utils import update_jwks
 
 def enforce_json(endpoint):
     @wraps(endpoint)
@@ -67,25 +65,8 @@ def token_required(endpoint):
                 
             # Possibly new KID, ping auth server
             else:
-                response = requests.get(f'{current_app.config["AUTH_SERVER_URL"]}/auth/jwks.json', timeout=3)
-                if response.status_code != 200:
-                    raise Unauthorized("Failed to validate JWT. This may be an issue with our authentication service")
-                
-                newMapping: dict[str, str|int] = response.json().get('keys')
-                if not newMapping:
-                    #TODO: Ping auth server to indicate malformatted JWKS response
-                    raise Unauthorized()
-                
-                # For any new items in newMapping, we'll need to construct a new dict entry with its public verificiation key
-                for keyMetadata in newMapping:
-                    # New key found, welcome to the club >:3
-                    if keyMetadata['kid'] not in current_app.config['KEY_VK_MAPPING']:
-                        x = keyMetadata['x']
-                        y = keyMetadata['y']
-                        point = ecdsa.ellipticcurve.Point(ecdsa.SECP256k1.curve, x, y)
-                        vk = ecdsa.VerifyingKey.from_public_point(point, curve=ecdsa.SECP256k1)
-
-                        current_app.config['KEY_VK_MAPPING'][keyMetadata['kid']] = vk.to_pem()
+                # Update current mapping with any new keys fetched from auth server. Failure will return the same mapping itself
+                current_app.config['KEY_VK_MAPPING'] = update_jwks(f'{current_app.config["AUTH_SERVER_URL"]}/auth/jwks.json', current_app.config['KEY_VK_MAPPING'])
 
                 if tokenKID not in current_app.config['KEY_VK_MAPPING']:
                     raise Unauthorized('Invalid Key ID, no such key was found. Please login again')
@@ -137,25 +118,8 @@ def pass_user_details(endpoint):
                 
             # Possibly new KID, request auth server
             else:
-                response = requests.get(f'{current_app.config["AUTH_SERVER_URL"]}/auth/jwks.json', timeout=3)
-                if response.status_code != 200:
-                    return endpoint(*args, **kwargs)
-                
-                newMapping: dict[str, str|int] = response.json().get('keys')
-                if not newMapping:
-                    return endpoint(*args, **kwargs)
-                
-                # For any new items in newMapping, we'll need to construct a new dict entry with its public verificiation key
-                for keyMetadata in newMapping:
-                    # New key found, welcome to the club >:3
-                    if keyMetadata['kid'] not in current_app.config['KEY_VK_MAPPING']:
-                        x = keyMetadata['x']
-                        y = keyMetadata['y']
-                        point = ecdsa.ellipticcurve.Point(ecdsa.SECP256k1.curve, x, y)
-                        vk = ecdsa.VerifyingKey.from_public_point(point, curve=ecdsa.SECP256k1)
-
-                        current_app.config['KEY_VK_MAPPING'][keyMetadata['kid']] = vk.to_pem()
-
+                # Update current mapping with any new keys fetched from auth server. Failure will return the same mapping itself
+                current_app.config['KEY_VK_MAPPING'] = update_jwks(f'{current_app.config["AUTH_SERVER_URL"]}/auth/jwks.json', current_app.config['KEY_VK_MAPPING'])
                 if tokenKID not in current_app.config['KEY_VK_MAPPING']:
                     return endpoint(*args, **kwargs)
                 
