@@ -5,11 +5,14 @@ import re
 from flask import jsonify
 import os
 import traceback
-from typing import Mapping, Callable
+from typing import Mapping, Callable, Literal
 from types import NoneType
 import base64
 import requests
 import ecdsa
+import ujson
+from redis import Redis
+from redis.exceptions import RedisError
 
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
 
@@ -128,3 +131,55 @@ def genericDBFetchException():
     exc = Exception()
     exc.__setattr__("description", 'An error occurred when fetching this resource')
     raise exc
+
+def consult_cache(interface: Redis, cache_key: str,
+                  ttl_cap: int, ttl_promotion: int = 15, ttl_ephemeral: int = 15, 
+                  dtype: Literal['mapping', 'string'] = 'mapping', nf_repr: str = '__NF__', suppress_errors: bool = True) -> dict|None:
+    '''
+    Consult Redis cache and attempt to fetch the given key.
+    Args:
+        interface: Redis instance connected to cache server
+        cache_key: Name of the key to search for
+        ttl_cap: Maximum TTL in seconds for any entry in cache
+        ttl_promotion: Seconds to add to an existing entry's TTL on cache hit
+        ttl_ephemeral: TTL in seconds for ephemeral announcements
+        dtype: Redis data structure assosciated with this item. Defaults to hashmap
+        nf_repr: Representation of a key that does not exist. If dtype is mapping, then it is interpreted as {nf_val:-1}
+        suppress_errors: Flag to allow silent failures. Ideally this should be set to True to allow graceful fallback to database
+    '''
+    res: list[dict|str, int] = [None]
+    try:
+        with interface.pipeline(transaction=False) as pipe:
+            if dtype == 'mapping':
+                pipe.hgetall(cache_key)
+            else:
+                pipe.get(cache_key)
+            pipe.ttl(cache_key)
+            res = pipe.execute()
+
+        if not res[0]:  # Cache miss
+            return None
+        
+        if nf_repr in res[0] or res[0] == nf_repr:
+            # cache_key is guaranteed to not exist anywhere, reannounce non-existence of key and then return None
+            if dtype == 'mapping':
+                with interface.pipeline() as pipe:
+                    pipe.hset(cache_key, mapping={nf_repr:-1})
+                    pipe.expire(cache_key, ttl_ephemeral)
+                    pipe.execute()
+            else:
+                interface.set(cache_key, nf_repr, ttl_ephemeral)
+            return None
+        
+        # Cache hit, and resource actually exists
+        cachedResource: dict = res[0] if dtype == 'mapping' else ujson.loads(res[0])
+        cachedTTL: int = res[1]
+
+        interface.expire(cache_key, min(ttl_cap, ttl_promotion+cachedTTL))
+        return cachedResource
+
+    except RedisError as e:
+        if suppress_errors:
+            return None
+        else:
+            raise RuntimeError('Unsuppressed cache failure') from e
