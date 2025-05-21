@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from resource_server.models import db, Post, User, Forum, ForumFlair, ForumAdmin, PostSave, PostVote, PostReport, Comment, ReportTags
 from auxillary.decorators import enforce_json, token_required, pass_user_details
 from resource_server.external_extensions import RedisInterface
-from auxillary.utils import rediserialize, genericDBFetchException
+from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 
 from werkzeug.exceptions import NotFound, BadRequest, Forbidden
 
@@ -58,6 +58,7 @@ def create_post() -> tuple[Response, int]:
     post: Post = Post(author.id, forum.id, title, body, datetime.now(), flair)
     RedisInterface.xadd("INSERTIONS", rediserialize(post.__attrdict__()) | {'table' : Post.__tablename__})
 
+    # Write through can't be done here, since insertions is async. Incrementing the sequence would defeat the purpose of the stream anyways, so yeah :/
     # Increment posts counter for this forum
     postsCounterKey: str = RedisInterface.hget(f"{Forum.__tablename__}:posts", forumID)
     if postsCounterKey:
@@ -80,74 +81,62 @@ def create_post() -> tuple[Response, int]:
 @pass_user_details
 def get_post(post_id : int) -> tuple[Response, int]:
     cacheKey: str = f'post:{post_id}'
-    cachedPost: Optional[dict[str, Any]] = None
-    cachedPostTTL: int = 0
-    try:
-        with RedisInterface.pipeline() as pp:
-            pp.hgetall(cacheKey)
-            pp.ttl(cacheKey)
-            _res = pp.execute()
-        print(_res[0])
-        if '__NF__' in _res[0]:
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+    post_mapping: Optional[dict[str, Any]] = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
 
-            raise NotFound(f"Post with id {post_id} could not be found :(")
-        elif(_res[0]):
-            cachedPost = _res[0]
-            cachedPostTTL = _res[1]
-            # Promote TTL
-            RedisInterface.expire(cacheKey, min(current_app.config['REDIS_TTL_CAP'], cachedPostTTL+current_app.config['REDIS_TTL_PROMOTION']))
+    if post_mapping:
+        if '__NF__' in post_mapping:
+            raise NotFound('No post with this ID could be found')
 
-    except RedisError: 
-        ... #TODO: Add logging logic for cache failures
+    else:
+        try:
+            fetchedPost : Post | None = db.session.execute(select(Post).where((Post.id == post_id) & (Post.deleted == False))).scalar_one_or_none()
+            if not fetchedPost:
+                hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+                raise NotFound(f"Post with id {post_id} could not be found :(")
+            
+            post_mapping = rediserialize(fetchedPost.__json_like__())
+            hset_with_ttl(RedisInterface, cacheKey, post_mapping, current_app.config['REDIS_TTL_STRONG'])
 
-    if not cachedPost:
-        fetchedPost : Post | None = db.session.execute(select(Post).where((Post.id == post_id) & (Post.deleted == False))).scalar_one_or_none()
-        if not fetchedPost:
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
-            raise NotFound(f"Post with id {post_id} could not be found :(")
+        except SQLAlchemyError: genericDBFetchException()
+
+    # post_mapping has been fetched, either from cache or DB. Start constructing final JSON response
+    res: dict[str, dict] = {'post' : post_mapping}
+
+    if g.REQUESTING_USER and 'fetch_relation' in request.args:
+        # Check for user's relationships to the post as well
+        postSaved, postVoted = False, None
+
+        # Check if user is owner of this post
+        res['owner'] = g.REQUESTING_USER.get('sid') == post_mapping['author_id']
+
+        # Check if saved, voted
+        # 1: Consult cache
+        with RedisInterface.pipeline(transaction=False) as pp:  # Get operation need not be constrained by atomicity
+            pp.get(f'saves:{post_id}:{g.REQUESTING_USER["sid"]}')
+            pp.get(f'votes:{post_id}:{g.REQUESTING_USER["sid"]}')
+            pipeRes = pp.execute()
         
-    post_mapping = cachedPost or fetchedPost.__json_like__()
-    res = {'post' : post_mapping}
+        postSaved, postVoted = pipeRes
 
-    # Cache if not cached already
-    if not cachedPost:
-        hset_with_ttl(RedisInterface, cacheKey, rediserialize(post_mapping), current_app.config['REDIS_TTL_STRONG'])
-    
-    # No auth
-    if not g.REQUESTING_USER:
-        return jsonify(res), 200
+        # 2: Fall back to db
+        if not postSaved:
+            postSaved = db.session.execute(select(PostSave)
+                                           .where((PostSave.post_id == post_id) & (PostSave.user_id == g.REQUESTING_USER.get('sid')))
+                                           ).scalar_one_or_none()
+        if not postVoted:
+            postVoted = db.session.execute(select(PostVote.vote)
+                                           .where((PostVote.post_id == post_id) & (PostVote.voter_id == g.REQUESTING_USER.get('sid')))
+                                           ).scalar_one_or_none()
 
-    # Auth, check for user's relationships to the post as well
-    postSaved, postVoted = False, None
+        res['saved'] = bool(postSaved)
+        res['voted'] = postVoted
 
-    # Check if user is owner of this post
-    res['owner'] = g.REQUESTING_USER.get('sid') == fetchedPost.author_id
+        # No promotion logic for ephemral keys
+        with RedisInterface.pipeline(transaction=False) as pp:  # Ephemeral set operation need not be constrained by atomicity
+            pp.set(f'saves:{post_id}:{g.REQUESTING_USER["sid"]}', 1 if postSaved else 0, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
+            pp.set(f'votes:{post_id}:{g.REQUESTING_USER["sid"]}', -1 if not postVoted else int(postVoted), ex=current_app.config['REDIS_TTL_EPHEMERAL'])
+            pp.execute()
 
-    # Check if saved, voted
-    # 1: Consult cache
-    with RedisInterface.pipeline(transaction=False) as pp:  # Get operation need not be constrained by atomicity
-        pp.get(f'saves:{post_id}:{g.REQUESTING_USER["sid"]}')
-        pp.get(f'votes:{post_id}:{g.REQUESTING_USER["sid"]}')
-        pp.execute()
-    postSaved, postVoted = pp
-
-    # 2: Fall back to db
-    if not postSaved:
-        postSaved = db.session.execute(select(PostSave).where((PostSave.post_id == post_id) & (PostSave.user_id == g.REQUESTING_USER.get('sid')))).scalar_one_or_none()
-    if not postVoted:
-        postVoted = db.session.execute(select(PostVote.vote).where((PostVote.post_id == post_id) & (PostVote.voter_id == g.REQUESTING_USER.get('sid')))).scalar_one_or_none()
-
-    res['saved'] = bool(postSaved)
-    res['voted'] = postVoted
-
-    # No promotion logic for ephemral keys
-    with RedisInterface.pipeline(transaction=False) as pp:  # Ephemeral set operation need not be constrained by atomicity
-        pp.set(f'saves:{post_id}:{g.REQUESTING_USER["sid"]}', postSaved, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
-        pp.set(f'votes:{post_id}:{g.REQUESTING_USER["sid"]}', postVoted, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
-        pp.execute()
-
-    # Post mapping was already cached
     return jsonify(res), 200
 
 @post.route("/<int:post_id>", methods=["PATCH"])
@@ -155,7 +144,10 @@ def get_post(post_id : int) -> tuple[Response, int]:
 @token_required
 def edit_post(post_id : int) -> tuple[Response, int]:
     # Ensure user is owner of this post
-    owner: User = db.session.execute(select(User).join(Post, Post.author_id == User.id).where((Post.id == post_id) & (Post.deleted == False))).scalar_one_or_none()
+    owner: User = db.session.execute(select(User)
+                                     .join(Post, Post.author_id == User.id)
+                                     .where((Post.id == post_id) & (Post.deleted == False))
+                                     ).scalar_one_or_none()
     if not owner:
         raise Forbidden('You do not have the rights to edit this post')
     
@@ -246,7 +238,9 @@ def delete_post(post_id: int) -> Response:
 
     # Post good to go for deletion
     try:
-        db.session.execute(update(Post).where(Post.id == post_id).values(deleted = True, time_deleted = datetime.now()))
+        db.session.execute(update(Post)
+                           .where(Post.id == post_id)
+                           .values(deleted = True, time_deleted = datetime.now()))
         db.session.commit()
     except:
         exc: Exception = Exception()
@@ -291,7 +285,7 @@ def vote_post(post_id: int) -> tuple[Response, int]:
     # Request valid at the surface level, check for votes existence in db
     bSwitchVote: bool = False
     postVote: int = None
-    cacheKey: str = f'votes:{post_id}:{g.DECODED_TOKEN["str"]}'
+    cacheKey: str = f'votes:{post_id}:{g.DECODED_TOKEN["sid"]}'
 
     # 1: Consult cache
     try:
