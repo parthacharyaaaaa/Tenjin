@@ -36,76 +36,91 @@ def signup() -> tuple[str, int]:
 @templates.route('/view/forum/<string:name>')
 @pass_user_details
 def forum(name: str) -> tuple[str, int]:
-    cachedMapping: dict[str, Any] = None
-    forum = None
+    pointerKey: str = f'forum_pointer:{name}'
+    forumMapping: dict[str, Any] = None
     try:
-        cachedMapping = ujson.loads(RedisInterface.get(f'view:forum:{name}'))
-    except: ...
+        forumID = RedisInterface.get(pointerKey)
+        if forumID == '__NF__':
+            return render_template('error.html',
+                        code=404,
+                        message='No forum with this name could be found',
+                        links = [('Back to home', url_for('.index'))])
+        if forumID:
+            RedisInterface.expire(pointerKey, current_app.config['REDIS_TTL_WEAK'])
 
-    try:
-        if not cachedMapping:
+            cacheKey: str = f'forum:{forumID}'
+            forumMapping = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'], dtype='string')
+
+            if '__NF__' in forumMapping:
+                return render_template('error.html',
+                                       code=404,
+                                       message='No forum with this name could be found',
+                                       links = [('Back to home', url_for('.index'))])
+    except: ... # Silent, fallback to DB
+
+    if not forumMapping:
+        try:
             # Fetch forum details
-            forum: Forum = db.session.execute(select(Forum).where(Forum._name == name)).scalar_one_or_none()
+            forum: Forum = db.session.execute(select(Forum)
+                                              .where(Forum._name == name)
+                                              ).scalar_one_or_none()
             if not forum:
+                # Announce string representation as __NF__
+                RedisInterface.set(pointerKey, '__NF__', current_app.config['REDIS_TTL_EPHEMERAL'])
 
                 return render_template('error.html',
-                                    code=404,
-                                    message='No forum with this name could be found',
-                                    links = [('Back to home', url_for('.index'))])
+                                       code=404,
+                                       message='No forum with this name could be found',
+                                       links = [('Back to home', url_for('.index'))])
             
             # Fetch highlighted posts
-            highlightedPosts: list[Post] = db.session.execute(select(Post).where(Post.id.in_([forum.highlight_post_1, forum.highlight_post_2, forum.highlight_post_3]))).scalars().all()
+            highlightedPosts: list[Post] = db.session.execute(select(Post)
+                                                              .where(Post.id.in_([forum.highlight_post_1, forum.highlight_post_2, forum.highlight_post_3]))
+                                                              ).scalars().all()
 
             # Fetch rules
-            forumRules: list[ForumRules] = db.session.execute(select(ForumRules).where(ForumRules.forum_id == forum.id)).scalars().all()
+            forumRules: list[ForumRules] = db.session.execute(select(ForumRules)
+                                                              .where(ForumRules.forum_id == forum.id)
+                                                              ).scalars().all()
 
             # Fetch admins
             forumAdmins: list[str] = db.session.execute(select(User.username)
                                                             .join(ForumAdmin, ForumAdmin.forum_id == forum.id)
                                                             .where(User.id == ForumAdmin.user_id)
+                                                            .limit(6)
                                                             ).scalars().all()
 
-        # Fetch if subscribed
-        if g.REQUESTING_USER:
-            if forum:
-                subbedForum = db.session.execute(select(ForumSubscription)
-                                                .where((ForumSubscription.forum_id == forum.id) & 
-                                                        (ForumSubscription.user_id == g.REQUESTING_USER['sid']))
-                                                        ).scalar_one_or_none()
-            else:
-                subbedForum = db.session.execute(select(ForumSubscription)
-                                                .where((ForumSubscription.forum_id == cachedMapping['forum']['id']) & 
-                                                        (ForumSubscription.user_id == g.REQUESTING_USER['sid']))
-                                                        ).scalar_one_or_none()
+        except SQLAlchemyError: genericDBFetchException()
 
-        # Check if admin
-        else:
-            subbedForum = None
-    except SQLAlchemyError: genericDBFetchException()
-
-    if not cachedMapping:
+        showAllAdminsLink: bool = False
         if len(forumAdmins) == 6:
             forumAdmins.pop(-1)
-            showAllAdminsLink: bool = True
-        else:
-            showAllAdminsLink: bool = False
+            showAllAdminsLink = True
 
-        # Big boy query, needs to be cached
-        forumFullMapping = {'forum' : forum.__json_like__(),
-                            'forum_rules' : tuple(forumRule.__json_like__() for forumRule in forumRules),
-                            'forum_admins' : forumAdmins,
-                            'show_all_admins':showAllAdminsLink,
-                            'highlighted_posts' : tuple(highlightedPost.__json_like__() for highlightedPost in highlightedPosts)}
+        #TODO: Cache highlighted posts separately
+        forumMapping: dict = {'forum' : rediserialize(forum.__json_like__()),
+                              'forum_rules' : tuple(forumRule.__json_like__() for forumRule in forumRules),
+                              'forum_admins' : forumAdmins,
+                              'highlighted_posts' : tuple(highlightedPost.__json_like__() for highlightedPost in highlightedPosts)}
         
-        RedisInterface.set(f'view:forum:{name}', ujson.dumps(forumFullMapping), ex=300)
+        # Cache forum
+        RedisInterface.set(f'forum:{forumID}', ujson.dumps(forumMapping), current_app.config['REDIS_TTL_STRONG'])
 
-    print(cachedMapping if cachedMapping else forumFullMapping)
-    return render_template('forum.html',
-                           name = name,
-                           forum_mapping = cachedMapping if cachedMapping else forumFullMapping,
-                           subbed=bool(subbedForum),
-                           userlink = None if not g.REQUESTING_USER else g.REQUESTING_USER['sub'])
+    # Post has now been fetched, either from cache or from DB
+    subbedForum: bool = False
+    forumAdminRole: str = None
+    if g.REQUESTING_USER and 'fetch_relation' in request.args:
+        try:
+            subbedForum = bool(db.session.execute(select(ForumSubscription)
+                                            .where((ForumSubscription.forum_id == forumMapping['forum']['id']) & (ForumSubscription.user_id == g.REQUESTING_USER['sid']))
+                                            ).scalar_one_or_none())
 
+            forumAdminRole: str = db.session.execute(select(ForumAdmin.role)
+                                                     .where((ForumAdmin.forum_id == forumMapping['forum']['id']) & (ForumAdmin.user_id == g.REQUESTING_USER.get('sid')))
+                                                     ).scalar_one_or_none()
+        except SQLAlchemyError: ... # Silent failure, very wasteful to let the entire cycle go to waste over 2 optional weak entities        
+
+    return render_template('forum.html', forum_mapping = forumMapping, subbed=bool(subbedForum))
 @templates.route('/catalogue/animes')
 @pass_user_details
 def get_anime() -> tuple[str, int]:
@@ -173,7 +188,6 @@ def view_post(post_id: int) -> tuple[str, int]:
         return render_template('post.html',
                                post_mapping =  postMapping,
                                permission_level = 0)
-    authorID: int = postMapping.get('author_id')
     if not postMapping:
         try:
             post: Post = db.session.execute(select(Post)
@@ -197,7 +211,7 @@ def view_post(post_id: int) -> tuple[str, int]:
     # Post fetched, now check to see user's relation to this post
     permissionLevel: int = 0
     if g.REQUESTING_USER:
-        if(g.REQUESTING_USER.get('sid') == authorID):
+        if(g.REQUESTING_USER.get('sid') == postMapping.get('author_id')):
             # Author has highest permission level with edit access also
             permissionLevel = 2
         else:

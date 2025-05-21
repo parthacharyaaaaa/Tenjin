@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}
-{{ name }}
+{{ forum_mapping['forum']['name'] }}
 {% endblock %}
 
 {% block depends %}
@@ -14,7 +14,7 @@
 <div class="forum-container">
     <div class="forum-header">
         <div class="left">
-            <h2>{{name}}</h2>
+            <h2>{{ forum_mapping['forum']['name'] }}</h2>
         </div>
         <div class="right">
             <button class = 'btn-primary' id="sub-btn" subscribed={{subbed}}>
