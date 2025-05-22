@@ -5,7 +5,7 @@ import re
 from flask import jsonify
 import os
 import traceback
-from typing import Mapping, Callable, Literal
+from typing import Mapping, Callable, Literal, Any, Iterable
 from types import NoneType
 import base64
 import requests
@@ -186,3 +186,48 @@ def consult_cache(interface: Redis, cache_key: str,
             return None
         else:
             raise RuntimeError('Unsuppressed cache failure') from e
+        
+def fetch_group_resources(interface: Redis, group_key: str, resource_dtype: Literal['l', 's', 'z'], element_dtype: Literal['mapping', 'string'] = 'mapping') -> tuple[tuple[Any], bool, str]:
+    """
+    Fetches all values for keys stored in a Redis iterable (list, set, or sorted set) for cursor based pagination. If any key is missing from the cache, the function returns `None` to indicate a cache miss. It is upto the caller to reconcile cache misses
+    Args:
+        interface: The Redis client instance used to access the cache.
+        group_key: The Redis key pointing to a collection of resource keys.
+        resource_dtype: The data type of the collection stored at `group_key`.
+            - "l": List
+            - "s": Set
+            - "z": Sorted Set (zset)
+        element_dtype: The expected data type of each individual resource key in the group (used for deserialization).
+
+    Returns:
+        tuple: A tuple of values corresponding to each key in the group, boolean indicating end of pagination, value of next cursor
+    """
+    keys: Iterable[str] = None
+    end: bool = False
+    if resource_dtype == 'l':  keys: list[str] = interface.lrange(group_key, 0, -1)
+    elif resource_dtype == 'z': keys: list[str] = interface.zrange(group_key, 0, -1)
+    elif resource_dtype == 's': keys: set[str] = interface.smembers(group_key)
+    else: raise ValueError('Invalid resource data type provided')
+
+    if not keys:
+        return None, True, None
+
+    if '__NF__' in keys:
+        return None, True, None
+
+    if 'end' in keys:
+        keys.pop('end')
+        end = True
+
+    cursor: str = keys.pop('cursor') or None
+    resources: list[dict[str, Any]|str] = []
+    with interface.pipeline() as pipe:
+        for key in keys:
+            pipe.get(key)
+        resources = pipe.execute()
+
+    # Account for sentinel mappings
+    if element_dtype == 'mapping':
+        return tuple(map(lambda resource : None if '__NF__' in resource else resource, resources)), end, cursor
+    
+    return tuple(map(lambda resource : None if resource == '__NF__' else ujson.loads(resource), resources)), end, cursor
