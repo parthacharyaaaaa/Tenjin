@@ -6,7 +6,7 @@ user = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/us
 
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized
 from auxillary.decorators import enforce_json, private
-from auxillary.utils import processUserInfo, hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache
+from auxillary.utils import processUserInfo, hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
 from resource_server.external_extensions import RedisInterface
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -20,7 +20,7 @@ from uuid import uuid4
 import ujson
 import base64
 from hashlib import sha256
-import requests
+from typing import Any
 
 @user.route("/", methods=["POST"])
 # @private
@@ -277,32 +277,21 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
         rawCursor = request.args.get('cursor', '0').strip()
         if rawCursor == '0':
             cursor: int = 0
-            init: bool = True
         else:
             cursor = int(base64.b64decode(rawCursor).decode())
-            init: bool = False
     except (ValueError, TypeError):
             raise BadRequest("Failed to load more posts. Please refresh this page")
     
-    cacheKey: str = f'profile:{user_id}:posts:{cursor}'
-    try:
-        with RedisInterface.pipeline() as pp:
-            pp.hgetall(cacheKey)
-            pp.ttl(cacheKey)
-            _res = pp.execute()
-        if '__NF__' in _res[0]:
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
-            return jsonify({'end' : True}), 200
-        
-        elif(_res[0]):
-            cachedPost = _res[0]
-            cachedPostTTL = _res[1]
-            # Promote TTL
-            RedisInterface.expire(cacheKey, min(current_app.config['REDIS_TTL_CAP'], cachedPostTTL+current_app.config['REDIS_TTL_PROMOTION']))
-
-    except RedisError: 
-        ... #TODO: Add logging logic for cache failures
+    # 1: Redis
+    cacheKey: str = f'profile:{user_id}:posts:{cursor}'     # cacheKey here will just be a list of key names for individually cached posts
+    resources, end, nextCursor = fetch_group_resources(RedisInterface, cacheKey)
+    if resources and all(resources):
+        # All resources exist in cache, promote TTL and return results
+        promote_group_ttl(interface=RedisInterface, group_key=cacheKey,
+                          promotion_ttl=current_app.config['REDIS_TTL_PROMOTION'], max_ttl=current_app.config['REDIS_TTL_CAP'])
+        return jsonify({'posts' : resources, 'cursor' : nextCursor, 'end' : end})
     
+    # Cache failure, either missing key in set or set does not exist. Either way, we'll have to bother the DB >:3
     try:
         user: User = db.session.execute(select(User)
                                         .where(User.id == user_id)
@@ -313,31 +302,41 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
             raise NotFound('No user with this ID exists')
         
         whereClause = (Post.author_id == user_id)
-        if not init:
+        if cursor:      # Cursor value at 0 will evaluate to False
             whereClause &= (Post.id < cursor)
         
         recentPosts: list[Post] = db.session.execute(select(Post)
-                                                        .where(whereClause)
-                                                        .order_by(Post.time_posted.desc())
-                                                        .limit(6)).scalars().all()
-        if not recentPosts:
-            return jsonify({'posts' : None, 'cursor' : cursor, 'end' : True})
-        
-        if len(recentPosts) < 6:
-            end = True
-        else:
-            end = False
-            recentPosts.pop(-1)
-
+                                                     .where(whereClause)
+                                                     .order_by(Post.time_posted.desc())
+                                                     .limit(6)
+                                                     ).scalars().all()
     except SQLAlchemyError: genericDBFetchException()
 
-    cursor = base64.b64encode(str(recentPosts[-1].id).encode('utf-8')).decode()
-    _posts = [rediserialize(post.__json_like__()) for post in recentPosts]
-    if cursor == 0:
-        # Batch cache only the posts that appear at the original, non-paginated profile of the user
-        batch_hset_with_ttl(RedisInterface, names=(f'post:{post.id}' for post in recentPosts), mappings=_posts, ttl=current_app.config['REDIS_TTL_STRONG'])
+    if not recentPosts:
+        with RedisInterface.pipeline() as pipe:
+            pipe.lpush(cacheKey, '__NF__', current_app.config['REDIS_TTL_WEAK'])  # Announce non-existence
+            pipe.expire(cacheKey, current_app.config['REDIS_TTL_WEAK'])
+            pipe.execute()
 
-    return jsonify({'posts' : _posts, 'cursor' : cursor, 'end' : end})
+        return jsonify({'posts' : None, 'cursor' : cursor, 'end' : True})
+    
+    if len(recentPosts) < 6:
+        end = True
+    else:
+        end = False
+        recentPosts.pop(-1)
+
+    nextCursor = base64.b64encode(str(recentPosts[-1].id).encode('utf-8')).decode()
+    _posts = [rediserialize(post.__json_like__()) for post in recentPosts]
+
+    # Cache grouped resources
+    cache_grouped_resource(interface=RedisInterface,
+                           group_key=cacheKey, resource_type='post',
+                           resources= {post['id']:post for post in _posts},
+                           weak_ttl= current_app.config['REDIS_TTL_WEAK'], strong_ttl= current_app.config['REDIS_TTL_STRONG'],
+                           cursor=nextCursor, end=end)
+
+    return jsonify({'posts' : _posts, 'cursor' : nextCursor, 'end' : end})
 
 @user.route('profile/<int:user_id>/forums')
 def get_user_forums(user_id: int) -> tuple[Response, int]:
