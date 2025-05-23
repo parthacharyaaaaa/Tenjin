@@ -314,7 +314,7 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
 
     if not recentPosts:
         with RedisInterface.pipeline() as pipe:
-            pipe.lpush(cacheKey, '__NF__', current_app.config['REDIS_TTL_WEAK'])  # Announce non-existence
+            pipe.lpush(cacheKey, '__NF__')  # Announce non-existence
             pipe.expire(cacheKey, current_app.config['REDIS_TTL_WEAK'])
             pipe.execute()
 
@@ -348,37 +348,18 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
             cursor = int(base64.b64decode(rawCursor).decode())
     except (ValueError, TypeError):
             raise BadRequest("Failed to load more Forums. Please refresh this page")
-    
 
     cacheKey: str = f'profile:{user_id}:forums:{cursor}'
-    try:
-        with RedisInterface.pipeline() as pp:
-            pp.hgetall(cacheKey)
-            pp.ttl(cacheKey)
-            _res = pp.execute()
-        if '__NF__' in _res[0]:
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
-            return jsonify({'end' : True}), 200
-        
-        elif(_res[0]):
-            cachedForums = _res[0]
-            cachedForumTTL = _res[1]
-            # Promote TTL
-            RedisInterface.expire(cacheKey, min(current_app.config['REDIS_TTL_CAP'], cachedForumTTL+current_app.config['REDIS_TTL_PROMOTION']))
-
-            # Formatting response
-            isEnd: int = RedisInterface.get(f'cursor_end:{cachedForums[-1]["id"]}')
-            cursor: str = base64.b64encode(str(cachedForums[-1]["id"]).encode('utf-8')).decode()
-
-            return jsonify({'forums' : cachedForums, 'cursor' : cursor, 'end' : False if not isEnd else bool(isEnd)})   # Fallback to False, the user can press a button one extra time instead of costing us a query >:(
-
-    except RedisError: 
-        ... #TODO: Add logging logic for cache failures
+    resources, end, cursor = fetch_group_resources(RedisInterface, cacheKey)
+    if resources and all(resources):
+        # Group cache is valid, promote TTL and dispatch result
+        promote_group_ttl(RedisInterface, cacheKey, promotion_ttl=current_app.config['REDIS_TTL_PROMOTION'], max_ttl=current_app.config['REDIS_TTL_CAP'])
+        return jsonify({'forums' : resources, 'cursor' : end, 'end' : end}), 200
 
     try:
         userID: int = db.session.execute(select(User.id)
-                                          .where(User.id == user_id)
-                                          ).scalar_one_or_none()
+                                         .where(User.id == user_id)
+                                         ).scalar_one_or_none()
         if not userID:
             hset_with_ttl(RedisInterface, f'user:{user_id}', {"__NF__" : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound(f'No user with ID {userID} exists')
@@ -388,23 +369,29 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
                                                  .join(ForumSubscription, ForumSubscription.user_id == userID)
                                                  .limit(6)
                                                  ).scalars().all()
-        if not forums:
-            return jsonify({'forums' : None, 'cursor' : cursor, 'end' : True})
-        if len(forums) < 6:
-            end = True
-        else:
-            end = False
-            forums.pop(-1)
     except SQLAlchemyError: genericDBFetchException()
 
+    if not forums:
+        with RedisInterface.pipeline() as pipe:
+            pipe.lpush(cacheKey, '__NF__')
+            pipe.expire(cacheKey, current_app.config['REDIS_TTL_EPHEMERAL'])
+            pipe.execute()
+        return jsonify({'forums' : None, 'cursor' : cursor, 'end' : True})
+
+    end: bool = True
+    if len(forums) >= 6:
+        end = False
+        forums.pop(-1)
+
+    newCursor: str = base64.b64encode(str(forums[-1].id).encode('utf-8')).decode()
     _forums = [rediserialize(forum.__json_like__()) for forum in forums]
+
+    # Group cache
+    cache_grouped_resource(RedisInterface, cacheKey, 'forum', {forum['id']:forum for forum in _forums},
+                           current_app.config['REDIS_TTL_WEAK'], current_app.config['REDIS_TTL_STRONG'],
+                           cursor=newCursor, end=end)
     
-    # Cache only if cursor is 0
-    if cursor == 0:
-        batch_hset_with_ttl(RedisInterface, names=tuple(f"forum:{forum.id}" for forum in forums), mappings=_forums, ttl=current_app.config['REDIS_TTL_STRONG'])
-    
-    cursor = base64.b64encode(str(forums[-1].id).encode('utf-8')).decode()
-    return jsonify({'forums' : _forums, 'cursor' : cursor, 'end' : end})
+    return jsonify({'forums' : _forums, 'cursor' : newCursor, 'end' : end})
 
 
 @user.route('profile/<int:user_id>/animes')
@@ -418,16 +405,16 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
     except (ValueError, TypeError):
             raise BadRequest("Failed to load more animes. Please refresh this page")
     
-    try:
-        cachedResult: str = RedisInterface.get(f'profile:{user_id}:animes:{cursor}')
-        if cachedResult:
-            return jsonify(ujson.loads(cachedResult)), 200
-    except:
-        ...
+    cacheKey: str = f'profile:{user_id}:animes:{cursor}'
+    resource, end, cursor = fetch_group_resources(RedisInterface, cacheKey)
+    if resource and all(resource):
+        promote_group_ttl(RedisInterface, cacheKey, current_app.config['REDIS_TTL_PROMOTION'], current_app.config['REDIS_TTL_CAP'])
+        return jsonify({'animes' : resource, 'cursor' : cursor, 'end' : end}), 200
 
     try:
         user: User = db.session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
         if not user:
+            hset_with_ttl(RedisInterface, f'user:{user_id}', {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound('No user with this ID exists')
         
         animes: list[Anime] = db.session.execute(select(Anime)
@@ -437,16 +424,18 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
         if not animes:
             return jsonify({'animes' : None, 'cursor' : cursor, 'end' : True})
         
-        if len(animes) < 6:
-            end = True
-        else:
+        end: bool = True
+        if len(animes) >= 6:
             end = False
             animes.pop(-1)
     except SQLAlchemyError: genericDBFetchException()
 
-    cursor = base64.b64encode(str(animes[-1].id).encode('utf-8')).decode()
+    newCursor: str = base64.b64encode(str(animes[-1].id).encode('utf-8')).decode()
     _animes = [rediserialize(anime.__json_like__()) for anime in animes]
-    return jsonify({'animes' : _animes, 'cursor' : cursor, 'end' : end})
+
+    # Cache as a group
+    cache_grouped_resource(RedisInterface, cacheKey, 'anime', {anime['id'] for anime in _animes}, current_app.config['REDIS_TTL_WEAK'], current_app.config['REDIS_TTL_STRONG'], newCursor, end)
+    return jsonify({'animes' : _animes, 'cursor' : newCursor, 'end' : end})
 
 
 @user.route("/login", methods=["POST"])
