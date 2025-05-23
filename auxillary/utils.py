@@ -12,6 +12,7 @@ import requests
 import ecdsa
 import ujson
 from redis import Redis
+from redis.client import Pipeline
 from redis.exceptions import RedisError
 
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
@@ -187,43 +188,44 @@ def consult_cache(interface: Redis, cache_key: str,
         else:
             raise RuntimeError('Unsuppressed cache failure') from e
         
-def fetch_group_resources(interface: Redis, group_key: str, resource_dtype: Literal['l', 's', 'z'], element_dtype: Literal['mapping', 'string'] = 'mapping') -> tuple[tuple[Any], bool, str]:
+def fetch_group_resources(interface: Redis, group_key: str, element_dtype: Literal['mapping', 'string'] = 'mapping') -> tuple[tuple[Any], bool, str]:
     """
     Fetches all values for keys stored in a Redis iterable (list, set, or sorted set) for cursor based pagination. If any key is missing from the cache, the function returns `None` to indicate a cache miss. It is upto the caller to reconcile cache misses
     Args:
         interface: The Redis client instance used to access the cache.
         group_key: The Redis key pointing to a collection of resource keys.
-        resource_dtype: The data type of the collection stored at `group_key`.
-            - "l": List
-            - "s": Set
-            - "z": Sorted Set (zset)
         element_dtype: The expected data type of each individual resource key in the group (used for deserialization).
 
     Returns:
         tuple: A tuple of values corresponding to each key in the group, boolean indicating end of pagination, value of next cursor
     """
     keys: Iterable[str] = None
+    keys: list[str] = interface.lrange(group_key, 0, -1)
+
+    if not keys: return None, True, None
+
+    if '__NF__' in keys: return None, True, None
+
+    cursor: str = None
     end: bool = False
-    if resource_dtype == 'l':  keys: list[str] = interface.lrange(group_key, 0, -1)
-    elif resource_dtype == 'z': keys: list[str] = interface.zrange(group_key, 0, -1)
-    elif resource_dtype == 's': keys: set[str] = interface.smembers(group_key)
-    else: raise ValueError('Invalid resource data type provided')
+    removed_entries: list[int] = []
+    for idx, entry in enumerate(keys):
+        if entry.startswith('cursor:'): 
+            cursor = entry.split(":")[1]    # Fetch next cursor for pagination if available
+            removed_entries.append(entry)
+        elif entry.startswith("end:"): 
+            removed_entries.append(entry)
+            end = entry.split(":")[1]        # Fetch flag to indiciate pagination end
+    for entry in removed_entries: keys.remove(entry)   # Remove cursor and end keys from group keys
 
-    if not keys:
-        return None, True, None
-
-    if '__NF__' in keys:
-        return None, True, None
-
-    if 'end' in keys:
-        keys.pop('end')
-        end = True
-
-    cursor: str = keys.pop('cursor') or None
+    end = False if end.lower() == 'false' else True      # Cast from Redis string to Python bool
     resources: list[dict[str, Any]|str] = []
     with interface.pipeline() as pipe:
         for key in keys:
-            pipe.get(key)
+            if element_dtype == 'mapping':
+                pipe.hgetall(key)
+            else:
+                pipe.get(key)
         resources = pipe.execute()
 
     # Account for sentinel mappings
@@ -231,3 +233,48 @@ def fetch_group_resources(interface: Redis, group_key: str, resource_dtype: Lite
         return tuple(map(lambda resource : None if '__NF__' in resource else resource, resources)), end, cursor
     
     return tuple(map(lambda resource : None if resource == '__NF__' else ujson.loads(resource), resources)), end, cursor
+
+def promote_group_ttl(interface: Redis, group_key: str, promotion_ttl: int = 15, max_ttl: int = 20*60) -> None:
+    keys: Iterable[str] = None
+    end: bool = False
+    keys: list[str] = interface.lrange(group_key, 0, -1)
+
+    if not keys:
+        return
+    
+    # Fetch TTLs
+    with interface.pipeline() as pipe:
+        pipe.ttl(group_key)
+        for key in keys:
+            pipe.ttl(key)
+
+        ttl_list: list[int] = pipe.execute()
+    
+    # Promote TTls
+    with interface.pipeline() as pipe:
+        pipe.expire(group_key, min(max_ttl, ttl_list[0] + promotion_ttl))
+
+        for idx, key in enumerate(keys, start=1):
+            pipe.expire(key, min(max_ttl, ttl_list[idx] + promotion_ttl))
+        pipe.execute()
+
+def cache_grouped_resource(interface: Redis, group_key: str, resource_type: str, resources: Mapping[str|int, dict], weak_ttl: int, strong_ttl: int, cursor: str, end: bool, member_dtype: Literal['mapping', 'string'] = 'mapping') -> None:
+    member_key_template: str = resource_type+':{}'
+    if member_dtype not in ('mapping', 'string'): raise ValueError()
+
+    with interface.pipeline() as pipe:
+        pipe.expire(group_key, weak_ttl)
+        for resourceID, resourceMapping in resources.items():
+            key_name: str = member_key_template.format(resourceID)
+            pipe.rpush(group_key, key_name)     # Push key name for resource into list
+
+            # Cache individual resource separately
+            if member_dtype == 'mapping':
+                pipe.hset(key_name, mapping=resourceMapping)
+            else:
+                pipe.set(key_name, ujson.dumps(resourceMapping))
+            pipe.expire(key_name, strong_ttl)
+        
+        pipe.rpush(group_key, f'cursor:{cursor}')
+        pipe.rpush(group_key, f'end:{end}')
+        pipe.execute()
