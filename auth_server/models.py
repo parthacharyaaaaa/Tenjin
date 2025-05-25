@@ -15,7 +15,11 @@ class Admin(db.Model):
     __tablename__ = 'admins'
     id: int = db.Column(INTEGER, primary_key=True, autoincrement=True)
     username: str = db.Column(VARCHAR(64), nullable=False, unique=True)
+    password_hash: bytes = db.Column(BYTEA, nullable=False)
+    password_salt: bytes = db.Column(BYTEA, nullable=False)
+    time_deleted: datetime.datetime = db.Column(TIMESTAMP, server_default=text('null'))
     role: str = db.Column(ADMIN_ROLES, nullable=False)
+    last_login: datetime.datetime = db.Column(TIMESTAMP, nullable=False, server_default=text('CURRENT_TIMESTAMP'))
 
 class KeyData(db.Model):
     __tablename__ = 'keydata'
