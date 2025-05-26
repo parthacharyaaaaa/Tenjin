@@ -2,12 +2,16 @@ import jwt
 from typing import Optional, Literal
 from redis import Redis
 from werkzeug.exceptions import InternalServerError
-from flask import Flask
 import uuid
 import time
 from typing import TypeAlias
 import jwt.exceptions as JWTexc
 from auth_server.key_container import KeyMetadata
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import select
+from auth_server.models import KeyData
+import threading
+from traceback import format_exc
 
 # Aliases
 tokenPair : TypeAlias = tuple[str, str]
@@ -19,7 +23,8 @@ class TokenManager:
 
     def __init__(self, kvsMapping: dict[str, KeyMetadata],
                  interface: Redis,
-                 dbConnString: str = None,
+                 synced_store: Redis,
+                 db: SQLAlchemy,
                  refreshLifetime : int = 60*60*3,
                  accessLifetime : int = 60*30,
                  alg : str = "ES256",
@@ -28,7 +33,8 @@ class TokenManager:
                  uHeaders : dict | None = None,
                  leeway : int = 180,
                  max_tokens_per_fid : int = 3,
-                 max_valid_keys: int = 3):
+                 max_valid_keys: int = 3,
+                 announcement_duration: int = 60*60*3):
         '''
         Args:
             kvsMapping (dict): Mapping of key IDs to key metadata (see `KeyMetadata` class). Never expose private keys via endpoints.
@@ -54,6 +60,14 @@ class TokenManager:
 
         if not (self._TokenStore.ping()):
             raise ConnectionError()
+        
+        self.announcement_duration = announcement_duration
+        
+        self._SyncedStore = synced_store
+        if not (self._SyncedStore.ping()):
+            raise ConnectionError()
+
+        self.db = db
 
         # Initialize universal headers, common to all tokens issued in any context
         uHeader = {"typ" : typ, "alg" : alg}
@@ -70,6 +84,9 @@ class TokenManager:
         # Set leeway for time-related claims
         self.leeway = leeway
         self.max_valid_keys = max_valid_keys
+
+        # Start background thread for polling
+        threading.Thread(target=self.poll_store, daemon=True).start()
 
     def decodeToken(self, token : str, tType : Literal["access", "refresh"] = "access", **kwargs) -> str:
         '''Decodes token, raises error in case of failure
@@ -211,14 +228,49 @@ class TokenManager:
         except Exception as e:
             raise InternalServerError("Failed to perform operation on token store")
         
-    def update_keydata(self, kid: str, newKeyData: KeyMetadata) -> None:
+    def update_keydata(self, kid: str, newKeyData: KeyMetadata, active:bool = True) -> None:
         '''Update key mapping on key rotation'''
-        self.latestKeyID = kid
-        self.latestKeyMetadata = newKeyData
+        if active:
+            self.latestKeyID = kid
+            self.latestKeyMetadata = newKeyData
+
         self.kvsMapping[kid] = newKeyData
-        mapItems = tokenManager.kvsMapping.items()
-        tokenManager.kvsMapping = dict(list(mapItems)[:len(mapItems) - self.max_valid_keys])    # Trim mapping size, hacky? maybe 
+        if len(self.kvsMapping) > self.max_valid_keys:
+            tokenManager.kvsMapping = dict(list(self.kvsMapping.items())[-self.max_valid_keys:]) 
+
+    def check_key(self, kid: str) -> bool:
+        '''Check database for a new key. If found, update keydata and return True.'''
+
+        # Try to fetch a valid key with this KID 
+        newKey: KeyData = self.db.session.execute(select(KeyData)
+                                                 .where((KeyData.kid == kid) & (KeyData.expired_at.issnot(None)))
+                                                 ).scalar_one_or_none()
+        if not newKey:
+            # Announce non existence to other workers in case they also receive this invalid key
+            self._SyncedStore.set(f'invalid_key:{kid}', 1, self.announcement_duration)
+            return False
+        
+        # Given key is indeed a valid key
+        self.update_keydata(kid, KeyMetadata(newKey.public_pem, newKey.private_pem, 'ES256', newKey.epoch), active=not bool(newKey.rotated_out_at))   # An active key's rotated_out_at column will be None (__bool__ == False)
+        return True
     
+    def poll_store(self) -> None:
+        '''Check synced store for an announcement for a new key. Intended to be run as a non-blocking, background task upon instantiation'''
+        while True:
+            try:
+                key: dict = self._SyncedStore.get('NEW_KEY_ANNOUNCEMENT')
+                if key and key != self.latestKeyID:
+                    updated: bool = tokenManager.check_key(key)
+                    if updated:
+                        print(f"[BACKGROUND POLLER] Updated to new key: {key}")
+                    else:
+                        print(f"[BACKGROUND POLLER] Announced key {key} not valid in DB.")
+            except Exception:
+                print(f'[BACKGROUND POLLER]: Exception encountered. Traceback:')
+                print(format_exc())
+            finally:
+                time.sleep(10)
+
     @staticmethod
     def generate_unique_identifier():
         return uuid.uuid4().hex
