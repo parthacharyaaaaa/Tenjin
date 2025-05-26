@@ -30,7 +30,7 @@ def admin_only(endpoint):
         #### Ensure that an incoming request carries with itself the necessary admin session token.
         - Verifies token semantics (session ID, admin ID, and expiry claims), 
         - Checks session expiry
-        - Checks session details against session hashmap in Synced Store
+        - Checks session details against session hashmap in Synced Store (session ID, expiry, role)
 
         On success, the session mapping is assigned to global context as `g.SESSION_TOKEN`, else performs the necessary account locking and session deletion
     '''
@@ -42,7 +42,7 @@ def admin_only(endpoint):
         
         sessionToken: dict = ujson.loads(base64.urlsafe_b64decode(encodedSessionToken).decode())
         # Verify token semantics
-        sessionID, adminID, expiry = sessionToken.get('session_id'), sessionToken.get('admin_id'), sessionToken.get('expiry_at')
+        sessionID, adminID, expiry, role = sessionToken.get('session_id'), sessionToken.get('admin_id'), sessionToken.get('expiry_at'), sessionToken.get('role')
         if not adminID:
             raise Unauthorized("Invalid token")
         
@@ -65,7 +65,9 @@ def admin_only(endpoint):
             raise Unauthorized('No session for this admin exists')
             
         # Session exists, check credentials
-        if not (sessionID == int(adminSessionMapping.get(b'session_id')) and expiry == float(adminSessionMapping.get(b'expiry_at'))):
+        if not (sessionID == int(adminSessionMapping.get(b'session_id')) and 
+                expiry == float(adminSessionMapping.get(b'expiry_at')) and 
+                role == adminSessionMapping.get(b'role').decode()):
             report_suspicious_activity(adminID, 'Invalid session token')
             raise Unauthorized('Invalid session token')
         
