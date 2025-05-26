@@ -1,7 +1,7 @@
 from flask import Blueprint, current_app, jsonify, g
 from auth_server.redis_manager import SyncedStore
 from auxillary.decorators import enforce_json
-from auxillary.utils import genericDBFetchException, verify_password
+from auxillary.utils import genericDBFetchException, verify_password, hash_password
 from auth_server.auth_auxillary import report_suspicious_activity, admin_only
 from werkzeug.exceptions import BadRequest, InternalServerError, NotFound, Forbidden, Conflict, Unauthorized
 from auth_server.models import db, Admin, SuspiciousActivity
@@ -12,7 +12,7 @@ from datetime import datetime
 import base64
 import ujson
 
-from sqlalchemy import select, update
+from sqlalchemy import select, update, insert
 from sqlalchemy.exc import SQLAlchemyError
 
 from redis.exceptions import RedisError
@@ -51,7 +51,7 @@ def admin_login() -> tuple[Response, int]:
 
         # Single sign-in policy, invalidate existing session and add entry in logs
         if adminSession:
-            SyncedStore.delete(adminSession)
+            SyncedStore.delete(sessionKey)
             report_suspicious_activity(admin.id, 'Session already active')
             raise Conflict('An admin session with these credentials is already active')
 
@@ -93,8 +93,27 @@ def admin_logout() -> tuple[Response, int]:
 
 @cmd.route('/admins', methods=['POST'])
 @enforce_json
+@admin_only
 def create_admin() -> tuple[Response, int]:
-    ...
+    if g.SESSION_TOKEN.get('role') != 'super':
+        raise Unauthorized('Only super roles are allowed to add admins')
+    
+    username: str = g.REQUEST_JSON.get('username', '').strip()
+    password: str = g.REQUEST_JSON.get('password')
+    if not (username and password):
+        raise BadRequest("Password and username are required to create a new admin")
+    
+    pw_hash, pw_salt = hash_password(password)
+    try:
+        db.session.execute(insert(Admin).values(username=username,
+                                                password_hash = pw_hash, password_salt = pw_salt,
+                                                role='staff',
+                                                created_by=g.SESSION_TOKEN['admin_id']))
+        db.session.commit()
+    except SQLAlchemyError:
+        raise InternalServerError("Failed to create a new admin, this is not from an erroneous input")
+    
+    return jsonify({'message' : 'Admin created'}), 202
 
 @cmd.route('/keys/purge', methods=['DELETE'])
 @enforce_json
