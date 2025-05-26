@@ -8,6 +8,7 @@ from functools import wraps
 import time
 import ujson
 import base64
+from typing import Literal
 
 def report_suspicious_activity(adminID: int, desc: str, force_logout: bool = True) -> None:
     db.session.execute(insert(SuspiciousActivity)
@@ -25,53 +26,66 @@ def report_suspicious_activity(adminID: int, desc: str, force_logout: bool = Tru
 
     db.session.commit()
 
-def admin_only(endpoint):
+def admin_only(required_role: Literal['staff', 'super'] = 'staff'):
     '''
-        #### Ensure that an incoming request carries with itself the necessary admin session token.
-        - Verifies token semantics (session ID, admin ID, and expiry claims), 
-        - Checks session expiry
-        - Checks session details against session hashmap in Synced Store (session ID, expiry, role)
+    #### Role-based admin session validation decorator.
+    - Verifies token presence and semantics
+    - Checks expiry
+    - Validates session from SyncedStore
+    - Compares role and ensures it meets or exceeds the required role
 
-        On success, the session mapping is assigned to global context as `g.SESSION_TOKEN`, else performs the necessary account locking and session deletion
+    On success, attaches session token to `g.SESSION_TOKEN`
     '''
-    @wraps(endpoint)
-    def decorated(*args, **kwargs):
-        encodedSessionToken: dict = request.headers.get('X-SESSION-TOKEN', None)
-        if not encodedSessionToken:
-            raise Unauthorized('Missing session token')
-        
-        sessionToken: dict = ujson.loads(base64.urlsafe_b64decode(encodedSessionToken).decode())
-        # Verify token semantics
-        sessionID, adminID, expiry, role = sessionToken.get('session_id'), sessionToken.get('admin_id'), sessionToken.get('expiry_at'), sessionToken.get('role')
-        if not adminID:
-            raise Unauthorized("Invalid token")
-        
-        adminID: int = int(adminID)
-        adminSessionKey: str = f'admin:{adminID}'
-        if not (sessionID and expiry):
-            SyncedStore.delete(adminSessionKey)
-            report_suspicious_activity(adminID, 'Invalid token submitted')
-            raise Unauthorized("Invalid token")
-        
-        # Verify token expiry
-        if time.time() > expiry:
-            SyncedStore.delete(adminSessionKey)
-            raise Forbidden("Session expired, please login again")
+    role_hierarchy = {'staff': 1, 'super': 2}
 
-        # Verify whether session exists
-        adminSessionMapping: dict = SyncedStore.hgetall(adminSessionKey)
-        if not adminSessionMapping:
-            report_suspicious_activity(adminID, 'No active session found')
-            raise Unauthorized('No session for this admin exists')
+    def wrapper(endpoint):
+        @wraps(endpoint)
+        def decorated(*args, **kwargs):
+            encodedSessionToken: str = request.headers.get('X-SESSION-TOKEN', None)
+            if not encodedSessionToken:
+                raise Unauthorized('Missing session token')
             
-        # Session exists, check credentials
-        if not (sessionID == int(adminSessionMapping.get(b'session_id')) and 
-                expiry == float(adminSessionMapping.get(b'expiry_at')) and 
-                role == adminSessionMapping.get(b'role').decode()):
-            report_suspicious_activity(adminID, 'Invalid session token')
-            raise Unauthorized('Invalid session token')
-        
-        g.SESSION_TOKEN = sessionToken
-    
-        return endpoint(*args, **kwargs)
-    return decorated
+            try:
+                sessionToken: dict = ujson.loads(base64.urlsafe_b64decode(encodedSessionToken).decode())
+            except Exception:
+                raise Unauthorized("Malformed session token")
+            
+            sessionID = sessionToken.get('session_id')
+            adminID = sessionToken.get('admin_id')
+            expiry = sessionToken.get('expiry_at')
+            role = sessionToken.get('role')
+
+            if not adminID:
+                raise Unauthorized("Invalid token")
+
+            adminID = int(adminID)
+            adminSessionKey = f'admin:{adminID}'
+
+            if not (sessionID and expiry):
+                SyncedStore.delete(adminSessionKey)
+                report_suspicious_activity(adminID, 'Invalid token submitted')
+                raise Unauthorized("Invalid token")
+
+            if time.time() > expiry:
+                SyncedStore.delete(adminSessionKey)
+                raise Forbidden("Session expired, please login again")
+
+            adminSessionMapping = SyncedStore.hgetall(adminSessionKey)
+            if not adminSessionMapping:
+                report_suspicious_activity(adminID, 'No active session found')
+                raise Unauthorized('No session for this admin exists')
+
+            if not (sessionID == int(adminSessionMapping.get(b'session_id')) and 
+                    expiry == float(adminSessionMapping.get(b'expiry_at')) and 
+                    role == adminSessionMapping.get(b'role').decode()):
+                report_suspicious_activity(adminID, 'Invalid session token')
+                raise Unauthorized('Invalid session token')
+
+            actual_role = role
+            if role_hierarchy.get(actual_role, 0) < role_hierarchy[required_role]:
+                raise Forbidden("Insufficient permissions for this action")
+
+            g.SESSION_TOKEN = sessionToken
+            return endpoint(*args, **kwargs)
+        return decorated
+    return wrapper
