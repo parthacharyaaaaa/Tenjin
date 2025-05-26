@@ -21,6 +21,7 @@ class Admin(db.Model):
     role: str = db.Column(ADMIN_ROLES, nullable=False)
     last_login: datetime.datetime = db.Column(TIMESTAMP, nullable=False, server_default=text('CURRENT_TIMESTAMP'))
     locked: bool = db.Column(BOOLEAN, nullable=False, server_default=text('false'))
+    created_by: int = db.Column(INTEGER, db.ForeignKey('admins.id'))
 
 class SuspiciousActivity(db.Model):
     __tablename__ = 'suspicious_activities'
