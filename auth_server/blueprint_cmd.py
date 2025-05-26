@@ -118,14 +118,14 @@ def admin_delete() -> tuple[Response, int]:
     
 
 @cmd.route('/admins/logout', methods=['PATCH'])
-@admin_only
+@admin_only()
 def admin_logout() -> tuple[Response, int]:
     SyncedStore.delete(f'admin:{g.SESSION_TOKEN["admin_id"]}')
     return jsonify({'message' : 'Logout successful'}), 200
 
 @cmd.route('/admins', methods=['POST'])
 @enforce_json
-@admin_only
+@admin_only()
 def create_admin() -> tuple[Response, int]:
     if g.SESSION_TOKEN.get('role') != 'super':
         raise Unauthorized('Only super roles are allowed to add admins')
@@ -163,15 +163,15 @@ def clean_keystore() -> tuple[Response, int]:
     ...
 
 @cmd.route('/keys/rotate', methods=['POST'])
-@admin_only
+@admin_only()
 def rotate_keys() -> tuple[Response, int]:
     '''Trigger a key rotation sequence'''
     # Check for concurrent worker performing a key rotation
     lock = SyncedStore.set('KEY_ROTATION_LOCK', g.SESSION_TOKEN['admin_id'], ex=300, nx=True)
     if not lock:
         # Another worker is performing this action, reject this request >:(
-        adminID: str = SyncedStore.get('KEY_ROTATION_LOCK')
-        return jsonify({'message' : "There is an active key rotation being performed, your request has been rejected", 'admin_id' : adminID}), 409
+        adminID: bytes = SyncedStore.get('KEY_ROTATION_LOCK')
+        return jsonify({'message' : "There is an active key rotation being performed, your request has been rejected", 'admin_id' : adminID.decode()}), 409
     
     # Check for cooldown, must be global for all staff admins
     cooldown_flag: int = SyncedStore.get('KEY_ROTATION_COOLDOWN')
@@ -193,7 +193,7 @@ def rotate_keys() -> tuple[Response, int]:
         # Reflect rotation in DB
         db.session.execute(update(KeyData)
                            .where(KeyData.kid == prevKID)
-                           .values(rotated_out_at=datetime.now(), manual_rotation=True, rotated_out_by=g.SESSION_TOKEN['admin_id']))
+                           .values(rotated_out_at=datetime.now(), manual_rotation=True, rotated_by=g.SESSION_TOKEN['admin_id']))
         
         # Add new key
         db.session.execute(insert(KeyData)
@@ -225,11 +225,11 @@ def rotate_keys() -> tuple[Response, int]:
                      private_key=signingKey, public_key=verificationKey, key_id=kid)
     
     # Remove previous key's private PEM file
-    os.remove(os.path.join(current_app.config['PRIVATE_PEM_DIRECTORY'], f'private_{prevKID}.pem'))
+    os.remove(os.path.join(current_app.config['PRIVATE_PEM_DIRECTORY'], f'private_{prevKID}_key.pem'))
     if overflow:
         # Delete oldest public PEM file.
-        os.remove(os.path.join(current_app.config['PUBLIC_PEM_DIRECTORY'], f'public_{purgeID}.pem'))
-        privateFpath: os.PathLike = os.path.join(current_app.config['PRIVATE_PEM_DIRECTORY'], f'private_{purgeID}.pem')
+        os.remove(os.path.join(current_app.config['PUBLIC_PEM_DIRECTORY'], f'public_{purgeID}_key.pem'))
+        privateFpath: os.PathLike = os.path.join(current_app.config['PRIVATE_PEM_DIRECTORY'], f'private_{purgeID}_key.pem')
 
         # Explicit check because ideally at key rotation because normally the private PEM file for any non-active valid key should already have been deleted.
         if os.path.exists(privateFpath):
