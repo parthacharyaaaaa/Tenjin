@@ -2,14 +2,14 @@ from flask import Blueprint, Response, current_app, jsonify, g
 from auth_server.redis_manager import SyncedStore
 from auxillary.decorators import enforce_json
 from auxillary.utils import genericDBFetchException, verify_password
-from auth_server.auth_auxillary import report_suspicious_activity
+from auth_server.auth_auxillary import report_suspicious_activity, admin_enforce
 from werkzeug.exceptions import BadRequest, InternalServerError, NotFound, Forbidden, Conflict, Unauthorized
 from auth_server.models import db, Admin, SuspiciousActivity
 import secrets
 import time
 from datetime import datetime
 
-from sqlalchemy import select, insert, func
+from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from redis.exceptions import RedisError
@@ -54,6 +54,10 @@ def admin_login() -> tuple[Response, int]:
 
     except RedisError:
         raise InternalServerError('An error occured when validating session integrity')
+    
+    try:
+        db.session.execute(update(Admin).values(last_login=datetime.now()))
+    except SQLAlchemyError: raise InternalServerError('An error occured when logging you in, this is not an issue with your request but with the database')
     
     # Admin validated, create new session
     sessionID: int = secrets.randbelow(10_000_000)
