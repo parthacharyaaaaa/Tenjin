@@ -276,6 +276,6 @@ class TokenManager:
         return uuid.uuid4().hex
     
 tokenManager: TokenManager = None
-def init_token_manager(kvsMapping: dict[int, KeyMetadata], redisinterface: Redis, **kwargs) -> None:
+def init_token_manager(kvsMapping: dict[int, KeyMetadata], redisinterface: Redis, syncedstore: Redis, database: SQLAlchemy, **kwargs) -> None:
     global tokenManager
-    tokenManager = TokenManager(kvsMapping=kvsMapping, interface=redisinterface, **kwargs)
+    tokenManager = TokenManager(kvsMapping=kvsMapping, interface=redisinterface, synced_store=syncedstore, db=database, **kwargs)

@@ -29,8 +29,7 @@ def update_jwks(vk: ecdsa.VerifyingKey, kid: str,
             jwks_contents: list[dict[str, str|int]] = jwks_contents[-capacity:]
         
         jwks_json_file.seek(0)
-        jwks_json_file.write(ujson.dumps(jwks_contents))
-        ujson.dump({'keys' : jwks_contents}, jwks_json_filepath)
+        jwks_json_file.write(ujson.dumps(jwks_contents, indent=2))
         jwks_json_file.truncate()
 
 def write_ecdsa_pair(privateDir: os.PathLike, staticDir: os.PathLike,
