@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 import json
 from typing import Any
+from datetime import timedelta
 
 CWD = os.path.dirname(__file__)
 bLoaded: bool = load_dotenv(os.path.join(CWD, "auth.env"), override=True)
@@ -44,6 +45,11 @@ class FlaskConfig:
         # Resource server metadata
         RESOURCE_SERVER_ORIGIN = os.environ["RS_DOMAIN"].lower()
         PROTOCOL = os.environ.get("RS_COMMUNICATION_PROTOCOL", "http").lower()
+
+        # Business logic
+        SUSPICIOUS_LOOKBACK_TIME: timedelta = timedelta(days=int(os.environ['SUSPICIOUS_LOOKBACK_TIME']))
+        MAX_ACTIVITY_LIMIT: int = int(os.environ['MAX_ACTIVITY_LIMIT'])
+        ADMIN_SESSION_DURATION: int = int(os.environ['ADMIN_SESSION_DURATION']) # Duration in seconds
 
         # Redis metadata
         RELATIVE_PATH: os.PathLike = os.environ['REDIS_CONFIG_REL_FPATH']
