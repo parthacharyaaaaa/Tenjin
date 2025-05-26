@@ -18,6 +18,11 @@ def create_app() -> Flask:
     auth_app.config.from_object(flaskconfig)
     auth_app.pid = os.getpid()
 
+    # Additional filepaths depending on instance/static directories
+    auth_app.config['JWKS_FPATH'] = os.path.join(auth_app.instance_path, 'jwks.json')
+    auth_app.config['PUBLIC_PEM_DIRECTORY'] = os.path.join(auth_app.static_folder, 'keys')
+    auth_app.config['PRIVATE_PEM_DIRECTORY'] = os.path.join(auth_app.instance_path, 'keys') #NOTE: Is this really safe?
+
     # Error handler
     auth_app.register_error_handler(Exception, generic_error_handler)
 
