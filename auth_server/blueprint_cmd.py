@@ -82,8 +82,35 @@ def admin_login() -> tuple[Response, int]:
     return jsonify({'session_token' : encodedSessionToken}), 200
     
 @cmd.route('/admins', methods=['DELETE'])
+@enforce_json
 def admin_delete() -> tuple[Response, int]:
-    ...
+    if g.SESSION_TOKEN.get('role') != 'super':
+        raise Unauthorized('Only super users are allowed to delete admins')
+    
+    purgeID: int = g.REQUEST_JSON.get('id')
+    if not purgeID:
+        raise BadRequest('ID must be provided for deletion')
+    
+    try:
+        admin: Admin = db.session.execute(select(Admin)
+                                          .where((Admin.id == purgeID) & (Admin.time_deleted == None))
+                                          ).scalar_one_or_none()
+        if not admin:
+            raise NotFound(f'No admin with ID {purgeID} found')
+        
+        if admin.role == 'super':
+            raise Conflict()
+        
+    except SQLAlchemyError: genericDBFetchException()
+
+    try:
+        db.session.execute(update(Admin)
+                        .where(Admin.id == admin.id)
+                        .values(time_deleted = datetime.now()))
+    except: raise InternalServerError("Failed to delete admin account")
+
+    return jsonify({'message' : 'Admin deleted'}), 200
+    
 
 @cmd.route('/admins/logout', methods=['PATCH'])
 @admin_only
