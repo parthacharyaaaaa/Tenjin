@@ -183,7 +183,7 @@ def rotate_keys() -> tuple[Response, int]:
     kid, signingKey, verificationKey = generate_ecdsa_pair()
 
     # Update DB first, then perform JWKS and PEM writes
-    overflow: bool = True
+    overflow: bool = False
     purgeID: int = None
     try:
         # Update currently active key
@@ -247,9 +247,3 @@ def rotate_keys() -> tuple[Response, int]:
     SyncedStore.delete('KEY_ROTATION_LOCK')
 
     return jsonify({'message' : 'Key rotation successful', 'kid' : kid , 'public_pem' : newKeyData.PUBLIC_PEM.decode(), 'epoch' : newKeyData.EPOCH, 'alg' : 'ES256', 'previous_kid' : prevKID}), 201
-
-@cmd.route('/keys/capacity', methods=['PATCH'])
-@enforce_json
-def cap_keys() -> tuple[Response, int]:
-    '''Enforce max capacity on keys to be stored'''
-    ...
