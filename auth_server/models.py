@@ -40,5 +40,5 @@ class KeyData(db.Model):
     expired_at: datetime.datetime = db.Column(TIMESTAMP, server_default=text('null'))
     private_pem: bytes = db.Column(BYTEA, nullable=False, unique=True)
     public_pem: bytes = db.Column(BYTEA, nullable=False, unique=True)
-    manual_rotation: bool = db.Column(BOOLEAN, server_default=text('false'), index=True)
-
+    manual_rotation: bool = db.Column(BOOLEAN, server_default=text('false'))
+    rotated_by: int = db.Column(INTEGER, db.ForeignKey('admins.id'), index=True)
