@@ -1,13 +1,16 @@
-from flask import Blueprint, Response, current_app, jsonify, g
+from flask import Blueprint, current_app, jsonify, g
 from auth_server.redis_manager import SyncedStore
 from auxillary.decorators import enforce_json
 from auxillary.utils import genericDBFetchException, verify_password
-from auth_server.auth_auxillary import report_suspicious_activity, admin_enforce
+from auth_server.auth_auxillary import report_suspicious_activity, admin_only
 from werkzeug.exceptions import BadRequest, InternalServerError, NotFound, Forbidden, Conflict, Unauthorized
 from auth_server.models import db, Admin, SuspiciousActivity
 import secrets
 import time
+from werkzeug import Response
 from datetime import datetime
+import base64
+import ujson
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -64,7 +67,7 @@ def admin_login() -> tuple[Response, int]:
     revivalDigest: str = secrets.token_hex(256)
     epoch: float = time.time()
     expiry: float = epoch + current_app.config['ADMIN_SESSION_DURATION']
-    sessionMapping: dict = {'admin_id' : admin.username,
+    sessionMapping: dict = {'admin_id' : admin.id,
                           'session_id' : sessionID,
                           'revival_digest' : revivalDigest,
                           'epoch' : epoch,
@@ -75,15 +78,18 @@ def admin_login() -> tuple[Response, int]:
     sessionMapping.pop('revival_digest')
     sessionMapping['message'] = 'Login successful'
 
-    return jsonify(sessionMapping), 200
+    encodedSessionToken: str = base64.urlsafe_b64encode(ujson.dumps(sessionMapping).encode()).decode()
+    return jsonify({'session_token' : encodedSessionToken}), 200
     
 @cmd.route('/admins', methods=['DELETE'])
 def admin_delete() -> tuple[Response, int]:
     ...
 
 @cmd.route('/admins/logout', methods=['PATCH'])
+@admin_only
 def admin_logout() -> tuple[Response, int]:
-    ...
+    SyncedStore.delete(f'admin:{g.SESSION_TOKEN["admin_id"]}')
+    return jsonify({'message' : 'Logout successful'}), 200
 
 @cmd.route('/admins', methods=['POST'])
 @enforce_json
