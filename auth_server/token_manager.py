@@ -27,7 +27,8 @@ class TokenManager:
                  uClaims : dict = {},
                  uHeaders : dict | None = None,
                  leeway : int = 180,
-                 max_tokens_per_fid : int = 3):
+                 max_tokens_per_fid : int = 3,
+                 max_valid_keys: int = 3):
         '''
         Args:
             kvsMapping (dict): Mapping of key IDs to key metadata (see `KeyMetadata` class). Never expose private keys via endpoints.
@@ -68,6 +69,7 @@ class TokenManager:
 
         # Set leeway for time-related claims
         self.leeway = leeway
+        self.max_valid_keys = max_valid_keys
 
     def decodeToken(self, token : str, tType : Literal["access", "refresh"] = "access", **kwargs) -> str:
         '''Decodes token, raises error in case of failure
@@ -208,6 +210,14 @@ class TokenManager:
                 print("No Family Found")
         except Exception as e:
             raise InternalServerError("Failed to perform operation on token store")
+        
+    def update_keydata(self, kid: str, newKeyData: KeyMetadata) -> None:
+        '''Update key mapping on key rotation'''
+        self.latestKeyID = kid
+        self.latestKeyMetadata = newKeyData
+        self.kvsMapping[kid] = newKeyData
+        mapItems = tokenManager.kvsMapping.items()
+        tokenManager.kvsMapping = dict(list(mapItems)[:len(mapItems) - self.max_valid_keys])    # Trim mapping size, hacky? maybe 
     
     @staticmethod
     def generate_unique_identifier():
