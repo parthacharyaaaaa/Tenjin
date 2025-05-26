@@ -73,7 +73,7 @@ def admin_login() -> tuple[Response, int]:
                           'epoch' : epoch,
                           'expiry_at' : expiry,
                           'role' : admin.role}
-    
+
     SyncedStore.hset(sessionKey, mapping=sessionMapping)        # Set hashmap with private revival digest
     sessionMapping.pop('revival_digest')
     sessionMapping['message'] = 'Login successful'
@@ -102,6 +102,12 @@ def create_admin() -> tuple[Response, int]:
     password: str = g.REQUEST_JSON.get('password')
     if not (username and password):
         raise BadRequest("Password and username are required to create a new admin")
+    
+    try:
+        existingAdmin : Admin = db.session.execute(select(Admin).where(Admin.username == username)).scalar_one_or_none()
+        if existingAdmin:
+            raise Conflict('An admin with this suername already exists')
+    except SQLAlchemyError: genericDBFetchException()
     
     pw_hash, pw_salt = hash_password(password)
     try:
