@@ -1,4 +1,5 @@
 from flask import Flask
+from flask.cli import with_appcontext
 from auth_server.config import flaskconfig
 import time
 import os, ujson
@@ -156,9 +157,8 @@ def create_app() -> Flask:
         
     # Blueprints
     from auth_server.blueprint_routes import auth
-    # from auth_server.blueprint_cmd import cmd
-    # auth_app.register_blueprint(cmd)
+    from auth_server.blueprint_cmd import cmd
+    auth_app.register_blueprint(cmd)
     auth_app.register_blueprint(auth)
-
 
     return auth_app
