@@ -20,6 +20,14 @@ class Admin(db.Model):
     time_deleted: datetime.datetime = db.Column(TIMESTAMP, server_default=text('null'))
     role: str = db.Column(ADMIN_ROLES, nullable=False)
     last_login: datetime.datetime = db.Column(TIMESTAMP, nullable=False, server_default=text('CURRENT_TIMESTAMP'))
+    locked: bool = db.Column(BOOLEAN, nullable=False, server_default=text('false'))
+
+class SuspiciousActivity(db.Model):
+    __tablename__ = 'suspicious_activities'
+    id: int = db.Column(INTEGER, primary_key=True, autoincrement=True)
+    suspect: int = db.Column(INTEGER, db.ForeignKey('admins.id'), nullable=False)
+    time_logged: datetime.datetime = db.Column(TIMESTAMP, nullable=False, server_default=text('CURRENT_TIMESTAMP'))
+    description: str = db.Column(VARCHAR(64), nullable=False)  
 
 class KeyData(db.Model):
     __tablename__ = 'keydata'
