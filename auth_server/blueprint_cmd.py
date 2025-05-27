@@ -88,10 +88,8 @@ def admin_login() -> tuple[Response, int]:
     
 @cmd.route('/admins', methods=['DELETE'])
 @enforce_json
+@admin_only(required_role='super')
 def admin_delete() -> tuple[Response, int]:
-    if g.SESSION_TOKEN.get('role') != 'super':
-        raise Unauthorized('Only super users are allowed to delete admins')
-    
     purgeID: int = g.REQUEST_JSON.get('id')
     if not purgeID:
         raise BadRequest('ID must be provided for deletion')
@@ -154,13 +152,16 @@ def create_admin() -> tuple[Response, int]:
     return jsonify({'message' : 'Admin created'}), 202
 
 @cmd.route('/keys/purge/<int:kid>', methods=['DELETE'])
+@admin_only(required_role='super')
 def purge_key(kid: int) -> tuple[Response, int]:
     ...
 
 @cmd.route('/keys/clean', methods=['DELETE'])
+@admin_only(required_role='super')
 def clean_keystore() -> tuple[Response, int]:
     '''Purge all keys except the most recent one'''
-    ...
+    # Check whether another worker is 
+
 
 @cmd.route('/keys/rotate', methods=['POST'])
 @admin_only()
@@ -231,7 +232,7 @@ def rotate_keys() -> tuple[Response, int]:
         os.remove(os.path.join(current_app.config['PUBLIC_PEM_DIRECTORY'], f'public_{purgeID}_key.pem'))
         privateFpath: os.PathLike = os.path.join(current_app.config['PRIVATE_PEM_DIRECTORY'], f'private_{purgeID}_key.pem')
 
-        # Explicit check because ideally at key rotation because normally the private PEM file for any non-active valid key should already have been deleted.
+        # Explicit check because normally the private PEM file for any non-active valid key should already have been deleted.
         if os.path.exists(privateFpath):
             os.remove(privateFpath)
     
