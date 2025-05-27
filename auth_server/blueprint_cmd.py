@@ -152,7 +152,7 @@ def create_admin() -> tuple[Response, int]:
     
     return jsonify({'message' : 'Admin created'}), 202
 
-@cmd.route('/keys/<str:kid>')
+@cmd.route('/keys/<string:kid>')
 @admin_only()
 def get_key(kid: str) -> tuple[Response, int]:
     try:
@@ -169,17 +169,89 @@ def get_key(kid: str) -> tuple[Response, int]:
 
     return jsonify(keyMapping), 200
 
-@cmd.route('/keys/purge/<int:kid>', methods=['DELETE'])
+@cmd.route('/keys/purge/<string:kid>', methods=['DELETE'])
 @admin_only(required_role='super')
-def purge_key(kid: int) -> tuple[Response, int]:
+def invalidate_key(kid: str) -> tuple[Response, int]:
     ...
 
 @cmd.route('/keys/clean', methods=['DELETE'])
 @admin_only(required_role='super')
 def clean_keystore() -> tuple[Response, int]:
-    '''Purge all keys except the most recent one'''
-    # Check whether another worker is 
+    '''Invalidate all keys except for the currently active key'''
+    # Check whether another worker is performing this action
+    if not SyncedStore.set('CLEAN_KEYSTORE_LOCK', g.SESSION_TOKEN['admin_id'], ex=300, nx=True):
+        # Another worker is performing clean operation, reject this request
+        adminID: bytes = SyncedStore.get('CLEAN_KEYSTORE_LOCK')
+        return jsonify({'message' : "There is an active keystore clean being performed, your request has been rejected", 'admin_id' : adminID.decode()}), 409
+    
+    # Before cleaning keystore, store all old data for rollbacks
+    old_jwks: list[dict[str, Any]] = []
+    with open(current_app.config['JWKS_FPATH']) as jwks_file:
+        old_jwks = ujson.loads(jwks_file.read())['keys']
 
+    # Edge case if only 1 active key exists
+    if len(old_jwks) == 1:
+        raise Conflict('No inactive keys present to invalidate')
+    
+    pem_mappings: dict[str, bytes] = {}
+    for keydata in old_jwks:
+        with open(os.path.join(current_app.config['PUBLIC_PEM_DIRECTORY'], f'public_{keydata["kid"]}_key.pem'), 'rb') as public_pem_file:
+            pem_mappings[keydata['kid']] = public_pem_file.read()
+    
+    # At this stage, we have all the old data saved for a rollback. JWKS can be restored, and any PEM files deleted in an erroneous transaction can be regenerated safely
+    # Begin operation
+    try:
+        # Fetch and lock all keys that have been rotated out, but not expired
+        validInactiveKeys: list[str] = db.session.execute(select(KeyData.kid)
+                                                              .where((KeyData.expired_at == None) & (KeyData.rotated_out_at.isnot(None)))
+                                                              .with_for_update(nowait=True)
+                                                              ).scalars().all()
+        
+        # Update and set as invalid, hence these keys can no longer be used for verification either
+        db.session.execute(update(KeyData)
+                           .where(KeyData.kid.in_(validInactiveKeys))
+                           .values(expired_at=datetime.now()))
+        
+        # Fetch latest KID to prune JWKS and PEM files accordingly
+        activeKey: KeyData = db.session.execute(select(KeyData).where(KeyData.rotated_out_at.is_(None))).scalar_one()
+
+        vk: ecdsa.VerifyingKey = ecdsa.VerifyingKey.from_pem(activeKey.public_pem.decode())
+        activeKeyMapping: dict[str, Any] = {'kty' : 'EC', 'alg' : 'ECDSA', 'crv' : str(ecdsa.SECP256k1), 'use' :'sig', 'kid' : activeKey.kid, 'x' : int(vk.pubkey.point.x()), 'y' : int(vk.pubkey.point.y())}
+
+        # DB updated, update JWKS
+        with open(current_app.config['JWKS_FPATH'], 'w') as jwks_file:
+            jwks_file.write(ujson.dumps({'keys':[activeKeyMapping]}, indent=2))
+        
+        # Purge all public PEM files for invalid keys
+        for keyID in validInactiveKeys:
+            fpath: os.PathLike = os.path.join(current_app.config['PUBLIC_PEM_DIRECTORY'], f'public_{keyID}_key.pem')
+            if os.path.exists(fpath):
+                os.remove(fpath)
+
+        db.session.commit() # Finally persist this transaction at the most important layer i.e. DB
+    except Exception as exc:
+        # Perform full rollback
+        # DB
+        db.session.rollback()
+
+        # JWKS
+        with open(current_app.config['JWKS_FPATH'], 'w') as jwks_file:
+            jwks_file.write(ujson.dumps({'keys' : old_jwks}, indent=2))
+
+        # PEM files
+        for kid, public_pem in pem_mappings.items():
+            fpath = os.path.join(current_app.config['PUBLIC_PEM_DIRECTORY'], f'public_{kid}_key.pem')
+            if not os.path.exists(fpath):
+                # Regenerate public PEM file in case of deletion
+                with open(fpath, 'wb') as public_pem_file:
+                    public_pem_file.write(public_pem)
+
+        # All rollbacks performed, crash and burn
+        raise InternalServerError('Failed to perform clean operation') from exc 
+    finally:
+        SyncedStore.delete('CLEAN_KEYSTORE_LOCK')
+
+    return jsonify({'message' : 'All inactive keys have been invalidated', 'invalidated keys' : validInactiveKeys, 'active_key' : activeKey.kid}), 200
 
 @cmd.route('/keys/rotate', methods=['POST'])
 @admin_only()
