@@ -16,6 +16,7 @@ import base64
 import ujson
 import ecdsa
 import os
+from typing import Any
 
 from sqlalchemy import select, update, insert, func
 from sqlalchemy.exc import SQLAlchemyError
@@ -150,6 +151,23 @@ def create_admin() -> tuple[Response, int]:
         raise InternalServerError("Failed to create a new admin, this is not from an erroneous input")
     
     return jsonify({'message' : 'Admin created'}), 202
+
+@cmd.route('/keys/<str:kid>')
+@admin_only()
+def get_key(kid: str) -> tuple[Response, int]:
+    try:
+        key = db.session.execute(select(KeyData)
+                                 .where(KeyData.kid == kid)
+                                 ).scalar_one_or_none()
+    except SQLAlchemyError: genericDBFetchException()
+
+    if not key:
+        raise NotFound('No key with this ID found')
+    
+    keyMapping: dict[str, Any] = key.__json_like__()
+    keyMapping['private_pem'] = key.private_pem.decode()    # Add private PEM since json repr only include public PEM
+
+    return jsonify(keyMapping), 200
 
 @cmd.route('/keys/purge/<int:kid>', methods=['DELETE'])
 @admin_only(required_role='super')

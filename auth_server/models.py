@@ -2,6 +2,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import VARCHAR, INTEGER, TIMESTAMP, BOOLEAN, text
 from sqlalchemy.dialects.postgresql import ENUM, BYTEA
 from enum import Enum
+from typing import Any
 import datetime
 db = SQLAlchemy()
 
@@ -42,3 +43,15 @@ class KeyData(db.Model):
     public_pem: bytes = db.Column(BYTEA, nullable=False, unique=True)
     manual_rotation: bool = db.Column(BOOLEAN, server_default=text('false'))
     rotated_by: int = db.Column(INTEGER, db.ForeignKey('admins.id'), index=True)
+
+    def __json_like__(self) -> dict[str, Any]:
+        '''Return JSON serializable dictionary, excluding private PEM'''
+        return {'kid' : self.kid,
+                'alg' : self.alg,
+                'curve' : self.curve,
+                'epoch' : self.epoch.isoformat(),
+                'rotated_out_at' : self.rotated_out_at or self.rotated_out_at.isoformat(),
+                'expired_at' : self.expired_at or self.expired_at.isoformat(),
+                'public_pem' : self.public_pem.decode(),
+                'manual_rotation' : self.manual_rotation,
+                'rotated_by' : self.rotated_by}
