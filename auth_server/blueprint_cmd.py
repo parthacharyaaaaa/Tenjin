@@ -75,6 +75,7 @@ def admin_login() -> tuple[Response, int]:
     expiry: float = epoch + current_app.config['ADMIN_SESSION_DURATION']
     sessionMapping: dict = {'admin_id' : admin.id,
                           'session_id' : sessionID,
+                          'session_iteration' : 1,
                           'revival_digest' : revivalDigest,
                           'epoch' : epoch,
                           'expiry_at' : expiry,
@@ -85,7 +86,7 @@ def admin_login() -> tuple[Response, int]:
     sessionMapping['message'] = 'Login successful'
 
     encodedSessionToken: str = base64.urlsafe_b64encode(ujson.dumps(sessionMapping).encode()).decode()
-    return jsonify({'session_token' : encodedSessionToken}), 200
+    return jsonify({'session_token' : encodedSessionToken, 'revival_digest' : revivalDigest}), 200
     
 @cmd.route('/admins', methods=['DELETE'])
 @enforce_json
@@ -115,6 +116,55 @@ def admin_delete() -> tuple[Response, int]:
 
     return jsonify({'message' : 'Admin deleted'}), 200
     
+@cmd.route('/admins/refresh', methods=['POST'])
+@enforce_json
+@admin_only()
+def admin_refresh() -> tuple[Response, int]:
+    '''Refresh an admin's session and enforce a maximum number of times a session can be refreshed before requiring reauthentication'''
+    revivalDigest: str = g.REQUEST_JSON.get('refresh-digest')
+    if not revivalDigest:
+        raise BadRequest("Session reauthentication requires a refresh digest to be provided")
+    
+    adminKey: str = f'admin:{g.SESSION_TOKEN["admin_id"]}'
+    if g.SESSION_TOKEN['session_iteration'] >= current_app.config['MAX_SESSION_ITERATIONS']:
+        SyncedStore.delete(adminKey)
+        raise Conflict('Maximum session reiterations reached, please reauthenticate to be assigned a fresh session')
+    
+    actualDigest: bytes = SyncedStore.hget(adminKey, 'revival_digest')
+    if not actualDigest:
+        SyncedStore.delete(adminKey)
+        raise InternalServerError('An error occured in verifying revival digests. Please reuthenticate')
+    
+    if actualDigest == b'__NF__':
+        SyncedStore.delete(adminKey)
+        raise Conflict('Maximum session reiterations reached')
+    
+    actualDigest: str = actualDigest.decode()
+    if actualDigest != revivalDigest:
+        report_suspicious_activity(g.SESSION_TOKEN['admin_id'], 'Invalid session revival digest')
+        raise Forbidden('Invalid revival digest provided')
+    
+    # Given digest matches revival digest. Refresh session and generate a new revival digest
+    newIteration: int = g.SESSION_TOKEN['session_iteration'] + 1
+    newSessionID: int = secrets.randbelow(10_000_000)
+    epoch: float = time.time()
+    expiry: float = epoch + current_app.config['ADMIN_SESSION_DURATION']
+    revival_digest: bytes | str = secrets.token_hex(256) if newIteration == current_app.config['MAX_SESSION_ITERATIONS'] else '__END__'
+    newSessionMapping: dict = {'admin_id' : g.SESSION_TOKEN['admin_id'],
+                               'session_id' : newSessionID,
+                               'session_iteration' : newIteration,
+                               'revival_digest' : revival_digest,
+                               'epoch' : epoch,
+                               'expiry_at' : expiry,
+                               'role' : g.SESSION_TOKEN['role']}
+    
+    SyncedStore.hset(adminKey, mapping=newSessionMapping)
+    newSessionMapping.pop('revival_digest')
+
+    newSessionMapping['message'] = 'Session extended'
+
+    encodedSessionToken: str = base64.urlsafe_b64encode(ujson.dumps(newSessionMapping).encode()).decode()
+    return jsonify({'session_token' : encodedSessionToken, 'revival_digest' : revivalDigest}), 200
 
 @cmd.route('/admins/logout', methods=['PATCH'])
 @admin_only()

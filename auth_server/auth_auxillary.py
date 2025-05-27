@@ -54,6 +54,7 @@ def admin_only(required_role: Literal['staff', 'super'] = 'staff'):
             adminID = sessionToken.get('admin_id')
             expiry = sessionToken.get('expiry_at')
             role = sessionToken.get('role')
+            iteration = sessionToken.get('session_iteration')
 
             if not adminID:
                 raise Unauthorized("Invalid token")
@@ -77,7 +78,8 @@ def admin_only(required_role: Literal['staff', 'super'] = 'staff'):
 
             if not (sessionID == int(adminSessionMapping.get(b'session_id')) and 
                     expiry == float(adminSessionMapping.get(b'expiry_at')) and 
-                    role == adminSessionMapping.get(b'role').decode()):
+                    role == adminSessionMapping.get(b'role').decode() and
+                    iteration == int(adminSessionMapping.get(b'session_iteration'))):
                 report_suspicious_activity(adminID, 'Invalid session token')
                 raise Unauthorized('Invalid session token')
 
