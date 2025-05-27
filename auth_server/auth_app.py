@@ -149,7 +149,7 @@ def create_app() -> Flask:
                         jwks_file.write(ujson.dumps({'keys' : writeBuffer}, indent=2))
 
                     # Initialize token manager
-                    init_token_manager(kvs_mapping, RedisInterface)
+                    init_token_manager(kvs_mapping, RedisInterface, SyncedStore, db)
                     print(f'[AUTH {auth_app.pid}] Master process bootup complete!')
         except Exception as e:
             print(f'[AUTH {auth_app.pid}] Master worker has encountered an irrecovarable error, details: ')

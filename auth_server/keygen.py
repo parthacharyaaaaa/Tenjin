@@ -3,6 +3,7 @@ from hashlib import sha512
 import os
 from cryptography.fernet import Fernet
 import secrets
+from auxillary.utils import to_base64url
 import ujson
 
 def generate_ecdsa_pair() -> tuple[str, ecdsa.SigningKey, ecdsa.VerifyingKey]:
@@ -18,7 +19,9 @@ def update_jwks(vk: ecdsa.VerifyingKey, kid: str,
                 enforce_capacity: bool = True,
                 capacity: int = 3) -> None:
     '''Updates the JWKS JSON file to include the given public key as the latest key'''
-    keyMapping: dict[str, str|int] = {'kty' : 'EC', 'alg' : 'ECDSA', 'crv' : ecdsa.SECP256k1.__str__(), 'use' :'sig', 'kid' : kid, 'x' : int(vk.pubkey.point.x()), 'y' : int(vk.pubkey.point.y())}
+    point = vk.pubkey.point
+    encodedX, encodedY = to_base64url(int(point.x())), to_base64url(int(point.y()))
+    keyMapping: dict[str, str|int] = {'kty' : 'EC', 'alg' : 'ECDSA', 'crv' : ecdsa.SECP256k1.__str__(), 'use' :'sig', 'kid' : kid, 'x' : encodedX, 'y' : encodedY}
 
     with open(jwks_json_filepath, 'r+') as jwks_json_file:
         jwks_contents: list[dict[str, str|int]] = ujson.loads(jwks_json_file.read())['keys']
@@ -29,7 +32,7 @@ def update_jwks(vk: ecdsa.VerifyingKey, kid: str,
             jwks_contents: list[dict[str, str|int]] = jwks_contents[-capacity:]
         
         jwks_json_file.seek(0)
-        jwks_json_file.write(ujson.dumps(jwks_contents, indent=2))
+        jwks_json_file.write(ujson.dumps({'keys':jwks_contents}, indent=2))
         jwks_json_file.truncate()
 
 def write_ecdsa_pair(privateDir: os.PathLike, staticDir: os.PathLike,
