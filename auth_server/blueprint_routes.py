@@ -1,5 +1,4 @@
 from auth_server.token_manager import tokenManager
-from auth_server.redis_manager import RedisInterface
 from auxillary.decorators import enforce_json, private
 from flask import Blueprint, request, jsonify, Response, make_response, g, current_app, send_from_directory
 from flask_cors import cross_origin
