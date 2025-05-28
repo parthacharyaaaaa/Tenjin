@@ -1,4 +1,4 @@
-from auth_server.models import db, SuspiciousActivity, Admin
+from auth_server.models import db, SuspiciousActivity, Admin, KeyData
 from auth_server.redis_manager import SyncedStore
 from sqlalchemy import func, select, insert, update
 from werkzeug.exceptions import Unauthorized, Forbidden
@@ -25,6 +25,13 @@ def report_suspicious_activity(adminID: int, desc: str, force_logout: bool = Tru
         SyncedStore.delete(f'admin:{adminID}')
 
     db.session.commit()
+
+def fetch_valid_keys() -> list[str]:
+    '''Fetch all valid key IDs from database'''
+    _res = db.session.execute(select(KeyData.kid).where(KeyData.expired_at.is_(None)))
+    if not _res:
+        raise RuntimeError("No valid keys found")
+    return _res.scalars().all()
 
 def admin_only(required_role: Literal['staff', 'super'] = 'staff'):
     '''
