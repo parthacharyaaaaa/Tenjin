@@ -471,10 +471,24 @@ def rotate_keys() -> tuple[Response, int]:
     newKeyData: KeyMetadata = KeyMetadata(PUBLIC_PEM=verificationKey.to_pem(), PRIVATE_PEM=signingKey.to_pem(), ALGORITHM='ES256')
     tokenManager.update_keydata(kid, newKeyData)
     
-
-    # Set global cooldown for key rotation
-    SyncedStore.set('KEY_ROTATION_COOLDOWN', 1, ex=current_app.config['KEY_ROTATION_COOLDOWN'])
-    # Release lock
-    SyncedStore.delete('KEY_ROTATION_LOCK')
+    valid_keys: list[bytes] = SyncedStore.lrange('VALID_KEYS', 0, -1)
+    if not valid_keys or kid not in valid_keys:
+        # Should never happen, but in case it does we fall back and regenerate the entire list
+        valid_keys: list[str] = fetch_valid_keys()
+    else:
+        valid_keys: list[str] = [key.decode() for key in valid_keys]
+    
+    if overflow and purgeID in valid_keys:
+        # Remove invalidated key ID
+        valid_keys.remove(purgeID)
+    
+    # At this state, valid_keys is a consistent list of key IDs
+    # Set global cooldown for key rotation, update global state, and release rotation lock
+    with SyncedStore.pipeline() as pipe:
+        pipe.set('KEY_ROTATION_COOLDOWN', 1, ex=current_app.config['KEY_ROTATION_COOLDOWN'])
+        pipe.delete('VALID_KEYS')
+        pipe.lpush('VALID_KEYS', *valid_keys)
+        pipe.delete('KEY_ROTATION_LOCK')
+        pipe.execute()
 
     return jsonify({'message' : 'Key rotation successful', 'kid' : kid , 'public_pem' : newKeyData.PUBLIC_PEM.decode(), 'epoch' : newKeyData.EPOCH, 'alg' : 'ES256', 'previous_kid' : prevKID}), 201
