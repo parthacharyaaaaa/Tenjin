@@ -2,7 +2,7 @@ from flask import Blueprint, current_app, jsonify, g
 from auth_server.redis_manager import SyncedStore
 from auxillary.decorators import enforce_json
 from auxillary.utils import genericDBFetchException, verify_password, hash_password
-from auth_server.auth_auxillary import report_suspicious_activity, admin_only
+from auth_server.auth_auxillary import report_suspicious_activity, admin_only, fetch_valid_keys
 from werkzeug.exceptions import BadRequest, InternalServerError, NotFound, Forbidden, Conflict, Unauthorized
 from auth_server.models import db, Admin, KeyData
 from auth_server.keygen import generate_ecdsa_pair, write_ecdsa_pair, update_jwks
@@ -219,7 +219,7 @@ def get_key(kid: str) -> tuple[Response, int]:
 
     return jsonify(keyMapping), 200
 
-@cmd.route('/keys/invalidate/<string:kid>', methods=['DELETE'])
+@cmd.route('/keys/<string:kid>', methods=['DELETE'])
 @admin_only(required_role='super')
 def invalidate_key(kid: str) -> tuple[Response, int]:
     '''Invalidate a given key'''
@@ -288,7 +288,26 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
     # Key invalidation successful, update local token manager
     tokenManager.invalidate_key(kid)
 
-    return jsonify({'message' : 'Key invalidated successfully', 'purged_kid' : kid, **additional_kw}), 200
+    # Update global 
+    valid_keys: list[bytes] = SyncedStore.lrange('VALID_KEYS', 0, -1)
+    if not valid_keys or kid not in valid_keys:
+        # Should never happen, but in case it does we fall back and regenerate the entire list
+        additional_kw['keylist_integrity_warning'] = "Synced keylist state was inconsistent and hence regenerated through database"
+        valid_keys: list[str] = fetch_valid_keys()
+    else:
+        valid_keys: list[str] = [key.decode() for key in valid_keys]
+        valid_keys.remove(kid)
+    
+    # By this stage, valid_keys will maintain a consistent sequence of valid key IDs (including that of the active key), either from a simple list removal or by consulting the database in case of any inconsistency
+
+    #  Update global state and release lock
+    with SyncedStore.pipeline() as pipe:
+        pipe.delete('VALID_KEYS')
+        pipe.lpush('VALID_KEYS', *valid_keys)
+        pipe.delete(key_lock)
+        pipe.execute()
+
+    return jsonify({'message' : 'Key invalidated successfully', 'purged_kid' : kid, 'valid_keys' : valid_keys,  **additional_kw}), 200
 
 @cmd.route('/keys/clean', methods=['DELETE'])
 @admin_only(required_role='super')
@@ -366,7 +385,7 @@ def clean_keystore() -> tuple[Response, int]:
         raise InternalServerError('Failed to perform clean operation') from exc 
     finally:
         SyncedStore.delete('CLEAN_KEYSTORE_LOCK')
-
+        
     return jsonify({'message' : 'All inactive keys have been invalidated', 'invalidated keys' : validInactiveKeys, 'active_key' : activeKey.kid}), 200
 
 @cmd.route('/keys/rotate', methods=['POST'])
@@ -446,7 +465,6 @@ def rotate_keys() -> tuple[Response, int]:
     newKeyData: KeyMetadata = KeyMetadata(PUBLIC_PEM=verificationKey.to_pem(), PRIVATE_PEM=signingKey.to_pem(), ALGORITHM='ES256')
     tokenManager.update_keydata(kid, newKeyData)
     
-    # Since token manager is now updated with the new key, it will now sign all tokens with the new key data. Any other worker's token manager will update it's mapping whenever it encounters a token with this new KID, so we need not bother with some async timer to ping some announcement channel anyways -_-
 
     # Set global cooldown for key rotation
     SyncedStore.set('KEY_ROTATION_COOLDOWN', 1, ex=current_app.config['KEY_ROTATION_COOLDOWN'])
