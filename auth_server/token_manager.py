@@ -262,16 +262,42 @@ class TokenManager:
         self.kvsMapping.pop(kid, None)
 
     def poll_store(self) -> None:
-        '''Check synced store for an announcement for a new key. Intended to be run as a non-blocking, background task upon instantiation'''
+        '''Check synced store to keep local keys updated with global keys. Intended to be run as a non-blocking, background task upon instantiation'''
         while True:
             try:
-                key: dict = self._SyncedStore.get('NEW_KEY_ANNOUNCEMENT')
-                if key and key != self.latestKeyID:
-                    updated: bool = tokenManager.check_key(key)
-                    if updated:
-                        print(f"[BACKGROUND POLLER] Updated to new key: {key}")
-                    else:
-                        print(f"[BACKGROUND POLLER] Announced key {key} not valid in DB.")
+                result_set: tuple[list[bytes], bytes] = []
+                with self._SyncedStore.pipeline() as pipe:
+                    pipe.lrange('VALID_KEYS', 0, -1)
+                    pipe.get('ACTIVE_KEY')
+                    result_set = pipe.execute()
+                
+                if result_set[0] == None:   # Explicit check with None and not a falsey value, since an empty VALID_KEYS list indicates that only the current active key is to be used for verification as well 
+                    # VALID_KEYS list must always be in memory, if not then raise an exception (Would it be better to crash and burn?)
+                    raise RuntimeError('VALID_KEYS list not found in Redis')
+
+                if not result_set[1]:   # Active key not present
+                    raise RuntimeError('Active key not found')
+
+                valid_keys: frozenset[str] = frozenset(key.decode() for key in result_set[0])
+                local_valid_keys: frozenset[str] = frozenset(self.kvsMapping.keys())
+
+                expired_local_keys: frozenset[str] = local_valid_keys - valid_keys
+                for expired_key in expired_local_keys:
+                    print(f'[BACKGROUND POLLER]: Invalidating local key {expired_key}...')
+                    self.invalidate_key(expired_key)
+                    print(f'[BACKGROUND POLLER]: Invalidated local key {expired_key}')
+
+                new_valid_keys: frozenset[str] = valid_keys - local_valid_keys
+                for new_key in new_valid_keys:
+                    print(f'[BACKGROUND POLLER]: Adding new key {new_key}...')
+                    result: bool = self.check_key(new_key)
+                    if result:
+                        print(f'[BACKGROUND POLLER]: Added new key {new_key} to local token manager')
+
+                if self.latestKeyID != (global_active_key := result_set[1].decode()):
+                    # Update local active key
+                    self.latestKeyID = global_active_key
+
             except Exception:
                 print(f'[BACKGROUND POLLER]: Exception encountered. Traceback:')
                 print(format_exc())
