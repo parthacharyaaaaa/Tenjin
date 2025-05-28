@@ -219,10 +219,76 @@ def get_key(kid: str) -> tuple[Response, int]:
 
     return jsonify(keyMapping), 200
 
-@cmd.route('/keys/purge/<string:kid>', methods=['DELETE'])
+@cmd.route('/keys/invalidate/<string:kid>', methods=['DELETE'])
 @admin_only(required_role='super')
 def invalidate_key(kid: str) -> tuple[Response, int]:
-    ...
+    '''Invalidate a given key'''
+    key_lock: str = f'INVALIDATE_KEY:{kid}'
+    if not SyncedStore.set(key_lock, g.SESSION_TOKEN['admin_id'], ex=300, nx=True):
+        # Another worker is performing clean operation, reject this request
+        adminID: bytes = SyncedStore.get(key_lock)
+        return jsonify({'message' : "There is an active keystore clean being performed, your request has been rejected", 'admin_id' : adminID.decode()}), 409
+    
+    public_pem_fpath: os.PathLike = os.path.join(current_app.config['PUBLIC_PEM_FPATH'], f'public_{kid}_key.pem')
+    additional_kw: dict[str, str] = {}
+    original_jwks: list[dict[str, Any]] = []
+    with open(current_app.config['JWKS_FPATH'], 'r') as jwks_file:
+        original_jwks = ujson.loads(jwks_file.read())['keys']
+    
+    if any(mapping['kid'] == kid for mapping in original_jwks):
+        additional_kw['jwks_integrity_warning'] = 'This key ID was not found in JWKS'
+    try:
+        # Select and lock key if exists
+        target_key: KeyData = db.session.execute(select(KeyData).where(KeyData.kid == kid).with_for_update(nowait=True)).scalar_one_or_none()
+        # Key exists
+        if not target_key:
+            raise NotFound(f'No key with ID {kid} found')
+        
+        # Key is inactive
+        if not target_key.rotated_out_at:
+            # Key is active, cannot expire directly
+            report_suspicious_activity(g.SESSION_TOKEN['admin_id'], f'Invaldiation attempt on active key {kid}')
+            raise Conflict(f"Active key {kid} must be rotated out before being invalidated")
+        
+        # Key is still valid for verification
+        if target_key.expired_at:
+            raise Conflict(f'Key {kid} has already been expired')
+
+        db.session.execute(update(KeyData).where(KeyData.kid == kid).values(expired_at=datetime.now()))
+
+        # Before persisting to DB, delete public PEM file, and update JWKS
+        updated_jwks = [mapping for mapping in original_jwks if mapping['kid'] != kid]
+        with open(current_app.config['JWKS_FPATH'], 'w') as jwks_file:
+            jwks_file.write(ujson.dumps({'keys' : updated_jwks}, indent=2))
+        
+        # Delete public PEM file
+        if os.path.exists(public_pem_fpath):
+            os.remove(public_pem_fpath)
+        
+        # File I/O done, commit DB
+        db.session.commit()
+    except (SQLAlchemyError, OSError) as exc:
+        # Rollback DB
+        db.session.rollback()
+
+        # Revert JWKS state
+        with open(current_app.config['JWKS_FPATH'], 'w') as jwks_file:
+            jwks_file.write(ujson.dumps({'keys' : original_jwks}, indent=2))
+        
+        # Regenerate PEM file
+        if not os.path.exists(public_pem_fpath):
+            with open(public_pem_fpath, 'wb') as public_pem_file:
+                public_pem_file.write(target_key.public_pem)
+        
+        # State reverted, crash and burn
+        error: InternalServerError = InternalServerError(f'Failed to invalidate key {kid}')
+        error.additional_kwargs = additional_kw
+        raise error from exc
+    
+    # Key invalidation successful, update local token manager
+    tokenManager.invalidate_key(kid)
+
+    return jsonify({'message' : 'Key invalidated successfully', 'purged_kid' : kid, **additional_kw}), 200
 
 @cmd.route('/keys/clean', methods=['DELETE'])
 @admin_only(required_role='super')

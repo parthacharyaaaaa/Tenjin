@@ -254,6 +254,13 @@ class TokenManager:
         self.update_keydata(kid, KeyMetadata(newKey.public_pem, newKey.private_pem, 'ES256', newKey.epoch), active=not bool(newKey.rotated_out_at))   # An active key's rotated_out_at column will be None (__bool__ == False)
         return True
     
+    def invalidate_key(self, kid: str) -> None:
+        '''Invalidate a verification key'''
+        if self.latestKeyID == kid:
+            raise RuntimeError('Cannot invalidate active signing key')
+        
+        self.kvsMapping.pop(kid, None)
+
     def poll_store(self) -> None:
         '''Check synced store for an announcement for a new key. Intended to be run as a non-blocking, background task upon instantiation'''
         while True:
