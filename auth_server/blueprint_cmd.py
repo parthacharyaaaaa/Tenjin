@@ -1,7 +1,7 @@
 from flask import Blueprint, current_app, jsonify, g
 from auth_server.redis_manager import SyncedStore
 from auxillary.decorators import enforce_json
-from auxillary.utils import genericDBFetchException, verify_password, hash_password
+from auxillary.utils import genericDBFetchException, verify_password, hash_password, to_base64url
 from auth_server.auth_auxillary import report_suspicious_activity, admin_only, fetch_valid_keys
 from werkzeug.exceptions import BadRequest, InternalServerError, NotFound, Forbidden, Conflict, Unauthorized
 from auth_server.models import db, Admin, KeyData
@@ -351,7 +351,7 @@ def clean_keystore() -> tuple[Response, int]:
         activeKey: KeyData = db.session.execute(select(KeyData).where(KeyData.rotated_out_at.is_(None))).scalar_one()
 
         vk: ecdsa.VerifyingKey = ecdsa.VerifyingKey.from_pem(activeKey.public_pem.decode())
-        activeKeyMapping: dict[str, Any] = {'kty' : 'EC', 'alg' : 'ECDSA', 'crv' : str(ecdsa.SECP256k1), 'use' :'sig', 'kid' : activeKey.kid, 'x' : int(vk.pubkey.point.x()), 'y' : int(vk.pubkey.point.y())}
+        activeKeyMapping: dict[str, Any] = {'kty' : 'EC', 'alg' : 'ECDSA', 'crv' : str(ecdsa.SECP256k1), 'use' :'sig', 'kid' : activeKey.kid, 'x' : to_base64url(int(vk.pubkey.point.x())), 'y' : to_base64url(int(vk.pubkey.point.y()))}
 
         # DB updated, update JWKS
         with open(current_app.config['JWKS_FPATH'], 'w') as jwks_file:
@@ -386,6 +386,12 @@ def clean_keystore() -> tuple[Response, int]:
     finally:
         SyncedStore.delete('CLEAN_KEYSTORE_LOCK')
         
+    # Update global state, no need to fetch current list of keys anyways since as of this operation only a single active key would be valid throughout
+    with SyncedStore.pipeline() as pipe:
+        pipe.delete('VALID_KEYS')
+        pipe.lpush('VALID_KEYS', activeKey.kid)
+        pipe.execute()
+
     return jsonify({'message' : 'All inactive keys have been invalidated', 'invalidated keys' : validInactiveKeys, 'active_key' : activeKey.kid}), 200
 
 @cmd.route('/keys/rotate', methods=['POST'])
