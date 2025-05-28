@@ -272,13 +272,12 @@ class TokenManager:
         '''Check synced store to keep local keys updated with global keys. Intended to be run as a non-blocking, background task upon instantiation'''
         while True:
             try:
-                result_set: tuple[list[bytes], bytes] = []
                 valid_keys: list[bytes] = self._SyncedStore.lrange('VALID_KEYS', 0, -1)
                 
                 if not valid_keys:
                     raise RuntimeError('Valid keys list empty or not found')
 
-                valid_keys: frozenset[str] = frozenset(key.decode() for key in result_set[0])
+                valid_keys: frozenset[str] = frozenset(key.decode() for key in valid_keys)
                 local_valid_keys: frozenset[str] = frozenset(self.key_mapping.keys())
 
                 expired_local_keys: frozenset[str] = local_valid_keys - valid_keys

@@ -50,6 +50,7 @@ class FlaskConfig:
         SUSPICIOUS_LOOKBACK_TIME: timedelta = timedelta(days=int(os.environ['SUSPICIOUS_LOOKBACK_TIME']))
         MAX_ACTIVITY_LIMIT: int = int(os.environ['MAX_ACTIVITY_LIMIT'])
         MAX_SESSION_ITERATIONS: int = int(os.environ.get('MAX_SESSION_ITERATIONS', 3))
+        ANNOUNCEMENT_DURATION: int = int(os.environ.get('ANNOUNCEMENT_DURATION', 900)) # Duration in seconds
         ADMIN_SESSION_DURATION: int = int(os.environ['ADMIN_SESSION_DURATION']) # Duration in seconds
         MAX_VALID_KEYS: int = int(os.environ['MAX_VALID_KEYS'])
         KEY_ROTATION_COOLDOWN: int = int(os.environ.get('KEY_ROTATION_COOLDOWN', 60*60*24)) # Default to 1 day in seconds
