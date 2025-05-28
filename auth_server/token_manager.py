@@ -21,10 +21,12 @@ class TokenManager:
 
     activeRefreshTokens : int = 0
 
-    def __init__(self, kvsMapping: dict[str, KeyMetadata],
+    def __init__(self,
                  interface: Redis,
                  synced_store: Redis,
                  db: SQLAlchemy,
+                 active_kid: str, active_key_metadata: KeyMetadata,
+                 verification_keys_mapping: dict[str, KeyMetadata] = None,
                  refreshLifetime : int = 60*60*3,
                  accessLifetime : int = 60*30,
                  alg : str = "ES256",
@@ -49,8 +51,10 @@ class TokenManager:
             leeway (int): Leeway time in seconds for token validation. Default is 180s.
             max_tokens_per_fid (int): Max tokens allowed per user/session.
         '''
-        self.kvsMapping = kvsMapping
-        self.latestKeyID, self.latestKeyMetadata = next(reversed(kvsMapping.items()))
+        if not verification_keys_mapping:
+            verification_keys_mapping = {}
+        self.key_mapping: dict[str, KeyMetadata] = verification_keys_mapping | {active_kid : active_key_metadata}
+        self.active_key = active_kid
 
         try:
             self._TokenStore = interface
@@ -96,12 +100,12 @@ class TokenManager:
         '''
         try:
             kid: int = jwt.get_unverified_header(token)['kid']
-            if kid not in self.kvsMapping:
+            if kid not in self.key_mapping:
                 raise JWTexc.InvalidKeyError('This key is not recognised, meaning it is possibly tampered, forged, or simply expired a long time ago.')
             
             return jwt.decode(jwt = token,
-                            key = self.kvsMapping[kid].PUBLIC_PEM,
-                            algorithms = [self.kvsMapping[kid].ALGORITHM],
+                            key = self.key_mapping[kid].PUBLIC_PEM,
+                            algorithms = [self.key_mapping[kid].ALGORITHM],
                             leeway = self.leeway,
                             options=kwargs.get('options'))
         except (JWTexc.ImmatureSignatureError, JWTexc.InvalidIssuedAtError, JWTexc.InvalidIssuerError) as e:
@@ -201,9 +205,9 @@ class TokenManager:
             payload.update(additionalClaims)
 
         return jwt.encode(payload=payload,
-                          key=self.latestKeyMetadata.PRIVATE_PEM,
-                          algorithm=self.latestKeyMetadata.ALGORITHM,
-                          headers=self.uHeader | {'kid': self.latestKeyID})
+                          key=self.active_key,
+                          algorithm=self.key_mapping[self.active_key].ALGORITHM,
+                          headers=self.uHeader | {'kid': self.active_key})
 
     def shiftTokenWindow(self, fID : str) -> None:
         '''Revokes the oldest refresh token from a family if capacity is reached, without invalidating the entire family'''
@@ -231,55 +235,51 @@ class TokenManager:
     def update_keydata(self, kid: str, newKeyData: KeyMetadata, active:bool = True) -> None:
         '''Update key mapping on key rotation'''
         if active:
-            self.latestKeyID = kid
-            self.latestKeyMetadata = newKeyData
+            self.active_key = kid
 
-        self.kvsMapping[kid] = newKeyData
-        if len(self.kvsMapping) > self.max_valid_keys:
-            tokenManager.kvsMapping = dict(list(self.kvsMapping.items())[-self.max_valid_keys:]) 
+        self.key_mapping[kid] = newKeyData
 
-    def check_key(self, kid: str) -> bool:
-        '''Check database for a new key. If found, update keydata and return True.'''
-
+    def fetch_unexpired_key(self, kid: str) -> KeyMetadata:
+        '''Fetch a non-expired key from the database
+        Args:
+            kid: Key ID to query the database for
+        
+        Returns:
+            Fetched key casted to KeyMetadata, None if not found'''
+        # Check synced store for an invalid key announcement for this key
+        invalidKey: bytes = self._SyncedStore.get(f'invalid_key:{kid}')
+        if invalidKey:
+            return None
+                
         # Try to fetch a valid key with this KID 
-        newKey: KeyData = self.db.session.execute(select(KeyData)
+        key: KeyData = self.db.session.execute(select(KeyData)
                                                  .where((KeyData.kid == kid) & (KeyData.expired_at.issnot(None)))
                                                  ).scalar_one_or_none()
-        if not newKey:
+        if not key:
             # Announce non existence to other workers in case they also receive this invalid key
             self._SyncedStore.set(f'invalid_key:{kid}', 1, self.announcement_duration)
-            return False
-        
-        # Given key is indeed a valid key
-        self.update_keydata(kid, KeyMetadata(newKey.public_pem, newKey.private_pem, 'ES256', newKey.epoch), active=not bool(newKey.rotated_out_at))   # An active key's rotated_out_at column will be None (__bool__ == False)
-        return True
+            return None
+        return KeyMetadata(key.public_pem, key.private_pem, key.alg, key.epoch, key.rotated_out_at)
     
     def invalidate_key(self, kid: str) -> None:
         '''Invalidate a verification key'''
-        if self.latestKeyID == kid:
+        if self.active_key == kid:
             raise RuntimeError('Cannot invalidate active signing key')
         
-        self.kvsMapping.pop(kid, None)
+        self.key_mapping.pop(kid, None)
 
     def poll_store(self) -> None:
         '''Check synced store to keep local keys updated with global keys. Intended to be run as a non-blocking, background task upon instantiation'''
         while True:
             try:
                 result_set: tuple[list[bytes], bytes] = []
-                with self._SyncedStore.pipeline() as pipe:
-                    pipe.lrange('VALID_KEYS', 0, -1)
-                    pipe.get('ACTIVE_KEY')
-                    result_set = pipe.execute()
+                valid_keys: list[bytes] = self._SyncedStore.lrange('VALID_KEYS', 0, -1)
                 
-                if result_set[0] == None:   # Explicit check with None and not a falsey value, since an empty VALID_KEYS list indicates that only the current active key is to be used for verification as well 
-                    # VALID_KEYS list must always be in memory, if not then raise an exception (Would it be better to crash and burn?)
-                    raise RuntimeError('VALID_KEYS list not found in Redis')
-
-                if not result_set[1]:   # Active key not present
-                    raise RuntimeError('Active key not found')
+                if not valid_keys:
+                    raise RuntimeError('Valid keys list empty or not found')
 
                 valid_keys: frozenset[str] = frozenset(key.decode() for key in result_set[0])
-                local_valid_keys: frozenset[str] = frozenset(self.kvsMapping.keys())
+                local_valid_keys: frozenset[str] = frozenset(self.key_mapping.keys())
 
                 expired_local_keys: frozenset[str] = local_valid_keys - valid_keys
                 for expired_key in expired_local_keys:
@@ -289,14 +289,11 @@ class TokenManager:
 
                 new_valid_keys: frozenset[str] = valid_keys - local_valid_keys
                 for new_key in new_valid_keys:
-                    print(f'[BACKGROUND POLLER]: Adding new key {new_key}...')
-                    result: bool = self.check_key(new_key)
+                    print(f'[BACKGROUND POLLER]: Adding verification new key {new_key}...')
+                    result: KeyMetadata = self.fetch_unexpired_key(new_key)
                     if result:
-                        print(f'[BACKGROUND POLLER]: Added new key {new_key} to local token manager')
-
-                if self.latestKeyID != (global_active_key := result_set[1].decode()):
-                    # Update local active key
-                    self.latestKeyID = global_active_key
+                        self.update_keydata(new_key, result, active=not bool(result.ROTATED_AT))    # If rotated out, them update key mapping with a verification key, else with an active key
+                        print(f'[BACKGROUND POLLER]: Added verification new key {new_key} to local token manager')
 
             except Exception:
                 print(f'[BACKGROUND POLLER]: Exception encountered. Traceback:')
