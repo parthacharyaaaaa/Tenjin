@@ -6,6 +6,8 @@ import ecdsa
 from resource_server.external_extensions import RedisInterface
 from flask import current_app
 import time
+from traceback import format_exc
+import threading
 
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
 
@@ -78,6 +80,18 @@ def update_jwks(endpoint: str, currentMapping: dict[str, bytes], timeout: int = 
             pipe.set('JWKS_POLL_COOLDOWN', current_app.config['JWKS_POLL_COOLDOWN'])
             pipe.execute()
         return currentMapping
+
+def background_poll(interval: int = 300):
+    def run():
+        while True:
+            try:
+                update_jwks(f'{current_app.config["AUTH_SERVER_URL"]}/auth/jwks.json', current_app.config['KEY_VK_MAPPING'])
+            except Exception:
+                print(f"[JWKS POLLER]: Error: {format_exc()}")
+            finally:
+                time.sleep(interval)
+    background_poll_thread: threading.Thread = threading.Thread(target=run, daemon=True)
+    background_poll_thread.run()
 
 def processUserInfo(**kwargs) -> tuple[bool, dict]:
     '''Validate and process user details\n
