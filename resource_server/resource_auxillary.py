@@ -5,15 +5,31 @@ from auxillary.utils import from_base64url
 import ecdsa
 from resource_server.external_extensions import RedisInterface
 from flask import current_app
+import time
 
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
 
-def update_jwks(endpoint: str, currentMapping: dict[str, bytes], timeout: int = 3) -> dict[str, str|int]:
+def poll_global_key_mapping() -> dict[str, bytes]:
+    '''Poll "JWKS_MAPPING" hashmap in Redis for new key mapping'''
+    res: dict[str, str] = RedisInterface.hgetall('JWKS_MAPPING')
+    if not res:
+        raise RuntimeError('JWKS Mapping not found/ found but empty')
+    
+    return {kid : pub_pem.encode() for kid, pub_pem in res.items()}  # RedisInterface has decoded responses, but PyJWT needs public pem in bytes
+
+
+def update_jwks(endpoint: str, currentMapping: dict[str, bytes], timeout: int = 3, max_global_mapping_polls: int = 10) -> dict[str, str|int]:
     '''Fetch JWKS from auth server and load any new key mappings into currentMapping'''
     res: int = RedisInterface.set('JWKS_POLL_LOCK', 1, ex=current_app.config['ANNOUNCEMENT_DURATION'], nx=True)
     if not res:
-        # Another worker is currently polling JWKS
-        return currentMapping   # TODO: Maybe add a back off mechanism and then consult JWKS list when lock is released
+        # Another worker is currently polling JWKS, wait until lock is released and then read global key mapping
+        while(RedisInterface.get('JWKS_POLL_LOCK') and max_global_mapping_polls):
+            time.sleep(timeout*2)
+            max_global_mapping_polls-=1 # Ideally, the lock would always be released no matter what, but a fallback to stop the thread from waiting forever wouldn't hurt
+        
+        global_mapping: dict[str, str] = RedisInterface.hgetall('JWKS_MAPPING') 
+        
+        return {kid:pub_pem.encode() for kid, pub_pem in global_mapping}
     
     try:
         response: requests.Response = requests.get(endpoint, timeout=timeout)
