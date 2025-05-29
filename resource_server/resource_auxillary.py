@@ -3,11 +3,18 @@ import requests
 import re
 from auxillary.utils import from_base64url
 import ecdsa
+from resource_server.external_extensions import RedisInterface
+from flask import current_app
 
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
 
-def update_jwks(endpoint: str, currentMapping: dict[str, str|int], timeout: int = 3) -> dict[str, str|int]:
-    '''Function to fetch JWKS from auth server and load any new key mappings into currentMapping'''
+def update_jwks(endpoint: str, currentMapping: dict[str, bytes], timeout: int = 3) -> dict[str, str|int]:
+    '''Fetch JWKS from auth server and load any new key mappings into currentMapping'''
+    res: int = RedisInterface.set('JWKS_POLL_LOCK', 1, ex=current_app.config['ANNOUNCEMENT_DURATION'], nx=True)
+    if not res:
+        # Another worker is currently polling JWKS
+        return currentMapping   # TODO: Maybe add a back off mechanism and then consult JWKS list when lock is released
+    
     try:
         response: requests.Response = requests.get(endpoint, timeout=timeout)
         if response.status_code != 200:
@@ -18,6 +25,14 @@ def update_jwks(endpoint: str, currentMapping: dict[str, str|int], timeout: int 
             #TODO: Ping auth server to indicate malformatted JWKS response
             return currentMapping
     
+        local_keys: frozenset[str] = frozenset(currentMapping.keys())
+        global_valid_keys: frozenset[str] = frozenset(newMapping.keys())
+
+        # Purge local keys that are invalid
+        expired_keys: frozenset[str] = local_keys - global_valid_keys
+        for expired_key in expired_keys:
+            currentMapping.pop(expired_key)
+        
         # For any new items in newMapping, we'll need to construct a new dict entry with its public verificiation key
         for keyMetadata in newMapping:
             # New key found, welcome to the club >:3
@@ -28,11 +43,25 @@ def update_jwks(endpoint: str, currentMapping: dict[str, str|int], timeout: int 
                 vk = ecdsa.VerifyingKey.from_public_point(point, curve=ecdsa.SECP256k1)
 
                 currentMapping[keyMetadata['kid']] = vk.to_pem()
+
+        # Update global list and values in Redis to inform other workers
+        with RedisInterface.pipeline() as pipe:
+            # Overwrite mapping entirely
+            pipe.delete('JWKS_MAPPING')
+            pipe.hset('JWKS_MAPPING', mapping=currentMapping)
+
+            # Finally release lock and update cooldown
+            pipe.delete('JWKS_POLL_LOCK')
+            pipe.set('JWKS_POLL_COOLDOWN', current_app.config['JWKS_POLL_COOLDOWN'])
+            pipe.execute()
+
         return currentMapping
     except:
+        with RedisInterface.pipeline() as pipe:
+            pipe.delete('JWKS_POLL_LOCK')
+            pipe.set('JWKS_POLL_COOLDOWN', current_app.config['JWKS_POLL_COOLDOWN'])
+            pipe.execute()
         return currentMapping
-    
-
 
 def processUserInfo(**kwargs) -> tuple[bool, dict]:
     '''Validate and process user details\n
