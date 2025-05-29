@@ -30,7 +30,6 @@ def create_app() -> Flask:
 
     ### Blueprints registaration ###
     from resource_server.blueprint_forum import forum
-    from resource_server.blueprint_admin import admin
     from resource_server.blueprint_user import user
     from resource_server.blueprint_config import config
     from resource_server.blueprint_posts import post
@@ -38,7 +37,6 @@ def create_app() -> Flask:
     from resource_server.blueprint_templates import templates
     from resource_server.blueprint_misc import misc
     app.register_blueprint(forum)
-    app.register_blueprint(admin)
     app.register_blueprint(user)
     app.register_blueprint(config)
     app.register_blueprint(post)
