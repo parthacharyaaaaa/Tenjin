@@ -37,7 +37,9 @@ def create_post() -> tuple[Response, int]:
         raise BadRequest("Malformatted post details")
     
     # Ensure author and forum actually exist
-    author: User = db.session.execute(select(User).where(User.id == g.DECODED_TOKEN['sid'])).scalar_one_or_none()
+    author: User = db.session.execute(select(User)
+                                      .where((User.id == g.DECODED_TOKEN['sid']) & (User.deleted.isnot(True)))
+                                      ).scalar_one_or_none()
     if not author:
         nf: NotFound = NotFound("Invalid author ID")
         nf.__setattr__("kwargs", {"help" : "If you believe that this is an erorr, please contact support",

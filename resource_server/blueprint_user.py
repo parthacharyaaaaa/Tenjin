@@ -108,8 +108,7 @@ def delete_user() -> Response:
     OP, USER_DETAILS = processUserInfo(username=g.REQUEST_JSON['username'], password=g.REQUEST_JSON['password'])
     if not OP:
         raise BadRequest(USER_DETAILS.get("error"))
-    userID : int | None = db.session.execute(select(User.id).where(User.username == USER_DETAILS['username'],
-                                                               User.deleted == False)
+    userID: int = db.session.execute(select(User.id).where((User.username == USER_DETAILS['username']) & (User.deleted.is_(False)))
                                                                .with_for_update(nowait=True)
                                                                ).scalar_one_or_none()
     if not userID:
@@ -145,7 +144,10 @@ def recover_user() -> Response:
     if not OP:
         raise BadRequest(USER_DETAILS.get('error', "Invalid user details"))
     
-    deadAccount = db.session.execute(select(User).where(User.email == USER_DETAILS.get('email') if isEmail else User.username == USER_DETAILS['username']).with_for_update()).scalar_one_or_none()
+    deadAccount = db.session.execute(select(User)
+                                     .where((User.email == USER_DETAILS.get('email') if isEmail else User.username == USER_DETAILS['username'] & (User.deleted.is_(True))))
+                                     .with_for_update()
+                                     ).scalar_one_or_none()
 
     # Never existed, or hard deleted already
     if not deadAccount:
@@ -259,7 +261,7 @@ def get_users(user_id: int) -> tuple[Response, int]:
     # Fallback to DB
     try:
         user: User = db.session.execute(select(User)
-                                        .where(User.id == user_id)
+                                        .where((User.id == user_id) & (User.deleted.isnot(False)))
                                         ).scalar_one_or_none()
         if not user:
             hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
@@ -294,7 +296,7 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
     # Cache failure, either missing key in set or set does not exist. Either way, we'll have to bother the DB >:3
     try:
         user: User = db.session.execute(select(User)
-                                        .where(User.id == user_id)
+                                        .where((User.id == user_id) & (User.deleted.isnot(False)))
                                         ).scalar_one_or_none()
         if not user:
             # Broadcast non-existence
@@ -358,7 +360,7 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
 
     try:
         userID: int = db.session.execute(select(User.id)
-                                         .where(User.id == user_id)
+                                         .where((User.id == user_id) & (User.deleted.isnot(False)))
                                          ).scalar_one_or_none()
         if not userID:
             hset_with_ttl(RedisInterface, f'user:{user_id}', {"__NF__" : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
@@ -412,7 +414,9 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
         return jsonify({'animes' : resource, 'cursor' : cursor, 'end' : end}), 200
 
     try:
-        user: User = db.session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+        user: User = db.session.execute(select(User)
+                                        .where((User.id == user_id) & (User.deleted.isnot(False)))
+                                        ).scalar_one_or_none()
         if not user:
             hset_with_ttl(RedisInterface, f'user:{user_id}', {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound('No user with this ID exists')
@@ -456,7 +460,10 @@ def login() -> Response:
         if not 5 < len(identity) <= 64:
             raise BadRequest("Provided username must be between 5 and 64 characters long")
 
-    user : User | None = db.session.execute(select(User).where(User.email == identity if isEmail else User.username == identity).with_for_update()).scalar_one_or_none()
+    user : User | None = db.session.execute(select(User)
+                                            .where((User.email == identity if isEmail else User.username == identity) & (User.deleted.isnot(False)))
+                                            .with_for_update()
+                                            ).scalar_one_or_none()
     if not user:
         raise NotFound(f"No user with {'email' if isEmail else 'username'} {identity} could be found")
     if not verify_password(g.REQUEST_JSON['password'], user.pw_hash, user.pw_salt):
