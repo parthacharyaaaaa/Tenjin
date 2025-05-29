@@ -91,7 +91,9 @@ def get_post(post_id : int) -> tuple[Response, int]:
 
     else:
         try:
-            fetchedPost : Post | None = db.session.execute(select(Post).where((Post.id == post_id) & (Post.deleted == False))).scalar_one_or_none()
+            fetchedPost : Post | None = db.session.execute(select(Post)
+                                                           .where(Post.id == post_id)
+                                                           ).scalar_one_or_none()
             if not fetchedPost:
                 hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
                 raise NotFound(f"Post with id {post_id} could not be found :(")
@@ -148,7 +150,7 @@ def edit_post(post_id : int) -> tuple[Response, int]:
     # Ensure user is owner of this post
     owner: User = db.session.execute(select(User)
                                      .join(Post, Post.author_id == User.id)
-                                     .where((Post.id == post_id) & (Post.deleted == False))
+                                     .where(Post.id == post_id)
                                      ).scalar_one_or_none()
     if not owner:
         raise Forbidden('You do not have the rights to edit this post')
@@ -224,7 +226,9 @@ def delete_post(post_id: int) -> Response:
     cacheKey: str = f'post:{post_id}'
     try:
         # Ensure post exists in the first place
-        post: Post = db.session.execute(select(Post).where((Post.id == post_id) & (Post.deleted == False))).scalar_one_or_none()
+        post: Post = db.session.execute(select(Post)
+                                        .where(Post.id == post_id)
+                                        ).scalar_one_or_none()
         if not post:
             hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound('Post does not exist')
@@ -232,7 +236,9 @@ def delete_post(post_id: int) -> Response:
         # Ensure post author is the issuer of this request
         if post.author_id != g.DECODED_TOKEN['sid']:
             # Check if admin of this forum
-            forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == post.forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
+            forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
+                                                        .where((ForumAdmin.forum_id == post.forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
+                                                        ).scalar_one_or_none()
             if not forumAdmin:
                 raise Forbidden('You do not have the rights to alter this post as you are not its author')
 

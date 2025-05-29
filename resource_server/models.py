@@ -151,14 +151,7 @@ class User(db.Model):
 
     deleted: bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
     time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
-
-    ### Relationships ###
-    # posts: Mapped[list["Post"]] = db.relationship("Post", back_populates="authored_by", uselist=True, lazy="select")
-    # comments: Mapped[list["Comment"]] = db.relationship("Comment", back_populates="authored_by", lazy="select")
-    # tickets: Mapped[list["UserTicket"]] = db.relationship("UserTicket", back_populates="parent_user", lazy="select")
-    # password_token: Mapped[list["PasswordRecoveryToken"]] = db.relationship("PasswordRecoveryToken", back_populates="parent_user", lazy="select")
-    #NOTE:  Only query the related attributes when necessary (attribute access time, typically GET /users/<user_id>), not on any other queries where a user might be part of the SELECT query, such as author (posts, comments, forum rules) or in GET /users/search?q=some-string
-
+    
     __table_args__ = (
         PrimaryKeyConstraint("id"),
         CheckConstraint("LENGTH(username) > 5", name="ck_users_username_length"),
@@ -222,7 +215,7 @@ class Anime(db.Model):
     def __json_like__(self) -> dict:
         return {"id": self.id,
                 "title": self.title,
-                "rating": self.rating,
+                "rating": float(self.rating),
                 "banner" : self.banner, 
                 "mal_ranking": self.mal_ranking,
                 "members": self.members,
@@ -420,8 +413,6 @@ class Comment(db.Model):
     time_created: datetime = db.Column(TIMESTAMP, nullable = False, server_default=text("CURRENT_TIMESTAMP"))
     body: str = db.Column(VARCHAR(512), nullable=False)
     parent_post: int = db.Column(BIGINT, db.ForeignKey("posts.id", ondelete='CASCADE'), nullable=False, index=True)
-    parent_thread: int = db.Column(BIGINT, db.ForeignKey("comments.id"), nullable=True)
-    replying_to: int = db.Column(BIGINT, db.ForeignKey("comments.id"))
     score: int = db.Column(INTEGER, default = 0)
     reports: int= db.Column(INTEGER, default = 0)
 
