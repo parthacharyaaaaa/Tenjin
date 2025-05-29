@@ -5,7 +5,8 @@ from sqlalchemy import select, update, delete
 from sqlalchemy.exc import SQLAlchemyError
 
 from resource_server.models import db, Post, User, Forum, ForumFlair, ForumAdmin, PostSave, PostVote, PostReport, Comment, ReportTags
-from auxillary.decorators import enforce_json, token_required, pass_user_details
+from auxillary.decorators import enforce_json
+from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 
@@ -150,7 +151,7 @@ def edit_post(post_id : int) -> tuple[Response, int]:
     # Ensure user is owner of this post
     owner: User = db.session.execute(select(User)
                                      .join(Post, Post.author_id == User.id)
-                                     .where(Post.id == post_id)
+                                     .where((Post.id == post_id) & (Post.deleted == False))
                                      ).scalar_one_or_none()
     if not owner:
         raise Forbidden('You do not have the rights to edit this post')
@@ -227,8 +228,7 @@ def delete_post(post_id: int) -> Response:
     try:
         # Ensure post exists in the first place
         post: Post = db.session.execute(select(Post)
-                                        .where(Post.id == post_id)
-                                        ).scalar_one_or_none()
+                                        .where(Post.id == post_id & (Post.deleted == False))).scalar_one_or_none()
         if not post:
             hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound('Post does not exist')
@@ -236,9 +236,7 @@ def delete_post(post_id: int) -> Response:
         # Ensure post author is the issuer of this request
         if post.author_id != g.DECODED_TOKEN['sid']:
             # Check if admin of this forum
-            forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
-                                                        .where((ForumAdmin.forum_id == post.forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
-                                                        ).scalar_one_or_none()
+            forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == post.forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
             if not forumAdmin:
                 raise Forbidden('You do not have the rights to alter this post as you are not its author')
 

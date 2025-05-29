@@ -8,7 +8,7 @@ from resource_server.models import db, Post, User, Forum, ForumRules, Anime, Ani
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from auxillary.utils import genericDBFetchException, rediserialize, consult_cache
-from auxillary.decorators import pass_user_details
+from resource_server.resource_decorators import pass_user_details
 
 from resource_server.external_extensions import RedisInterface, hset_with_ttl
 import ujson

@@ -1,4 +1,5 @@
-from auxillary.decorators import enforce_json, token_required, pass_user_details
+from resource_server.resource_decorators import token_required, pass_user_details
+from auxillary.decorators import enforce_json
 
 from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache

@@ -11,10 +11,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from flask_sqlalchemy import SQLAlchemy
 
 from auxillary.utils import genericDBFetchException, rediserialize, consult_cache
-from auxillary.decorators import token_required
+from resource_server.resource_decorators import token_required
 
-from resource_server.external_extensions import RedisInterface, hset_with_ttl
-from redis.exceptions import RedisError
+from resource_server.external_extensions import RedisInterface
 from flask import Blueprint, Response, g, jsonify, request, redirect, url_for, current_app
 anime = Blueprint('animes', 'animes', url_prefix="/animes")
 

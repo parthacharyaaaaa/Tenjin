@@ -5,8 +5,9 @@ from flask import Blueprint, Response, g, request, jsonify, current_app, url_for
 user = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/users")
 
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized
-from auxillary.decorators import enforce_json, private
-from auxillary.utils import processUserInfo, hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
+from auxillary.decorators import enforce_json
+from auxillary.utils import hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
+from resource_server.resource_auxillary import processUserInfo
 from resource_server.external_extensions import RedisInterface
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
