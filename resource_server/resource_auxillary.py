@@ -4,7 +4,7 @@ import re
 from auxillary.utils import from_base64url
 import ecdsa
 from resource_server.external_extensions import RedisInterface
-from flask import current_app
+from flask import Flask
 import time
 from traceback import format_exc
 import threading
@@ -20,7 +20,7 @@ def poll_global_key_mapping() -> dict[str, bytes]:
     return {kid : pub_pem.encode() for kid, pub_pem in res.items()}  # RedisInterface has decoded responses, but PyJWT needs public pem in bytes
 
 
-def update_jwks(endpoint: str, currentMapping: dict[str, bytes], timeout: int = 3, max_global_mapping_polls: int = 10) -> dict[str, str|int]:
+def update_jwks(endpoint: str, currentMapping: dict[str, bytes], current_app: Flask, timeout: int = 3, max_global_mapping_polls: int = 10) -> dict[str, str|int]:
     '''Fetch JWKS from auth server and load any new key mappings into currentMapping'''
     res: int = RedisInterface.set('JWKS_POLL_LOCK', 1, ex=current_app.config['ANNOUNCEMENT_DURATION'], nx=True)
     if not res:
@@ -81,7 +81,7 @@ def update_jwks(endpoint: str, currentMapping: dict[str, bytes], timeout: int = 
             pipe.execute()
         return currentMapping
 
-def background_poll(interval: int = 300):
+def background_poll(current_app: Flask, interval: int = 300):
     def run():
         while True:
             try:

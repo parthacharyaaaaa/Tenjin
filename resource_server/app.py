@@ -5,6 +5,7 @@ from flask_migrate import Migrate
 from traceback import format_exc
 from resource_server.flask_config import FLASK_CONFIG_OBJECT
 from auxillary.utils import generic_error_handler
+from resource_server.resource_auxillary import background_poll
 from types import MappingProxyType
 
 APP_CTX_CWD : os.PathLike = os.path.dirname(__file__)
@@ -114,6 +115,7 @@ def create_app() -> Flask:
                 exit(500)     
 
     fetch_genres(db)
+    background_poll(current_app=app)
     return app
 
 from resource_server.models import *
