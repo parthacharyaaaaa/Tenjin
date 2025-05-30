@@ -8,6 +8,7 @@ from flask import Flask
 import time
 from traceback import format_exc
 import threading
+import os
 
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
 
@@ -26,6 +27,7 @@ def update_jwks(endpoint: str, currentMapping: dict[str, bytes], RedisInterface:
     if not res:
         # Another worker is currently polling JWKS, wait until lock is released and then read global key mapping
         while(RedisInterface.get('JWKS_POLL_LOCK') and max_global_mapping_polls):
+            print(f'[JWKS POLLER] Standing by for master thread to perform updation')
             time.sleep(timeout*2)
             max_global_mapping_polls-=1 # Ideally, the lock would always be released no matter what, but a fallback to stop the thread from waiting forever wouldn't hurt
         
@@ -34,6 +36,7 @@ def update_jwks(endpoint: str, currentMapping: dict[str, bytes], RedisInterface:
         return {kid:pub_pem.encode() for kid, pub_pem in global_mapping}
     
     try:
+        print('[JWKS POLLER] Attempting to update JWKS...')
         response: requests.Response = requests.get(endpoint, timeout=timeout)
         if response.status_code != 200:
             return currentMapping
@@ -44,7 +47,7 @@ def update_jwks(endpoint: str, currentMapping: dict[str, bytes], RedisInterface:
             return currentMapping
     
         local_keys: frozenset[str] = frozenset(currentMapping.keys())
-        global_valid_keys: frozenset[str] = frozenset(newMapping.keys())
+        global_valid_keys: frozenset[str] = frozenset(mapping['kid'] for mapping in newMapping)
 
         # Purge local keys that are invalid
         expired_keys: frozenset[str] = local_keys - global_valid_keys
@@ -74,11 +77,12 @@ def update_jwks(endpoint: str, currentMapping: dict[str, bytes], RedisInterface:
             pipe.execute()
 
         return currentMapping
-    except:
+    except Exception:
         with RedisInterface.pipeline() as pipe:
             pipe.delete('JWKS_POLL_LOCK')
             pipe.set('JWKS_POLL_COOLDOWN', current_app.config['JWKS_POLL_COOLDOWN'])
             pipe.execute()
+        print(format_exc())
         return currentMapping
 
 def background_poll(current_app: Flask, RedisInterface: Redis, interval: int = 300):
