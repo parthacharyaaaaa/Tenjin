@@ -5,7 +5,8 @@ from werkzeug.exceptions import Unauthorized
 from jwt import get_unverified_header, decode
 from jwt.exceptions import PyJWTError, ExpiredSignatureError
 from datetime import timedelta
-from resource_server.resource_auxillary import update_jwks
+from resource_server.resource_auxillary import poll_global_key_mapping
+from resource_server.external_extensions import RedisInterface
 
 def token_required(endpoint):
     '''
@@ -40,8 +41,8 @@ def token_required(endpoint):
                 
             # Possibly new KID, ping auth server
             else:
-                # Update current mapping with any new keys fetched from auth server. Failure will return the same mapping itself
-                current_app.config['KEY_VK_MAPPING'] = update_jwks(f'{current_app.config["AUTH_SERVER_URL"]}/auth/jwks.json', current_app.config['KEY_VK_MAPPING'])
+                # Update current mapping through global JWKS mapping
+                new_mapping: dict[str, bytes] = poll_global_key_mapping(RedisInterface)                
 
                 if tokenKID not in current_app.config['KEY_VK_MAPPING']:
                     raise Unauthorized('Invalid Key ID, no such key was found. Please login again')
@@ -94,7 +95,7 @@ def pass_user_details(endpoint):
             # Possibly new KID, request auth server
             else:
                 # Update current mapping with any new keys fetched from auth server. Failure will return the same mapping itself
-                current_app.config['KEY_VK_MAPPING'] = update_jwks(f'{current_app.config["AUTH_SERVER_URL"]}/auth/jwks.json', current_app.config['KEY_VK_MAPPING'])
+                current_app.config['KEY_VK_MAPPING'] = poll_global_key_mapping(RedisInterface)
                 if tokenKID not in current_app.config['KEY_VK_MAPPING']:
                     return endpoint(*args, **kwargs)
                 
@@ -106,8 +107,6 @@ def pass_user_details(endpoint):
             g.REQUESTING_USER = decodedToken
 
         except Exception:
-            import traceback
-            print(traceback.format_exc())
             return endpoint(*args, **kwargs)
         
         return endpoint(*args, **kwargs)
