@@ -62,7 +62,7 @@ def forum(name: str) -> tuple[str, int]:
         try:
             # Fetch forum details
             forum: Forum = db.session.execute(select(Forum)
-                                              .where(Forum._name == name)
+                                              .where((Forum._name == name) & (Forum.deleted.is_(False)))
                                               ).scalar_one_or_none()
             if not forum:
                 # Announce string representation as __NF__
@@ -208,17 +208,18 @@ def view_post(post_id: int) -> tuple[str, int]:
     else:
         try:
             post: Post = db.session.execute(select(Post)
-                                            .where(Post.id == post_id)
+                                            .where((Post.id == post_id) & (Post.deleted.is_(False)))
                                             ).scalar_one_or_none()
             if not post:
                 hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             
-            author, authorID = db.session.execute(select(User.username, User.id)
-                                                  .where(User.id == post.author_id)
-                                                  ).all()[0]
-            postMapping: dict = rediserialize(post.__json_like__()) | {'author' : author, 'author_id' : authorID}
+            author: User = db.session.execute(select(User)
+                                        .where(User.id == post.author_id)
+                                        ).scalar_one_or_none()
+            
+            postMapping: dict = post.__json_like__() | {'author' : None if author.deleted else author.username, 'author_id' : None if author.deleted else author.id}
             # Cache post
-            hset_with_ttl(RedisInterface, cacheKey, postMapping, current_app.config['REDIS_TTL_STRONG'])
+            hset_with_ttl(RedisInterface, cacheKey, rediserialize(postMapping), current_app.config['REDIS_TTL_STRONG'])
         except SQLAlchemyError: genericDBFetchException()
         
     # Post fetched, now check to see user's relation to this post
@@ -255,7 +256,9 @@ def get_user(username: str) -> tuple[str, int]:
         return render_template('profile.html', user_mapping=userMapping), 200
     
     try:
-        user: User = db.session.execute(select(User).where(User.username == username)).scalar_one_or_none()
+        user: User = db.session.execute(select(User)
+                                        .where((User.username == username) & (User.deleted.is_(False)))
+                                        ).scalar_one_or_none()
         if not user:
             hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL']) # Announce non-existence of this resource
             return render_template('error.html',

@@ -1,7 +1,7 @@
 from flask import Blueprint, Response, jsonify, g, url_for, request, current_app
 post = Blueprint("post", "post", url_prefix="/posts")
 
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, Row
 from sqlalchemy.exc import SQLAlchemyError
 
 from resource_server.models import db, Post, User, Forum, ForumFlair, ForumAdmin, PostSave, PostVote, PostReport, Comment, ReportTags
@@ -92,14 +92,18 @@ def get_post(post_id : int) -> tuple[Response, int]:
 
     else:
         try:
-            fetchedPost : Post | None = db.session.execute(select(Post)
-                                                           .where(Post.id == post_id)
-                                                           ).scalar_one_or_none()
-            if not fetchedPost:
+            resultSet: Row = db.session.execute(select(Post, User.deleted)
+                                                   .join(Post, Post.author_id == User.id)
+                                                   .where((Post.id == post_id) & (Post.deleted.is_(False)))
+                                                   ).first()
+            if not resultSet:
                 hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
                 raise NotFound(f"Post with id {post_id} could not be found :(")
             
+            fetchedPost, anonymize = resultSet
             post_mapping = rediserialize(fetchedPost.__json_like__())
+            if anonymize:
+                post_mapping['author_id'] = None
             hset_with_ttl(RedisInterface, cacheKey, post_mapping, current_app.config['REDIS_TTL_STRONG'])
 
         except SQLAlchemyError: genericDBFetchException()
@@ -111,8 +115,9 @@ def get_post(post_id : int) -> tuple[Response, int]:
         # Check for user's relationships to the post as well
         postSaved, postVoted = False, None
 
-        # Check if user is owner of this post
-        res['owner'] = g.REQUESTING_USER.get('sid') == post_mapping['author_id']
+        if not anonymize:
+            # Check if user is owner of this post
+            res['owner'] = g.REQUESTING_USER.get('sid') == post_mapping['author_id']
 
         # Check if saved, voted
         # 1: Consult cache
