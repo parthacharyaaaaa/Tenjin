@@ -43,9 +43,13 @@
   <div class="post-card">
     <div class="post-credentials">
       <div>
+        {% if post_mapping['author'] %}
         <a target="_blank" href="{{ url_for('.get_user', username=post_mapping['author']) }}">
           <span id="author">{{post_mapping['author']}}</span>
         </a>
+        {% else %}
+          <span id="author">deleted</span>
+        {% endif %}
         <span id="time-posted">{{post_mapping['epoch']}}</span>
       </div>
       <div id="post-settings">

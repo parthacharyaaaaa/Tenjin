@@ -14,8 +14,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 <a href='/profile/${author}' target="_blank">
                     <strong>${author}</strong>
                 </a>
-                ${flair ? `<span class="flair">${flair}</span>` : ''}
-                ${edited ? `<em class="edited">(edited)</em>` : ''}
                 <span class="timestamp">${new Date(created_at).toLocaleString()}</span>
             </div>
             <div class="comment-body">${body}</div>
@@ -36,6 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (data.comments) {
                 data.comments.forEach(comment => {
+                    if (comment.author == null) comment.author = 'Deleted'
                     commentsContainer.appendChild(makeCommentCard(comment));
                 });
             }
