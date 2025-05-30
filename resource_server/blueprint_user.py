@@ -297,7 +297,7 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
     # Cache failure, either missing key in set or set does not exist. Either way, we'll have to bother the DB >:3
     try:
         user: User = db.session.execute(select(User)
-                                        .where((User.id == user_id) & (User.deleted.isnot(False)))
+                                        .where((User.id == user_id) & (User.deleted.is_(False)))
                                         ).scalar_one_or_none()
         if not user:
             # Broadcast non-existence
@@ -353,23 +353,23 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
             raise BadRequest("Failed to load more Forums. Please refresh this page")
 
     cacheKey: str = f'profile:{user_id}:forums:{cursor}'
-    resources, end, cursor = fetch_group_resources(RedisInterface, cacheKey)
+    resources, end, newCursor = fetch_group_resources(RedisInterface, cacheKey)
     if resources and all(resources):
         # Group cache is valid, promote TTL and dispatch result
         promote_group_ttl(RedisInterface, cacheKey, promotion_ttl=current_app.config['REDIS_TTL_PROMOTION'], max_ttl=current_app.config['REDIS_TTL_CAP'])
-        return jsonify({'forums' : resources, 'cursor' : end, 'end' : end}), 200
+        return jsonify({'forums' : resources, 'cursor' : newCursor, 'end' : end}), 200
 
     try:
         userID: int = db.session.execute(select(User.id)
-                                         .where((User.id == user_id) & (User.deleted.isnot(False)))
+                                         .where((User.id == user_id) & (User.deleted.is_(False)))
                                          ).scalar_one_or_none()
         if not userID:
             hset_with_ttl(RedisInterface, f'user:{user_id}', {"__NF__" : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound(f'No user with ID {userID} exists')
         
         forums: list[Forum] = db.session.execute(select(Forum)
-                                                 .where((Forum.id == ForumSubscription.forum_id) & (Forum.id > cursor))
                                                  .join(ForumSubscription, ForumSubscription.user_id == userID)
+                                                 .where((Forum.id == ForumSubscription.forum_id) & (Forum.id > cursor))
                                                  .limit(6)
                                                  ).scalars().all()
     except SQLAlchemyError: genericDBFetchException()
@@ -409,22 +409,22 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
             raise BadRequest("Failed to load more animes. Please refresh this page")
     
     cacheKey: str = f'profile:{user_id}:animes:{cursor}'
-    resource, end, cursor = fetch_group_resources(RedisInterface, cacheKey)
+    resource, end, newCursor = fetch_group_resources(RedisInterface, cacheKey)
     if resource and all(resource):
         promote_group_ttl(RedisInterface, cacheKey, current_app.config['REDIS_TTL_PROMOTION'], current_app.config['REDIS_TTL_CAP'])
-        return jsonify({'animes' : resource, 'cursor' : cursor, 'end' : end}), 200
+        return jsonify({'animes' : resource, 'cursor' : newCursor, 'end' : end}), 200
 
     try:
         user: User = db.session.execute(select(User)
-                                        .where((User.id == user_id) & (User.deleted.isnot(False)))
+                                        .where((User.id == user_id) & (User.deleted.is_(False)))
                                         ).scalar_one_or_none()
         if not user:
             hset_with_ttl(RedisInterface, f'user:{user_id}', {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound('No user with this ID exists')
         
         animes: list[Anime] = db.session.execute(select(Anime)
-                                                .where((Anime.id == AnimeSubscription.anime_id) & (Anime.id > cursor))
                                                 .join(AnimeSubscription, AnimeSubscription.user_id == user.id)
+                                                .where((Anime.id == AnimeSubscription.anime_id) & (Anime.id > cursor))
                                                 .limit(6)).scalars().all()
         if not animes:
             return jsonify({'animes' : None, 'cursor' : cursor, 'end' : True})
@@ -439,7 +439,7 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
     _animes = [rediserialize(anime.__json_like__()) for anime in animes]
 
     # Cache as a group
-    cache_grouped_resource(RedisInterface, cacheKey, 'anime', {anime['id'] for anime in _animes}, current_app.config['REDIS_TTL_WEAK'], current_app.config['REDIS_TTL_STRONG'], newCursor, end)
+    cache_grouped_resource(RedisInterface, cacheKey, 'anime', {anime['id']:anime for anime in _animes}, current_app.config['REDIS_TTL_WEAK'], current_app.config['REDIS_TTL_STRONG'], newCursor, end)
     return jsonify({'animes' : _animes, 'cursor' : newCursor, 'end' : end})
 
 
