@@ -655,16 +655,14 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
         rawCursor = request.args.get('cursor', '0').strip()
         if rawCursor == '0':
             cursor = 0
-            init: bool = True
         else:
-            init: bool = False
             cursor = int(base64.b64decode(rawCursor).decode())
     except (ValueError, TypeError, binascii.Error):
         raise BadRequest("Failed to load more posts. Please refresh this page")
 
     try:
         commentsDetails: list[tuple[str, Comment]] = db.session.execute(
-            select(User.username, Comment)
+            select(User, Comment)
             .where((Comment.id > cursor) & (Comment.parent_post == post_id))
             .join(User, Comment.author_id == User.id)
             .order_by(Comment.id)
@@ -682,10 +680,10 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
     comments: list[dict] = []
     new_cursor = cursor
 
-    for username, comment in commentsDetails:
+    for user, comment in commentsDetails:
         comments.append({
             'id': comment.id,
-            'author': username,
+            'author': None if user.deleted else user.username,
             'body': comment.body,
             'created_at': comment.time_created.isoformat()
         })
