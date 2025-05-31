@@ -121,14 +121,11 @@ def delete_user() -> Response:
     
     try:
         RedisInterface.xadd('SOFT_DELETIONS', {'id' : targetUser.id, 'table' : User.__tablename__})
-
         # Broadcast user deletion
-        hset_with_ttl(RedisInterface, f'user:{targetUser.id}', {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK']) # Non ephemeral timing? idk seems right
-    except SQLAlchemyError:
-        db.session.rollback()
+    except RedisError: 
         raise InternalServerError("Failed to perform account deletion, please try again. If the issue persists, please raise a ticket")
-    except RedisError: ...
     
+    hset_with_ttl(RedisInterface, f'user:{targetUser.id}', {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK']) # Non ephemeral timing? idk seems right
     return jsonify({"message" : "account deleted succesfully", "username" : user.username, "time_deleted" : user.time_deleted}), 203
 
 @user.route("/recover", methods=["PATCH"])
