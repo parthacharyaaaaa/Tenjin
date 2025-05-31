@@ -225,7 +225,7 @@ def edit_post(post_id : int) -> tuple[Response, int]:
                     "post_id" : post_id,
                     **update_kw, **additional_kw}), 202
 
-@post.route("/<int:post_id>", methods=["DELETE", ])
+@post.route("/<int:post_id>", methods=["DELETE"])
 @token_required
 def delete_post(post_id: int) -> Response:
     redirect: bool = 'redirect' in request.args
@@ -233,7 +233,8 @@ def delete_post(post_id: int) -> Response:
     try:
         # Ensure post exists in the first place
         post: Post = db.session.execute(select(Post)
-                                        .where(Post.id == post_id & (Post.deleted == False))).scalar_one_or_none()
+                                        .where(Post.id == post_id & (Post.deleted == False))
+                                        ).scalar_one_or_none()
         if not post:
             hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound('Post does not exist')
@@ -248,15 +249,7 @@ def delete_post(post_id: int) -> Response:
     except SQLAlchemyError: genericDBFetchException()
 
     # Post good to go for deletion
-    try:
-        db.session.execute(update(Post)
-                           .where(Post.id == post_id)
-                           .values(deleted = True, time_deleted = datetime.now()))
-        db.session.commit()
-    except:
-        exc: Exception = Exception()
-        exc.__setattr__('description', 'Failed to delete post')
-        raise exc
+    RedisInterface.xadd("SOFT_DELETIONS", {'id' : post_id, 'table' : Post.__tablename__})
     
     if redirect:
         redirectionForum: str = db.session.execute(select(Forum._name).where(Forum.id == post.forum_id)).scalar_one()
@@ -279,7 +272,7 @@ def delete_post(post_id: int) -> Response:
     
     # Overwrite any existing cached entries for this post with 404 mapping, and then expire ephemerally
     hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
-    return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, name = redirectionForum)}), 200
+    return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False)}), 200
 
 @post.route("/<int:post_id>/vote", methods=["PATCH"])
 @token_required

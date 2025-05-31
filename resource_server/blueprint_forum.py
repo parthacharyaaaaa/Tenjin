@@ -200,15 +200,7 @@ def delete_forum(forum_id: int) -> Response:
     except KeyError: raise BadRequest("Missing mandatory field 'sid', please login again")
 
     # Request carries the necessary permissions to delete this forum
-    try:
-        db.session.execute(update(Forum)
-                           .where(Forum.id == forum_id)
-                           .values(deleted=True, time_deleted=datetime.now()))
-        db.session.commit()
-    except: 
-        exc: Exception = Exception()
-        exc.__setattr__('description', 'Failed to delete this forum. Please try again later')
-        raise exc
+    RedisInterface.xadd("SOFT_DELETIONS", {'id' : forum_id, 'table' : Forum.__tablename__})
     
     # Broadcast deletion
     hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK'])

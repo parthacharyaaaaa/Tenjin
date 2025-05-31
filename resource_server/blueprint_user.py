@@ -116,10 +116,7 @@ def delete_user() -> Response:
         raise NotFound("Requested user could not be found")
     
     try:
-        db.session.execute(update(User)
-                           .where(User.id == userID)
-                           .values(deleted=True, time_deleted=datetime.now()))
-        db.session.commit()
+        RedisInterface.xadd('SOFT_DELETIONS', {'id' : userID, 'table' : User.__tablename__})
 
         # Broadcast user deletion
         hset_with_ttl(RedisInterface, f'user:{userID}', {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK']) # Non ephemeral timing? idk seems right
@@ -128,8 +125,6 @@ def delete_user() -> Response:
         raise InternalServerError("Failed to perform account deletion, please try again. If the issue persists, please raise a ticket")
     except RedisError: ...
     
-    # requests.delete(f"{current_app.config['AUTH_BASE_URL']}/delete-account",
-    #                 headers={'refreshID' : })
     return jsonify({"message" : "account deleted succesfully", "username" : user.username, "time_deleted" : user.time_deleted}), 203
 
 @user.route("/recover", methods=["PATCH"])
