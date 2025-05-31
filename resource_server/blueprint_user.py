@@ -1,27 +1,25 @@
 '''Blueprint module for all actions related to resource: user (`users` in database)
 ### Note: All user related actions (account creation, User.last_login updation, and account deletion are done directly without query dispatching to Redis)
 '''
-from flask import Blueprint, Response, g, request, jsonify, current_app, url_for
+from flask import Blueprint, g, request, jsonify, current_app, url_for
 user = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/users")
 
+from werkzeug import Response
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized
 from auxillary.decorators import enforce_json
 from auxillary.utils import hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
 from resource_server.resource_auxillary import processUserInfo
-from resource_server.external_extensions import RedisInterface
+from resource_server.external_extensions import RedisInterface, hset_with_ttl
+from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum, ForumSubscription, Anime, AnimeSubscription
+from resource_server.scripts.mail import enqueueEmail
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum, ForumSubscription, Anime, AnimeSubscription
-
 from datetime import datetime
 from redis.exceptions import RedisError
-from resource_server.external_extensions import hset_with_ttl, batch_hset_with_ttl
 from uuid import uuid4
-import ujson
 import base64
 from hashlib import sha256
-from typing import Any
 
 @user.route("/", methods=["POST"])
 # @private
@@ -126,6 +124,7 @@ def delete_user() -> Response:
         raise InternalServerError("Failed to perform account deletion, please try again. If the issue persists, please raise a ticket")
     
     hset_with_ttl(RedisInterface, f'user:{targetUser.id}', {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK']) # Non ephemeral timing? idk seems right
+    enqueueEmail(RedisInterface, email=targetUser.email, subject='deletion', username=targetUser.username)
     return jsonify({"message" : "account deleted succesfully", "username" : user.username, "time_deleted" : user.time_deleted}), 203
 
 @user.route("/recover", methods=["PATCH"])
@@ -172,6 +171,7 @@ def recover_user() -> Response:
     except:
         raise InternalServerError("Failed to recover your account. If this issue persists, please raise a user ticket immediately")
     
+    enqueueEmail(RedisInterface, email=deadAccount.email, subject="recovery", username=deadAccount.username, user_id=deadAccount.id, time_restored=datetime.now().isoformat())
     return jsonify({"message" : "Account recovered succesfully",
                    "username" : deadAccount.username,
                    "email" : deadAccount.email,
@@ -190,7 +190,9 @@ def recover_password() -> Response:
     if not OP:
         raise BadRequest(USER_DETAIL["error"])
 
-    recoveryAccount = db.session.execute(select(User).where(User.email == USER_DETAIL.get('email') if isEmail else User.username == USER_DETAIL['username'])).scalar_one_or_none()
+    recoveryAccount = db.session.execute(select(User)
+                                         .where(User.email == USER_DETAIL.get('email') if isEmail else User.username == USER_DETAIL['username'])
+                                         ).scalar_one_or_none()
 
     if not recoveryAccount:
         raise NotFound(f"No account with this {'email' if isEmail else 'username'} exists")
@@ -198,15 +200,17 @@ def recover_password() -> Response:
     temp_url = (uuid4().hex + datetime.now().strftime('%d%m%y%H%M%S'))
     hashedToken = sha256(temp_url.encode()).digest()
     try:
-        db.session.execute(delete(PasswordRecoveryToken).where(PasswordRecoveryToken.user_id == recoveryAccount.id))
-        db.session.execute(insert(PasswordRecoveryToken).values(user_id = recoveryAccount.id,
-                                                                expiry_time = datetime.now() + current_app.config['PASSWORD_TOKEN_MAX_AGE'],
-                                                                url_hash = hashedToken))
+        db.session.execute(delete(PasswordRecoveryToken)
+                           .where(PasswordRecoveryToken.user_id == recoveryAccount.id))
+        db.session.execute(insert(PasswordRecoveryToken)
+                           .values(user_id = recoveryAccount.id,
+                                   expiry_time = datetime.now() + current_app.config['PASSWORD_TOKEN_MAX_AGE'],
+                                   url_hash = hashedToken))
         db.session.commit()
     except:
-        raise InternalServerError("There seems to be an issue with our password recovery service")      #TODO: For the love of god add some better consideration here
+        raise InternalServerError("There seems to be an issue with our password recovery service")
     
-    #TODO: Invoke RedisManager method to send recovery email to recoveryAccount.email with a temp link
+    enqueueEmail(RedisInterface, email=recoveryAccount.email, subject="password", username=recoveryAccount.username, password_recovery_link=temp_url)
     return jsonify({"message" : "An email has been sent to account"}), 200    
 
 @user.route("/update-password/<string:token>", methods=["PATCH"])
