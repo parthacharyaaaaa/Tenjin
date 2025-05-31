@@ -1,6 +1,7 @@
 '''SMTP Worker logic'''
 import os, sys
 from time import sleep, time
+from dotenv import load_dotenv
 
 from ssl import create_default_context
 import smtplib
@@ -9,12 +10,14 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from resource_server.external_extensions import RedisInterface
 from redis import Redis
 from traceback import format_exc
 
 from typing import Literal
 from uuid import uuid4
+
+if not load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")):
+    raise FileNotFoundError()
 
 def enqueueEmail(redisinterface: Redis, email: str, subject = Literal["deletion", "recovery", "password"], **kwargs):
     '''Enqueue an email to a global Redis queue for delivery, equivalent to pushing an element to `mail_queue` from the left. Expects all email metadata to be provided as keyword arguments.
@@ -112,8 +115,10 @@ def refreshConnection(bAlive: bool = True, host : str = os.environ["SMTP_HOST"],
         currentConnection.quit()
         currentConnection.close()
 
-    interface = smtplib.SMTP_SSL(host, port, context=create_default_context())
-    interface.login(user=SENDER_ADDRESS,
+    interface = smtplib.SMTP(host, port)
+    interface.ehlo()
+    interface.starttls(context=create_default_context())
+    interface.login(user=os.environ['SMTP_SENDER_ADDRESS'],
                         password=os.environ["SMTP_PASSWORD"])
     return interface
 
@@ -122,8 +127,8 @@ def backoff(default_time = float(os.environ["SMTP_BACKOFF_TIME"])):
 
 
 if __name__ == "__main__":
-    ### SMTP setup ###
-    SENDER_ADDRESS : str = f"{os.environ['SMTP_SENDER_ADDRESS']}@{os.environ['SMTP_HOST']}"
+    ### Redis setup ###
+    RedisInterface: Redis = Redis(os.environ['REDIS_HOST'], os.environ['REDIS_PORT'], decode_responses=True)    # I've chosen to assign a separate instance to each mail worker to make them independent from RedisInterface instance used universally in resource server. This allows the mail workers to work regardless of whatever happens to the Flask workers
 
     ### Email templates for all possible scenarios ###
     #NOTE: It is CRUCIAL for the file names to match with the *args in the Literal type hint in the signature for sendMail, otherwise a keyError would be raised when trying to load an email template
