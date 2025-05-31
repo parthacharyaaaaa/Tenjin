@@ -230,7 +230,9 @@ def update_password(token : str) -> Response:
         raise BadRequest(DETAILS.get('error', "Invalid password"))
     
     hashedToken = sha256(token.encode()).digest()
-    dbToken : PasswordRecoveryToken | None = db.session.execute(select(PasswordRecoveryToken).where(PasswordRecoveryToken.url_hash == hashedToken).with_for_update(nowait=True)).scalar_one_or_none()
+    dbToken: PasswordRecoveryToken = db.session.execute(select(PasswordRecoveryToken)
+                                                        .where(PasswordRecoveryToken.url_hash == hashedToken)
+                                                        ).scalar_one_or_none()
     if not dbToken:
         raise NotFound("No such token exists. Please retry")
     
@@ -239,15 +241,22 @@ def update_password(token : str) -> Response:
     
     pw_hash, pw_salt = hash_password(DETAILS['password'])
     try:
-        user = db.session.execute(update(User).where(User.id == dbToken.user_id).values(pw_hash = pw_hash, pw_salt = pw_salt).returning(User.id)).scalar_one_or_none()
+        user = db.session.execute(update(User)
+                                  .where(User.id == dbToken.user_id)
+                                  .values(pw_hash = pw_hash, pw_salt = pw_salt)
+                                  .returning(User.id)
+                                  ).scalar_one_or_none()
         if not user:
             raise NotFound("Account not found")
-        db.session.execute(delete(PasswordRecoveryToken).where(PasswordRecoveryToken.user_id == dbToken.user_id))
+        
+        db.session.execute(delete(PasswordRecoveryToken)
+                           .where(PasswordRecoveryToken.user_id == dbToken.user_id))
+        db.session.commit()
     except SQLAlchemyError:
-        raise InternalServerError("Failed to recover password")     #TODO: Some better response
+        raise InternalServerError("Failed to recover password")
     
     return jsonify({"message" : "password updated succesfully",
-                    "_links" : {"login" : {"href" : url_for(".login")}}})
+                    "_links" : {"login" : {"href" : url_for("templates.login")}}})
 
 @user.route("/<int:user_id>", methods=["GET"])
 def get_users(user_id: int) -> tuple[Response, int]:
