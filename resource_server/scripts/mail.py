@@ -16,20 +16,19 @@ from traceback import format_exc
 from typing import Literal
 from uuid import uuid4
 
-def enqueueEmail(redisinterface: Redis, subject = Literal["deletion", "recovery", "password"], **kwargs):
+def enqueueEmail(redisinterface: Redis, email: str, subject = Literal["deletion", "recovery", "password"], **kwargs):
     '''Enqueue an email to a global Redis queue for delivery, equivalent to pushing an element to `mail_queue` from the left. Expects all email metadata to be provided as keyword arguments.
     The subject arg is used by SMTP workers to select the appropriate email template and load kwargs. See email_templates to know which templates expects which kwargs
     \n
-    `email` is a required kwarg (Will update to be in function signature later)
     '''
     try:
         uid = uuid4().hex
-        added = redisinterface._interface.hset(uid, mapping={"type" : subject, **kwargs})
+        added = redisinterface.hset(uid, mapping={"type" : subject, "email" : email, **kwargs})
 
         if added == 0:
             return False
         
-        redisinterface._interface.lpush("mail_queue", uid)
+        redisinterface.lpush("mail_queue", uid)
         return True
     except:
         return False
