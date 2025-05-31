@@ -41,6 +41,10 @@ def forgot_password() -> tuple[str, int]:
 def recover_password(digest: str) -> tuple[str, int]:
     return render_template('change_password.html')
 
+@templates.route("/recover-account")
+def recover_account() -> tuple[str, int]:
+    return render_template('recover_account.html')
+
 @templates.route('/view/forum/<string:name>')
 @pass_user_details
 def forum(name: str) -> tuple[str, int]:

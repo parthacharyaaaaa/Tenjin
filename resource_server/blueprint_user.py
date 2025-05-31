@@ -15,7 +15,7 @@ from resource_server.scripts.mail import enqueueEmail
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from redis.exceptions import RedisError
 from uuid import uuid4
 import base64
@@ -133,17 +133,16 @@ def recover_user() -> Response:
                                      .with_for_update()
                                      ).scalar_one_or_none()
 
-    # Never existed, or hard deleted already
     if not deadAccount:
-        nf = NotFound(f"No accounts with this {'email' if isEmail else 'username'} exists.")
+        # Never existed, or hard deleted already
+        nf = NotFound(f"No deleted account with this {'email' if isEmail else 'username'} exists.")
         nf.__setattr__("kwargs", {"info" : f"If you had believe that this account is still in the recovery period of {current_app['ACCOUNT_RECOVERY_PERIOD']} days, contact support",
                                   "_links" : {"tickets" : {"href" : url_for("tickets")}}})
         raise nf
     
-    # Tough luck, its already past recovery period >:(
-    if deadAccount.time_deleted + current_app['ACCOUNT_RECOVERY_PERIOD'] <= datetime.now():
-        cnf = Conflict("Account recovery period for this account has already expired, and its deletion is due soon. Please create a new account, or raise a user ticket")
-        cnf.__setattr__("kwargs", {"_links" : {"tickets" : {"href" : url_for("tickets")}}})
+    if (deadAccount.time_deleted or datetime(2000,1,1,0,0,0,0)) + current_app.config['ACCOUNT_RECOVERY_PERIOD'] <= datetime.now():
+        # Tough luck, its already past recovery period >:(
+        cnf = Conflict("Account recovery period for this account has already expired, and its deletion is due soon. Please create a new account")
         raise cnf
     
     # Match password hashes
