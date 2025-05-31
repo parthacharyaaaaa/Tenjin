@@ -35,24 +35,12 @@ def register() -> tuple[Response, int]:
     if not op:
         raise BadRequest(USER_DETAILS.get("error"))
 
-    response_kwargs = {}
-    alias: str | None = None
-    if g.REQUEST_JSON.get("alias"):
-        try:
-            alias = g.REQUEST_JSON.pop('alias').strip()
-            if not (5 < len(alias) < 16):
-                response_kwargs["alias_error"] = "Alias length should be in range 5 and 16"
-        finally:
-            g.REQUEST_JSON["alias"] = None
+    response_kwargs: dict[str, str] = {}
 
-    if g.REQUEST_JSON.get("pfp"):
-        try:
-            if not (1 < g.REQUEST_JSON["pfp"] < 20):
-                response_kwargs["pfp_error"] = "Invalid pfp selected"
-        finally:
-            g.REQUEST_JSON["pfp"] = None
     try:
-        existingUsers = db.session.execute(select(User).where((User.username == USER_DETAILS["username"]) | (User.email == USER_DETAILS["email"]))).scalars().all()
+        existingUsers: list[User] | User = db.session.execute(select(User)
+                                           .where((User.username == USER_DETAILS["username"]) | (User.email == USER_DETAILS["email"]))
+                                           ).scalars().all()
     except:
         raise InternalServerError()
     if existingUsers:
@@ -68,7 +56,8 @@ def register() -> tuple[Response, int]:
                     raise Conflict
         
         # Hard delete both accounts that violate unique contraint for email and username. Purge time >:3
-        db.session.execute(delete(User).where(User.id.in_([existingUsers[0].id, existingUsers[-1].id])))
+        db.session.execute(delete(User)
+                           .where(User.id.in_([existingUsers[0].id, existingUsers[-1].id])))
 
     # All checks passed, user creation good to go
     passwordHash, passwordSalt = hash_password(USER_DETAILS.pop("password"))
@@ -76,9 +65,9 @@ def register() -> tuple[Response, int]:
         uID: int = db.session.execute(insert(User).values(email=USER_DETAILS["email"],
                                                           username=USER_DETAILS["username"],
                                                           pw_hash=passwordHash,
-                                                          pw_salt=passwordSalt,
-                                                          pfp=g.REQUEST_JSON.get("pfp"),
-                                                          _alias=alias).returning(User.id)).scalar_one_or_none()
+                                                          pw_salt=passwordSalt)
+                                                          .returning(User.id)
+                                                          ).scalar_one_or_none()
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
@@ -94,7 +83,6 @@ def register() -> tuple[Response, int]:
                     "sub" : USER_DETAILS["username"],
                     "sid" : uID,
                     "email" : USER_DETAILS["email"], 
-                    "alias" : alias, 
                     **response_kwargs}), 201
  
 @user.route("/", methods=["DELETE"])
@@ -166,7 +154,9 @@ def recover_user() -> Response:
         
     # Account recovery good to go
     try:
-        db.session.execute(update(User).where(User.id == deadAccount.id).values({"deleted" : False, "time_deleted" : None}))
+        db.session.execute(update(User)
+                           .where(User.id == deadAccount.id)
+                           .values({"deleted" : False, "time_deleted" : None}))
         db.session.commit()
     except:
         raise InternalServerError("Failed to recover your account. If this issue persists, please raise a user ticket immediately")
@@ -183,7 +173,7 @@ def recover_password() -> Response:
     if not g.REQUEST_JSON.get('identity'):
         raise BadRequest("Missing identity for password recovery")
     
-    isEmail = '@' in g.REQUEST_JSON['identity']
+    isEmail: bool = '@' in g.REQUEST_JSON['identity']
     OP, USER_DETAIL = processUserInfo(email = g.REQUEST_JSON.get('identity') if isEmail else None,
                                       username = g.REQUEST_JSON.get('identity') if not isEmail else None)
     
@@ -204,7 +194,7 @@ def recover_password() -> Response:
                            .where(PasswordRecoveryToken.user_id == recoveryAccount.id))
         db.session.execute(insert(PasswordRecoveryToken)
                            .values(user_id = recoveryAccount.id,
-                                   expiry_time = datetime.now() + current_app.config['PASSWORD_TOKEN_MAX_AGE'],
+                                   expiry = datetime.now() + current_app.config['PASSWORD_TOKEN_MAX_AGE'],
                                    url_hash = hashedToken))
         db.session.commit()
     except:

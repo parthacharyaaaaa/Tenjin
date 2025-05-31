@@ -52,10 +52,10 @@ def dispatchFromQueue(redisinterface: Redis, cooldown_key: str = 'SSL_COOLDOWN_K
             return None
         
         # Lock set, let's do this >:D
-        res = redisinterface.rpop('mail_queue', 1)
+        res: list[str] = redisinterface.rpop('mail_queue', 1)
         if not res: return None
+        res: str = res[0]
         metadata: dict = redisinterface.hgetall(res)
-        metadata = {k.decode('utf-8') : v.decode('utf-8') for k, v in metadata.items()}
 
         with redisinterface.pipeline() as pipeline:    
             pipeline.multi()
@@ -94,21 +94,16 @@ def manageRefresh(redisinterface: Redis, cooldown_key: str = 'SSL_COOLDOWN_KEY',
         print("Failure in resetting countdown")
         print(format_exc())
 
-def sendMail(interface: smtplib.SMTP_SSL, subject = Literal["deletion", "recovery", "password"], **kwargs) -> None:
-    global TEMPLATES, SENDER_ADDRESS, SMTP_INTERFACE
+def sendMail(interface: smtplib.SMTP_SSL, template: str, sender_address: str, subject = Literal["deletion", "recovery", "password"], **kwargs) -> None:
 
-    try:
-        email_message = MIMEMultipart()
-        email_message['From'] = SENDER_ADDRESS
-        email_message['To'] = kwargs["email"]
-        email_message['Subject'] = f'{subject}'
+    email_message = MIMEMultipart()
+    email_message['From'] = sender_address
+    email_message['To'] = kwargs["email"]
+    email_message['Subject'] = f'{subject}'
 
-        body = TEMPLATES[subject].format(**kwargs)
-        email_message.attach(MIMEText(body, 'html'))
-        interface.send_message(email_message)
-
-    except Exception as e:
-        print(f"Failed to send mail: {e}")
+    body = template.format(**kwargs)
+    email_message.attach(MIMEText(body, 'html'))
+    interface.send_message(email_message)
 
 def refreshConnection(bAlive: bool = True, host : str = os.environ["SMTP_HOST"], port : int = int(os.environ["SMTP_PORT"]), currentConnection : smtplib.SMTP_SSL | None = None):
     if bAlive:
@@ -175,6 +170,8 @@ if __name__ == "__main__":
 
             sendMail(interface=SMTP_INTERFACE,
                      subject=email_metadata["type"], 
+                     template=TEMPLATES[email_metadata['type']],
+                     sender_address=os.environ['SMTP_SENDER_ADDRESS'],
                      **email_metadata)
 
             print(f"[{identity}] sent mail to {email_metadata['email']}")
