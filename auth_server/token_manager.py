@@ -189,9 +189,9 @@ class TokenManager:
             pipe.expireat(f"FID:{familyID}", int(payload["exp"]))
 
         return jwt.encode(payload=payload,
-                          key=self.latestKeyMetadata.PRIVATE_PEM,
-                          algorithm=self.latestKeyMetadata.ALGORITHM,
-                          headers=self.uHeader | {'kid' : self.latestKeyID})
+                          key=self.key_mapping[self.active_key].PRIVATE_PEM,
+                          algorithm=self.key_mapping[self.active_key].ALGORITHM,
+                          headers=self.uHeader | {'kid' : self.active_key})
 
     def issueAccessToken(self, sub : str, sid: int, familyID: str, additionalClaims : dict|None = None) -> str:
         payload: dict = {"iat" : time.time(),
@@ -205,7 +205,7 @@ class TokenManager:
             payload.update(additionalClaims)
 
         return jwt.encode(payload=payload,
-                          key=self.active_key,
+                          key=self.key_mapping[self.active_key].PRIVATE_PEM,
                           algorithm=self.key_mapping[self.active_key].ALGORITHM,
                           headers=self.uHeader | {'kid': self.active_key})
 
