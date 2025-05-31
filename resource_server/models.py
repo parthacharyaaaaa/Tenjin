@@ -190,7 +190,7 @@ class PasswordRecoveryToken(db.Model):
 
     user_id: int = db.Column(BIGINT, db.ForeignKey("users.id"))
     expiry: datetime = db.Column(TIMESTAMP, nullable = False, server_default = text("CURRENT_TIMESTAMP"), index=True)
-    url_hash: str = db.Column(BYTEA(512), nullable = False, unique = True, index = True)
+    url_hash: bytes = db.Column(BYTEA(512), nullable = False, unique = True, index = True)
 
     __table_args__ = (
         PrimaryKeyConstraint("user_id"),

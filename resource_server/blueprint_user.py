@@ -199,14 +199,14 @@ def recover_password() -> Response:
         db.session.commit()
     except:
         raise InternalServerError("There seems to be an issue with our password recovery service")
-    
-    enqueueEmail(RedisInterface, email=recoveryAccount.email, subject="password", username=recoveryAccount.username, password_recovery_link=temp_url)
+    print(url_for('templates.recover_password', _external=True, digest=temp_url))
+    enqueueEmail(RedisInterface, email=recoveryAccount.email, subject="password", username=recoveryAccount.username, password_recovery_link=url_for('templates.recover_password', _external=True, digest=temp_url))
     return jsonify({"message" : "An email has been sent to account"}), 200    
 
-@user.route("/update-password/<string:token>", methods=["PATCH"])
+@user.route("/update-password/<string:temp_url>", methods=["PATCH"])
 @enforce_json
-def update_password(token : str) -> Response:
-    if len(token < 15):
+def update_password(temp_url: str) -> Response:
+    if len(temp_url) < 15:
         raise BadRequest("Invalid token")
     
     if not (g.REQUEST_JSON.get('password') and g.REQUEST_JSON.get('cpassword')):
@@ -219,7 +219,7 @@ def update_password(token : str) -> Response:
     if not OP:
         raise BadRequest(DETAILS.get('error', "Invalid password"))
     
-    hashedToken = sha256(token.encode()).digest()
+    hashedToken: bytes = sha256(temp_url.encode()).digest()
     dbToken: PasswordRecoveryToken = db.session.execute(select(PasswordRecoveryToken)
                                                         .where(PasswordRecoveryToken.url_hash == hashedToken)
                                                         ).scalar_one_or_none()
@@ -460,10 +460,10 @@ def login() -> Response:
         if not 5 < len(identity) <= 64:
             raise BadRequest("Provided username must be between 5 and 64 characters long")
 
-    user : User | None = db.session.execute(select(User)
-                                            .where((User.email == identity if isEmail else User.username == identity) & (User.deleted.isnot(False)))
-                                            .with_for_update()
-                                            ).scalar_one_or_none()
+    user: User = db.session.execute(select(User)
+                                    .where((User.email == identity if isEmail else User.username == identity) & (User.deleted.is_(False)))
+                                    .with_for_update()
+                                    ).scalar_one_or_none()
     if not user:
         raise NotFound(f"No user with {'email' if isEmail else 'username'} {identity} could be found")
     if not verify_password(g.REQUEST_JSON['password'], user.pw_hash, user.pw_salt):
