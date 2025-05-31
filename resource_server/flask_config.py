@@ -35,7 +35,8 @@ class FlaskConfig:
         AUTH_SERVER_URL: str = f'{os.environ["AUTH_SERVER_PROTOCOL"]}://{os.environ["AUTH_SERVER_HOSTNAME"]}:{os.environ["AUTH_SERVER_PORT"]}'
 
         ### Application-specific configurations ###
-        ACCOUNT_RECOVERY_PERIOD = timedelta(days=int(os.environ["ACCOUNT_RECOVERY_PERIOD"]))
+        ACCOUNT_RECOVERY_PERIOD: timedelta = timedelta(days=int(os.environ["ACCOUNT_RECOVERY_PERIOD"]))
+        PASSWORD_TOKEN_MAX_AGE: timedelta = timedelta(minutes=int(os.environ['PASSWORD_TOKEN_MAX_AGE']))
 
         ### Redis Configuration ###
         REDIS_HOST: str = os.environ["REDIS_HOST"]
