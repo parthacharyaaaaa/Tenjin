@@ -689,3 +689,56 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
         'cursor': encoded_cursor,
         'end': end
     }), 200
+
+@post.route('/<int:post_id>/comments/<int:comment_id>', methods=['DELETE'])
+@token_required
+def delete_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
+    cacheKey: str = f'comment:{comment_id}'
+    if '__NF__' in RedisInterface.hgetall(cacheKey):
+        hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+        return jsonify({'message' : 'This comment has already been deleted'})
+    
+    try:
+        # A comment can be deleted by either a forum admin or the author of the comment
+        comment: Comment = db.session.execute(select(Comment)
+                                              .where((Comment.id == comment_id) & (Comment.deleted.isnot(True)))
+                                              ).first()
+        if not comment:
+            raise NotFound("This comment could not be found")
+    except SQLAlchemyError: genericDBFetchException()
+
+    if not (comment.author_id == g.DECODED_TOKEN.get('sid')):
+        # Check whether admin
+        forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
+                                                    .where((ForumAdmin.forum_id == comment.parent_forum) & (ForumAdmin.user_id == g.DECODED_TOKEN.get('sid')))
+                                                    ).scalar_one_or_none()
+        if not forumAdmin:
+            raise Unauthorized('You do not have the necessary permissions to delete this comment')
+    
+    # Requestor has necessary permissions for comment deletion
+    RedisInterface.xadd('SOFT_DELETIONS', {'id' : comment_id, 'table' : Comment.__tablename__})
+
+    # Update comments counter for this post
+    # Check to see if a counter for this post already exists
+    commentCounterKey: str = RedisInterface.hget(f"{Post.__tablename__}:total_comments", post_id)
+
+    response: Response = jsonify({'message' : 'Comment deleted'})
+    # Exists
+    if commentCounterKey:
+        RedisInterface.decr(commentCounterKey)
+        return response, 202
+    
+    # Does not exist
+    pComments: int = db.session.execute(select(Post.total_comments)
+                                        .where(Post.id == post_id)
+                                        ).scalar_one_or_none()
+
+    commentCounterKey: str = f'post:{post_id}:total_comments'
+    op = RedisInterface.set(commentCounterKey, pComments+1, nx=True)
+    if not op:
+        # Other Flask worker already made a counter while this request was being processed, decrement counter and end
+        RedisInterface.decr(commentCounterKey)
+        return response, 202
+    
+    RedisInterface.hset(f"{Post.__tablename__}:reports", post_id, commentCounterKey)
+    return response, 202
