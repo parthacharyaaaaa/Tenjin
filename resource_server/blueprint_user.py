@@ -109,17 +109,21 @@ def delete_user() -> Response:
     OP, USER_DETAILS = processUserInfo(username=g.REQUEST_JSON['username'], password=g.REQUEST_JSON['password'])
     if not OP:
         raise BadRequest(USER_DETAILS.get("error"))
-    userID: int = db.session.execute(select(User.id).where((User.username == USER_DETAILS['username']) & (User.deleted.is_(False)))
-                                                               .with_for_update(nowait=True)
-                                                               ).scalar_one_or_none()
-    if not userID:
+    targetUser: User = db.session.execute(select(User)
+                                     .where((User.username == USER_DETAILS['username']) & (User.deleted.is_(False)))
+                                     .with_for_update(nowait=True)
+                                     ).scalar_one_or_none()
+    if not targetUser:
         raise NotFound("Requested user could not be found")
     
+    if not verify_password(g.REQUEST_JSON['password'], targetUser.pw_hash, targetUser.pw_salt):
+        raise Unauthorized('Invalid credentials')
+    
     try:
-        RedisInterface.xadd('SOFT_DELETIONS', {'id' : userID, 'table' : User.__tablename__})
+        RedisInterface.xadd('SOFT_DELETIONS', {'id' : targetUser.id, 'table' : User.__tablename__})
 
         # Broadcast user deletion
-        hset_with_ttl(RedisInterface, f'user:{userID}', {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK']) # Non ephemeral timing? idk seems right
+        hset_with_ttl(RedisInterface, f'user:{targetUser.id}', {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK']) # Non ephemeral timing? idk seems right
     except SQLAlchemyError:
         db.session.rollback()
         raise InternalServerError("Failed to perform account deletion, please try again. If the issue persists, please raise a ticket")
