@@ -112,23 +112,29 @@ def processUserInfo(**kwargs) -> tuple[bool, dict]:
     '''
     global EMAIL_REGEX
     try:
+        res: dict[str, str] = {}
         if kwargs.get("username"):
-            username : str = kwargs['username'].strip()
+            username: str = kwargs['username'].strip()
             if not (5 < len(username) < 64):
                 return False, {"error" : "username must not end or begin with whitespaces, and must be between 5 and 64 characters long"}
             if not username.isalnum():
                 return False, {"error" : "username must be strictly alphanumeric"}
+            res['username'] = username
         
         if kwargs.get("email"):
-            email : str = kwargs['email'].strip()
+            email: str = kwargs['email'].strip()
             if not re.match(EMAIL_REGEX, email, re.IGNORECASE):
+                print("Oh allah")
                 return False, {"error" : "invalid email address"}
-        
+            res['email'] = email
+
         if kwargs.get('password'):
             if not (8 < len(kwargs.get('password')) < 64):
                 return False, {"error" : "Password length must lie between 8 and 64"}
-        
-        return True, {"username" : username, "email" : email, "password" : kwargs.get('password')}
+            res['password'] = kwargs.get('password')
+
+        return True, res
     except:
+        print(format_exc())
         return False, {"error" : "Malformatted data, please validate data types of each field"}
   
