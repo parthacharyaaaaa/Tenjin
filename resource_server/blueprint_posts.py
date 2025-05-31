@@ -639,8 +639,33 @@ def comment_on_post(post_id: int) -> tuple[Response, int]:
     comment: Comment = Comment(g.DECODED_TOKEN['sid'], post.forum_id, datetime.now(), commentBody.strip(), post_id, None, None)
 
     RedisInterface.xadd('INSERTIONS', rediserialize(comment.__attrdict__()) | {'table' : Comment.__tablename__})
+    
+    # Update comments counter for this post
+    # Check to see if a counter for this post already exists
+    commentCounterKey: str = RedisInterface.hget(f"{Post.__tablename__}:total_comments", post_id)
 
-    return jsonify({'message' : 'comment added!', 'body' : commentBody, 'author' : g.DECODED_TOKEN['sub']}), 202
+    response: Response =  jsonify({'message' : 'comment added!', 'body' : commentBody, 'author' : g.DECODED_TOKEN['sub']})
+    
+    # Exists
+    if commentCounterKey:
+        RedisInterface.incr(commentCounterKey)
+        return response, 202
+    
+    # Does not exist
+    pComments: int = db.session.execute(select(Post.total_comments)
+                                        .where(Post.id == post_id)
+                                        ).scalar_one_or_none()
+
+    commentCounterKey: str = f'post:{post_id}:total_comments'
+    op = RedisInterface.set(commentCounterKey, pComments+1, nx=True)
+    if not op:
+        # Other Flask worker already made a counter while this request was being processed, increment counter and end
+        RedisInterface.incr(commentCounterKey)
+        return response, 202
+    
+    RedisInterface.hset(f"{Post.__tablename__}:total_comments", post_id, commentCounterKey)
+    return response, 202
+
 
 @post.route('/<int:post_id>/comments')
 def get_post_comments(post_id: int) -> tuple[Response, int]:
@@ -740,5 +765,5 @@ def delete_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
         RedisInterface.decr(commentCounterKey)
         return response, 202
     
-    RedisInterface.hset(f"{Post.__tablename__}:reports", post_id, commentCounterKey)
+    RedisInterface.hset(f"{Post.__tablename__}:total_comments", post_id, commentCounterKey)
     return response, 202
