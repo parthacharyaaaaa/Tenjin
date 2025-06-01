@@ -4,7 +4,7 @@ post = Blueprint("post", "post", url_prefix="/posts")
 from sqlalchemy import select, update, delete, Row
 from sqlalchemy.exc import SQLAlchemyError
 
-from resource_server.models import db, Post, User, Forum, ForumFlair, ForumAdmin, PostSave, PostVote, PostReport, Comment, ReportTags
+from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostVote, PostReport, Comment, ReportTags
 from auxillary.decorators import enforce_json
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
@@ -32,7 +32,6 @@ def create_post() -> tuple[Response, int]:
         forumID: int = int(g.REQUEST_JSON['forum'])
         title: str = g.REQUEST_JSON['title'].strip()
         body: str = g.REQUEST_JSON['body'].strip()
-        flair: str = g.REQUEST_JSON.get('flair', '').strip()
 
     except (KeyError, ValueError):
         raise BadRequest("Malformatted post details")
@@ -50,15 +49,9 @@ def create_post() -> tuple[Response, int]:
         raise NotFound("This forum could not be found")
     
     additional_kw = {}
-    if flair:
-        # Ensure flair is valid for this forum
-        validFlair = db.session.execute(select(ForumFlair).where((ForumFlair.forum_id == forum.id) & (ForumFlair.flair_name == flair))).scalar_one_or_none()
-        if not validFlair:
-            flair = None
-            additional_kw["flair_err"] = f"Invalid flair for {forum._name}, defaulting to None."
         
     # Push to INSERTION stream. Since the consumers of this stream expect the entire table data to be given, we can use our class definitions
-    post: Post = Post(author.id, forum.id, title, body, datetime.now(), flair)
+    post: Post = Post(author.id, forum.id, title, body, datetime.now())
     RedisInterface.xadd("INSERTIONS", rediserialize(post.__attrdict__()) | {'table' : Post.__tablename__})
 
     # Write through can't be done here, since insertions is async. Incrementing the sequence would defeat the purpose of the stream anyways, so yeah :/
@@ -163,7 +156,6 @@ def edit_post(post_id : int) -> tuple[Response, int]:
     
     if not (g.REQUEST_JSON.get('title') or 
             g.REQUEST_JSON.get('body') or 
-            g.REQUEST_JSON.get('flair') or 
             g.REQUEST_JSON.get('closed')):
         raise BadRequest("No changes sent")
     
@@ -185,24 +177,6 @@ def edit_post(post_id : int) -> tuple[Response, int]:
 
     if g.REQUEST_JSON.pop('closed', None):
         update_kw["closed"] = True
-
-    if flair := g.REQUEST_JSON.pop('flair', None):
-        flair: str = flair.strip()
-        if not flair:
-            additional_kw['flair_err'] = "Flair cannot be empty/whitespace only"
-        else:
-            # Get forum ID
-            forum: Forum = db.session.execute(select(Forum).join(Post, Post.forum_id == Forum.id).where(Post.id == post_id)).scalar_one_or_none()
-            if not forum:
-                raise NotFound("This forum does not exist")
-            
-            # Check if this flair exists for the queried Forum
-            _flair: str = db.session.execute(select(ForumFlair).where((ForumFlair.forum_id == forum.id) & (ForumFlair.flair_name == flair))).scalar_one_or_none()
-            if not _flair:
-                flair = None
-                additional_kw['flair_err'] = f'{forum._name} does not have any flair named {flair}'
-            else:
-                update_kw['flair'] = flair
         
     if not update_kw:
         badReq = BadRequest("Empty request for updating post")

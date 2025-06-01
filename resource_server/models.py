@@ -19,12 +19,6 @@ with open(os.path.join(os.path.dirname(__file__), "instance", "config.json"), 'r
 db = SQLAlchemy()
 
 ### Assosciation Tables ###
-class ForumFlair(db.Model):
-    __tablename__ = "forum_flairs"
-    forum_id = db.Column(db.Integer, db.ForeignKey("forums.id", ondelete='CASCADE'), primary_key=True, nullable=False)
-    flair_name = db.Column(db.String(32), primary_key=True, nullable=False)
-
-
 class ForumSubscription(db.Model):
     __tablename__ = "forum_subscriptions"
     user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
@@ -132,7 +126,6 @@ class User(db.Model):
     # Basic identification
     id: int = db.Column(BIGINT, nullable = False, autoincrement=True)
     username: str = db.Column(VARCHAR(64), nullable = False, unique=True, index=True)
-    _alias: str = db.Column(VARCHAR(64), nullable = True)
     email: str = db.Column(VARCHAR(320), nullable = False, unique=True, index=True)
     rtfb: bool = db.Column(BOOLEAN, server_default=text('false'), nullable = False)
 
