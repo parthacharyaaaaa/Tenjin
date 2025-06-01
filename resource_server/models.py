@@ -169,12 +169,14 @@ class User(db.Model):
 class UserTicket(db.Model):
     __tablename__ = 'user_tickets'
 
+    id: int = db.Column(BIGINT)
     user_id: int = db.Column(BIGINT, db.ForeignKey("users.id"))
+    email: str = db.Column(VARCHAR(320), nullable=False, index=True)
     time_raised: datetime = db.Column(TIMESTAMP, nullable = False, server_default = text("CURRENT_TIMESTAMP"))
     description: str = db.Column(VARCHAR(512), nullable = False)
 
     __table_args__ = (
-        PrimaryKeyConstraint("user_id"),
+        PrimaryKeyConstraint("id"),
     )
 
 @dataclass
