@@ -1,20 +1,20 @@
-from resource_server.resource_decorators import token_required, pass_user_details
 from auxillary.decorators import enforce_json
 
-from resource_server.external_extensions import RedisInterface
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
+from resource_server.resource_decorators import token_required, pass_user_details
+from resource_server.resource_auxillary import update_global_counter
+from resource_server.external_extensions import RedisInterface, hset_with_ttl
 from sqlalchemy import select, update, insert, desc
 from sqlalchemy.exc import SQLAlchemyError
 
+from typing import Any
 from types import MappingProxyType
-from resource_server.external_extensions import hset_with_ttl
 from datetime import datetime, timedelta
 from redis.exceptions import RedisError
 import base64
 import binascii
-from typing import Any
 
 from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict, Unauthorized, InternalServerError
 from flask import Blueprint, Response, g, jsonify, request, current_app, url_for
@@ -248,27 +248,8 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Mandatory claim "sid" missing in token. Please login again')
 
-    # Add WE entry in advance
-    RedisInterface.xadd('WEAK_INSERTIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : newAdminID, 'role' : newAdminRole})
-
-    # Increment admin counter
-    adminCounterKey: str = RedisInterface.hget(f'{Forum.__tablename__}:admins', forum_id)
-    if adminCounterKey:
-        # Counter exists, increment and finish
-        RedisInterface.incr(adminCounterKey)
-        return jsonify({"message" : "Added new admin", "userID" : newAdminID, "role" : newAdminRole}), 202
-    
-    # Counter does not exist yet
-    adminCounterKey: str = f"forum:{forum_id}:admins"
-    fAdminCount: int = db.session.execute(select(Forum.admin_count).where(Forum.id == forum_id)).scalar_one()
-
-    op = RedisInterface.set(adminCounterKey, fAdminCount+1, nx=True)
-    if not op:
-        # Other Flask worker already made a counter while this request was being processed, update counter and end
-        RedisInterface.incr(adminCounterKey)
-        return jsonify({"message" : "Added new admin", "userID" : newAdminID, "role" : newAdminRole}), 202
-        
-    RedisInterface.hset(f'{Forum.__tablename__}:admins', forum_id, adminCounterKey)
+    update_global_counter(RedisInterface, f"forum:{forum_id}:admins", 1, db, Forum.__tablename__, 'admins', forum_id)   # Increment admin counter for this forum by 1
+    RedisInterface.xadd('WEAK_INSERTIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : newAdminID, 'role' : newAdminRole})  # Queue forum_admins record for insertion
     return jsonify({"message" : "Added new admin", "userID" : newAdminID, "role" : newAdminRole}), 202
 
 @forum.route("/<int:forum_id>/admins", methods=['DELETE'])
@@ -305,26 +286,8 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
     except KeyError: raise BadRequest('Mandatory claim "sid" missing in token. Please login again')
 
     # Add WE entry in advance
+    update_global_counter(RedisInterface, f"forum:{forum_id}:admins", -1, db, Forum.__tablename__, 'admins', forum_id)   # Increment admin counter for this forum by 1
     RedisInterface.xadd('WEAK_DELETIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : targetAdminID})
-
-    # Decrement admin counter
-    adminCounterKey: str = RedisInterface.hget(f'{Forum.__tablename__}:admins', forum_id)
-    if adminCounterKey:
-        # Counter exists, decrement and finish
-        RedisInterface.decr(adminCounterKey)
-        return jsonify({"message" : "Removed admin", "userID" : targetAdminID}), 202
-    
-    # Counter does not exist yet
-    adminCounterKey: str = f"forum:{forum_id}:admins"
-    fAdminCount: int = db.session.execute(select(Forum.admin_count).where(Forum.id == forum_id)).scalar_one()
-
-    op = RedisInterface.set(adminCounterKey, fAdminCount-1, nx=True)
-    if not op:
-        # Other Flask worker already made a counter while this request was being processed, update counter and end
-        RedisInterface.decr(adminCounterKey)
-        return jsonify({"message" : "Removed admin", "userID" : targetAdminID}), 202
-        
-    RedisInterface.hset(f'{Forum.__tablename__}:admins', forum_id, adminCounterKey)
     return jsonify({"message" : "Removed admin", "userID" : targetAdminID}), 202
 
 @forum.route("/<int:forum_id>/admins", methods=['PATCH'])
@@ -398,28 +361,20 @@ def check_admin_permissions(forum_id: int) -> tuple[Response, int]:
 def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     try:
         subbedForum: ForumSubscription = db.session.execute(select(ForumSubscription)
-                                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
+                                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))
+                                                            ).scalar_one_or_none()
         if subbedForum:
             print(1)
             return jsonify({'message' : 'Already subscribed to this forum'}), 204
-        _forum = db.session.execute(select(Forum).where(Forum.id == forum_id)).scalar_one()
+        _forum = db.session.execute(select(Forum)
+                                    .where(Forum.id == forum_id)
+                                    ).scalar_one()
 
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Invalid token, please login again')
 
-    subCounterKey: str = RedisInterface.hget(f'{Forum.__tablename__}:subscribers', forum_id)
+    update_global_counter(RedisInterface, f'forum:{forum_id}:subscribers', 1, db, Forum.__tablename__, 'subscribers', forum_id)
     RedisInterface.xadd("WEAK_INSERTIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
-    if subCounterKey:
-        RedisInterface.incr(subCounterKey)
-        return jsonify({'message' : 'subscribed!'}), 200
-    
-    subCounterKey = f'forum:{forum_id}:subscribers' 
-    op = RedisInterface.set(subCounterKey, _forum.subscribers+1, nx=True)
-    if not op:
-        RedisInterface.incr(subCounterKey)
-        return jsonify({'message' : 'subscribed!'}), 200
-    
-    RedisInterface.hset(f"{Forum.__tablename__}:subscribers", forum_id, subCounterKey)
     return jsonify({'message' : 'subscribed!'}), 200
 
 @forum.route("/<int:forum_id>/unsubscribe", methods=['PATCH'])
@@ -430,24 +385,16 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
                                                             .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
         if not subbedForum:
             return jsonify({'message' : 'You have not subscribed to this forum'}), 204
-        _forum = db.session.execute(select(Forum).where(Forum.id == forum_id)).scalar_one()
+        _forum = db.session.execute(select(Forum)
+                                    .where(Forum.id == forum_id)
+                                    ).scalar_one()
         
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Invalid token, please login again')
 
     subCounterKey: str = RedisInterface.hget(f'{Forum.__tablename__}:subscribers', forum_id)
+    update_global_counter(RedisInterface, f'forum:{forum_id}:subscribers', -1, db, Forum.__tablename__, 'subscribers', forum_id)
     RedisInterface.xadd("WEAK_DELETIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
-    if subCounterKey:
-        RedisInterface.decr(subCounterKey)
-        return jsonify({'message' : 'unsubscribed!'}), 200
-    
-    subCounterKey = f'forum:{forum_id}:subscribers' 
-    op = RedisInterface.set(subCounterKey, _forum.subscribers-1, nx=True)
-    if not op:
-        RedisInterface.decr(subCounterKey)
-        return jsonify({'message' : 'unsubscribed!'}), 200
-    
-    RedisInterface.hset(f"{Forum.__tablename__}:subscribers", forum_id, subCounterKey)
     return jsonify({'message' : 'unsubscribed!'}), 200
 
 @forum.route("/<int:forum_id>", methods=["PATCH"])
