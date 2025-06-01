@@ -20,15 +20,6 @@ document.addEventListener('DOMContentLoaded', () => {
             console.info(adminLevel)
             if (adminLevel < 2) return;
 
-            const adminConsoleButton = document.createElement('button');
-            adminConsoleButton.classList.add('btn-primary')
-            adminConsoleButton.innerText = 'Manage Admins'
-            adminConsoleButton.addEventListener('click', () => {
-                window.location.href = `/forums/${forumID}/manage-admins`;
-            });
-
-            forumRibbon.appendChild(adminConsoleButton);
-
             if (adminLevel === 3) {
                 deleteForumButton = document.createElement('button');
                 deleteForumButton.classList.add('btn-primary');
