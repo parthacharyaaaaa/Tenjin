@@ -5,9 +5,10 @@ from sqlalchemy import select, update, delete, Row
 from sqlalchemy.exc import SQLAlchemyError
 
 from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostVote, PostReport, Comment, ReportTags
-from auxillary.decorators import enforce_json
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
+from resource_server.resource_auxillary import update_global_counter
+from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 
 from werkzeug.exceptions import NotFound, BadRequest, Forbidden
@@ -55,21 +56,8 @@ def create_post() -> tuple[Response, int]:
     RedisInterface.xadd("INSERTIONS", rediserialize(post.__attrdict__()) | {'table' : Post.__tablename__})
 
     # Write through can't be done here, since insertions is async. Incrementing the sequence would defeat the purpose of the stream anyways, so yeah :/
-    # Increment posts counter for this forum
-    postsCounterKey: str = RedisInterface.hget(f"{Forum.__tablename__}:posts", forumID)
-    if postsCounterKey:
-        RedisInterface.incr(postsCounterKey)
-        return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
-
-    # No counter, create one
-    currentForumPosts: int = db.session.execute(select(Forum.posts).where(Forum.id == forumID)).scalar_one()
-    postsCounterKey = f'forum:{forumID}:posts'
-    op = RedisInterface.set(postsCounterKey, currentForumPosts+1, nx=True)
-    if not op:
-        # Counter made by another Flask worker
-        RedisInterface.incr(postsCounterKey)
-    else:
-        RedisInterface.hset(f'{Forum.__tablename__}:posts', forumID, postsCounterKey)
+    update_global_counter(RedisInterface, f'forum:{forumID}:posts', 1, db, Forum.__tablename__, 'posts', forumID)   # Counter for posts in this forum
+    update_global_counter(RedisInterface, f'user:{g.DECODED_TOKEN['sid']}:total_posts', 1, db, User.__tablename__, 'total_posts', g.DECODED_TOKEN['sid']) # Counter for posts made by this user
 
     return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
 
@@ -228,22 +216,10 @@ def delete_post(post_id: int) -> Response:
     if redirect:
         redirectionForum: str = db.session.execute(select(Forum._name).where(Forum.id == post.forum_id)).scalar_one()
     
-    # Decrement posts counter for this forum
-    postsCounterKey: str = RedisInterface.hget(f"{Forum.__tablename__}:posts", post.forum_id)
-    if postsCounterKey:
-        RedisInterface.decr(postsCounterKey)
-        return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, name = redirectionForum)}), 200
-
-    # No counter, create one
-    currentForumPosts: int = db.session.execute(select(Forum.posts).where(Forum.id == post.forum_id)).scalar_one()
-    postsCounterKey = f'forum:{post.forum_id}:posts'
-    op = RedisInterface.set(postsCounterKey, currentForumPosts, nx=True)
-    if not op:
-        # Counter made by another Flask worker
-        RedisInterface.decr(postsCounterKey)
-    else:
-        RedisInterface.hset(f'{Forum.__tablename__}:posts', post.forum_id, postsCounterKey)
-    
+    # Decrement global counters
+    update_global_counter(RedisInterface, f'forum:{post.forum_id}:posts', -1, db, Forum.__tablename__, 'posts', post.forum_id)   # Counter for posts in this forum
+    update_global_counter(RedisInterface, f'user:{g.DECODED_TOKEN['sid']}:total_posts', -1, db, User.__tablename__, 'total_posts', g.DECODED_TOKEN['sid']) # Counter for posts made by this user
+   
     # Overwrite any existing cached entries for this post with 404 mapping, and then expire ephemerally
     hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
     return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False)}), 200
@@ -275,70 +251,29 @@ def vote_post(post_id: int) -> tuple[Response, int]:
     # 2: Fall back to DB
     try:
         # Check if user has already casted a vote for this post
-        postVote: int = db.session.execute(select(PostVote.vote).where((PostVote.voter_id == g.DECODED_TOKEN['sid']) & (PostVote.post_id == post_id))).scalar()
-        if postVote:
+        postVote: int = db.session.execute(select(PostVote.vote)
+                                           .where((PostVote.voter_id == g.DECODED_TOKEN['sid']) & (PostVote.post_id == post_id))
+                                           ).scalar()
+        if postVote is not None:
             if int(postVote) == vote:
                 # Casting the same vote twice, do nothing
                 return jsonify({'message' : f'Post already {"upvoted" if postVote else "downvoted"}'}), 200
             else:
                 # Going from upvote to downvote, or vice-versa. Counter will be incremented or decremented by 2
                 bSwitchVote = True
-                RedisInterface.xadd("WEAK_DELETIONS", {'voter_id' : g.DECODED_TOKEN['sid'], 'post_id' : post_id, 'table' : PostVote.__tablename__})
+                # Remove old record for user VOTES ON posts in advance
+                db.session.execute(delete(PostVote).where((PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid'])))
+                db.session.commit()
     except SQLAlchemyError: genericDBFetchException()
 
-    # Check if counter for this post's score exists already
-    voteCounterKey: int = RedisInterface.hget(f"{Post.__tablename__}:score", post_id)
-    if voteCounterKey:
-        if vote:
-            # Upvote
-            RedisInterface.incr(voteCounterKey, 2 if bSwitchVote else 1) 
-        else: 
-            # Downvote
-            RedisInterface.decr(voteCounterKey, 2 if bSwitchVote else 1) 
-
-        # Add new weak entity for user VOTES ON posts
-        RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__})
-        RedisInterface.set(cacheKey, vote, ex=current_app.config['REDIS_TTL_EPHEMERAL'])    # Ephemerally cache that bad boy
-        return jsonify({"message" : "Voted!"}), 202
-    
-    # No counter found
-    try:
-        # Fetch current score of post
-        pScore: int = db.session.execute(select(Post.score).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
-        if pScore == None:
-            raise NotFound("No such post exists")
-    except SQLAlchemyError: genericDBFetchException()
-
-    voteCounterKey: str = f'post:{post_id}:score'
-
-    # Handle insertion and deletion of weak entities in advance
-    if bSwitchVote:
-        # Remove old WE for user VOTES ON posts in advance
-        db.session.execute(delete(PostVote).where((PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid'])))
-        db.session.commit()
+    delta: int = 2 if bSwitchVote else 1
+    if not vote: delta*=-1  # Negative vote for downvote
 
     # Insert new WE
-    RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__})
+    RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__}) # Add post_votes record to insertion queue
+    update_global_counter(RedisInterface, f'post:{post_id}:score', delta, db, Post.__tablename__, 'score', post_id) # Update counter for this post's score
+    RedisInterface.set(cacheKey, vote, ex=current_app.config['REDIS_TTL_EPHEMERAL'])    # Ephemerally cache that bad boy
 
-    # Finally, update counter
-    delta = 2 if bSwitchVote else 1
-    op = RedisInterface.set(voteCounterKey, pScore+delta if vote else pScore-delta, nx=True)
-    if not op:
-        # Other Flask worker created a counter during handling of this request, update counter
-        if vote:
-            # Upvote
-            RedisInterface.incr(voteCounterKey, 2 if bSwitchVote else 1) 
-        else: 
-            # Downvote
-            RedisInterface.decr(voteCounterKey, 2 if bSwitchVote else 1)
-
-        RedisInterface.set(cacheKey, vote, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
-        return jsonify({'message' : 'Voted!'}), 202
-
-    RedisInterface.set(cacheKey, vote, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
-
-    # New counter set, add to this post's score hashmap and finish
-    RedisInterface.hset(f"{Post.__tablename__}:score", post_id, voteCounterKey)
     return jsonify({"message" : "Voted!"}), 202
 
 @post.route("/<int:post_id>/unvote", methods=["PATCH"])
@@ -346,51 +281,17 @@ def vote_post(post_id: int) -> tuple[Response, int]:
 def unvote_post(post_id: int) -> tuple[Response, int]:    
     try:
         # Check if user has not casted a vote for this post, if yes then do nothing
-        postVote: PostVote = db.session.execute(select(PostVote).where((PostVote.voter_id == g.DECODED_TOKEN['sid']) & (PostVote.post_id == post_id))).scalar_one_or_none()
+        postVote: PostVote = db.session.execute(select(PostVote)
+                                                .where((PostVote.voter_id == g.DECODED_TOKEN['sid']) & (PostVote.post_id == post_id))
+                                                ).scalar_one_or_none()
         if not postVote:
-            return jsonify({'message' : f'Post already voted'}), 200
+            return jsonify({'message' : f'Post not voted'}), 409
     except SQLAlchemyError: genericDBFetchException()
 
-    vote = PostVote.vote
-    # Check if counter for this post's votes exists already
-    voteCounterKey: str = RedisInterface.hget(f"{Post.__tablename__}:score", post_id)
-    if voteCounterKey:
-        if vote:
-            # Remove upvote
-            RedisInterface.decr(voteCounterKey)
-        else: 
-            # Remove downvote
-            RedisInterface.incr(voteCounterKey)
-        
-        RedisInterface.xadd("WEAK_DELETIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostVote.__tablename__})
-        return jsonify({"message" : "Removed vote"}), 202
-    
-    # No counter found
-    try:
-        # Fetch current score of post
-        pScore: int = db.session.execute(select(Post.score).where(Post.id == post_id)).scalar_one_or_none()
-        if pScore == None:
-            raise NotFound("No such post exists")
-    except SQLAlchemyError: genericDBFetchException()
-
-    voteCounterKey: str = f'post:{post_id}:score'
-
-    # Delete WE in advance
+    delta: int = -1 if PostVote.vote else 1
+    update_global_counter(RedisInterface, f'post:{post_id}:score', delta, db, Post.__tablename__, 'score', post_id)
     RedisInterface.xadd("WEAK_DELETIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostVote.__tablename__})
 
-    op = RedisInterface.set(voteCounterKey, pScore+1 if not vote else pScore-1, nx=True)
-    if not op:
-        # Other Flask worker created a counter during handling of this request, update counter
-        if vote:
-            # Remove upvote
-            RedisInterface.decr(voteCounterKey)
-        else: 
-            # Remove downvote
-            RedisInterface.incr(voteCounterKey)
-        return jsonify({"message" : "Removed vote!"}), 202
-
-    # New counter set, add it to this post's score hashmap and finish
-    RedisInterface.hset(f"{Post.__tablename__}:score", post_id, voteCounterKey)
     return jsonify({"message" : "Removed vote!"}), 202
 
 @post.route('/<int:post_id>/is-saved', methods=['GET'])
@@ -455,42 +356,18 @@ def check_post_vote(post_id: int) -> tuple[Response, int]:
 def save_post(post_id: int) -> tuple[Response, int]:    
     try:
         # First check to see if the user has already saved this post. If yes, then do nothing
-        savedPost: PostSave = db.session.execute(select(PostSave).where((PostSave.user_id == g.DECODED_TOKEN['sid']) & (PostSave.post_id == post_id))).scalar_one_or_none()
+        savedPost: PostSave = db.session.execute(select(PostSave)
+                                                 .where((PostSave.user_id == g.DECODED_TOKEN['sid']) & (PostSave.post_id == post_id))
+                                                 ).scalar_one_or_none()
         if savedPost:
             return jsonify({'message' : 'post already saved'}), 200
     except SQLAlchemyError: genericDBFetchException()
     
-    # If post counter exists, update directly
-    saveCounterKey: int = RedisInterface.hget(f"{Post.__tablename__}:saves", post_id)
-    if saveCounterKey:
-        RedisInterface.incr(saveCounterKey)
-        RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})
-        return jsonify({"message" : "Saved!"}), 202
-        
-    # Post counter does NOT exist
-    try:
-        # Fetch current post saves
-        pSaves: int = db.session.execute(select(Post.saves).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
-        # 0 is falsy, so add extra check
-        if pSaves == None:      
-            raise NotFound("No such post exists")
-    except SQLAlchemyError: genericDBFetchException()
-
-    # Insert WE in advance
-    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})  # Add post_saves entry to db
-
-    # Create a new counter for this post
-    saveCounterKey: str = f"post:{post_id}:saves"
-    op = RedisInterface.set(saveCounterKey, pSaves+1, nx=True)
-    if not op:
-        # Other Flask worker already made a counter while this request was being processed, update counter and end
-        RedisInterface.incr(saveCounterKey)
-        return jsonify({"message" : "Saved!"}), 202
-
-    RedisInterface.hset(f"{Post.__tablename__}:saves", post_id, saveCounterKey) # Add post's counter to saves hashmap for this table
-
+    update_global_counter(RedisInterface, f"post:{post_id}:saves", 1, db, Post.__tablename__, 'saves', post_id)
+    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})
     # Ephemerally set save flag
     RedisInterface.set(f"saves:{post_id}:{g.DECODED_TOKEN['sid']}", 1, current_app.config['REDIS_TTL_EPHEMERAL'])
+
     return jsonify({"message" : "Saved!"}), 202
 
 @post.route("/<int:post_id>/unsave", methods=["PATCH"])
@@ -498,42 +375,17 @@ def save_post(post_id: int) -> tuple[Response, int]:
 def unsave_post(post_id: int) -> tuple[Response, int]:
     try:
         # First check to see if the user hasn't saved this post. If yes, then do nothing
-        savedPost: PostSave = db.session.execute(select(PostSave).where((PostSave.user_id == g.DECODED_TOKEN['sid']) & (PostSave.post_id == post_id))).scalar_one_or_none()
+        savedPost: PostSave = db.session.execute(select(PostSave)
+                                                 .where((PostSave.user_id == g.DECODED_TOKEN['sid']) & (PostSave.post_id == post_id))
+                                                 ).scalar_one_or_none()
         if not savedPost:
             return jsonify({'message' : 'post not saved'}), 200
     except SQLAlchemyError: genericDBFetchException()
 
-    # If post counter exists, decrement directly
-    saveCounterKey: int = RedisInterface.hget(f"{Post.__tablename__}:saves", post_id)
-    if saveCounterKey:
-        RedisInterface.decr(saveCounterKey)
-        RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})
-        return jsonify({"message" : "Removed from saved posts"}), 202
-        
-    # Post counter does NOT exist
-    try:
-        # Fetch current post saves
-        pSaves: int = db.session.execute(select(Post.saves).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
-        # 0 is falsy, so add extra check
-        if pSaves == None: 
-            raise NotFound("No such post exists")
-    except SQLAlchemyError: genericDBFetchException()
-
-    # Add WE in advance
-    RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})  # Add post_saves entry to db
-
-    # Create a new counter for this post
-    saveCounterKey: str = f"post:{post_id}:saves"
-    op = RedisInterface.set(saveCounterKey, pSaves-1, nx=True)
-    if not op:
-        # Other Flask worker already made a counter while this request was being processed, decrement counter and end
-        RedisInterface.decr(saveCounterKey)
-        return jsonify({"message" : "Removed from saved posts"}), 202
-
-    RedisInterface.hset(f"{Post.__tablename__}:saves", post_id, saveCounterKey) # Add post's counter to saves hashmap for this table
-
-    # Ephemerally set save flag to False
-    RedisInterface.set(f"saves:{post_id}:{g.DECODED_TOKEN['sid']}", 0, current_app.config['REDIS_TTL_EPHEMERAL'])
+    update_global_counter(RedisInterface, f"post:{post_id}:saves", -1, db, Post.__tablename__, 'saves', post_id)    # Update global counter for this post's saves
+    RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})  # Queue post_saves record for deletion
+    RedisInterface.set(f"saves:{post_id}:{g.DECODED_TOKEN['sid']}", 0, current_app.config['REDIS_TTL_EPHEMERAL']) # Ephemerally set save flag to False
+    
     return jsonify({"message" : "Removed from saved posts"}), 202
 
 @post.route("/<int:post_id>/report", methods=[])
@@ -558,37 +410,16 @@ def report_post(post_id: int) -> tuple[Response, int]:
     
     # Check if user has reported this post already. If so, do nothing
     try:
-        reportedPost: PostReport = db.session.execute(select(PostReport).where((PostReport.user_id == g.DECODED_TOKEN['sid']) & (PostReport.post_id == post_id))).scalar_one_or_none()
+        reportedPost: PostReport = db.session.execute(select(PostReport)
+                                                      .where((PostReport.user_id == g.DECODED_TOKEN['sid']) & (PostReport.post_id == post_id))
+                                                      ).scalar_one_or_none()
         if reportedPost:
             return jsonify({'message' : 'post reported already'}), 409
     except SQLAlchemyError: genericDBFetchException()
 
-    # Request is for a new report on this post
-    # Check to see if a counter for this post already exists
-    reportCounterKey: int = RedisInterface.hget(f"{Post.__tablename__}:reports", post_id)
-
-    # Exists
-    if reportCounterKey:
-        RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'report_tag' : reportTag, 'table' : PostReport.__tablename__})
-        RedisInterface.incr(reportCounterKey)
-        return jsonify({"message" : "Reported!"}), 202
+    update_global_counter(RedisInterface, f'post:{post_id}:reports', 1, db, Post.__tablename__, 'reports', post_id) # Update report counter for this post
+    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'report_tag' : reportTag, 'table' : PostReport.__tablename__})   # Queue insertion for post_reports
     
-    # Does not exist
-    pReports: int = db.session.execute(select(Post.reports).where(Post.id == post_id).with_for_update(nowait=True)).scalar_one_or_none()
-    if pReports == None:
-        raise NotFound("No such post exists")
-
-    # Insert WE in advance
-    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'report_tag' : reportTag, 'table' : PostReport.__tablename__})
-
-    reportCounterKey: str = f'post:{post_id}:reports'
-    op = RedisInterface.set(reportCounterKey, pReports+1, nx=True)
-    if not op:
-        # Other Flask worker already made a counter while this request was being processed, increment counter and end
-        RedisInterface.incr(reportCounterKey)
-        return jsonify({"message" : "Reported!"}), 202
-    
-    RedisInterface.hset(f"{Post.__tablename__}:reports", post_id, reportCounterKey)
     return jsonify({"message" : "Reported!"}), 202
 
 @post.route("/<int:post_id>/comment", methods=['POST'])
@@ -612,33 +443,14 @@ def comment_on_post(post_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
     comment: Comment = Comment(g.DECODED_TOKEN['sid'], post.forum_id, datetime.now(), commentBody.strip(), post_id, None, None)
 
+    # Update global counters for this post, and commenting user's 'total_comments' columns
+    update_global_counter(RedisInterface, f'post:{post_id}:total_comments', 1, db, Post.__tablename__, 'total_comments', post_id)
+    update_global_counter(RedisInterface, f'user:{g.DECODED_TOKEN["sid"]}:total_comments', 1, db, User.__tablename__, 'total_comments', g.DECODED_TOKEN['sid'])
+
+    # Queue insertion of new comment
     RedisInterface.xadd('INSERTIONS', rediserialize(comment.__attrdict__()) | {'table' : Comment.__tablename__})
-    
-    # Update comments counter for this post
-    # Check to see if a counter for this post already exists
-    commentCounterKey: str = RedisInterface.hget(f"{Post.__tablename__}:total_comments", post_id)
 
-    response: Response =  jsonify({'message' : 'comment added!', 'body' : commentBody, 'author' : g.DECODED_TOKEN['sub']})
-    
-    # Exists
-    if commentCounterKey:
-        RedisInterface.incr(commentCounterKey)
-        return response, 202
-    
-    # Does not exist
-    pComments: int = db.session.execute(select(Post.total_comments)
-                                        .where(Post.id == post_id)
-                                        ).scalar_one_or_none()
-
-    commentCounterKey: str = f'post:{post_id}:total_comments'
-    op = RedisInterface.set(commentCounterKey, pComments+1, nx=True)
-    if not op:
-        # Other Flask worker already made a counter while this request was being processed, increment counter and end
-        RedisInterface.incr(commentCounterKey)
-        return response, 202
-    
-    RedisInterface.hset(f"{Post.__tablename__}:total_comments", post_id, commentCounterKey)
-    return response, 202
+    return jsonify({'message' : 'comment added!', 'body' : commentBody, 'author' : g.DECODED_TOKEN['sub']}), 202
 
 
 @post.route('/<int:post_id>/comments')
@@ -701,7 +513,7 @@ def delete_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
         # A comment can be deleted by either a forum admin or the author of the comment
         comment: Comment = db.session.execute(select(Comment)
                                               .where((Comment.id == comment_id) & (Comment.deleted.isnot(True)))
-                                              ).first()
+                                              ).scalar_one_or_none()
         if not comment:
             raise NotFound("This comment could not be found")
     except SQLAlchemyError: genericDBFetchException()
@@ -714,30 +526,10 @@ def delete_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
         if not forumAdmin:
             raise Unauthorized('You do not have the necessary permissions to delete this comment')
     
-    # Requestor has necessary permissions for comment deletion
+    # Decrement global counters for this post, and the user's total comments
+    update_global_counter(RedisInterface, f'post:{post_id}:total_comments', -1, db, Post.__tablename__, 'total_comments', post_id)
+    update_global_counter(RedisInterface, f'user:{g.DECODED_TOKEN["sid"]}:total_comments', -1, db, User.__tablename__, 'total_comments', g.DECODED_TOKEN['sid'])
+    # Queue comment for soft deletion
     RedisInterface.xadd('SOFT_DELETIONS', {'id' : comment_id, 'table' : Comment.__tablename__})
 
-    # Update comments counter for this post
-    # Check to see if a counter for this post already exists
-    commentCounterKey: str = RedisInterface.hget(f"{Post.__tablename__}:total_comments", post_id)
-
-    response: Response = jsonify({'message' : 'Comment deleted'})
-    # Exists
-    if commentCounterKey:
-        RedisInterface.decr(commentCounterKey)
-        return response, 202
-    
-    # Does not exist
-    pComments: int = db.session.execute(select(Post.total_comments)
-                                        .where(Post.id == post_id)
-                                        ).scalar_one_or_none()
-
-    commentCounterKey: str = f'post:{post_id}:total_comments'
-    op = RedisInterface.set(commentCounterKey, pComments+1, nx=True)
-    if not op:
-        # Other Flask worker already made a counter while this request was being processed, decrement counter and end
-        RedisInterface.decr(commentCounterKey)
-        return response, 202
-    
-    RedisInterface.hset(f"{Post.__tablename__}:total_comments", post_id, commentCounterKey)
-    return response, 202
+    return jsonify({'message' : 'Comment deleted'}), 202
