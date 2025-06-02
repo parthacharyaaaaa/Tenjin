@@ -117,11 +117,31 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
     
     nextPosts: list[Post] = db.session.execute(query).all()
     if not nextPosts:
-        return jsonify({'posts' : None, 'cursor' : cursor}), 200
-    end = False
-    if len(nextPosts) != 6:
-        end = True
+        return jsonify({'posts' : None, 'cursor' : None}), 200
+    end: bool = len(nextPosts) < 6
     postsJSON: list[dict[str, Any]] = [post.__json_like__() | {'username' : username} for post, username in nextPosts]
+
+    # Fetching each post's global counters
+    global_counters: list[int] = []
+
+    # Prepping names for counters in advance
+    counter_names: list[str] = []
+    for post in postsJSON:
+        counter_names.append(f'post:{post["id"]}:score')
+        counter_names.append(f'post:{post["id"]}:total_comments')
+        counter_names.append(f'post:{post["id"]}:saves')
+
+    global_counters = fetch_global_counters(RedisInterface, *counter_names)
+    post_idx: int = 0
+    for i in range(0, len(global_counters), 3): # global_counters will always have elements in multiple of 3, since a missing counter is still returned as None
+        if global_counters[i] is not None:  # post score
+            postsJSON[post_idx]['score'] = global_counters[i]
+        if global_counters[i+1] is not None: # post comments
+            postsJSON[post_idx]['comments'] = global_counters[i+1]
+        if global_counters[i+2] is not None: # post saves
+            postsJSON[post_idx]['saves'] = global_counters[i+2]
+        post_idx+=1
+        
     cursor = base64.b64encode(str(nextPosts[-1][0].id).encode('utf-8')).decode()
 
     return jsonify({'posts' : postsJSON, 'cursor' : cursor, 'end' : end}), 200
