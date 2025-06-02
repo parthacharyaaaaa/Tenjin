@@ -4,7 +4,7 @@ from auxillary.utils import rediserialize, genericDBFetchException, consult_cach
 
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from resource_server.resource_decorators import token_required, pass_user_details
-from resource_server.resource_auxillary import update_global_counter
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters
 from resource_server.external_extensions import RedisInterface, hset_with_ttl
 from sqlalchemy import select, update, insert, desc
 from sqlalchemy.exc import SQLAlchemyError
@@ -31,28 +31,43 @@ TIMEFRAMES: MappingProxyType = MappingProxyType({0 : lambda dt : dt - timedelta(
 @pass_user_details
 def get_forum(forum_id: int) -> tuple[Response, int]:
     cacheKey: str = f'forum:{forum_id}'
+    fetch_relation: bool = 'fetch_relation' in request.args and g.REQUESTING_USER
     forumMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
-    
+    global_subcount, global_postcount = fetch_global_counters(RedisInterface, f'{cacheKey}:subscribers', f'{cacheKey}:posts')
+
     if forumMapping:
         if '__NF__' in forumMapping:
             raise NotFound('No forum with this ID exists')
-        return jsonify(forumMapping), 200
+        
+        # Update fetch mapping with global mappings
+        if global_postcount is not None:
+            forumMapping['posts'] = global_postcount
+        if global_subcount is not None:
+            forumMapping['subscribers'] = global_subcount
     
     # Fallback to DB
-    try:
-        fetchedForum: Forum = db.session.execute(select(Forum)
-                                                 .where(Forum.id== forum_id)
-                                                 ).scalar_one_or_none()
-        if not fetchedForum:
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
-            raise NotFound('No forum with this ID could be found')
-        
-        forumMapping: dict = rediserialize(fetchedForum.__json_like__())
-        hset_with_ttl(RedisInterface, cacheKey, forumMapping, current_app.config['REDIS_TTL_STRONG'])
-    except SQLAlchemyError: genericDBFetchException()
+    else:
+        try:
+            fetchedForum: Forum = db.session.execute(select(Forum)
+                                                    .where(Forum.id== forum_id)
+                                                    ).scalar_one_or_none()
+            if not fetchedForum:
+                hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+                raise NotFound('No forum with this ID could be found')
+            
+            forumMapping: dict = rediserialize(fetchedForum.__json_like__())
+
+            # Update fetch mapping with global mappings
+            if global_postcount is not None:
+                forumMapping['posts'] = global_postcount
+            if global_subcount is not None:
+                forumMapping['subscribers'] = global_subcount
+            # Cache mapping with updated counters
+            hset_with_ttl(RedisInterface, cacheKey, forumMapping, current_app.config['REDIS_TTL_STRONG'])
+        except SQLAlchemyError: genericDBFetchException()
 
     try:
-        if g.REQUESTING_USER and 'user_relation' in request.args:
+        if fetch_relation:
             # Select forum admin/subscribed
             adminRole: str = db.session.execute(select(ForumAdmin.role)
                                                 .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.REQUESTING_USER['sid']))
