@@ -171,3 +171,11 @@ def update_global_counter(interface: Redis, counter_name: str, delta: int, db: S
         interface.incrby(counter_key, delta)
     else:
         interface.hset(hashmap_key, identifier, counter_key)
+
+def fetch_global_counters(interface: Redis, *counter_names: str) -> list[int]:
+    counters: list[int] = []
+    with interface.pipeline(transaction=False) as pipe:
+        for counter_name in counter_names:
+            pipe.get(counter_name)
+        counters = pipe.execute()
+    return list(map(lambda counter:None if not counter else int(counter), counters))
