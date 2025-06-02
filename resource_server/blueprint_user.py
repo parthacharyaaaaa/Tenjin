@@ -284,7 +284,7 @@ def get_user(user_id: int) -> tuple[Response, int]:
     hset_with_ttl(RedisInterface, cacheKey, userMapping, current_app.config['REDIS_TTL_STRONG'])
     return jsonify({'user' : userMapping}), 200
 
-@user.route('profile/<int:user_id>/posts')
+@user.route('/<int:user_id>/posts')
 def get_user_posts(user_id: int) -> tuple[Response, int]:
     try:
         rawCursor = request.args.get('cursor', '0').strip()
@@ -297,8 +297,25 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
     
     # 1: Redis
     cacheKey: str = f'profile:{user_id}:posts:{cursor}'     # cacheKey here will just be a list of key names for individually cached posts
+    counter_names: list[str] = []
+    global_counters: list[int] = []
+
     resources, end, nextCursor = fetch_group_resources(RedisInterface, cacheKey)
     if resources and all(resources):
+        for resource in resources:  # Prep name list in advance
+            counter_names.extend([f'post:{resource["id"]}:score', f'forum:{resource["id"]}:saves', f'forum:{resource["id"]}:total_comments'])
+        
+        global_counters = fetch_global_counters(RedisInterface, *counter_names)
+        post_idx: int = 0
+        # Update with global counters
+        for i in range(0, len(global_counters), 3):
+            if global_counters[i] is not None:  # Post score
+                resources[post_idx]['score'] = global_counters[i]
+            if global_counters[i+1] is not None:  # Post saves
+                resources[post_idx]['saves'] = global_counters[i+1]
+            if global_counters[i+2] is not None:  # Post comments
+                resources[post_idx]['comments'] = global_counters[i+2]
+            post_idx+=1
         # All resources exist in cache, promote TTL and return results
         promote_group_ttl(interface=RedisInterface, group_key=cacheKey,
                           promotion_ttl=current_app.config['REDIS_TTL_PROMOTION'], max_ttl=current_app.config['REDIS_TTL_CAP'])
@@ -331,18 +348,31 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
             pipe.expire(cacheKey, current_app.config['REDIS_TTL_WEAK'])
             pipe.execute()
 
-        return jsonify({'posts' : None, 'cursor' : cursor, 'end' : True})
+        return jsonify({'posts' : None, 'cursor' : None, 'end' : True})
     
-    if len(recentPosts) < 6:
-        end = True
-    else:
-        end = False
+    end: bool = len(recentPosts) < 6
+    if not end:
         recentPosts.pop(-1)
 
     nextCursor = base64.b64encode(str(recentPosts[-1].id).encode('utf-8')).decode()
     _posts = [rediserialize(post.__json_like__()) for post in recentPosts]
 
-    # Cache grouped resources
+    for post in _posts:  # Prep name list in advance
+        counter_names.extend([f'post:{post["id"]}:score', f'forum:{post["id"]}:saves', f'forum:{post["id"]}:total_comments'])
+        
+        global_counters = fetch_global_counters(RedisInterface, *counter_names)
+        post_idx: int = 0
+        # Update with global counters
+        for i in range(0, len(global_counters), 3):
+            if global_counters[i] is not None:  # Post score
+                _posts[post_idx]['score'] = global_counters[i]
+            if global_counters[i+1] is not None:  # Post saves
+                _posts[post_idx]['saves'] = global_counters[i+1]
+            if global_counters[i+2] is not None:  # Post comments
+                _posts[post_idx]['comments'] = global_counters[i+2]
+            post_idx+=1
+
+    # Cache grouped resources with updated counters
     cache_grouped_resource(interface=RedisInterface,
                            group_key=cacheKey, resource_type='post',
                            resources= {post['id']:post for post in _posts},
@@ -351,7 +381,7 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
 
     return jsonify({'posts' : _posts, 'cursor' : nextCursor, 'end' : end})
 
-@user.route('profile/<int:user_id>/forums')
+@user.route('/<int:user_id>/forums')
 def get_user_forums(user_id: int) -> tuple[Response, int]:
     try:
         rawCursor = request.args.get('cursor', '0').strip()
@@ -363,9 +393,28 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
             raise BadRequest("Failed to load more Forums. Please refresh this page")
 
     cacheKey: str = f'profile:{user_id}:forums:{cursor}'
+    counter_names: list[str] = []
+    global_counters: list[int] = []
+
     resources, end, newCursor = fetch_group_resources(RedisInterface, cacheKey)
     if resources and all(resources):
-        # Group cache is valid, promote TTL and dispatch result
+        # Group cache is valid
+        # Fetch updated global counters if in memory
+        for resource in resources:  # Prep name list in advance
+            counter_names.extend([f'forum:{resource["id"]}:posts', f'forum:{resource["id"]}:subscribers', f'forum:{resource["id"]}:admin_count'])
+
+        global_counters = fetch_global_counters(RedisInterface, *counter_names)
+        forum_idx: int = 0
+        # Update with global counters
+        for i in range(0, len(global_counters), 3):
+            if global_counters[i] is not None:  # Forum posts
+                resources[forum_idx]['posts'] = global_counters[i]
+            if global_counters[i+1] is not None:  # Forum subscribers
+                resources[forum_idx]['subscribers'] = global_counters[i+1]
+            if global_counters[i+2] is not None:  # Forum admins
+                resources[forum_idx]['admins'] = global_counters[i+2]
+            forum_idx+=1
+
         promote_group_ttl(RedisInterface, cacheKey, promotion_ttl=current_app.config['REDIS_TTL_PROMOTION'], max_ttl=current_app.config['REDIS_TTL_CAP'])
         return jsonify({'forums' : resources, 'cursor' : newCursor, 'end' : end}), 200
 
@@ -391,15 +440,29 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
             pipe.execute()
         return jsonify({'forums' : None, 'cursor' : cursor, 'end' : True})
 
-    end: bool = True
-    if len(forums) >= 6:
-        end = False
+    end: bool = len(forums) < 6
+    if not end:
         forums.pop(-1)
 
     newCursor: str = base64.b64encode(str(forums[-1].id).encode('utf-8')).decode()
     _forums = [rediserialize(forum.__json_like__()) for forum in forums]
 
-    # Group cache
+    # Update _forums with global counters
+    for forum in _forums:
+        counter_names.extend([f'forum:{forum["id"]}:posts', f'forum:{forum["id"]}:subscribers', f'forum:{forum["id"]}:admin_count'])
+    global_counters = fetch_global_counters(RedisInterface, *counter_names)
+    forum_idx: int = 0
+    # Update with global counters
+    for i in range(0, len(global_counters), 3):
+        if global_counters[i] is not None:  # Forum posts
+            _forums[forum_idx]['posts'] = global_counters[i]
+        if global_counters[i+1] is not None:  # Forum subscribers
+            _forums[forum_idx]['subscribers'] = global_counters[i+1]
+        if global_counters[i+2] is not None:  # Forum admins
+            _forums[forum_idx]['admins'] = global_counters[i+2]
+        forum_idx+=1
+
+    # Group cache with updated counters
     cache_grouped_resource(RedisInterface, cacheKey, 'forum', {forum['id']:forum for forum in _forums},
                            current_app.config['REDIS_TTL_WEAK'], current_app.config['REDIS_TTL_STRONG'],
                            cursor=newCursor, end=end)
@@ -419,10 +482,24 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
             raise BadRequest("Failed to load more animes. Please refresh this page")
     
     cacheKey: str = f'profile:{user_id}:animes:{cursor}'
-    resource, end, newCursor = fetch_group_resources(RedisInterface, cacheKey)
-    if resource and all(resource):
+    counter_names: list[str] = []
+    global_counters: list[int] = []
+
+    resources, end, newCursor = fetch_group_resources(RedisInterface, cacheKey)
+    if resources and all(resources):
+        # Fetch updated global counters if in memory
+        for resource in resources:  # Prep name list in advance
+            counter_names.append(f'anime:{resource["id"]}:members')
+
+        global_counters = fetch_global_counters(RedisInterface, *counter_names)
+        # Update with global counters
+        for anime_idx, counter in enumerate(global_counters):
+            if counter is not None:  # Anime members
+                resources[anime_idx]['members'] = counter
+            anime_idx+=1
+
         promote_group_ttl(RedisInterface, cacheKey, current_app.config['REDIS_TTL_PROMOTION'], current_app.config['REDIS_TTL_CAP'])
-        return jsonify({'animes' : resource, 'cursor' : newCursor, 'end' : end}), 200
+        return jsonify({'animes' : resources, 'cursor' : newCursor, 'end' : end}), 200
 
     try:
         user: User = db.session.execute(select(User)
@@ -448,7 +525,17 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
     newCursor: str = base64.b64encode(str(animes[-1].id).encode('utf-8')).decode()
     _animes = [rediserialize(anime.__json_like__()) for anime in animes]
 
-    # Cache as a group
+    for anime in _animes:  # Prep name list in advance
+        counter_names.append(f'anime:{anime["id"]}:members')
+
+        global_counters = fetch_global_counters(RedisInterface, *counter_names)
+        # Update with global counters
+        for anime_idx, counter in enumerate(global_counters):
+            if counter is not None:  # Anime members
+                _animes[anime_idx]['members'] = counter
+            anime_idx+=1
+
+    # Cache as a group with updated counters
     cache_grouped_resource(RedisInterface, cacheKey, 'anime', {anime['id']:anime for anime in _animes}, current_app.config['REDIS_TTL_WEAK'], current_app.config['REDIS_TTL_STRONG'], newCursor, end)
     return jsonify({'animes' : _animes, 'cursor' : newCursor, 'end' : end})
 
