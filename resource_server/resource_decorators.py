@@ -30,7 +30,6 @@ def token_required(endpoint):
         
         if alg != 'ES256':
             raise Unauthorized("Invalid token, unsupported algorithm claim")
-        
         try: 
             decodedToken: dict = None
             if tokenKID in current_app.config['KEY_VK_MAPPING']:
@@ -42,7 +41,7 @@ def token_required(endpoint):
             # Possibly new KID, ping auth server
             else:
                 # Update current mapping through global JWKS mapping
-                new_mapping: dict[str, bytes] = poll_global_key_mapping(RedisInterface)                
+                current_app.config['KEY_VK_MAPPING'] = poll_global_key_mapping(RedisInterface)                
 
                 if tokenKID not in current_app.config['KEY_VK_MAPPING']:
                     raise Unauthorized('Invalid Key ID, no such key was found. Please login again')
