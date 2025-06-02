@@ -25,32 +25,16 @@ class ForumSubscription(db.Model):
     forum_id = db.Column(db.Integer, db.ForeignKey("forums.id", ondelete='CASCADE'), primary_key=True)
     time_subscribed = db.Column(db.TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
-
 class AnimeSubscription(db.Model):
     __tablename__ = "anime_subscriptions"
     user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
     anime_id = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
-
-
-class CommentVote(db.Model):
-    __tablename__ = "comment_votes"
-    voter_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
-    comment_id = db.Column(db.BigInteger, db.ForeignKey("comments.id"), primary_key=True)
-    vote = db.Column(db.Boolean, nullable=False)
-
-
-class CommentReport(db.Model):
-    __tablename__ = "comment_reports"
-    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
-    comment_id = db.Column(db.BigInteger, db.ForeignKey("comments.id", ondelete='CASCADE'), primary_key=True)
-
 
 class PostVote(db.Model):
     __tablename__ = "post_votes"
     voter_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
     post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id", ondelete='CASCADE'), primary_key=True)
     vote = db.Column(db.Boolean, nullable=False)
-
 
 class PostSave(db.Model):
     __tablename__ = "post_saves"
@@ -76,19 +60,16 @@ class PostReport(db.Model):
     report_description = db.Column(VARCHAR(256), nullable = False)
     report_tag = db.Column(REPORT_TAGS, nullable=False)
 
-
 class StreamLink(db.Model):
     __tablename__ = "stream_links"
     anime_id = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
     url = db.Column(db.String(256), primary_key=True, nullable=False)
     website = db.Column(db.String(128), nullable=False)
 
-
 class AnimeGenre(db.Model):
     __tablename__ = "anime_genres"
     anime_id = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
     genre_id = db.Column(db.SmallInteger, db.ForeignKey("genres.id", ondelete='CASCADE'), primary_key=True)
-
 
 ADMIN_ROLES = ENUM("admin", "super", "owner", name="ADMIN_ROLES", create_type=True)
 class AdminRoles(Enum):
