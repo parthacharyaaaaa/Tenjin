@@ -57,7 +57,7 @@ def create_post() -> tuple[Response, int]:
 
     # Write through can't be done here, since insertions is async. Incrementing the sequence would defeat the purpose of the stream anyways, so yeah :/
     update_global_counter(RedisInterface, f'forum:{forumID}:posts', 1, db, Forum.__tablename__, 'posts', forumID)   # Counter for posts in this forum
-    update_global_counter(RedisInterface, f'user:{g.DECODED_TOKEN['sid']}:total_posts', 1, db, User.__tablename__, 'total_posts', g.DECODED_TOKEN['sid']) # Counter for posts made by this user
+    update_global_counter(RedisInterface, f'user:{g.DECODED_TOKEN["sid"]}:total_posts', 1, db, User.__tablename__, 'total_posts', g.DECODED_TOKEN['sid']) # Counter for posts made by this user
 
     return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
 
@@ -218,11 +218,11 @@ def delete_post(post_id: int) -> Response:
     
     # Decrement global counters
     update_global_counter(RedisInterface, f'forum:{post.forum_id}:posts', -1, db, Forum.__tablename__, 'posts', post.forum_id)   # Counter for posts in this forum
-    update_global_counter(RedisInterface, f'user:{g.DECODED_TOKEN['sid']}:total_posts', -1, db, User.__tablename__, 'total_posts', g.DECODED_TOKEN['sid']) # Counter for posts made by this user
+    update_global_counter(RedisInterface, f'user:{g.DECODED_TOKEN["sid"]}:total_posts', -1, db, User.__tablename__, 'total_posts', g.DECODED_TOKEN['sid']) # Counter for posts made by this user
    
     # Overwrite any existing cached entries for this post with 404 mapping, and then expire ephemerally
     hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
-    return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False)}), 200
+    return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, forum_name = redirectionForum)}), 200
 
 @post.route("/<int:post_id>/vote", methods=["PATCH"])
 @token_required
