@@ -31,14 +31,12 @@ def create_app() -> Flask:
     ### Blueprints registaration ###
     from resource_server.blueprint_forum import forum
     from resource_server.blueprint_user import user
-    from resource_server.blueprint_config import config
     from resource_server.blueprint_posts import post
     from resource_server.blueprint_animes import anime
     from resource_server.blueprint_templates import templates
     from resource_server.blueprint_misc import misc
     app.register_blueprint(forum)
     app.register_blueprint(user)
-    app.register_blueprint(config)
     app.register_blueprint(post)
     app.register_blueprint(templates)
     app.register_blueprint(anime)
