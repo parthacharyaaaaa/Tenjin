@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostVote, PostReport, Comment, ReportTags
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
-from resource_server.resource_auxillary import update_global_counter
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters
 from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 
@@ -65,13 +65,26 @@ def create_post() -> tuple[Response, int]:
 @pass_user_details
 def get_post(post_id : int) -> tuple[Response, int]:
     cacheKey: str = f'post:{post_id}'
+    fetch_relation: bool = 'fetch_relation' in request.args and g.REQUESTING_USER
     post_mapping: Optional[dict[str, Any]] = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
+    
+    # Fetch global counters if in memory
+    global_score, global_comments, global_saves = fetch_global_counters(RedisInterface, f'post:{post_id}:score', f'post:{post_id}:total_comments', f'post:{post_id}:saves')
 
     if post_mapping:
         if '__NF__' in post_mapping:
             raise NotFound('No post with this ID could be found')
+        
+        # Update fetched mapping with global counters
+        if global_score is not None:
+            post_mapping['score'] = global_score
+        if global_saves is not None:
+            post_mapping['saves'] = global_saves
+        if global_comments is not None:
+            post_mapping['comments'] = global_comments
 
     else:
+        # Cache miss
         try:
             resultSet: Row = db.session.execute(select(Post, User.deleted)
                                                    .join(Post, Post.author_id == User.id)
@@ -85,6 +98,16 @@ def get_post(post_id : int) -> tuple[Response, int]:
             post_mapping = rediserialize(fetchedPost.__json_like__())
             if anonymize:
                 post_mapping['author_id'] = None
+            
+            # Update fetched mapping with global counters
+            if global_score is not None:
+                post_mapping['score'] = global_score
+            if global_saves is not None:
+                post_mapping['saves'] = global_saves
+            if global_comments is not None:
+                post_mapping['comments'] = global_comments
+
+            # Cache with updated counters
             hset_with_ttl(RedisInterface, cacheKey, post_mapping, current_app.config['REDIS_TTL_STRONG'])
 
         except SQLAlchemyError: genericDBFetchException()
