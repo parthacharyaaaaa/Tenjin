@@ -8,14 +8,14 @@ from werkzeug import Response
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized
 from auxillary.decorators import enforce_json
 from auxillary.utils import hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
-from resource_server.resource_auxillary import processUserInfo
+from resource_server.resource_auxillary import processUserInfo, fetch_global_counters
 from resource_server.external_extensions import RedisInterface, hset_with_ttl
 from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum, ForumSubscription, Anime, AnimeSubscription
 from resource_server.scripts.mail import enqueueEmail
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from redis.exceptions import RedisError
 from uuid import uuid4
 import base64
@@ -248,13 +248,20 @@ def update_password(temp_url: str) -> Response:
                     "_links" : {"login" : {"href" : url_for("templates.login")}}})
 
 @user.route("/<int:user_id>", methods=["GET"])
-def get_users(user_id: int) -> tuple[Response, int]:
-    cacheKey: str = f'users:{user_id}'
+def get_user(user_id: int) -> tuple[Response, int]:
+    cacheKey: str = f'user:{user_id}'
     userMapping: dict[str, str|int] = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
+    global_posts_count, global_comments_count = fetch_global_counters(RedisInterface, f'{cacheKey}:total_posts', f'{cacheKey}:total_comments')
 
     if userMapping:
         if '__NF__' in userMapping:
             raise NotFound('No user with this ID exists')
+        
+        # Update with global counters
+        if global_comments_count is not None:
+            userMapping['comments'] = global_comments_count
+        if global_posts_count is not None:
+            userMapping['posts'] = global_posts_count
         return jsonify({'user' : userMapping})        
 
     # Fallback to DB
@@ -269,6 +276,11 @@ def get_users(user_id: int) -> tuple[Response, int]:
         userMapping = rediserialize(user.__json_like__())
     except SQLAlchemyError: genericDBFetchException()
 
+    # Update with global counters
+    if global_comments_count is not None:
+        userMapping['comments'] = global_comments_count
+    if global_posts_count is not None:
+        userMapping['posts'] = global_posts_count
     hset_with_ttl(RedisInterface, cacheKey, userMapping, current_app.config['REDIS_TTL_STRONG'])
     return jsonify({'user' : userMapping}), 200
 
