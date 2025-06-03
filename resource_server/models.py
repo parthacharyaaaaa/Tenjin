@@ -108,7 +108,7 @@ class User(db.Model):
     id: int = db.Column(BIGINT, nullable = False, autoincrement=True)
     username: str = db.Column(VARCHAR(64), nullable = False, unique=True, index=True)
     email: str = db.Column(VARCHAR(320), nullable = False, unique=True, index=True)
-    rtfb: bool = db.Column(BOOLEAN, server_default=text('false'), nullable = False)
+    rtbf: bool = db.Column(BOOLEAN, server_default=text('false'), nullable = False)
 
     pfp: str = db.Column(VARCHAR(256))
 
