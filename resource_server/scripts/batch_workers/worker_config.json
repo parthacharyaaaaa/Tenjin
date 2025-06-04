@@ -1,19 +1,22 @@
 {
-    "wait" : 1,
+    "wait" : 3,
     "backoff_seq" : [0.1, 0.5, 1, 2, 3],
-    "insert_stream" : "INSERTIONS",
+
+    "insert_stream" : "INSERTIONS", 
     "insert_batch_size" : 100,
+
     "weak_insert_stream" : "WEAK_INSERTIONS",
     "weak_insert_batch_size" : 100,
     "delete_batch_size" : 100,
+
     "weak_delete_stream" : "WEAK_DELETIONS",
     "weak_delete_batch_size" : 100,
+
     "soft_delete_stream" : "SOFT_DELETIONS",
     "soft_delete_batch_size" : 100,
+
     "user_activity_delete_stream" : "USER_ACTIVITY_DELETIONS",
     "user_activity_delete_batch_size" : 100,
-    "update_stream" : "UPDATIONS",
-    "update_batch_size" : 100,
     
     "counter_metadata" : {
         "posts" : ["score", "saves", "reports", "total_comments"],
