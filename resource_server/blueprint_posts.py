@@ -56,6 +56,10 @@ def create_post() -> tuple[Response, int]:
     RedisInterface.xadd("INSERTIONS", rediserialize(post.__attrdict__()) | {'table' : Post.__tablename__})
 
     # Write through can't be done here, since insertions is async. Incrementing the sequence would defeat the purpose of the stream anyways, so yeah :/
+    update_global_counter(interface=RedisInterface, delta=1, database=db, table=Forum.__tablename__, column='posts', identifier=forumID)    
+    update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='total_posts', identifier=g.DECODED_TOKEN['sid'])    
+
+
     update_global_counter(RedisInterface, f'forum:{forumID}:posts', 1, db, Forum.__tablename__, 'posts', forumID)   # Counter for posts in this forum
     update_global_counter(RedisInterface, f'user:{g.DECODED_TOKEN["sid"]}:total_posts', 1, db, User.__tablename__, 'total_posts', g.DECODED_TOKEN['sid']) # Counter for posts made by this user
 
@@ -115,7 +119,7 @@ def get_post(post_id : int) -> tuple[Response, int]:
     # post_mapping has been fetched, either from cache or DB. Start constructing final JSON response
     res: dict[str, dict] = {'post' : post_mapping}
 
-    if g.REQUESTING_USER and 'fetch_relation' in request.args:
+    if fetch_relation:
         # Check for user's relationships to the post as well
         postSaved, postVoted = False, None
 
@@ -203,7 +207,7 @@ def edit_post(post_id : int) -> tuple[Response, int]:
     # Enforce write-through
     cacheKey: str = f'post:{post_id}'
     if RedisInterface.hgetall(cacheKey):
-        #NOTE: The hashmap for 404 ({'__NF__' : '-1'}) would logically never be encountered since control reaching here indicates that the post obviously exists, hence we can directly check for empty maps
+        #NOTE: The hashmap for 404 ({'__NF__' : '-1'}) would logically never be encountered since control reaching here indicates that the post obviously exists
         hset_with_ttl(RedisInterface, cacheKey, updatedPost.__json_like__(), current_app.config['REDIS_TTL_STRONG'])
 
     return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected",
@@ -240,9 +244,9 @@ def delete_post(post_id: int) -> Response:
         redirectionForum: str = db.session.execute(select(Forum._name).where(Forum.id == post.forum_id)).scalar_one()
     
     # Decrement global counters
-    update_global_counter(RedisInterface, f'forum:{post.forum_id}:posts', -1, db, Forum.__tablename__, 'posts', post.forum_id)   # Counter for posts in this forum
-    update_global_counter(RedisInterface, f'user:{g.DECODED_TOKEN["sid"]}:total_posts', -1, db, User.__tablename__, 'total_posts', g.DECODED_TOKEN['sid']) # Counter for posts made by this user
-   
+    update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='posts', identifier=post.forum_id)    
+    update_global_counter(interface=RedisInterface, delta=-1, database=db, table=User.__tablename__, column='total_posts', identifier=g.DECODED_TOKEN['sid'])    
+
     # Overwrite any existing cached entries for this post with 404 mapping, and then expire ephemerally
     hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
     return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, forum_name = redirectionForum)}), 200
@@ -292,9 +296,8 @@ def vote_post(post_id: int) -> tuple[Response, int]:
     delta: int = 2 if bSwitchVote else 1
     if not vote: delta*=-1  # Negative vote for downvote
 
-    # Insert new WE
+    update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id)
     RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__}) # Add post_votes record to insertion queue
-    update_global_counter(RedisInterface, f'post:{post_id}:score', delta, db, Post.__tablename__, 'score', post_id) # Update counter for this post's score
     RedisInterface.set(cacheKey, vote, ex=current_app.config['REDIS_TTL_EPHEMERAL'])    # Ephemerally cache that bad boy
 
     return jsonify({"message" : "Voted!"}), 202
@@ -312,7 +315,8 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
 
     delta: int = -1 if PostVote.vote else 1
-    update_global_counter(RedisInterface, f'post:{post_id}:score', delta, db, Post.__tablename__, 'score', post_id)
+    
+    update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id)    
     RedisInterface.xadd("WEAK_DELETIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostVote.__tablename__})
 
     return jsonify({"message" : "Removed vote!"}), 202
@@ -386,7 +390,7 @@ def save_post(post_id: int) -> tuple[Response, int]:
             return jsonify({'message' : 'post already saved'}), 200
     except SQLAlchemyError: genericDBFetchException()
     
-    update_global_counter(RedisInterface, f"post:{post_id}:saves", 1, db, Post.__tablename__, 'saves', post_id)
+    update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)    
     RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})
     # Ephemerally set save flag
     RedisInterface.set(f"saves:{post_id}:{g.DECODED_TOKEN['sid']}", 1, current_app.config['REDIS_TTL_EPHEMERAL'])
@@ -405,7 +409,7 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
             return jsonify({'message' : 'post not saved'}), 200
     except SQLAlchemyError: genericDBFetchException()
 
-    update_global_counter(RedisInterface, f"post:{post_id}:saves", -1, db, Post.__tablename__, 'saves', post_id)    # Update global counter for this post's saves
+    update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)    
     RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})  # Queue post_saves record for deletion
     RedisInterface.set(f"saves:{post_id}:{g.DECODED_TOKEN['sid']}", 0, current_app.config['REDIS_TTL_EPHEMERAL']) # Ephemerally set save flag to False
     
@@ -440,7 +444,8 @@ def report_post(post_id: int) -> tuple[Response, int]:
             return jsonify({'message' : 'post reported already'}), 409
     except SQLAlchemyError: genericDBFetchException()
 
-    update_global_counter(RedisInterface, f'post:{post_id}:reports', 1, db, Post.__tablename__, 'reports', post_id) # Update report counter for this post
+    # Incremenet global counter for reports on this post and insert record into post_reports
+    update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='reports', identifier=post_id)    
     RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'report_tag' : reportTag, 'table' : PostReport.__tablename__})   # Queue insertion for post_reports
     
     return jsonify({"message" : "Reported!"}), 202
@@ -466,10 +471,10 @@ def comment_on_post(post_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
     comment: Comment = Comment(g.DECODED_TOKEN['sid'], post.forum_id, datetime.now(), commentBody.strip(), post_id, None, None)
 
-    # Update global counters for this post, and commenting user's 'total_comments' columns
-    update_global_counter(RedisInterface, f'post:{post_id}:total_comments', 1, db, Post.__tablename__, 'total_comments', post_id)
-    update_global_counter(RedisInterface, f'user:{g.DECODED_TOKEN["sid"]}:total_comments', 1, db, User.__tablename__, 'total_comments', g.DECODED_TOKEN['sid'])
-
+    # Increment global counters for this post, and commenting user's 'total_comments' columns
+    update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='total_comments', identifier=post_id)
+    update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='total_comments', identifier=g.DECODED_TOKEN['sid'])
+    
     # Queue insertion of new comment
     RedisInterface.xadd('INSERTIONS', rediserialize(comment.__attrdict__()) | {'table' : Comment.__tablename__})
 
@@ -550,8 +555,8 @@ def delete_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
             raise Unauthorized('You do not have the necessary permissions to delete this comment')
     
     # Decrement global counters for this post, and the user's total comments
-    update_global_counter(RedisInterface, f'post:{post_id}:total_comments', -1, db, Post.__tablename__, 'total_comments', post_id)
-    update_global_counter(RedisInterface, f'user:{g.DECODED_TOKEN["sid"]}:total_comments', -1, db, User.__tablename__, 'total_comments', g.DECODED_TOKEN['sid'])
+    update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Post.__tablename__, column='total_comments', identifier=post_id)
+    update_global_counter(interface=RedisInterface, delta=-1, database=db, table=User.__tablename__, column='total_comments', identifier=g.DECODED_TOKEN['sid'])
     # Queue comment for soft deletion
     RedisInterface.xadd('SOFT_DELETIONS', {'id' : comment_id, 'table' : Comment.__tablename__})
 

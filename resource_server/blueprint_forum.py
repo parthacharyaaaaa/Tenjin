@@ -283,7 +283,7 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Mandatory claim "sid" missing in token. Please login again')
 
-    update_global_counter(RedisInterface, f"forum:{forum_id}:admins", 1, db, Forum.__tablename__, 'admins', forum_id)   # Increment admin counter for this forum by 1
+    update_global_counter(interface=RedisInterface, delta=1, database=db, table=Forum.__tablename__, column='admin_count', identifier=forum_id)
     RedisInterface.xadd('WEAK_INSERTIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : newAdminID, 'role' : newAdminRole})  # Queue forum_admins record for insertion
     return jsonify({"message" : "Added new admin", "userID" : newAdminID, "role" : newAdminRole}), 202
 
@@ -320,8 +320,8 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Mandatory claim "sid" missing in token. Please login again')
 
-    # Add WE entry in advance
-    update_global_counter(RedisInterface, f"forum:{forum_id}:admins", -1, db, Forum.__tablename__, 'admins', forum_id)   # Increment admin counter for this forum by 1
+    # Decrement global admin count and delete forum_admins record
+    update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='admin_count', identifier=forum_id)
     RedisInterface.xadd('WEAK_DELETIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : targetAdminID})
     return jsonify({"message" : "Removed admin", "userID" : targetAdminID}), 202
 
@@ -408,7 +408,7 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Invalid token, please login again')
 
-    update_global_counter(RedisInterface, f'forum:{forum_id}:subscribers', 1, db, Forum.__tablename__, 'subscribers', forum_id)
+    update_global_counter(interface=RedisInterface, delta=1, database=db, table=Forum.__tablename__, column='subscribers', identifier=forum_id)
     RedisInterface.xadd("WEAK_INSERTIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
     return jsonify({'message' : 'subscribed!'}), 200
 
@@ -427,8 +427,7 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Invalid token, please login again')
 
-    subCounterKey: str = RedisInterface.hget(f'{Forum.__tablename__}:subscribers', forum_id)
-    update_global_counter(RedisInterface, f'forum:{forum_id}:subscribers', -1, db, Forum.__tablename__, 'subscribers', forum_id)
+    update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='subscribers', identifier=forum_id)
     RedisInterface.xadd("WEAK_DELETIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
     return jsonify({'message' : 'unsubscribed!'}), 200
 
