@@ -8,6 +8,17 @@
     "delete_batch_size" : 100,
     "weak_delete_stream" : "WEAK_DELETIONS",
     "weak_delete_batch_size" : 100,
+    "soft_delete_stream" : "SOFT_DELETIONS",
+    "soft_delete_batch_size" : 100,
+    "user_activity_delete_stream" : "USER_ACTIVITY_DELETIONS",
+    "user_activity_delete_batch_size" : 100,
     "update_stream" : "UPDATIONS",
-    "update_batch_size" : 100
+    "update_batch_size" : 100,
+    
+    "counter_metadata" : {
+        "posts" : ["score", "saves", "reports", "total_comments"],
+        "forums" : ["subscribers", "admins", "admin_count"],
+        "animes" : ["members"],
+        "user" : ["aura", "total_comments", "total_posts"]
+    }
 }
