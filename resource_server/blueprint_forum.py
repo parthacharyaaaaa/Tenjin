@@ -6,7 +6,7 @@ from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, For
 from resource_server.resource_decorators import token_required, pass_user_details
 from resource_server.resource_auxillary import update_global_counter, fetch_global_counters
 from resource_server.external_extensions import RedisInterface, hset_with_ttl
-from sqlalchemy import select, update, insert, desc
+from sqlalchemy import select, update, insert, desc, Row
 from sqlalchemy.exc import SQLAlchemyError
 
 from typing import Any
@@ -207,30 +207,31 @@ def create_forum() -> tuple[Response, int]:
 @token_required
 @enforce_json
 def delete_forum(forum_id: int) -> Response:
-    cacheKey: str = f'forum:{forum_id}'
+    cache_key: str = f'{Forum.__tablename__}:{forum_id}'
+    # Check for 404 sentinal value
+    if RedisInterface.hget(cache_key, '__NF__') == '-1':
+        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+        raise NotFound(f'No forum with ID {forum_id} exists')
+    
     confirmationText: str = g.REQUEST_JSON.get('confirmation')
     if not confirmationText:
         raise BadRequest('Please enter the name of the forum to follow through with deletion')
     try:
         # Check existence of this forum
-        delForum: Forum = db.session.execute(select(Forum)
-                                          .where((Forum.id == forum_id) & (Forum.deleted == False))
-                                          ).scalar_one_or_none()
-        if not delForum:
+        _res: Row = db.session.execute(select(Forum, ForumAdmin)
+                                       .outerjoin(ForumAdmin, (ForumAdmin.forum_id == forum_id) & (ForumAdmin.role == 'owner') & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
+                                       .where(Forum.id == forum_id)).first()
+        if not _res:
             # Broadcast non-existence
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            hset_with_ttl(RedisInterface, cache_key, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
             raise NotFound(f'No forum with id {forum_id} found. Perhaps you already deleted it?')
         
-        if(delForum._name != confirmationText):
+        target_forum, owner = _res
+        if not owner:
+            raise Forbidden("You do not have the necessary permissions to delete this forum")
+        if(target_forum._name != confirmationText):
             raise BadRequest('Please enter the forum title correctly, as it is')
         
-        # Check to see if user is owner or superuser
-        userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
-                                                   .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
-                                                   ).scalar_one_or_none()
-        if not userAdmin or userAdmin.role != 'owner':
-            raise Forbidden("You do not have the necessary permissions to delete this forum")
-
     except SQLAlchemyError: raise genericDBFetchException()
     except KeyError: raise BadRequest("Missing mandatory field 'sid', please login again")
 
@@ -238,10 +239,10 @@ def delete_forum(forum_id: int) -> Response:
     RedisInterface.xadd("SOFT_DELETIONS", {'id' : forum_id, 'table' : Forum.__tablename__})
     
     # Broadcast deletion
-    hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK'])
+    hset_with_ttl(RedisInterface, cache_key, {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK'])
     res = {'message' : 'forum deleted'}
     if 'redirect' in request.args:
-        res['redirect'] = url_for('templates.view_anime', anime_id = delForum.anime)
+        res['redirect'] = url_for('templates.view_anime', anime_id = _res.anime)
     return jsonify(res), 200
 
 @forum.route("/<int:forum_id>/admins", methods=['POST'])
@@ -394,16 +395,22 @@ def check_admin_permissions(forum_id: int) -> tuple[Response, int]:
 @forum.route("/<int:forum_id>/subscribe", methods=['PATCH'])
 @token_required
 def subscribe_forum(forum_id: int) -> tuple[Response, int]:
+    cache_key: str = f'{Forum.__tablename__}:{forum_id}'
+    # Check for 404 sentinal value
+    if RedisInterface.hget(cache_key, '__NF__') == '-1':
+        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+        raise NotFound(f'No forum with ID {forum_id} exists')
+    
     try:
-        subbedForum: ForumSubscription = db.session.execute(select(ForumSubscription)
-                                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))
-                                                            ).scalar_one_or_none()
-        if subbedForum:
-            print(1)
-            return jsonify({'message' : 'Already subscribed to this forum'}), 204
-        _forum = db.session.execute(select(Forum)
-                                    .where(Forum.id == forum_id)
-                                    ).scalar_one()
+        _res: Row = db.session.execute(select(Forum)
+                                       .outerjoin(ForumSubscription, (ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))
+                                       .where(Forum.id == forum_id)).first()
+        if not _res:
+            hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Ephemeral announcement
+            raise NotFound(f'No forum with ID {forum_id} exists')
+
+        if _res[1]:
+            raise Conflict('Forum already subscribed')
 
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Invalid token, please login again')
@@ -414,15 +421,23 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
 
 @forum.route("/<int:forum_id>/unsubscribe", methods=['PATCH'])
 @token_required
-def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
+def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:    
+    cache_key: str = f'{Forum.__tablename__}:{forum_id}'
+    # Check for 404 sentinal value
+    if RedisInterface.hget(cache_key, '__NF__') == '-1':
+        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+        raise NotFound(f'No forum with ID {forum_id} exists')
+    
     try:
-        subbedForum: ForumSubscription = db.session.execute(select(ForumSubscription)
-                                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
-        if not subbedForum:
-            return jsonify({'message' : 'You have not subscribed to this forum'}), 204
-        _forum = db.session.execute(select(Forum)
-                                    .where(Forum.id == forum_id)
-                                    ).scalar_one()
+        _res: Row = db.session.execute(select(Forum)
+                                       .outerjoin(ForumSubscription, (ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))
+                                       .where(Forum.id == forum_id)).first()
+        if not _res:
+            hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Ephemeral announcement
+            raise NotFound(f'No forum with ID {forum_id} exists')
+
+        if not _res[1]:
+            raise Conflict('Forum already unsubscribed')
         
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Invalid token, please login again')
