@@ -6,7 +6,7 @@ from resource_server.external_extensions import RedisInterface, hset_with_ttl
 from resource_server.resource_decorators import token_required
 from resource_server.models import db, Anime, AnimeGenre, Genre, StreamLink, Forum, AnimeSubscription
 from auxillary.utils import genericDBFetchException, rediserialize, consult_cache
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, func, Row
 from sqlalchemy.exc import SQLAlchemyError
 from flask_sqlalchemy import SQLAlchemy
 import base64
@@ -89,25 +89,24 @@ def get_random_anime():
 def sub_anime(anime_id: int) -> tuple[Response, int]:
     cacheKey: str = f'{Anime.__tablename__}:{anime_id}'
     res = RedisInterface.hgetall(cacheKey)
-    if '__NF__' in res:
+    if RedisInterface.hget(cacheKey, '__NF__') == '-1':
+        hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL']) # Reannounce non-existence
         raise NotFound(f'No anime with ID {anime_id} exists')
     try:
-        anime = db.session.execute(select(Anime)
-                                   .where(Anime.id == anime_id)
-                                   ).scalar_one_or_none()
-        if not anime:
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'], False)
+        _res: Row = db.session.execute(select(Anime, AnimeSubscription)
+                                       .outerjoin(AnimeSubscription, (AnimeSubscription.anime_id == anime_id) & (AnimeSubscription.user_id == g.DECODED_TOKEN['sid']))
+                                       .where(Anime.id == anime_id)).first()
+        if not _res:
+            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL']) # Reannounce non-existence
             raise NotFound(f'No anime with ID {anime_id} exists')
-        anime_subscription: AnimeSubscription = db.session.execute(select(AnimeSubscription)
-                                                                   .where((AnimeSubscription.anime_id == anime_id) & (AnimeSubscription.user_id == g.DECODED_TOKEN.get('sid')))
-                                                                   ).scalar_one_or_none()
-        if anime_subscription:
+
+        if _res[1]:
             raise Conflict("You are already subscribed to this anime")
     except SQLAlchemyError: genericDBFetchException()
 
     # Increment global count for animes.members and insert new record to anime_subscriptions
     update_global_counter(interface=RedisInterface, delta=1, database=db, table=Anime.__tablename__, column='members', identifier=anime_id)
-    RedisInterface.xadd("WEAK_INSERTIONS", {'user_id' : g.decodedToken['sid'], 'anime_id' : anime_id, 'table' : AnimeSubscription.__tablename__})
+    RedisInterface.xadd("WEAK_INSERTIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'anime_id' : anime_id, 'table' : AnimeSubscription.__tablename__})
     
     return jsonify({'message' : 'subscribed!'}), 202
 
@@ -116,29 +115,26 @@ def sub_anime(anime_id: int) -> tuple[Response, int]:
 def unsub_anime(anime_id: int) -> tuple[Response, int]:
     cacheKey: str = f'{Anime.__tablename__}:{anime_id}'
     res = RedisInterface.hgetall(cacheKey)
-    if '__NF__' in res:
+    if RedisInterface.hget(cacheKey, '__NF__') == '-1':
+        hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL']) # Reannounce non-existence
         raise NotFound(f'No anime with ID {anime_id} exists')
-    
     try:
-        anime = db.session.execute(select(Anime)
-                                   .where(Anime.id == anime_id)
-                                   ).scalar_one_or_none()
-        if not anime:
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'], False)
+        _res: Row = db.session.execute(select(Anime, AnimeSubscription)
+                                       .outerjoin(AnimeSubscription, (AnimeSubscription.anime_id == anime_id) & (AnimeSubscription.user_id == g.DECODED_TOKEN['sid']))
+                                       .where(Anime.id == anime_id)).first()
+        if not _res:
+            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL']) # Reannounce non-existence
             raise NotFound(f'No anime with ID {anime_id} exists')
 
-        anime_subscription: AnimeSubscription = db.session.execute(select(AnimeSubscription)
-                                                                   .where((AnimeSubscription.anime_id == anime_id) & (AnimeSubscription.user_id == g.DECODED_TOKEN.get('sid')))
-                                                                   ).scalar_one_or_none()
-        if not anime_subscription:
-            raise Conflict('You are not subscribed to this anime')
+        if not _res[1]:
+            raise Conflict("You are not subscribed to this anime")
     except SQLAlchemyError: genericDBFetchException()
 
     # Decrement anime.members count and delete the existing anime_subscriptions record
     update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Anime.__tablename__, column='members', identifier=anime_id)
-    RedisInterface.xadd("WEAK_DELETIONS", {'user_id' : g.decodedToken['sid'], 'anime_id' : anime_id, 'table' : AnimeSubscription.__tablename__})
+    RedisInterface.xadd("WEAK_DELETIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'anime_id' : anime_id, 'table' : AnimeSubscription.__tablename__})
     
-    return jsonify({'message' : 'unsubscribed!'})
+    return jsonify({'message' : 'unsubscribed!'}), 202
     
 @anime.route("/")
 def get_animes() -> tuple[Response, int]:
