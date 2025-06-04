@@ -140,37 +140,32 @@ def processUserInfo(**kwargs) -> tuple[bool, dict]:
         print(format_exc())
         return False, {"error" : "Malformatted data, please validate data types of each field"}
   
-def update_global_counter(interface: Redis, counter_name: str, delta: int, db: SQLAlchemy, table: str, column: str, identifier: int | str, counter_expiry: int = 86400, hashmap_key: str = None) -> None:
+def update_global_counter(interface: Redis, delta: int, database: SQLAlchemy, table: str, column: str, identifier: int | str, hashmap_key: str = None) -> None:
     '''
-    Update the global counter
+    Update the global counter for a resource's field
     Args:
-        interface: Redis instance
-        counter_name: Name of the counter to be updated, in case an active counter is not found
+        interface: Redis instance connected to server holding the counters
         delta: Whether to increment or decrement the counter
-        db: SQLAlchemy instance to fetch data from in case the counter is absent in Redis, and a new one needs to be made
+        database: SQLAlchemy instance to fetch data from in case the counter is absent in Redis, and a new one needs to be made
         table: Table name for the entity to be updated
         column: Column of entity associated with the counter
         identifier: Unique ID to identify the target record
-        counter_expiry: TTL for counter
+        hashmap_key: Optional key name for hashmap. If not passed, constructed as table:column
     '''
     if not hashmap_key:
         hashmap_key: str = f'{table}:{column}'
-    counter_key: str = interface.hget(hashmap_key, identifier)
-    if counter_key:
-        interface.incrby(counter_key, delta)
+    counter = interface.hget(hashmap_key, identifier)
+    if counter:
+        interface.hincrby(hashmap_key, identifier, delta)
         return 
 
     # No counter, create one
-    currentCount: int = db.session.execute(text(f"SELECT {column} FROM {table} WHERE id = :identifier"), {'identifier':identifier}).scalar()
-    counter_key = counter_name
+    currentCount: int = database.session.execute(text(f"SELECT {column} FROM {table} WHERE id = :identifier"), {'identifier':identifier}).scalar()
     
-    op = interface.set(counter_key, currentCount+delta, nx=True, ex=counter_expiry)
-
+    op = interface.hsetnx(hashmap_key, identifier, currentCount)
     if not op:
-        # Counter made by another worker
-        interface.incrby(counter_key, delta)
-    else:
-        interface.hset(hashmap_key, identifier, counter_key)
+        # Counter made by another worker, update in place
+        interface.hincrby(hashmap_key, identifier, delta)
 
 def fetch_global_counters(interface: Redis, *counter_names: str) -> list[int]:
     counters: list[int] = []
