@@ -1,20 +1,20 @@
-from werkzeug.exceptions import BadRequest, NotFound
+from flask import Blueprint, g, jsonify, request, redirect, url_for, current_app
+from werkzeug import Response
+from werkzeug.exceptions import BadRequest, NotFound, Conflict
+from resource_server.resource_auxillary import update_global_counter
+from resource_server.external_extensions import RedisInterface, hset_with_ttl
+from resource_server.resource_decorators import token_required
+from resource_server.models import db, Anime, AnimeGenre, Genre, StreamLink, Forum, AnimeSubscription
+from auxillary.utils import genericDBFetchException, rediserialize, consult_cache
+from sqlalchemy import select, and_, func
+from sqlalchemy.exc import SQLAlchemyError
+from flask_sqlalchemy import SQLAlchemy
 import base64
 import binascii
 import ujson
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
-from resource_server.models import db, Anime, AnimeGenre, Genre, StreamLink, Forum, AnimeSubscription
-from sqlalchemy import select, and_, func
-from sqlalchemy.exc import SQLAlchemyError
-from flask_sqlalchemy import SQLAlchemy
-
-from auxillary.utils import genericDBFetchException, rediserialize, consult_cache
-from resource_server.resource_decorators import token_required
-
-from resource_server.external_extensions import RedisInterface
-from flask import Blueprint, Response, g, jsonify, request, redirect, url_for, current_app
 anime = Blueprint('animes', 'animes', url_prefix="/animes")
 
 RANDOMIZER_SQL = (select(Anime).where(Anime.id >= func.floor(func.random() * select(func.max(Anime.id)).scalar_subquery())).order_by(Anime.id).limit(50))
@@ -87,25 +87,29 @@ def get_random_anime():
 @anime.route("/<int:anime_id>/subscribe", methods=["PATCH"])
 @token_required
 def sub_anime(anime_id: int) -> tuple[Response, int]:
+    cacheKey: str = f'{Anime.__tablename__}:{anime_id}'
+    res = RedisInterface.hgetall(cacheKey)
+    if '__NF__' in res:
+        raise NotFound(f'No anime with ID {anime_id} exists')
     try:
-        anime = db.session.execute(select(Anime).where(Anime.id == anime_id)).scalar_one_or_none()
+        anime = db.session.execute(select(Anime)
+                                   .where(Anime.id == anime_id)
+                                   ).scalar_one_or_none()
         if not anime:
-            raise NotFound('No anime found with this ID')
+            hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            raise NotFound(f'No anime with ID {anime_id} exists')
+        anime_subscription: AnimeSubscription = db.session.execute(select(AnimeSubscription)
+                                                                   .where((AnimeSubscription.anime_id == anime_id) & (AnimeSubscription.user_id == g.DECODED_TOKEN.get('sid')))
+                                                                   ).scalar_one_or_none()
+        if anime_subscription:
+            raise Conflict("You are already subscribed to this anime")
     except SQLAlchemyError: genericDBFetchException()
-    subCounterKey: str = RedisInterface.hget(f'{Anime.__tablename__}:members', anime_id)
+
+    # Increment global count for animes.members and insert new record to anime_subscriptions
+    update_global_counter(interface=RedisInterface, delta=1, database=db, table=Anime.__tablename__, column='members', identifier=anime_id)
     RedisInterface.xadd("WEAK_INSERTIONS", {'user_id' : g.decodedToken['sid'], 'anime_id' : anime_id, 'table' : AnimeSubscription.__tablename__})
-    if subCounterKey:
-        RedisInterface.incr(subCounterKey)
-        return jsonify({'message' : 'subscribed!'})
     
-    subCounterKey = f'anime:{anime.id}:saves' 
-    op = RedisInterface.set(subCounterKey, anime.members+1, nx=True)
-    if not op:
-        RedisInterface.incr(subCounterKey)
-        return jsonify({'message' : 'subscribed!'})
-    
-    RedisInterface.hset(f"{Anime.__tablename__}:members", anime_id, subCounterKey)
-    return jsonify({'message' : 'subscribed!'})
+    return jsonify({'message' : 'subscribed!'}), 202
 
 @anime.route("/<int:anime_id>/unsubscribe", methods=["PATCH"])
 @token_required
