@@ -1,24 +1,22 @@
-from flask import Blueprint, Response, jsonify, g, url_for, request, current_app
-post = Blueprint("post", "post", url_prefix="/posts")
-
+from flask import Blueprint, jsonify, g, url_for, request, current_app
+from werkzeug import Response
+from werkzeug.exceptions import NotFound, BadRequest, Forbidden, Conflict
 from sqlalchemy import select, update, delete, Row
 from sqlalchemy.exc import SQLAlchemyError
-
 from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostVote, PostReport, Comment, ReportTags
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
 from resource_server.resource_auxillary import update_global_counter, fetch_global_counters
 from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
-
-from werkzeug.exceptions import NotFound, BadRequest, Forbidden
-
 from typing import Any, Optional
 from redis.exceptions import RedisError
 from resource_server.external_extensions import hset_with_ttl
 import base64
 import binascii
 from datetime import datetime
+
+post = Blueprint("post", "post", url_prefix="/posts")
 
 @post.route("/", methods=["POST", ])
 @enforce_json
@@ -68,7 +66,7 @@ def create_post() -> tuple[Response, int]:
 @post.route("/<int:post_id>", methods=["GET"])
 @pass_user_details
 def get_post(post_id : int) -> tuple[Response, int]:
-    cacheKey: str = f'post:{post_id}'
+    cacheKey: str = f'{Post._tablename__}:{post_id}'
     fetch_relation: bool = 'fetch_relation' in request.args and g.REQUESTING_USER
     post_mapping: Optional[dict[str, Any]] = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
     
@@ -161,6 +159,12 @@ def get_post(post_id : int) -> tuple[Response, int]:
 @enforce_json
 @token_required
 def edit_post(post_id : int) -> tuple[Response, int]:
+    cache_key: str = f'{Post.__tablename__}:{post_id}'
+    # Check for 404 sentinal value
+    if RedisInterface.hget(cache_key, '__NF__') == '-1':
+        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+        raise NotFound(f'No post with ID {post_id} exists')
+    
     # Ensure user is owner of this post
     owner: User = db.session.execute(select(User)
                                      .join(Post, Post.author_id == User.id)
@@ -205,10 +209,9 @@ def edit_post(post_id : int) -> tuple[Response, int]:
     db.session.commit()
 
     # Enforce write-through
-    cacheKey: str = f'post:{post_id}'
-    if RedisInterface.hgetall(cacheKey):
+    if RedisInterface.hgetall(cache_key):
         #NOTE: The hashmap for 404 ({'__NF__' : '-1'}) would logically never be encountered since control reaching here indicates that the post obviously exists
-        hset_with_ttl(RedisInterface, cacheKey, updatedPost.__json_like__(), current_app.config['REDIS_TTL_STRONG'])
+        hset_with_ttl(RedisInterface, cache_key, updatedPost.__json_like__(), current_app.config['REDIS_TTL_STRONG'])
 
     return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected",
                     "post_id" : post_id,
@@ -217,43 +220,64 @@ def edit_post(post_id : int) -> tuple[Response, int]:
 @post.route("/<int:post_id>", methods=["DELETE"])
 @token_required
 def delete_post(post_id: int) -> Response:
+    cache_key: str = f'{Post.__tablename__}:{post_id}'
+    # NOTE: We try to fetch the entire mapping, instead of just sentinal mapping to avoid querying DB for post on cache hits
+
+    post_mapping: dict = RedisInterface.hgetall(cache_key)
+    if post_mapping and '__NF__' in post_mapping:
+        raise NotFound(f'No post with ID {post_id} found') 
+    
     redirect: bool = 'redirect' in request.args
-    cacheKey: str = f'post:{post_id}'
+    # Ensure post exists in the first place
     try:
-        # Ensure post exists in the first place
-        post: Post = db.session.execute(select(Post)
-                                        .where(Post.id == post_id & (Post.deleted == False))
-                                        ).scalar_one_or_none()
-        if not post:
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
-            raise NotFound('Post does not exist')
+        if not post_mapping:
+            post: Post = db.session.execute(select(Post)
+                                            .where(Post.id == post_id & (Post.deleted.is_(False)))
+                                            ).scalar_one_or_none()
+            if not post:
+                hset_with_ttl(RedisInterface, cache_key, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+                raise NotFound('Post does not exist')
+            else:
+                post_mapping = post.__json_like__()
         
         # Ensure post author is the issuer of this request
-        if post.author_id != g.DECODED_TOKEN['sid']:
+        if int(post_mapping['author_id']) != g.DECODED_TOKEN['sid']:
             # Check if admin of this forum
-            forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == post.forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
+            forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
+                                                        .where((ForumAdmin.forum_id == int(post_mapping['forum'])) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
+                                                        ).scalar_one_or_none()
             if not forumAdmin:
                 raise Forbidden('You do not have the rights to alter this post as you are not its author')
-
     except SQLAlchemyError: genericDBFetchException()
 
-    # Post good to go for deletion
-    RedisInterface.xadd("SOFT_DELETIONS", {'id' : post_id, 'table' : Post.__tablename__})
-    
-    if redirect:
-        redirectionForum: str = db.session.execute(select(Forum._name).where(Forum.id == post.forum_id)).scalar_one()
-    
+
     # Decrement global counters
     update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='posts', identifier=post.forum_id)    
     update_global_counter(interface=RedisInterface, delta=-1, database=db, table=User.__tablename__, column='total_posts', identifier=g.DECODED_TOKEN['sid'])    
+    # Post good to go for deletion
+    RedisInterface.xadd("SOFT_DELETIONS", {'id' : post_id, 'table' : Post.__tablename__})
+    
+    redirectionForum: str = None
+    if redirect:
+        try:
+            redirectionForum = db.session.execute(select(Forum._name)
+                                                  .where(Forum.id == post.forum_id)
+                                                  ).scalar_one()
+        except SQLAlchemyError: ... # Fail silently, ain't no way we have done all that and then do a 500 because we didn't get a redirection link >:(
 
     # Overwrite any existing cached entries for this post with 404 mapping, and then expire ephemerally
-    hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+    hset_with_ttl(RedisInterface, cache_key, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
     return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, forum_name = redirectionForum)}), 200
 
 @post.route("/<int:post_id>/vote", methods=["PATCH"])
 @token_required
 def vote_post(post_id: int) -> tuple[Response, int]:
+    cache_key: str = f'{Post.__tablename__}:{post_id}'
+    # Check for 404 sentinal value
+    if RedisInterface.hget(cache_key, '__NF__') == '-1':
+        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+        raise NotFound(f'No post with ID {post_id} exists')
+    
     try:
         vote: int = int(request.args['type'])
         if vote != 0 and vote != 1:
@@ -265,59 +289,75 @@ def vote_post(post_id: int) -> tuple[Response, int]:
     
     # Request valid at the surface level, check for votes existence in db
     bSwitchVote: bool = False
-    postVote: int = None
-    cacheKey: str = f'votes:{post_id}:{g.DECODED_TOKEN["sid"]}'
+    previous_vote: int = None
+    vote_cache_key: str = f'votes:{post_id}:{g.DECODED_TOKEN["sid"]}'
+    delta: int = 1
 
     # 1: Consult cache
     try:
-        postVote = RedisInterface.get(cacheKey)
-        if postVote:
-            postVote = int(postVote)
+        previous_vote = RedisInterface.get(vote_cache_key)
+        if previous_vote is not None:
+            previous_vote = int(previous_vote)
     except RedisError: ...
     
     # 2: Fall back to DB
     try:
-        # Check if user has already casted a vote for this post
-        postVote: int = db.session.execute(select(PostVote.vote)
-                                           .where((PostVote.voter_id == g.DECODED_TOKEN['sid']) & (PostVote.post_id == post_id))
-                                           ).scalar()
-        if postVote is not None:
-            if int(postVote) == vote:
+        # Check if post exists AND if user has already casted a vote for this post
+        _res: Row = db.session.execute(select(Post)
+                                       .outerjoin(PostVote, (PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid']))
+                                       .where(Post.id == post_id)).first()
+        if not _res:
+            hset_with_ttl(RedisInterface, f'{Post.__tablename__}:{post_id}', {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            raise NotFound(f'No post with ID {post_id} exists')
+        
+        previous_vote = _res[1]
+        if previous_vote is not None:
+            if int(previous_vote) == vote:
                 # Casting the same vote twice, do nothing
-                return jsonify({'message' : f'Post already {"upvoted" if postVote else "downvoted"}'}), 200
+                raise Conflict('Same vote cannot be cast twice on the same post')
             else:
                 # Going from upvote to downvote, or vice-versa. Counter will be incremented or decremented by 2
-                bSwitchVote = True
+                delta = 2
                 # Remove old record for user VOTES ON posts in advance
                 db.session.execute(delete(PostVote).where((PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid'])))
                 db.session.commit()
     except SQLAlchemyError: genericDBFetchException()
 
-    delta: int = 2 if bSwitchVote else 1
     if not vote: delta*=-1  # Negative vote for downvote
 
     update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id)
     RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__}) # Add post_votes record to insertion queue
-    RedisInterface.set(cacheKey, vote, ex=current_app.config['REDIS_TTL_EPHEMERAL'])    # Ephemerally cache that bad boy
+    RedisInterface.set(vote_cache_key, vote, ex=current_app.config['REDIS_TTL_EPHEMERAL'])    # Ephemerally cache that bad boy
 
     return jsonify({"message" : "Voted!"}), 202
 
 @post.route("/<int:post_id>/unvote", methods=["PATCH"])
 @token_required
-def unvote_post(post_id: int) -> tuple[Response, int]:    
+def unvote_post(post_id: int) -> tuple[Response, int]:
+    cache_key: str = f'{Post.__tablename__}:{post_id}'
+    # Check for 404 sentinal value
+    if RedisInterface.hget(cache_key, '__NF__') == '-1':
+        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+        raise NotFound(f'No post with ID {post_id} exists')
+    
     try:
-        # Check if user has not casted a vote for this post, if yes then do nothing
-        postVote: PostVote = db.session.execute(select(PostVote)
-                                                .where((PostVote.voter_id == g.DECODED_TOKEN['sid']) & (PostVote.post_id == post_id))
-                                                ).scalar_one_or_none()
-        if not postVote:
-            return jsonify({'message' : f'Post not voted'}), 409
+        # Check that post exists AND user has voted on this post
+        _res: Row = db.session.execute(select(Post)
+                                       .outerjoin(PostVote, (PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid']))
+                                       .where(Post.id == post_id)).first()
+        if not _res:
+            hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            raise NotFound(f'No post with ID {post_id} exists')
+        
+        if not _res[1]:
+            raise Conflict(f'No vote casted for post with ID {post_id}')
     except SQLAlchemyError: genericDBFetchException()
 
     delta: int = -1 if PostVote.vote else 1
     
     update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id)    
     RedisInterface.xadd("WEAK_DELETIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostVote.__tablename__})
+    RedisInterface.delete(f'votes:{post_id}:{g.DECODED_TOKEN["sid"]}')    # Remove cached entry if exists
 
     return jsonify({"message" : "Removed vote!"}), 202
 
@@ -364,7 +404,8 @@ def check_post_vote(post_id: int) -> tuple[Response, int]:
         return jsonify(int(postVote)), 200
     
     try:
-        postVote = db.session.execute(select(PostVote.voter_id)
+        # Comment Of Shame: This line used to be select(PostVote.voter_id), massive skill issue
+        postVote = db.session.execute(select(PostVote.vote)
                                       .where((PostVote.post_id == post_id) & (PostVote.voter_id == g.REQUESTING_USER['sid']))
                                       ).scalars().one_or_none()
         
@@ -380,14 +421,24 @@ def check_post_vote(post_id: int) -> tuple[Response, int]:
 
 @post.route("/<int:post_id>/save", methods=["PATCH"])
 @token_required
-def save_post(post_id: int) -> tuple[Response, int]:    
+def save_post(post_id: int) -> tuple[Response, int]:
+    cache_key: str = f'{Post.__tablename__}:{post_id}'
+    # Check for 404 sentinal value
+    if RedisInterface.hget(cache_key, '__NF__') == '-1':
+        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+        raise NotFound(f'No post with ID {post_id} exists')
+
     try:
-        # First check to see if the user has already saved this post. If yes, then do nothing
-        savedPost: PostSave = db.session.execute(select(PostSave)
-                                                 .where((PostSave.user_id == g.DECODED_TOKEN['sid']) & (PostSave.post_id == post_id))
-                                                 ).scalar_one_or_none()
-        if savedPost:
-            return jsonify({'message' : 'post already saved'}), 200
+        # Check that post exists AND that the user has actually saved it
+        _res = db.session.execute(select(Post)
+                                  .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
+                                  .where(Post.id == post_id)
+                                  ).first()
+        if not _res:
+            hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            raise NotFound(f'No post with ID {post_id} found')
+        if _res[1]:
+            raise Conflict('Post already saved prior to this request')
     except SQLAlchemyError: genericDBFetchException()
     
     update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)    
@@ -400,13 +451,23 @@ def save_post(post_id: int) -> tuple[Response, int]:
 @post.route("/<int:post_id>/unsave", methods=["PATCH"])
 @token_required
 def unsave_post(post_id: int) -> tuple[Response, int]:
+    cache_key: str = f'{Post.__tablename__}:{post_id}'
+
+    if RedisInterface.hget(cache_key, '__NF__') == '-1':
+        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+        raise NotFound(f'No post with ID {post_id} exists')
     try:
-        # First check to see if the user hasn't saved this post. If yes, then do nothing
-        savedPost: PostSave = db.session.execute(select(PostSave)
-                                                 .where((PostSave.user_id == g.DECODED_TOKEN['sid']) & (PostSave.post_id == post_id))
-                                                 ).scalar_one_or_none()
-        if not savedPost:
-            return jsonify({'message' : 'post not saved'}), 200
+        # Check that post exists AND that the user has actually saved it
+        _res = db.session.execute(select(Post)
+                                  .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
+                                  .where(Post.id == post_id)
+                                  ).first()
+        if not _res:
+            hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            raise NotFound(f'No post with ID {post_id} found')
+        if not _res[1]:
+            raise Conflict('Post not saved prior to this request')
+
     except SQLAlchemyError: genericDBFetchException()
 
     update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)    
@@ -415,10 +476,16 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Removed from saved posts"}), 202
 
-@post.route("/<int:post_id>/report", methods=[])
+@post.route("/<int:post_id>/report", methods=['POST'])
 @token_required
 @enforce_json
 def report_post(post_id: int) -> tuple[Response, int]:
+    cache_key: str = f'{Post.__tablename__}:{post_id}'
+
+    cached_mapping: dict = RedisInterface.hgetall(cache_key)
+    if cached_mapping and '__NF__' in cached_mapping:
+        raise NotFound(f'No post with ID {post_id} found')
+    
     try:
         reportDescription: str = str(g.REQUEST_JSON.get('desc'))
         reportTag: str = str(g.REQUEST_JSON.get('tag'))
@@ -432,16 +499,22 @@ def report_post(post_id: int) -> tuple[Response, int]:
         if not ReportTags.check_membership(reportTag):
             raise BadRequest('Invalid report tag')
 
-    except (ValueError, TypeError) as e:
+    except (ValueError, TypeError):
         raise BadRequest("Malformatted report request")
     
     # Check if user has reported this post already. If so, do nothing
     try:
-        reportedPost: PostReport = db.session.execute(select(PostReport)
-                                                      .where((PostReport.user_id == g.DECODED_TOKEN['sid']) & (PostReport.post_id == post_id))
-                                                      ).scalar_one_or_none()
-        if reportedPost:
-            return jsonify({'message' : 'post reported already'}), 409
+        # Check post exists, and that user has not already reported the post
+        if not cached_mapping:
+            _res: tuple[Post, PostReport|None] = db.session.execute(select(Post)
+                                                                    .outerjoin(PostReport, (PostReport.post_id == post_id) & (PostReport.user_id == g.DECODED_TOKEN['sid']))
+                                                                    .where(Post.id == post_id)
+                                                                    ).first()
+            if not _res:
+                hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Broadcast non-existence ephemerally 
+                raise NotFound(f'No post with ID {post_id} found')
+            if _res[1]:
+                raise Conflict('Post already reported')
     except SQLAlchemyError: genericDBFetchException()
 
     # Incremenet global counter for reports on this post and insert record into post_reports
@@ -465,7 +538,9 @@ def comment_on_post(post_id: int) -> tuple[Response, int]:
             raise BadRequest('Invalid comment body')
             
     try:
-        post: Post = db.session.execute(select(Post).where(Post.id == post_id)).scalar_one_or_none()
+        post: Post = db.session.execute(select(Post)
+                                        .where(Post.id == post_id)
+                                        ).scalar_one_or_none()
         if not post:
             raise NotFound('No such post exists')
     except SQLAlchemyError: genericDBFetchException()
@@ -533,8 +608,8 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
 @token_required
 def delete_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
     cacheKey: str = f'comment:{comment_id}'
-    if '__NF__' in RedisInterface.hgetall(cacheKey):
-        hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+    if RedisInterface.hget(cacheKey, '__NF__') == '-1':
+        hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])   # Reannounce non-existence
         return jsonify({'message' : 'This comment has already been deleted'})
     
     try:
@@ -559,5 +634,6 @@ def delete_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
     update_global_counter(interface=RedisInterface, delta=-1, database=db, table=User.__tablename__, column='total_comments', identifier=g.DECODED_TOKEN['sid'])
     # Queue comment for soft deletion
     RedisInterface.xadd('SOFT_DELETIONS', {'id' : comment_id, 'table' : Comment.__tablename__})
+    hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL']) # Announce deletion
 
     return jsonify({'message' : 'Comment deleted'}), 202
