@@ -57,10 +57,6 @@ def create_post() -> tuple[Response, int]:
     update_global_counter(interface=RedisInterface, delta=1, database=db, table=Forum.__tablename__, column='posts', identifier=forumID)    
     update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='total_posts', identifier=g.DECODED_TOKEN['sid'])    
 
-
-    update_global_counter(RedisInterface, f'forum:{forumID}:posts', 1, db, Forum.__tablename__, 'posts', forumID)   # Counter for posts in this forum
-    update_global_counter(RedisInterface, f'user:{g.DECODED_TOKEN["sid"]}:total_posts', 1, db, User.__tablename__, 'total_posts', g.DECODED_TOKEN['sid']) # Counter for posts made by this user
-
     return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
 
 @post.route("/<int:post_id>", methods=["GET"])
@@ -342,7 +338,7 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
     
     try:
         # Check that post exists AND user has voted on this post
-        _res: Row = db.session.execute(select(Post)
+        _res: Row = db.session.execute(select(Post, PostVote)
                                        .outerjoin(PostVote, (PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid']))
                                        .where(Post.id == post_id)).first()
         if not _res:
@@ -430,7 +426,7 @@ def save_post(post_id: int) -> tuple[Response, int]:
 
     try:
         # Check that post exists AND that the user has actually saved it
-        _res = db.session.execute(select(Post)
+        _res = db.session.execute(select(Post, PostSave)
                                   .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
                                   .where(Post.id == post_id)
                                   ).first()
@@ -458,7 +454,7 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
         raise NotFound(f'No post with ID {post_id} exists')
     try:
         # Check that post exists AND that the user has actually saved it
-        _res = db.session.execute(select(Post)
+        _res = db.session.execute(select(Post, PostSave)
                                   .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
                                   .where(Post.id == post_id)
                                   ).first()
@@ -506,7 +502,7 @@ def report_post(post_id: int) -> tuple[Response, int]:
     try:
         # Check post exists, and that user has not already reported the post
         if not cached_mapping:
-            _res: tuple[Post, PostReport|None] = db.session.execute(select(Post)
+            _res: tuple[Post, PostReport|None] = db.session.execute(select(Post, PostReport)
                                                                     .outerjoin(PostReport, (PostReport.post_id == post_id) & (PostReport.user_id == g.DECODED_TOKEN['sid']))
                                                                     .where(Post.id == post_id)
                                                                     ).first()
