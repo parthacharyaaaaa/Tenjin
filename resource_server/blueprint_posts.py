@@ -228,7 +228,7 @@ def delete_post(post_id: int) -> Response:
     try:
         if not post_mapping:
             post: Post = db.session.execute(select(Post)
-                                            .where(Post.id == post_id & (Post.deleted.is_(False)))
+                                            .where((Post.id == post_id) & (Post.deleted.is_(False)))
                                             ).scalar_one_or_none()
             if not post:
                 hset_with_ttl(RedisInterface, cache_key, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])

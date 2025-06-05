@@ -106,7 +106,7 @@ def delete_user() -> Response:
         raise Unauthorized('Invalid credentials')
     
     try:
-        RedisInterface.xadd('SOFT_DELETIONS', {'id' : targetUser.id, 'table' : User.__tablename__})
+        RedisInterface.xadd('SOFT_DELETIONS', {'id' : targetUser.id, 'table' : User.__tablename__, 'rtbf' : int(targetUser.rtbf)})
         # Broadcast user deletion
     except RedisError: 
         raise InternalServerError("Failed to perform account deletion, please try again. If the issue persists, please raise a ticket")
