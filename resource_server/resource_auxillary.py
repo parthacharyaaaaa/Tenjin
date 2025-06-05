@@ -162,7 +162,7 @@ def update_global_counter(interface: Redis, delta: int, database: SQLAlchemy, ta
     # No counter, create one
     currentCount: int = database.session.execute(text(f"SELECT {column} FROM {table} WHERE id = :identifier"), {'identifier':identifier}).scalar()
     
-    op = interface.hsetnx(hashmap_key, identifier, currentCount)
+    op = interface.hsetnx(hashmap_key, identifier, currentCount+delta)
     if not op:
         # Counter made by another worker, update in place
         interface.hincrby(hashmap_key, identifier, delta)
