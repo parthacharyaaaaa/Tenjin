@@ -5,44 +5,44 @@ Tables affected:
 - forums
 - users
 
-Works on the assumption that a soft deletion is represented as a true value in the `deleted` column, accompanied with a TIMESTAMP value in `deleted_ar`'''
-
+Works on the assumption that a soft deletion is represented as a true value in the `deleted` column, accompanied with a TIMESTAMP value in `time_deleted
+`'''
+import psycopg2 as pg
+from psycopg2.extras import execute_batch
+from redis import Redis
+from redis import exceptions as redisExceptions
 import os
 import json
 from dotenv import load_dotenv
 from time import sleep
 from datetime import datetime
-import time
-import psycopg2 as pg
-from psycopg2.extras import execute_batch
 from traceback import format_exc
 
-from redis import Redis
-from redis import exceptions as redisExceptions
-
-loaded = load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"))
-if not loaded:
-    raise FileNotFoundError()
-
-ID: int = os.getpid()
-
-interface: Redis = Redis(os.environ["REDIS_HOST"], int(os.environ["REDIS_PORT"]), decode_responses=True)
-if not interface.ping():
-    raise ConnectionError()
-
-CONNECTION_KWARGS : dict[str, int | str] = {
-    "user" : os.environ["POSTGRES_USERNAME"],
-    "password" : os.environ["POSTGRES_PASSWORD"],
-    "host" : os.environ["POSTGRES_HOST"],
-    "port" : int(os.environ["POSTGRES_PORT"]),
-    "database" : os.environ["POSTGRES_DATABASE"]
-}
-
-CONNECTION: pg.extensions.connection = pg.connect(**CONNECTION_KWARGS)
-CURSOR: pg.extensions.cursor = CONNECTION.cursor()
-UPDATION_SQL: str = "UPDATE {tablename} SET deleted_at = %s, deleted = true WHERE id IN ({ids_to_delete})"
 if __name__ == '__main__':
-    # Initally load stream name
+    loaded = load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"))
+    if not loaded:
+        raise FileNotFoundError()
+
+    ID: int = os.getpid()
+
+    interface: Redis = Redis(os.environ["REDIS_HOST"], int(os.environ["REDIS_PORT"]), decode_responses=True)
+    if not interface.ping():
+        raise ConnectionError()
+
+    CONNECTION_KWARGS : dict[str, int | str] = {
+        "user" : os.environ["POSTGRES_USERNAME"],
+        "password" : os.environ["POSTGRES_PASSWORD"],
+        "host" : os.environ["POSTGRES_HOST"],
+        "port" : int(os.environ["POSTGRES_PORT"]),
+        "database" : os.environ["POSTGRES_DATABASE"]
+    }
+
+    CONNECTION: pg.extensions.connection = pg.connect(**CONNECTION_KWARGS)
+    
+    # Initialize updation SQL
+    UPDATION_SQL: str = "UPDATE {tablename} SET time_deleted = %s, deleted = true WHERE id IN ({ids_to_delete})"
+
+    # Initalize configuration for this worker
     with open(os.path.join(os.path.dirname(__file__), "worker_config.json"), 'rb') as configFile:
         configData: dict = json.loads(configFile.read())
         wait: float = configData.get("wait", 1)
@@ -52,19 +52,20 @@ if __name__ == '__main__':
         batchSize: int = configData["soft_delete_batch_size"]
     
     with CONNECTION:
-        with CURSOR:
+        with CONNECTION.cursor() as CURSOR:
             while(True):
                 try:
                     _streamd_queries: list[tuple[str, dict[str, str]]] = interface.xrange(streamName, count=batchSize)
                 except (redisExceptions.ConnectionError):
                     if backoffIndex >= maxBackoffIndex:
+                        # For connection errors, try retrying at increasing backoff periods
                         print(f"[{ID}]: Connection to Redis instance compromised, exiting...")
                         exit(100)
                     sleep(wait)
                     backoffIndex+=1
                     continue
 
-                backoffIndex = 0
+                backoffIndex = 0    # Reset backoff index on succesfull network call
                 if not _streamd_queries:
                     sleep(wait)
                     continue
@@ -73,29 +74,28 @@ if __name__ == '__main__':
                 trimUB: str = '-'.join((trimUBs[0], str(int(trimUBs[1]) + 1)))
 
                 # Stream entries will contain unique ID, table name, and primary key of target record
-                table_groups: dict[str, list[list[int], list[datetime]]] = {}
+                table_groups: dict[str, list[list[int], list[datetime]]] = {}   # {<tablename> : [<ordered list of IDs to delete>, <ordered list of datetime objects for 'time_deleted>' column]}
                 for queryData in _streamd_queries:
                     # Prepare table groups with mappings containing table names as keys and list of 2 lists, with IDs to delete and their deleted timestamps as pairs at equal indices
                     try:
                         table: str = queryData[1].pop('table')
-                        timestamp: float = float(queryData[0].split("-")[0])
-                        deleted_at: datetime = datetime.fromtimestamp(timestamp)
+                        timestamp: float = float(queryData[0].split("-")[0]) / 1000
+                        time_deleted: datetime = datetime.fromtimestamp(timestamp)
                         if table in table_groups:
                             table_groups[table][0].append(queryData[1].pop('id'))
-                            table_groups[table][1].append(deleted_at)
+                            table_groups[table][1].append(time_deleted)
                         else:
-                            table_groups[table][0] = queryData[1].pop('id')
-                            table_groups[table][1] = [deleted_at]
-                        
+                            table_groups[table] = (queryData[1].pop('id'), [time_deleted])
                     except KeyError:
                         print(f"[{ID}]: Received invalid query params from entry: {queryData[0]}")
+                        print(format_exc())
 
-                # Oh boy, here I go killing again
                 CURSOR.execute(f'SAVEPOINT s{ID}')
-                for table, targetList in table_groups:
+                for table, targetList in table_groups.items():
+                    # Oh boy, here I go killing again
                     try:
                         execute_batch(CURSOR, UPDATION_SQL.format(tablename=table, ids_to_delete=table_groups[table][0]),
-                                    argslist=table_groups[table][1])
+                                    argslist=[table_groups[table][1]])
                         CONNECTION.commit()
                     except (pg.errors.ModifyingSqlDataNotPermitted):
                         print(f"[{ID}]: Permission error, aborting script...")
@@ -114,3 +114,4 @@ if __name__ == '__main__':
 
                 table_groups.clear()
                 interface.xtrim(streamName, minid=trimUB)
+                sleep(wait)

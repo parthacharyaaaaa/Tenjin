@@ -1,21 +1,15 @@
 '''UPDATION consumer, but only for counters (votes, saves, reports, followers, etc.)
 '''
-import os
-from dotenv import load_dotenv
-
-from redis import Redis
-from redis import Redis, exceptions as redisExceptions
-
 import psycopg2 as pg
 from psycopg2.extras import execute_values, execute_batch
-
+from redis import Redis
+import os
+from dotenv import load_dotenv
 from time import sleep
 import json
 from traceback import format_exc
 
-
 if __name__ == "__main__":
-    UPDATION_SQL: str = "UPDATE {table_name} SET {column_name} = %(counter)s WHERE id = %(id)s;"
     loaded = load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"))
     if not loaded:
         raise FileNotFoundError()
@@ -39,6 +33,10 @@ if __name__ == "__main__":
         exit(500)
     
     sleep_duration: int = 5
+
+    # Initialize updation template
+    UPDATION_SQL: str = "UPDATE {table_name} SET {column_name} = %(counter)s WHERE id = %(id)s;"
+
     # Counters will be accessible through hashmaps, not streams like other scripts
     counter_hashmap_names: set[str] = set()
     with open(os.path.join(os.path.dirname(__file__), "worker_config.json"), 'rb') as config_file:
@@ -47,12 +45,11 @@ if __name__ == "__main__":
         assert counter_metadata, "Config file for batch workers missing mandatory field: counter_metadata"
 
         # Prepare collection of hashmap names to query from Redis
-        for resource, fields in counter_metadata:
+        for resource, fields in counter_metadata.items():
             for field in fields:
                 # Hashmaps for counters follow the convention: table:column, example: users:total_posts, posts:score
                 counter_hashmap_names.add(f'{resource}:{field}')
         
-    
     with CONNECTION.cursor() as CURSOR:
         while(True):
             for counter_mapping in counter_hashmap_names:
@@ -64,9 +61,10 @@ if __name__ == "__main__":
                     _res: tuple[dict[str, str], int] = pipe.execute()
 
                 if not _res[0]:
+                    # Empty mapping, move to next one
                     continue
+
                 counter_data: list[dict[str, int]] = [{'id' : key, 'counter' : counter} for key, counter in _res[0].items()]    # argslist argument
-                
                 try:
                     execute_batch(cur=CURSOR,
                                   sql=UPDATION_SQL.format(table_name=table, column_name=column),
@@ -86,4 +84,5 @@ if __name__ == "__main__":
                     print(f"[{ID}]: Error in executing batch isnert for table {table}, exception: {pg_error.__class__.__name__}")
                     print(f"[{ID}]: Error details: {format_exc()}")
 
-                sleep(sleep_duration)
+            # Finally after scanning all mappings, sleep
+            sleep(sleep_duration)

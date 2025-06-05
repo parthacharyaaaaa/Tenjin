@@ -4,17 +4,16 @@ Resources soft deleted:
 - posts
 - comments
 '''
-
-import os
-from dotenv import load_dotenv
-from redis import Redis
-from redis import Redis, exceptions as redisExceptions
 import psycopg2 as pg
 from psycopg2.extras import execute_batch
+from redis import Redis
+from redis import Redis, exceptions as redisExceptions
+import os
+import json
+from dotenv import load_dotenv
 from time import sleep
 from traceback import format_exc
 from datetime import datetime
-import json
 
 if __name__ == "__main__":
     loaded = load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"))
@@ -41,11 +40,13 @@ if __name__ == "__main__":
         print(f"{ID}: Failed to connect to Postgres instance.\n\tError: {e.__class__.__name__}\n\tError Logs: ", format_exc())
         exit(500)
 
+    # Initialize SQL template
     SOFT_DELETION_SQL: str =  '''UPDATE {tablename} SET deleted_at = %s, deleted = true WHERE id = %s'''
-    rtfb_data: list[tuple[int, datetime]] = []
-    nrtfb_data: list[tuple[int, datetime]] = []
+    # Initalize separate lists of ids, deleted_at pairs for RTBF and non-RTBF users
+    rtbf_data: list[tuple[int, datetime]] = []
+    non_rtbf_data: list[tuple[int, datetime]] = []
 
-    # Initally load stream name
+    # Initialize configurations for this worker
     with open(os.path.join(os.path.dirname(__file__), "worker_config.json"), 'rb') as configFile:
         configData: dict = json.loads(configFile.read())
         wait: float = configData.get("wait", 1)
@@ -53,6 +54,7 @@ if __name__ == "__main__":
         backoffIndex, maxBackoffIndex = 0, len(backoffSequence) - 1
         streamName: str = configData["user_activity_delete_stream"]
         batchSize: int = configData["user_activity_delete_batch_size"]
+    
     with CONNECTION:
         with CONNECTION.cursor() as CURSOR:
             while(True):
@@ -60,46 +62,48 @@ if __name__ == "__main__":
                     _streamd_queries: list[tuple[str, dict[str, str]]] = interface.xrange(streamName, count=batchSize)
                 except (redisExceptions.ConnectionError):
                     if backoffIndex >= maxBackoffIndex:
+                        # For connection errors, try retrying at increasing backoff periods
                         print(f"[{ID}]: Connection to Redis instance compromised, exiting...")
                         exit(100)
-                    sleep(wait)
+                    sleep(backoffSequence[backoffIndex])
                     backoffIndex+=1
                     continue
 
-                backoffIndex = 0
+                backoffIndex = 0    # Reset backoff index on succesfull network calls
                 if not _streamd_queries:
                     sleep(wait)
                     continue
 
+                # Remember upper bound of fetched substream for trimming later
                 trimUBs: str = _streamd_queries[-1][0].split("-")
                 trimUB: str = '-'.join((trimUBs[0], str(int(trimUBs[1]) + 1)))
 
                 for querydata in _streamd_queries:
                     # time of stream entry will be taken as time of soft deletion
                     deleted_at: datetime = datetime.fromtimestamp(float(querydata[0].split("-")[0]))    # mfw I'm so bad at programming that even Python becomes unreadable
-                    rtfb: int = int(querydata[1].pop('rtfb', 0))
+                    rtbf: int = int(querydata[1].pop('rtbf', 0))
                     userID: int = int(querydata[1].pop('id'))
 
-                    if rtfb:
-                        rtfb_data.append((deleted_at, userID))
+                    if rtbf:
+                        rtbf_data.append((deleted_at, userID))
                     else:
-                        nrtfb_data.append((deleted_at, userID))
+                        non_rtbf_data.append((deleted_at, userID))
 
                 # For both batches of users, update users table
                 try:
                     execute_batch(cur=CURSOR,
                                   sql=SOFT_DELETION_SQL.format(tablename='users'),
-                                  argslist=rtfb_data+nrtfb_data)
-                    nrtfb_data.clear()
+                                  argslist=rtbf_data+non_rtbf_data)
+                    non_rtbf_data.clear()
                     
                     # For RTFB users, update users table and posts+comments tables
                     execute_batch(cur=CURSOR,
                                   sql=SOFT_DELETION_SQL.format(tablename='posts'),
-                                  argslist=rtfb_data)
+                                  argslist=rtbf_data)
                     execute_batch(cur=CURSOR,
                                   sql=SOFT_DELETION_SQL.format(tablename='comments'),
-                                  argslist=rtfb_data)
-                    rtfb_data.clear()
+                                  argslist=rtbf_data)
+                    rtbf_data.clear()
 
                     CONNECTION.commit()
                 except (pg.errors.ModifyingSqlDataNotPermitted):
@@ -115,4 +119,5 @@ if __name__ == "__main__":
                     print(f"[{ID}]: Error in executing batch update, exception: {pg_error.__class__.__name__}")
                     print(f"[{ID}]: Error details: {format_exc()}")
 
-                interface.xtrim(streamName, minid=trimUB)
+                interface.xtrim(streamName, minid=trimUB)   # Trim consumed substream
+                sleep(wait)

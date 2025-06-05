@@ -20,8 +20,8 @@
     
     "counter_metadata" : {
         "posts" : ["score", "saves", "reports", "total_comments"],
-        "forums" : ["subscribers", "admins", "admin_count"],
+        "forums" : ["subscribers", "admins", "admin_count", "posts"],
         "animes" : ["members"],
-        "user" : ["aura", "total_comments", "total_posts"]
+        "users" : ["aura", "total_comments", "total_posts"]
     }
 }
