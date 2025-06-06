@@ -3,7 +3,7 @@ from werkzeug import Response
 from werkzeug.exceptions import BadRequest
 misc = Blueprint('Misc', 'misc', url_prefix="/")
 
-from resource_server.models import db
+from resource_server.models import UserTicket
 from auxillary.decorators import enforce_json
 from resource_server.resource_decorators import pass_user_details
 from resource_server.resource_auxillary import EMAIL_REGEX
@@ -30,5 +30,6 @@ def issue_ticket() -> tuple[Response, int]:
     RedisInterface.xadd('INSERTIONS', fields={'user_id' : '' if not g.REQUESTING_USER else g.REQUESTING_USER.get('sid', ''),
                                               'email' : email,
                                               'time_raised': datetime.now().isoformat(),
-                                              'description' : description})
+                                              'description' : description,
+                                              'table' : UserTicket.__tablename__})
     return jsonify({'Your report has been recorded'}), 202
