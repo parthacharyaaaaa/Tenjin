@@ -17,8 +17,9 @@ class RedisConfig:
     ANNOUNCEMENT_DURATION: int = int(os.environ.get('ANNOUNCEMENT_DURATION', 300))
     JWKS_POLL_COOLDOWN: int = int(os.environ.get('JWKS_POLL_COOLDOWN', 600))
 
-    RESOURCE_CREATION_FLAG: str = '1'
-    RESOURCE_DELETION_FLAG: str = '0'
-    RESOURCE_CREATION_ALT_FLAG: str = '-1'    # Special value for post_votes
+    RESOURCE_CREATION_PENDING_FLAG: str = 'creation_pending'
+    RESOURCE_DELETION_PENDING_FLAG: str = 'deletion_pending'
+    RESOURCE_CREATION_PENDING_ALT_FLAG: str = 'alt_creation_pending'    # Special value for post_votes & comment_votes
 
-    NF_SENTINAL: str = '-1'
+    NF_SENTINEL_KEY: str = '__NF__'
+    NF_SENTINEL_VALUE: str = '-1'
