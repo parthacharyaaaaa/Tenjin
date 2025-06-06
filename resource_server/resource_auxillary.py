@@ -198,3 +198,24 @@ def write_action_state(interface: Redis, flag_name: str, flag_state: str, flag_t
         pipe.delete(lock_name)
         pipe.execute()
     return True
+
+def cache_layer_integrity_check(interface: Redis, mapping_key: str, flag_key: str, action_state: str, nf_sentinel_key: str = '__NF__', nf_sentinel_value: str = '-1') -> tuple[bool, bool]:
+    '''
+    Consult cache to perform an early check on whether a given resource has been deleted, and check if a given state is already the latest state for an action. This consumes only a single network call
+    Args:
+        interface: Redis instance connected to cache server
+        mapping_key: Key name for the cached resource
+        flag_key: Key name for the action flag for the action
+        action_state: State of action to check against current state (if any)
+        nf_sentinel_key: Optional hashmap key for nf sentinel mapping
+        nf_sentinel_value: Optional hashmap value for nf sentinel mapping
+    Returns:
+        tuple of 2 boolean values. First one indicates whether resource does not exist, second one indicates whether current action state matches the requested action state
+
+    '''
+    # Check for 404 sentinal value and this action's state with a single network call
+    with interface.pipeline(transaction=False) as pipe:
+        pipe.hget(mapping_key, nf_sentinel_key)
+        pipe.get(flag_key)
+        nf_sentinel, current_action_state = pipe.execute()
+    return nf_sentinel == nf_sentinel_value, current_action_state == action_state
