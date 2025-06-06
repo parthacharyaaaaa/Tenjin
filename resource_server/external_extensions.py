@@ -2,7 +2,7 @@ from redis import Redis
 from flask import Flask
 from typing import Iterable
 
-RedisInterface = None
+RedisInterface: Redis = None
 
 def hset_with_ttl(interface: Redis, name: str, mapping: dict, ttl: int, transaction: bool = True):
     with interface.pipeline(transaction) as pp:

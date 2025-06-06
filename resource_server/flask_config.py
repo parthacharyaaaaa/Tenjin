@@ -42,13 +42,6 @@ class FlaskConfig:
         REDIS_HOST: str = os.environ["REDIS_HOST"]
         REDIS_PORT: int = int(os.environ["REDIS_PORT"])
         REDIS_DB: int = int(os.environ.get("REDIS_DB", 0))
-        REDIS_TTL_CAP: int = int(os.environ["TTL_CAP"])
-        REDIS_TTL_PROMOTION: int = int(os.environ["TTL_PROMOTION"])
-        REDIS_TTL_STRONG: int = int(os.environ["TTL_STRONG"])
-        REDIS_TTL_WEAK: int = int(os.environ["TTL_WEAK"])
-        REDIS_TTL_EPHEMERAL: int = int(os.environ["TTL_EPHEMERAL"])
-        ANNOUNCEMENT_DURATION: int = int(os.environ.get('ANNOUNCEMENT_DURATION', 300))
-        JWKS_POLL_COOLDOWN: int = int(os.environ.get('JWKS_POLL_COOLDOWN', 600))
 
         GENERIC_HTTP_MESSAGES : dict = {2 : "Success",
                                 3 : "Redirection",
