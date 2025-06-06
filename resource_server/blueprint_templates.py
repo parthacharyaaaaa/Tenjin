@@ -1,18 +1,16 @@
-
 '''Blueprint for serving HTML files. No URL prefix for these endpoints is required'''
-from flask import Blueprint, render_template, request, g, url_for, current_app
-
-templates: Blueprint = Blueprint('templates', __name__, template_folder='templates')
-
+from flask import Blueprint, render_template, request, g, url_for
 from resource_server.models import db, Post, User, Forum, ForumRules, Anime, AnimeSubscription, ForumSubscription, ForumAdmin, StreamLink, AnimeGenre, Genre
+from resource_server.resource_decorators import pass_user_details
+from resource_server.external_extensions import RedisInterface, hset_with_ttl
+from resource_server.redis_config import RedisConfig
+from auxillary.utils import genericDBFetchException, rediserialize, consult_cache
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from auxillary.utils import genericDBFetchException, rediserialize, consult_cache
-from resource_server.resource_decorators import pass_user_details
-
-from resource_server.external_extensions import RedisInterface, hset_with_ttl
 import ujson
 from typing import Any
+
+templates: Blueprint = Blueprint('templates', __name__, template_folder='templates')
 ###========================= ENDPOINTS =========================###
 
 @templates.context_processor
@@ -52,18 +50,18 @@ def forum(name: str) -> tuple[str, int]:
     forumMapping: dict[str, Any] = None
     try:
         forumID = RedisInterface.get(pointerKey)
-        if forumID == '__NF__':
+        if forumID == RedisConfig.NF_SENTINEL_KEY:
             return render_template('error.html',
                         code=404,
                         message='No forum with this name could be found',
                         links = [('Back to home', url_for('.index'))])
         if forumID:
-            RedisInterface.expire(pointerKey, current_app.config['REDIS_TTL_WEAK'])
+            RedisInterface.expire(pointerKey, RedisConfig.TTL_WEAK)
 
             cacheKey: str = f'forum:{forumID}'
-            forumMapping = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'], dtype='string')
+            forumMapping = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION,RedisConfig.TTL_EPHEMERAL, dtype='string')
 
-            if forumMapping and '__NF__' in forumMapping:
+            if forumMapping and RedisConfig.NF_SENTINEL_KEY in forumMapping:
                 return render_template('error.html',
                                        code=404,
                                        message='No forum with this name could be found',
@@ -78,7 +76,7 @@ def forum(name: str) -> tuple[str, int]:
                                               ).scalar_one_or_none()
             if not forum:
                 # Announce string representation as __NF__
-                RedisInterface.set(pointerKey, '__NF__', current_app.config['REDIS_TTL_EPHEMERAL'])
+                RedisInterface.set(pointerKey, RedisConfig.NF_SENTINEL_KEY, RedisConfig.TTL_EPHEMERAL)
 
                 return render_template('error.html',
                                        code=404,
@@ -116,7 +114,7 @@ def forum(name: str) -> tuple[str, int]:
                               'highlighted_posts' : tuple(highlightedPost.__json_like__() for highlightedPost in highlightedPosts)}
         
         # Cache forum
-        RedisInterface.set(f'forum:{forumID}', ujson.dumps(forumMapping), current_app.config['REDIS_TTL_STRONG'])
+        RedisInterface.set(f'forum:{forumID}', ujson.dumps(forumMapping), RedisConfig.TTL_STRONG)
 
     # Post has now been fetched, either from cache or from DB
     subbedForum: bool = False
@@ -144,10 +142,10 @@ def get_anime() -> tuple[str, int]:
 def view_anime(anime_id) -> tuple[str, int]:
     cacheKey: str = f'anime:{anime_id}'
     # 1: Redis
-    animeMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'], dtype='string')
+    animeMapping: dict = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION, RedisConfig.TTL_EPHEMERAL, dtype='string')
     
     if animeMapping:
-        if '__NF__' in animeMapping:
+        if RedisConfig.NF_SENTINEL_KEY in animeMapping:
             return render_template('error.html',
                                     code = 400, 
                                     msg = 'The anime you requested could not be found :(',
@@ -163,7 +161,7 @@ def view_anime(anime_id) -> tuple[str, int]:
                                             .where(Anime.id == anime_id)
                                             ).scalar_one_or_none()
             if not anime:
-                RedisInterface.set(cacheKey, '__NF__', current_app.config['REDIS_TTL_EPHEMERAL'])  # Announce non-existence
+                RedisInterface.set(cacheKey, RedisConfig.NF_SENTINEL_KEY, RedisConfig.TTL_EPHEMERAL)  # Announce non-existence
                 return render_template('error.html',
                                     code = 400, 
                                     msg = 'The anime you requested could not be found :(',
@@ -183,7 +181,7 @@ def view_anime(anime_id) -> tuple[str, int]:
 
     if 'random_prefetch' not in request.args:
         # Only cache if user actually wanted to come here, and not randomly
-        RedisInterface.set(cacheKey, ujson.dumps(animeMapping), current_app.config['REDIS_TTL_STRONG'])
+        RedisInterface.set(cacheKey, ujson.dumps(animeMapping), RedisConfig.TTL_STRONG)
 
     # Check user's subscription to this anime
     isSubbed: bool = False
@@ -202,10 +200,10 @@ def view_anime(anime_id) -> tuple[str, int]:
 @pass_user_details
 def view_post(post_id: int) -> tuple[str, int]:
     cacheKey: str = f'post:{post_id}'
-    postMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
+    postMapping: dict = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION,RedisConfig.TTL_EPHEMERAL)
 
     if postMapping:
-        if '__NF__' in postMapping:
+        if RedisConfig.NF_SENTINEL_KEY in postMapping:
             return render_template('error.html',
                                     code = 400, 
                                     msg = 'The post you requested could not be found :(',
@@ -223,7 +221,7 @@ def view_post(post_id: int) -> tuple[str, int]:
                                             .where((Post.id == post_id) & (Post.deleted.is_(False)))
                                             ).scalar_one_or_none()
             if not post:
-                hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+                hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
             
             author: User = db.session.execute(select(User)
                                         .where(User.id == post.author_id)
@@ -231,7 +229,7 @@ def view_post(post_id: int) -> tuple[str, int]:
             
             postMapping: dict = post.__json_like__() | {'author' : None if author.deleted else author.username, 'author_id' : None if author.deleted else author.id}
             # Cache post
-            hset_with_ttl(RedisInterface, cacheKey, rediserialize(postMapping), current_app.config['REDIS_TTL_STRONG'])
+            hset_with_ttl(RedisInterface, cacheKey, rediserialize(postMapping), RedisConfig.TTL_STRONG)
         except SQLAlchemyError: genericDBFetchException()
         
     # Post fetched, now check to see user's relation to this post
@@ -257,10 +255,10 @@ def view_post(post_id: int) -> tuple[str, int]:
 @pass_user_details
 def get_user(username: str) -> tuple[str, int]:
     cacheKey: str = f'user:{username}'
-    userMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
+    userMapping: dict = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION,RedisConfig.TTL_EPHEMERAL)
 
     if userMapping:
-        if '__NF__' in userMapping:
+        if RedisConfig.NF_SENTINEL_KEY in userMapping:
             return render_template('error.html',
                                     code=404,
                                     msg='No user with this username could be found',
@@ -272,7 +270,7 @@ def get_user(username: str) -> tuple[str, int]:
                                         .where((User.username == username) & (User.deleted.is_(False)))
                                         ).scalar_one_or_none()
         if not user:
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL']) # Announce non-existence of this resource
+            hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL) # Announce non-existence of this resource
             return render_template('error.html',
                                    code=404,
                                    msg='No user with this username could be found',
@@ -281,7 +279,7 @@ def get_user(username: str) -> tuple[str, int]:
     except SQLAlchemyError: genericDBFetchException()
 
     userMapping: dict = rediserialize(user.__json_like__())
-    hset_with_ttl(RedisInterface, cacheKey, userMapping, current_app.config['REDIS_TTL_STRONG'])
+    hset_with_ttl(RedisInterface, cacheKey, userMapping, RedisConfig.TTL_STRONG)
     return render_template('profile.html', user_mapping=userMapping), 200
 
 @templates.route('/about')

@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, g, url_for, request, current_app
+from flask import Blueprint, jsonify, g, url_for, request
 from werkzeug import Response
 from werkzeug.exceptions import NotFound, BadRequest, Forbidden, Conflict
 from sqlalchemy import select, update, delete, Row
@@ -7,6 +7,7 @@ from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, 
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
 from resource_server.resource_auxillary import update_global_counter, fetch_global_counters
+from resource_server.redis_config import RedisConfig
 from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 from typing import Any, Optional
@@ -64,13 +65,13 @@ def create_post() -> tuple[Response, int]:
 def get_post(post_id : int) -> tuple[Response, int]:
     cacheKey: str = f'{Post._tablename__}:{post_id}'
     fetch_relation: bool = 'fetch_relation' in request.args and g.REQUESTING_USER
-    post_mapping: Optional[dict[str, Any]] = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
+    post_mapping: Optional[dict[str, Any]] = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION,RedisConfig.TTL_EPHEMERAL)
     
     # Fetch global counters if in memory
     global_score, global_comments, global_saves = fetch_global_counters(RedisInterface, f'post:{post_id}:score', f'post:{post_id}:total_comments', f'post:{post_id}:saves')
 
     if post_mapping:
-        if '__NF__' in post_mapping:
+        if RedisConfig.NF_SENTINEL_KEY in post_mapping:
             raise NotFound('No post with this ID could be found')
         
         # Update fetched mapping with global counters
@@ -89,7 +90,7 @@ def get_post(post_id : int) -> tuple[Response, int]:
                                                    .where((Post.id == post_id) & (Post.deleted.is_(False)))
                                                    ).first()
             if not resultSet:
-                hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+                hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
                 raise NotFound(f"Post with id {post_id} could not be found :(")
             
             fetchedPost, anonymize = resultSet
@@ -106,7 +107,7 @@ def get_post(post_id : int) -> tuple[Response, int]:
                 post_mapping['comments'] = global_comments
 
             # Cache with updated counters
-            hset_with_ttl(RedisInterface, cacheKey, post_mapping, current_app.config['REDIS_TTL_STRONG'])
+            hset_with_ttl(RedisInterface, cacheKey, post_mapping, RedisConfig.TTL_STRONG)
 
         except SQLAlchemyError: genericDBFetchException()
 
@@ -145,8 +146,8 @@ def get_post(post_id : int) -> tuple[Response, int]:
 
         # No promotion logic for ephemral keys
         with RedisInterface.pipeline(transaction=False) as pp:  # Ephemeral set operation need not be constrained by atomicity
-            pp.set(f'saves:{post_id}:{g.REQUESTING_USER["sid"]}', 1 if postSaved else 0, ex=current_app.config['REDIS_TTL_EPHEMERAL'])
-            pp.set(f'votes:{post_id}:{g.REQUESTING_USER["sid"]}', -1 if not postVoted else int(postVoted), ex=current_app.config['REDIS_TTL_EPHEMERAL'])
+            pp.set(f'saves:{post_id}:{g.REQUESTING_USER["sid"]}', 1 if postSaved else 0, ex=RedisConfig.TTL_EPHEMERAL)
+            pp.set(f'votes:{post_id}:{g.REQUESTING_USER["sid"]}', -1 if not postVoted else int(postVoted), ex=RedisConfig.TTL_EPHEMERAL)
             pp.execute()
 
     return jsonify(res), 200
@@ -157,8 +158,8 @@ def get_post(post_id : int) -> tuple[Response, int]:
 def edit_post(post_id : int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, '__NF__') == '-1':
-        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No post with ID {post_id} exists')
     
     # Ensure user is owner of this post
@@ -206,8 +207,8 @@ def edit_post(post_id : int) -> tuple[Response, int]:
 
     # Enforce write-through
     if RedisInterface.hgetall(cache_key):
-        #NOTE: The hashmap for 404 ({'__NF__' : '-1'}) would logically never be encountered since control reaching here indicates that the post obviously exists
-        hset_with_ttl(RedisInterface, cache_key, updatedPost.__json_like__(), current_app.config['REDIS_TTL_STRONG'])
+        #NOTE: The hashmap for 404 ({RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}) would logically never be encountered since control reaching here indicates that the post obviously exists
+        hset_with_ttl(RedisInterface, cache_key, updatedPost.__json_like__(), RedisConfig.TTL_STRONG)
 
     return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected",
                     "post_id" : post_id,
@@ -220,7 +221,7 @@ def delete_post(post_id: int) -> Response:
     # NOTE: We try to fetch the entire mapping, instead of just sentinal mapping to avoid querying DB for post on cache hits
 
     post_mapping: dict = RedisInterface.hgetall(cache_key)
-    if post_mapping and '__NF__' in post_mapping:
+    if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:
         raise NotFound(f'No post with ID {post_id} found') 
     
     redirect: bool = 'redirect' in request.args
@@ -231,7 +232,7 @@ def delete_post(post_id: int) -> Response:
                                             .where((Post.id == post_id) & (Post.deleted.is_(False)))
                                             ).scalar_one_or_none()
             if not post:
-                hset_with_ttl(RedisInterface, cache_key, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+                hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
                 raise NotFound('Post does not exist')
             else:
                 post_mapping = post.__json_like__()
@@ -245,7 +246,6 @@ def delete_post(post_id: int) -> Response:
             if not forumAdmin:
                 raise Forbidden('You do not have the rights to alter this post as you are not its author')
     except SQLAlchemyError: genericDBFetchException()
-
 
     # Decrement global counters
     update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='posts', identifier=post.forum_id)    
@@ -262,7 +262,7 @@ def delete_post(post_id: int) -> Response:
         except SQLAlchemyError: ... # Fail silently, ain't no way we have done all that and then do a 500 because we didn't get a redirection link >:(
 
     # Overwrite any existing cached entries for this post with 404 mapping, and then expire ephemerally
-    hset_with_ttl(RedisInterface, cache_key, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+    hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
     return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, forum_name = redirectionForum)}), 200
 
 @post.route("/<int:post_id>/vote", methods=["PATCH"])
@@ -270,8 +270,8 @@ def delete_post(post_id: int) -> Response:
 def vote_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, '__NF__') == '-1':
-        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No post with ID {post_id} exists')
     
     try:
@@ -303,7 +303,7 @@ def vote_post(post_id: int) -> tuple[Response, int]:
                                        .outerjoin(PostVote, (PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid']))
                                        .where(Post.id == post_id)).first()
         if not _res:
-            hset_with_ttl(RedisInterface, f'{Post.__tablename__}:{post_id}', {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            hset_with_ttl(RedisInterface, f'{Post.__tablename__}:{post_id}', {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
             raise NotFound(f'No post with ID {post_id} exists')
         
         previous_vote = _res[1]
@@ -323,7 +323,7 @@ def vote_post(post_id: int) -> tuple[Response, int]:
 
     update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id)
     RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__}) # Add post_votes record to insertion queue
-    RedisInterface.set(vote_cache_key, vote, ex=current_app.config['REDIS_TTL_EPHEMERAL'])    # Ephemerally cache that bad boy
+    RedisInterface.set(vote_cache_key, vote, ex=RedisConfig.TTL_EPHEMERAL)    # Ephemerally cache that bad boy
 
     return jsonify({"message" : "Voted!"}), 202
 
@@ -332,8 +332,8 @@ def vote_post(post_id: int) -> tuple[Response, int]:
 def unvote_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, '__NF__') == '-1':
-        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No post with ID {post_id} exists')
     
     try:
@@ -342,7 +342,7 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
                                        .outerjoin(PostVote, (PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid']))
                                        .where(Post.id == post_id)).first()
         if not _res:
-            hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
             raise NotFound(f'No post with ID {post_id} exists')
         
         if not _res[1]:
@@ -366,7 +366,7 @@ def check_post_saved(post_id: int) -> tuple[Response, int]:
     cacheKey: str = f"saves:{post_id}:{g.REQUESTING_USER['sid']}"
     isSaved = RedisInterface.get(cacheKey)
     if isSaved:
-        RedisInterface.set(cacheKey, int(isSaved), current_app.config['REDIS_TTL_EPHEMERAL'])
+        RedisInterface.set(cacheKey, int(isSaved), RedisConfig.TTL_EPHEMERAL)
         return jsonify(int(isSaved)), 200
     
     try:
@@ -374,7 +374,7 @@ def check_post_saved(post_id: int) -> tuple[Response, int]:
                                                 .where((PostSave.post_id == post_id) & (PostSave.user_id == g.REQUESTING_USER['sid']))
                                                 ).scalar_one_or_none()))
 
-        RedisInterface.set(cacheKey, isSaved, current_app.config['REDIS_TTL_EPHEMERAL'])
+        RedisInterface.set(cacheKey, isSaved, RedisConfig.TTL_EPHEMERAL)
         return jsonify(isSaved), 200
     
     except SQLAlchemyError:
@@ -396,7 +396,7 @@ def check_post_vote(post_id: int) -> tuple[Response, int]:
     cacheKey: str = f'votes:{post_id}:{g.REQUESTING_USER["sid"]}'
     postVote = RedisInterface.get(cacheKey)
     if postVote:
-        RedisInterface.set(cacheKey, postVote, current_app.config['REDIS_TTL_EPHEMERAL'])   # No promotion for an ephemeral key, just reset TTL
+        RedisInterface.set(cacheKey, postVote, RedisConfig.TTL_EPHEMERAL)   # No promotion for an ephemeral key, just reset TTL
         return jsonify(int(postVote)), 200
     
     try:
@@ -407,12 +407,12 @@ def check_post_vote(post_id: int) -> tuple[Response, int]:
         
         # 0 is falsey, hence 'not postVote' won't work as intended here
         if postVote == None:
-            RedisInterface.set(cacheKey, -1, current_app.config['REDIS_TTL_EPHEMERAL'])
+            RedisInterface.set(cacheKey, -1, RedisConfig.TTL_EPHEMERAL)
             return jsonify(-1), 200
     except: genericDBFetchException()
 
     postVote = int(postVote)
-    RedisInterface.set(cacheKey, postVote, current_app.config['REDIS_TTL_EPHEMERAL'])
+    RedisInterface.set(cacheKey, postVote, RedisConfig.TTL_EPHEMERAL)
     return jsonify(postVote), 200
 
 @post.route("/<int:post_id>/save", methods=["PATCH"])
@@ -420,8 +420,8 @@ def check_post_vote(post_id: int) -> tuple[Response, int]:
 def save_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, '__NF__') == '-1':
-        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No post with ID {post_id} exists')
 
     try:
@@ -431,7 +431,7 @@ def save_post(post_id: int) -> tuple[Response, int]:
                                   .where(Post.id == post_id)
                                   ).first()
         if not _res:
-            hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
             raise NotFound(f'No post with ID {post_id} found')
         if _res[1]:
             raise Conflict('Post already saved prior to this request')
@@ -439,8 +439,6 @@ def save_post(post_id: int) -> tuple[Response, int]:
     
     update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)    
     RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})
-    # Ephemerally set save flag
-    RedisInterface.set(f"saves:{post_id}:{g.DECODED_TOKEN['sid']}", 1, current_app.config['REDIS_TTL_EPHEMERAL'])
 
     return jsonify({"message" : "Saved!"}), 202
 
@@ -449,8 +447,8 @@ def save_post(post_id: int) -> tuple[Response, int]:
 def unsave_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
 
-    if RedisInterface.hget(cache_key, '__NF__') == '-1':
-        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No post with ID {post_id} exists')
     try:
         # Check that post exists AND that the user has actually saved it
@@ -459,7 +457,7 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
                                   .where(Post.id == post_id)
                                   ).first()
         if not _res:
-            hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
             raise NotFound(f'No post with ID {post_id} found')
         if not _res[1]:
             raise Conflict('Post not saved prior to this request')
@@ -468,7 +466,7 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
 
     update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)    
     RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})  # Queue post_saves record for deletion
-    RedisInterface.set(f"saves:{post_id}:{g.DECODED_TOKEN['sid']}", 0, current_app.config['REDIS_TTL_EPHEMERAL']) # Ephemerally set save flag to False
+    RedisInterface.set(f"saves:{post_id}:{g.DECODED_TOKEN['sid']}", 0, RedisConfig.TTL_EPHEMERAL) # Ephemerally set save flag to False
     
     return jsonify({"message" : "Removed from saved posts"}), 202
 
@@ -479,7 +477,7 @@ def report_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
 
     cached_mapping: dict = RedisInterface.hgetall(cache_key)
-    if cached_mapping and '__NF__' in cached_mapping:
+    if cached_mapping and RedisConfig.NF_SENTINEL_KEY in cached_mapping:
         raise NotFound(f'No post with ID {post_id} found')
     
     try:
@@ -507,7 +505,7 @@ def report_post(post_id: int) -> tuple[Response, int]:
                                                                     .where(Post.id == post_id)
                                                                     ).first()
             if not _res:
-                hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Broadcast non-existence ephemerally 
+                hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Broadcast non-existence ephemerally 
                 raise NotFound(f'No post with ID {post_id} found')
             if _res[1]:
                 raise Conflict('Post already reported')
@@ -604,8 +602,8 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
 @token_required
 def delete_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
     cacheKey: str = f'comment:{comment_id}'
-    if RedisInterface.hget(cacheKey, '__NF__') == '-1':
-        hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])   # Reannounce non-existence
+    if RedisInterface.hget(cacheKey, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+        hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)   # Reannounce non-existence
         return jsonify({'message' : 'This comment has already been deleted'})
     
     try:
@@ -630,6 +628,6 @@ def delete_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
     update_global_counter(interface=RedisInterface, delta=-1, database=db, table=User.__tablename__, column='total_comments', identifier=g.DECODED_TOKEN['sid'])
     # Queue comment for soft deletion
     RedisInterface.xadd('SOFT_DELETIONS', {'id' : comment_id, 'table' : Comment.__tablename__})
-    hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL']) # Announce deletion
+    hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL) # Announce deletion
 
     return jsonify({'message' : 'Comment deleted'}), 202

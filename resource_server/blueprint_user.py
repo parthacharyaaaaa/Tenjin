@@ -1,9 +1,5 @@
-'''Blueprint module for all actions related to resource: user (`users` in database)
-### Note: All user related actions (account creation, User.last_login updation, and account deletion are done directly without query dispatching to Redis)
-'''
+'''Blueprint module for all actions related to resource: users'''
 from flask import Blueprint, g, request, jsonify, current_app, url_for
-user = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/users")
-
 from werkzeug import Response
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized
 from auxillary.decorators import enforce_json
@@ -12,14 +8,16 @@ from resource_server.resource_auxillary import processUserInfo, fetch_global_cou
 from resource_server.external_extensions import RedisInterface, hset_with_ttl
 from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum, ForumSubscription, Anime, AnimeSubscription
 from resource_server.scripts.mail import enqueueEmail
+from resource_server.redis_config import RedisConfig
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
-
 from datetime import datetime
 from redis.exceptions import RedisError
 from uuid import uuid4
 import base64
 from hashlib import sha256
+
+user = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/users")
 
 @user.route("/", methods=["POST"])
 # @private
@@ -111,7 +109,7 @@ def delete_user() -> Response:
     except RedisError: 
         raise InternalServerError("Failed to perform account deletion, please try again. If the issue persists, please raise a ticket")
     
-    hset_with_ttl(RedisInterface, f'user:{targetUser.id}', {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK']) # Non ephemeral timing? idk seems right
+    hset_with_ttl(RedisInterface, f'user:{targetUser.id}', {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_WEAK) # Non ephemeral timing? idk seems right
     enqueueEmail(RedisInterface, email=targetUser.email, subject='deletion', username=targetUser.username)
     return jsonify({"message" : "account deleted succesfully", "username" : user.username, "time_deleted" : user.time_deleted}), 203
 
@@ -250,11 +248,11 @@ def update_password(temp_url: str) -> Response:
 @user.route("/<int:user_id>", methods=["GET"])
 def get_user(user_id: int) -> tuple[Response, int]:
     cacheKey: str = f'user:{user_id}'
-    userMapping: dict[str, str|int] = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
+    userMapping: dict[str, str|int] = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION,RedisConfig.TTL_EPHEMERAL)
     global_posts_count, global_comments_count = fetch_global_counters(RedisInterface, f'{cacheKey}:total_posts', f'{cacheKey}:total_comments')
 
     if userMapping:
-        if '__NF__' in userMapping:
+        if RedisConfig.NF_SENTINEL_KEY in userMapping:
             raise NotFound('No user with this ID exists')
         
         # Update with global counters
@@ -270,7 +268,7 @@ def get_user(user_id: int) -> tuple[Response, int]:
                                         .where((User.id == user_id) & (User.deleted.isnot(False)))
                                         ).scalar_one_or_none()
         if not user:
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
             raise NotFound('No user with this ID exists')
         
         userMapping = rediserialize(user.__json_like__())
@@ -281,7 +279,7 @@ def get_user(user_id: int) -> tuple[Response, int]:
         userMapping['comments'] = global_comments_count
     if global_posts_count is not None:
         userMapping['posts'] = global_posts_count
-    hset_with_ttl(RedisInterface, cacheKey, userMapping, current_app.config['REDIS_TTL_STRONG'])
+    hset_with_ttl(RedisInterface, cacheKey, userMapping, RedisConfig.TTL_STRONG)
     return jsonify({'user' : userMapping}), 200
 
 @user.route('/<int:user_id>/posts')
@@ -318,7 +316,7 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
             post_idx+=1
         # All resources exist in cache, promote TTL and return results
         promote_group_ttl(interface=RedisInterface, group_key=cacheKey,
-                          promotion_ttl=current_app.config['REDIS_TTL_PROMOTION'], max_ttl=current_app.config['REDIS_TTL_CAP'])
+                          promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
         return jsonify({'posts' : resources, 'cursor' : nextCursor, 'end' : end})
     
     # Cache failure, either missing key in set or set does not exist. Either way, we'll have to bother the DB >:3
@@ -328,7 +326,7 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
                                         ).scalar_one_or_none()
         if not user:
             # Broadcast non-existence
-            hset_with_ttl(RedisInterface, f'user:{user_id}', {"__NF__" : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            hset_with_ttl(RedisInterface, f'user:{user_id}', {"__NF__" : -1}, RedisConfig.TTL_EPHEMERAL)
             raise NotFound('No user with this ID exists')
         
         whereClause = (Post.author_id == user_id)
@@ -344,8 +342,8 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
 
     if not recentPosts:
         with RedisInterface.pipeline() as pipe:
-            pipe.lpush(cacheKey, '__NF__')  # Announce non-existence
-            pipe.expire(cacheKey, current_app.config['REDIS_TTL_WEAK'])
+            pipe.lpush(cacheKey, RedisConfig.NF_SENTINEL_KEY)  # Announce non-existence
+            pipe.expire(cacheKey, RedisConfig.TTL_WEAK)
             pipe.execute()
 
         return jsonify({'posts' : None, 'cursor' : None, 'end' : True})
@@ -376,7 +374,7 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
     cache_grouped_resource(interface=RedisInterface,
                            group_key=cacheKey, resource_type='post',
                            resources= {post['id']:post for post in _posts},
-                           weak_ttl= current_app.config['REDIS_TTL_WEAK'], strong_ttl= current_app.config['REDIS_TTL_STRONG'],
+                           weak_ttl= RedisConfig.TTL_WEAK, strong_ttl= RedisConfig.TTL_STRONG,
                            cursor=nextCursor, end=end)
 
     return jsonify({'posts' : _posts, 'cursor' : nextCursor, 'end' : end})
@@ -415,7 +413,7 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
                 resources[forum_idx]['admins'] = global_counters[i+2]
             forum_idx+=1
 
-        promote_group_ttl(RedisInterface, cacheKey, promotion_ttl=current_app.config['REDIS_TTL_PROMOTION'], max_ttl=current_app.config['REDIS_TTL_CAP'])
+        promote_group_ttl(RedisInterface, cacheKey, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
         return jsonify({'forums' : resources, 'cursor' : newCursor, 'end' : end}), 200
 
     try:
@@ -423,7 +421,7 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
                                          .where((User.id == user_id) & (User.deleted.is_(False)))
                                          ).scalar_one_or_none()
         if not userID:
-            hset_with_ttl(RedisInterface, f'user:{user_id}', {"__NF__" : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            hset_with_ttl(RedisInterface, f'user:{user_id}', {"__NF__" : -1}, RedisConfig.TTL_EPHEMERAL)
             raise NotFound(f'No user with ID {userID} exists')
         
         forums: list[Forum] = db.session.execute(select(Forum)
@@ -435,8 +433,8 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
 
     if not forums:
         with RedisInterface.pipeline() as pipe:
-            pipe.lpush(cacheKey, '__NF__')
-            pipe.expire(cacheKey, current_app.config['REDIS_TTL_EPHEMERAL'])
+            pipe.lpush(cacheKey, RedisConfig.NF_SENTINEL_KEY)
+            pipe.expire(cacheKey, RedisConfig.TTL_EPHEMERAL)
             pipe.execute()
         return jsonify({'forums' : None, 'cursor' : cursor, 'end' : True})
 
@@ -464,7 +462,7 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
 
     # Group cache with updated counters
     cache_grouped_resource(RedisInterface, cacheKey, 'forum', {forum['id']:forum for forum in _forums},
-                           current_app.config['REDIS_TTL_WEAK'], current_app.config['REDIS_TTL_STRONG'],
+                           RedisConfig.TTL_WEAK, RedisConfig.TTL_STRONG,
                            cursor=newCursor, end=end)
     
     return jsonify({'forums' : _forums, 'cursor' : newCursor, 'end' : end})
@@ -498,7 +496,7 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
                 resources[anime_idx]['members'] = counter
             anime_idx+=1
 
-        promote_group_ttl(RedisInterface, cacheKey, current_app.config['REDIS_TTL_PROMOTION'], current_app.config['REDIS_TTL_CAP'])
+        promote_group_ttl(RedisInterface, cacheKey, RedisConfig.TTL_PROMOTION, RedisConfig.TTL_CAP)
         return jsonify({'animes' : resources, 'cursor' : newCursor, 'end' : end}), 200
 
     try:
@@ -506,7 +504,7 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
                                         .where((User.id == user_id) & (User.deleted.is_(False)))
                                         ).scalar_one_or_none()
         if not user:
-            hset_with_ttl(RedisInterface, f'user:{user_id}', {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            hset_with_ttl(RedisInterface, f'user:{user_id}', {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
             raise NotFound('No user with this ID exists')
         
         animes: list[Anime] = db.session.execute(select(Anime)
@@ -536,7 +534,7 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
             anime_idx+=1
 
     # Cache as a group with updated counters
-    cache_grouped_resource(RedisInterface, cacheKey, 'anime', {anime['id']:anime for anime in _animes}, current_app.config['REDIS_TTL_WEAK'], current_app.config['REDIS_TTL_STRONG'], newCursor, end)
+    cache_grouped_resource(RedisInterface, cacheKey, 'anime', {anime['id']:anime for anime in _animes}, RedisConfig.TTL_WEAK, RedisConfig.TTL_STRONG, newCursor, end)
     return jsonify({'animes' : _animes, 'cursor' : newCursor, 'end' : end})
 
 

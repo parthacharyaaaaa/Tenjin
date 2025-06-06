@@ -1,8 +1,9 @@
-from flask import Blueprint, g, jsonify, request, redirect, url_for, current_app
+from flask import Blueprint, g, jsonify, request, redirect, url_for
 from werkzeug import Response
 from werkzeug.exceptions import BadRequest, NotFound, Conflict
 from resource_server.resource_auxillary import update_global_counter
 from resource_server.external_extensions import RedisInterface, hset_with_ttl
+from resource_server.redis_config import RedisConfig
 from resource_server.resource_decorators import token_required
 from resource_server.models import db, Anime, AnimeGenre, Genre, StreamLink, Forum, AnimeSubscription
 from auxillary.utils import genericDBFetchException, rediserialize, consult_cache
@@ -28,10 +29,10 @@ executor = ThreadPoolExecutor(2)
 def get_anime(anime_id: int) -> tuple[Response, int]:
     # 1: Redis
     cacheKey: str = f'anime:{anime_id}'
-    animeMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'], dtype='string')
+    animeMapping: dict = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION, RedisConfig.TTL_EPHEMERAL, dtype='string')
 
     if animeMapping:
-        if '__NF__' in animeMapping:
+        if RedisConfig.NF_SENTINEL_KEY in animeMapping:
             raise NotFound(f"No anime with id {anime_id} could be found")
         return jsonify(animeMapping), 200            
 
@@ -39,7 +40,7 @@ def get_anime(anime_id: int) -> tuple[Response, int]:
     try:
         anime: Anime = db.session.execute(select(Anime).where(Anime.id == anime_id)).scalar_one_or_none()
         if not anime:
-            RedisInterface.set(cacheKey, '__NF__', current_app.config['REDIS_TTL_EPHEMERAL'])  # Announce non-existence
+            RedisInterface.set(cacheKey, RedisConfig.NF_SENTINEL_KEY, RedisConfig.TTL_EPHEMERAL)  # Announce non-existence
             raise NotFound(f"No anime with id {anime_id} could be found")
         
         genres: list[str] = db.session.execute(select(Genre._name)
@@ -52,7 +53,7 @@ def get_anime(anime_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
 
     animeMapping = rediserialize(anime.__json_like__()) | {'genres' : genres, 'stream_links' : {link.website:link.url for link in streamLinks}}
-    RedisInterface.set(cacheKey, ujson.dumps(animeMapping), current_app.config['REDIS_TTL_STRONG'])
+    RedisInterface.set(cacheKey, ujson.dumps(animeMapping), RedisConfig.TTL_STRONG)
 
     return jsonify({'anime' : animeMapping}), 200
 
@@ -89,15 +90,15 @@ def get_random_anime():
 def sub_anime(anime_id: int) -> tuple[Response, int]:
     cacheKey: str = f'{Anime.__tablename__}:{anime_id}'
     res = RedisInterface.hgetall(cacheKey)
-    if RedisInterface.hget(cacheKey, '__NF__') == '-1':
-        hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL']) # Reannounce non-existence
+    if RedisInterface.hget(cacheKey, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+        hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL) # Reannounce non-existence
         raise NotFound(f'No anime with ID {anime_id} exists')
     try:
         _res: Row = db.session.execute(select(Anime, AnimeSubscription)
                                        .outerjoin(AnimeSubscription, (AnimeSubscription.anime_id == anime_id) & (AnimeSubscription.user_id == g.DECODED_TOKEN['sid']))
                                        .where(Anime.id == anime_id)).first()
         if not _res:
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL']) # Reannounce non-existence
+            hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL) # Reannounce non-existence
             raise NotFound(f'No anime with ID {anime_id} exists')
 
         if _res[1]:
@@ -115,15 +116,15 @@ def sub_anime(anime_id: int) -> tuple[Response, int]:
 def unsub_anime(anime_id: int) -> tuple[Response, int]:
     cacheKey: str = f'{Anime.__tablename__}:{anime_id}'
     res = RedisInterface.hgetall(cacheKey)
-    if RedisInterface.hget(cacheKey, '__NF__') == '-1':
-        hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL']) # Reannounce non-existence
+    if RedisInterface.hget(cacheKey, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+        hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL) # Reannounce non-existence
         raise NotFound(f'No anime with ID {anime_id} exists')
     try:
         _res: Row = db.session.execute(select(Anime, AnimeSubscription)
                                        .outerjoin(AnimeSubscription, (AnimeSubscription.anime_id == anime_id) & (AnimeSubscription.user_id == g.DECODED_TOKEN['sid']))
                                        .where(Anime.id == anime_id)).first()
         if not _res:
-            hset_with_ttl(RedisInterface, cacheKey, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL']) # Reannounce non-existence
+            hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL) # Reannounce non-existence
             raise NotFound(f'No anime with ID {anime_id} exists')
 
         if not _res[1]:

@@ -1,14 +1,15 @@
+from flask import Blueprint, g, jsonify, request, url_for
+from werkzeug import Response
+from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict, Unauthorized, InternalServerError
 from auxillary.decorators import enforce_json
-
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
-
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from resource_server.resource_decorators import token_required, pass_user_details
 from resource_server.resource_auxillary import update_global_counter, fetch_global_counters
 from resource_server.external_extensions import RedisInterface, hset_with_ttl
+from resource_server.redis_config import RedisConfig
 from sqlalchemy import select, update, insert, desc, Row
 from sqlalchemy.exc import SQLAlchemyError
-
 from typing import Any
 from types import MappingProxyType
 from datetime import datetime, timedelta
@@ -16,8 +17,6 @@ from redis.exceptions import RedisError
 import base64
 import binascii
 
-from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict, Unauthorized, InternalServerError
-from flask import Blueprint, Response, g, jsonify, request, current_app, url_for
 forum = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/forums")
 
 TIMEFRAMES: MappingProxyType = MappingProxyType({0 : lambda dt : dt - timedelta(hours=1),
@@ -32,11 +31,11 @@ TIMEFRAMES: MappingProxyType = MappingProxyType({0 : lambda dt : dt - timedelta(
 def get_forum(forum_id: int) -> tuple[Response, int]:
     cacheKey: str = f'forum:{forum_id}'
     fetch_relation: bool = 'fetch_relation' in request.args and g.REQUESTING_USER
-    forumMapping: dict = consult_cache(RedisInterface, cacheKey, current_app.config['REDIS_TTL_CAP'], current_app.config['REDIS_TTL_PROMOTION'],current_app.config['REDIS_TTL_EPHEMERAL'])
+    forumMapping: dict = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION, RedisConfig.TTL_EPHEMERAL)
     global_subcount, global_postcount = fetch_global_counters(RedisInterface, f'{cacheKey}:subscribers', f'{cacheKey}:posts')
 
     if forumMapping:
-        if '__NF__' in forumMapping:
+        if RedisConfig.NF_SENTINEL_KEY in forumMapping:
             raise NotFound('No forum with this ID exists')
         
         # Update fetch mapping with global mappings
@@ -52,7 +51,7 @@ def get_forum(forum_id: int) -> tuple[Response, int]:
                                                     .where(Forum.id== forum_id)
                                                     ).scalar_one_or_none()
             if not fetchedForum:
-                hset_with_ttl(RedisInterface, cacheKey, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+                hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
                 raise NotFound('No forum with this ID could be found')
             
             forumMapping: dict = rediserialize(fetchedForum.__json_like__())
@@ -63,7 +62,7 @@ def get_forum(forum_id: int) -> tuple[Response, int]:
             if global_subcount is not None:
                 forumMapping['subscribers'] = global_subcount
             # Cache mapping with updated counters
-            hset_with_ttl(RedisInterface, cacheKey, forumMapping, current_app.config['REDIS_TTL_STRONG'])
+            hset_with_ttl(RedisInterface, cacheKey, forumMapping, RedisConfig.TTL_STRONG)
         except SQLAlchemyError: genericDBFetchException()
 
     try:
@@ -182,7 +181,7 @@ def create_forum() -> tuple[Response, int]:
                                           ).scalar_one_or_none()
         if not anime:
             # Set 404 mapping ephemerally for this anime ID
-            hset_with_ttl(RedisInterface, f'anime:{forumAnimeID}', {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            hset_with_ttl(RedisInterface, f'anime:{forumAnimeID}', {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
             raise NotFound(f"No anime with ID: {forumAnimeID} could be found")
     except SQLAlchemyError: genericDBFetchException()
 
@@ -200,7 +199,7 @@ def create_forum() -> tuple[Response, int]:
         sqlErr.__setattr__("description", "An error occured while trying to create the forum. This is most likely an issue with our servers")
         raise sqlErr
 
-    hset_with_ttl(RedisInterface, cacheKey, rediserialize(newForum.__json_like__()), current_app.config['REDIS_TTL_STRONG'])
+    hset_with_ttl(RedisInterface, cacheKey, rediserialize(newForum.__json_like__()), RedisConfig.TTL_STRONG)
     return jsonify({"message" : "Forum created succesfully"}), 202
 
 @forum.route("/<int:forum_id>", methods = ["DELETE"])
@@ -209,8 +208,8 @@ def create_forum() -> tuple[Response, int]:
 def delete_forum(forum_id: int) -> Response:
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
     # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, '__NF__') == '-1':
-        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No forum with ID {forum_id} exists')
     
     confirmationText: str = g.REQUEST_JSON.get('confirmation')
@@ -223,7 +222,7 @@ def delete_forum(forum_id: int) -> Response:
                                        .where(Forum.id == forum_id)).first()
         if not _res:
             # Broadcast non-existence
-            hset_with_ttl(RedisInterface, cache_key, {'__NF__' : -1}, current_app.config['REDIS_TTL_EPHEMERAL'])
+            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
             raise NotFound(f'No forum with id {forum_id} found. Perhaps you already deleted it?')
         
         target_forum, owner = _res
@@ -239,7 +238,7 @@ def delete_forum(forum_id: int) -> Response:
     RedisInterface.xadd("SOFT_DELETIONS", {'id' : forum_id, 'table' : Forum.__tablename__})
     
     # Broadcast deletion
-    hset_with_ttl(RedisInterface, cache_key, {'__NF__' : -1}, current_app.config['REDIS_TTL_WEAK'])
+    hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_WEAK)
     res = {'message' : 'forum deleted'}
     if 'redirect' in request.args:
         res['redirect'] = url_for('templates.view_anime', anime_id = _res.anime)
@@ -260,8 +259,6 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
 
     if (newAdminLevel == -1 or newAdminLevel == AdminRoles.owner) :
         raise BadRequest("Forum administrators can only have 2 roles: admin and super")
-    
-    
     # Request details valid at a surface level.
     try:        
         # Check to see if new admin actually exists is users table
@@ -270,17 +267,14 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
                                            ).scalar_one_or_none()
         if not newAdmin:
             raise NotFound('No user with this user id was found')
-        
         # Check if user has necessary permissions
         userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
                                                    .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
                                                    ).scalar_one_or_none()
         if not userAdmin:
             raise Forbidden(f"You do not have the necessary permissions to add admins to: {forum._name}")
-        
         if AdminRoles.getAdminAccessLevel(userAdmin.role) <= newAdminLevel:
             raise Unauthorized("You do not have the necessary permissions to add this type of admin")
-        
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Mandatory claim "sid" missing in token. Please login again')
 
@@ -295,7 +289,6 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
     targetAdminID: int = g.REQUEST_JSON.pop('user_id', None)
     if not targetAdminID:
         raise BadRequest('Missing user id for new admin')
-
     # Request details valid at a surface level.
     try:        
         # Check if user has necessary permissions
@@ -305,7 +298,6 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
         requestingUserLevel: int = AdminRoles.getAdminAccessLevel(userAdminRole)
         if requestingUserLevel < 2:
             raise Forbidden('You do not have the necessary permissions to delete an admin from this forum')
-        
         # Check to see if given user is actually an admin
         targetAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
                                                   .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetAdminID))
@@ -313,7 +305,6 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
                                                   ).scalar_one_or_none()
         if not targetAdmin:
             raise NotFound("This user is not an admin")
-        
         targetAdminRole = AdminRoles.getAdminAccessLevel(targetAdmin.role)
         # Must have higher access, pr same access but 
         if (requestingUserLevel < targetAdminRole or not (requestingUserLevel == targetAdminRole and targetAdminID == g.DECODED_TOKEN['sid'])):
@@ -397,8 +388,8 @@ def check_admin_permissions(forum_id: int) -> tuple[Response, int]:
 def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
     # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, '__NF__') == '-1':
-        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No forum with ID {forum_id} exists')
     
     try:
@@ -406,7 +397,7 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
                                        .outerjoin(ForumSubscription, (ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))
                                        .where(Forum.id == forum_id)).first()
         if not _res:
-            hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Ephemeral announcement
+            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Ephemeral announcement
             raise NotFound(f'No forum with ID {forum_id} exists')
 
         if _res[1]:
@@ -424,8 +415,8 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
 def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:    
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
     # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, '__NF__') == '-1':
-        hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Reset ephemeral announcement
+    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No forum with ID {forum_id} exists')
     
     try:
@@ -433,7 +424,7 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
                                        .outerjoin(ForumSubscription, (ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))
                                        .where(Forum.id == forum_id)).first()
         if not _res:
-            hset_with_ttl(RedisInterface, cache_key, {'__NF__':-1}, current_app.config['REDIS_TTL_EPHEMERAL'])  # Ephemeral announcement
+            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Ephemeral announcement
             raise NotFound(f'No forum with ID {forum_id} exists')
 
         if not _res[1]:
@@ -454,7 +445,7 @@ def edit_forum(forum_id: int) -> tuple[Response, int]:
     cacheKey: str = f'forum:{forum_id}'
     try:
         op = RedisInterface.hgetall(cacheKey)
-        if '__NF__' in op:
+        if RedisConfig.NF_SENTINEL_KEY in op:
             # Not 404, if __NF__ mapping is in cache then the forum was deleted very recently
             raise Conflict('This forum was just deleted')
         
@@ -506,7 +497,7 @@ def edit_forum(forum_id: int) -> tuple[Response, int]:
         e.__setattr__('description', 'Failed to update this forum. Please try again later')
         raise e
 
-    hset_with_ttl(RedisInterface, cacheKey, updatedForum.__json_like__(), current_app.config['REDIS_TTL_WEAK'])
+    hset_with_ttl(RedisInterface, cacheKey, updatedForum.__json_like__(), RedisConfig.TTL_WEAK)
     return jsonify({'message' : 'Edited forum'}), 200
 
 @forum.route("/<int:forum_id>/highlight-post", methods=['PATCH'])
