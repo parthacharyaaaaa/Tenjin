@@ -8,8 +8,7 @@ from flask import Flask
 import time
 from traceback import format_exc
 import threading
-from typing import Literal
-from sqlalchemy import select, text
+from sqlalchemy import text
 from flask_sqlalchemy import SQLAlchemy
 
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
@@ -174,3 +173,28 @@ def fetch_global_counters(interface: Redis, *counter_names: str) -> list[int]:
             pipe.get(counter_name)
         counters = pipe.execute()
     return list(map(lambda counter:None if not counter else int(counter), counters))
+
+def write_action_state(interface: Redis, flag_name: str, flag_state: str, flag_ttl: int = 86400, lock_ttl: int = 5) -> None:
+    '''
+    Write a given state for a pending action.
+    Args:
+        interface: Redis instance connected to the cachr server
+        flag_name: Name of flag to write action state into
+        flag_stat: Action state to write
+        flag_ttl: Optional TTL in seconds for flag, defaults to 1 day
+        lock_ttl: Optional TTL in seconds for lock used when updating state, defaults to 5 seconds
+
+    Returns:
+        True if state was succesfully written, False otherwise  
+    '''
+    lock_name: str = f'lock:{flag_state}L{flag_name}'
+    acquired = interface.set(lock_name, value=1, nx=True, ex=lock_ttl)
+    if not acquired:
+        return False
+    
+    # Lock acquired
+    with interface.pipeline() as pipe:
+        pipe.set(flag_name, flag_state, ex=flag_ttl)
+        pipe.delete(lock_name)
+        pipe.execute()
+    return True
