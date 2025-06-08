@@ -402,21 +402,19 @@ class Comment(db.Model):
         CheckConstraint("reports >= 0", "check_reports_value"),
     )
 
-    def __init__(self, authorID: int, parentForum: int, epoch: datetime, body: str, parentPost: int, parentThread: int, replyingTo: int | None = None):
+    def __init__(self, authorID: int, parentForum: int, epoch: datetime, body: str, parentPost: int):
         self.author_id = authorID
         self.parent_forum = parentForum
         self.time_created = epoch
         self.body = body
         self.parent_post = parentPost
-        self.parent_thread = parentThread
-        self.replying_to = replyingTo
         self.score = 0
         self.reports = 0
         self.deleted = False
         self.time_deleted = None
 
     def __repr__(self) -> str:
-        return f"<Comment({self.id}, {self.author_id}, {self.parent_forum}, {self.time_created.strftime('%d/%m/%y, %H:%M:%S')}, {self.body}, {self.parent_post}, {self.parent_thread}, {self.replying_to}, {self.score}, {self.reports}, {self.author_id}, {self.post}, {self.parent}, {self.child}, {self.parent_comment}, {self.comment_replied})>"
+        return f"<Comment({self.id}, {self.author_id}, {self.parent_forum}, {self.time_created.strftime('%d/%m/%y, %H:%M:%S')}, {self.body}, {self.parent_post}, {self.score}, {self.reports})>"
     
     def __json_like__(self) -> dict:
         return {"id": self.id,
@@ -425,6 +423,4 @@ class Comment(db.Model):
                 "time_created": self.time_created.strftime('%d/%m/%y, %H:%M:%S'),
                 "body": self.body,
                 "parent_post": self.parent_post,
-                "parent_thread": self.parent_thread,
-                "replying_to": self.replying_to,
                 "score": self.score}
