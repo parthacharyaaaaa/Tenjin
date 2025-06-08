@@ -6,7 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostVote, PostReport, Comment, ReportTags
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, cache_layer_integrity_check, write_action_state
 from resource_server.redis_config import RedisConfig
 from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
@@ -419,54 +419,127 @@ def check_post_vote(post_id: int) -> tuple[Response, int]:
 @token_required
 def save_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
-    # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+    flag_key: str = f'{PostSave.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
+    lock_key: str = f'lock:{RedisConfig.RESOURCE_CREATION_PENDING_FLAG}:{flag_key}'    
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(cache_key)
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        post_mapping, latest_intent, lock = pipe.execute()
+    
+    if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No post with ID {post_id} exists')
-
-    try:
-        # Check that post exists AND that the user has actually saved it
-        _res = db.session.execute(select(Post, PostSave)
-                                  .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
-                                  .where(Post.id == post_id)
-                                  ).first()
-        if not _res:
-            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
-            raise NotFound(f'No post with ID {post_id} found')
-        if _res[1]:
-            raise Conflict('Post already saved prior to this request')
-    except SQLAlchemyError: genericDBFetchException()
+    if lock or latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG:
+        raise Conflict(f'A request for this action is currently enqueued')
+    # Attempt to set lock for this action
+    lock = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock:
+        # Failed to acquire lock means another worker is performing this same request, treat this request as a duplicate
+        raise Conflict(f'A request for this action is currently enqueued')
     
-    update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)    
-    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})
-
-    return jsonify({"message" : "Saved!"}), 202
+    # Lock acquired, perform all necessary valdiations
+    post_exists: bool = bool(post_mapping)
+    isSaved: bool = False if latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG else True
+    try:
+        if not (post_mapping or latest_intent):
+            # Nothing known at this point, query both Post and PostSave
+            _res = db.session.execute(select(Post.id, PostSave)
+                                             .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
+                                             .where(Post.id == post_id)).first()
+            if _res:
+                post_exists, isSaved = _res
+        elif not latest_intent:
+            # Fetch PostSave record to see if the user has already saved this post
+            isSaved = bool(db.session.execute(select(PostSave)
+                                              .where((PostSave.user_id == g.DECODED_TOKEN['sid']) & (PostSave.post_id == post_id))
+                                              ).scalar_one_or_none())
+            
+        elif not post_mapping:
+            post_exists = bool(db.session.execute(select(Post.id)
+                                                  .where(Post.id == post_id)).scalar_one_or_none())
+    except SQLAlchemyError: genericDBFetchException()
+    if not post_exists:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
+        RedisInterface.delete(lock_key)
+        raise NotFound(f'No post with ID {post_id} exists')
+    # If post is already saved in database, then check if latest intent is to unsave. IF no, then this request is invalid
+    if isSaved and latest_intent != RedisConfig.RESOURCE_DELETION_PENDING_FLAG:
+        RedisInterface.delete(lock_key)
+        raise Conflict('Post already saved')
+    
+    # All validations passed, change state for this action
+    RedisInterface.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG)    # Write/Update flag to show latest intent as post save
+    
+    # Only queue database operations if state was written succesfully
+    try:
+        update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)    
+        RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})
+    finally:
+        RedisInterface.delete(lock_key)
+    return jsonify({"message" : "Post saved!"}), 202
 
 @post.route("/<int:post_id>/unsave", methods=["PATCH"])
 @token_required
 def unsave_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
+    flag_key: str = f'{PostSave.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
+    lock_key: str = f'lock:{RedisConfig.RESOURCE_DELETION_PENDING_FLAG}:{flag_key}'    
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(cache_key)
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        post_mapping, latest_intent, lock = pipe.execute()
 
-    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+    if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No post with ID {post_id} exists')
+    
+    if lock or latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG:
+        raise Conflict(f'A request for this action is currently enqueued')
+    # Attempt to set lock for this action
+    lock = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock:
+        # Failed to acquire lock means another worker is performing this same request, treat this request as a duplicate
+        raise Conflict(f'A request for this action is currently enqueued')
+    
+    post_exists: bool = bool(post_mapping)
+    isSaved: bool = False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG else True
     try:
-        # Check that post exists AND that the user has actually saved it
-        _res = db.session.execute(select(Post, PostSave)
-                                  .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
-                                  .where(Post.id == post_id)
-                                  ).first()
-        if not _res:
-            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
-            raise NotFound(f'No post with ID {post_id} found')
-        if not _res[1]:
-            raise Conflict('Post not saved prior to this request')
-
+        if not (post_mapping or latest_intent):
+            # Nothing known at this point, query both Post and PostSave
+            _res = db.session.execute(select(Post.id, PostSave)
+                                             .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
+                                             .where(Post.id == post_id)).first()
+            if _res:
+                post_exists, isSaved = _res
+        elif not latest_intent:
+            # Fetch PostSave record to see if the user has already saved this post
+            isSaved = bool(db.session.execute(select(PostSave)
+                                              .where((PostSave.user_id == g.DECODED_TOKEN['sid']) & (PostSave.post_id == post_id))
+                                              ).scalar_one_or_none())
+            
+        elif not post_mapping:
+            post_exists = bool(db.session.execute(select(Post.id)
+                                                  .where(Post.id == post_id)).scalar_one_or_none())
     except SQLAlchemyError: genericDBFetchException()
-
-    update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)    
-    RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})  # Queue post_saves record for deletion
-    RedisInterface.set(f"saves:{post_id}:{g.DECODED_TOKEN['sid']}", 0, RedisConfig.TTL_EPHEMERAL) # Ephemerally set save flag to False
+    if not post_exists:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
+        RedisInterface.delete(lock_key)
+        raise NotFound(f'No post with ID {post_id} exists')
+    # If post not saved in database, check to see if latest intent was to save. If not, reject this request
+    if not (isSaved or latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG):
+        RedisInterface.delete(lock_key)
+        raise Conflict('Post not saved in the first place')
+    
+    # All validations passed, change state for this action
+    RedisInterface.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG)    # Write/Update flag to show latest intent as post unsave
+    
+    try:
+        update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)    
+        RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})  # Queue post_saves record for deletion
+    finally:
+        RedisInterface.delete(lock_key)
     
     return jsonify({"message" : "Removed from saved posts"}), 202
 
