@@ -305,7 +305,7 @@ def vote_post(post_id: int) -> tuple[Response, int]:
         pipe.get(flag_key)
         pipe.get(lock_key)
         post_mapping, latest_intent, lock = pipe.execute()
-    
+
     if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No post with ID {post_id} exists')
@@ -369,30 +369,66 @@ def vote_post(post_id: int) -> tuple[Response, int]:
 @token_required
 def unvote_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
-    # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+    flag_key: str = f'{PostVote.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
+    lock_key: str = f'lock:{RedisConfig.RESOURCE_CREATION_PENDING_FLAG}:{flag_key}'
+
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(cache_key)
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        post_mapping, latest_intent, lock = pipe.execute()
+    
+    if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No post with ID {post_id} exists')
+    if lock or latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG: # Race condition, or latest intent is same as the intent carried by this request (unvote). Reject
+        raise Conflict(f'A request for this action is currently enqueued')
+    
+    previous_vote: bool = (True if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG 
+                           else False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG
+                           else None)
+    print(previous_vote)
+    # Consult DB for partial/complete cache misses
+    try:
+        if not (post_mapping or latest_intent):
+            # Complete cache miss, read state from DB
+            joined_result: Row = db.session.execute(select(Post, PostVote.vote)
+                                                    .outerjoin(PostVote, (PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid']))
+                                                    .where(Post.id == post_id)).first()
+            if joined_result:
+                post_mapping: dict[str, str|int] = joined_result[0].__json_like__()
+                previous_vote = joined_result[1]
+        elif previous_vote is None:
+            previous_vote = bool(db.session.execute(select(PostVote)
+                                                    .where((PostVote.voter_id == g.DECODED_TOKEN['sid']) & (PostVote.post_id == post_id))
+                                                    ).scalar_one_or_none())
+        elif not post_mapping:
+            post: Post = db.session.execute(select(Post)
+                                            .where(Post.id == post_id)
+                                            ).scalar_one_or_none()
+            if post:
+                post_mapping = post.__json_like__()
+    except SQLAlchemyError: genericDBFetchException()
+    if not post_mapping:
+        hset_with_ttl(RedisInterface, f'{Post.__tablename__}:{post_id}', {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+        raise NotFound(f'No post with ID {post_id} exists')
+    if previous_vote is None:   # Neither cache nor DB was able to prove that the user has previously voted on this post, hence this request is invalid. Begone >:3
+            raise Conflict(f'Post not voted prior to unvote request')
+
+    delta: int = -1 if previous_vote else 1 # No possibility of previous_vote being None at this state
+    # All checks passed, set lock
+    lock_set = RedisInterface.set(lock_key, value=1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock_set:    # Catch race condition, suuuuuper rare, but equally troublesome >:(
+        raise Conflict(f'A request for this action is currently enqueued')
     
     try:
-        # Check that post exists AND user has voted on this post
-        _res: Row = db.session.execute(select(Post, PostVote)
-                                       .outerjoin(PostVote, (PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid']))
-                                       .where(Post.id == post_id)).first()
-        if not _res:
-            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
-            raise NotFound(f'No post with ID {post_id} exists')
-        
-        if not _res[1]:
-            raise Conflict(f'No vote casted for post with ID {post_id}')
-    except SQLAlchemyError: genericDBFetchException()
-
-    delta: int = -1 if PostVote.vote else 1
+        RedisInterface.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG)    # Write latest intent as unvoting this post
+        update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id)    
+        RedisInterface.xadd("WEAK_DELETIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostVote.__tablename__})
+        RedisInterface.delete(f'votes:{post_id}:{g.DECODED_TOKEN["sid"]}')    # Remove cached entry if exists
+    finally:
+        RedisInterface.delete(lock_key)
     
-    update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id)    
-    RedisInterface.xadd("WEAK_DELETIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostVote.__tablename__})
-    RedisInterface.delete(f'votes:{post_id}:{g.DECODED_TOKEN["sid"]}')    # Remove cached entry if exists
-
     return jsonify({"message" : "Removed vote!"}), 202
 
 @post.route('/<int:post_id>/is-saved', methods=['GET'])
