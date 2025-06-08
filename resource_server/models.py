@@ -21,25 +21,25 @@ db = SQLAlchemy()
 ### Assosciation Tables ###
 class ForumSubscription(db.Model):
     __tablename__ = "forum_subscriptions"
-    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
-    forum_id = db.Column(db.Integer, db.ForeignKey("forums.id", ondelete='CASCADE'), primary_key=True)
-    time_subscribed = db.Column(db.TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
+    user_id: int = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
+    forum_id: int = db.Column(db.Integer, db.ForeignKey("forums.id", ondelete='CASCADE'), primary_key=True)
+    time_subscribed: datetime = db.Column(db.TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
 class AnimeSubscription(db.Model):
     __tablename__ = "anime_subscriptions"
-    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
-    anime_id = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
+    user_id: int = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
+    anime_id: int = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
 
 class PostVote(db.Model):
     __tablename__ = "post_votes"
-    voter_id = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
-    post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id", ondelete='CASCADE'), primary_key=True)
-    vote = db.Column(db.Boolean, nullable=False)
+    voter_id: int = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
+    post_id: int = db.Column(db.BigInteger, db.ForeignKey("posts.id", ondelete='CASCADE'), primary_key=True)
+    vote: bool = db.Column(db.Boolean, nullable=False)
 
 class PostSave(db.Model):
     __tablename__ = "post_saves"
-    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
-    post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id", ondelete='CASCADE'), primary_key=True)
+    user_id: int = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
+    post_id: int = db.Column(db.BigInteger, db.ForeignKey("posts.id", ondelete='CASCADE'), primary_key=True)
 
 REPORT_TAGS = ENUM('spam', 'harassment', 'hate', 'violence', 'other', name='REPORT_TAGS', create_type=True)
 class ReportTags(Enum):
@@ -54,22 +54,22 @@ class ReportTags(Enum):
         return arg in [v.value for v in ReportTags.__members__.values()]
 class PostReport(db.Model):
     __tablename__ = "post_reports"
-    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
-    post_id = db.Column(db.BigInteger, db.ForeignKey("posts.id", ondelete='CASCADE'), primary_key=True)
-    report_time = db.Column(TIMESTAMP, default = text('CURRENT_TIMESTAMP'))
-    report_description = db.Column(VARCHAR(256), nullable = False)
-    report_tag = db.Column(REPORT_TAGS, nullable=False)
+    user_id: int = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
+    post_id: int = db.Column(db.BigInteger, db.ForeignKey("posts.id", ondelete='CASCADE'), primary_key=True)
+    report_time: datetime = db.Column(TIMESTAMP, default = text('CURRENT_TIMESTAMP'))
+    report_description: str = db.Column(VARCHAR(256), nullable = False)
+    report_tag: str = db.Column(REPORT_TAGS, nullable=False)
 
 class StreamLink(db.Model):
     __tablename__ = "stream_links"
-    anime_id = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
-    url = db.Column(db.String(256), primary_key=True, nullable=False)
-    website = db.Column(db.String(128), nullable=False)
+    anime_id: int = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
+    url: str = db.Column(db.String(256), primary_key=True, nullable=False)
+    website: str = db.Column(db.String(128), nullable=False)
 
 class AnimeGenre(db.Model):
     __tablename__ = "anime_genres"
-    anime_id = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
-    genre_id = db.Column(db.SmallInteger, db.ForeignKey("genres.id", ondelete='CASCADE'), primary_key=True)
+    anime_id: int = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
+    genre_id: int = db.Column(db.SmallInteger, db.ForeignKey("genres.id", ondelete='CASCADE'), primary_key=True)
 
 ADMIN_ROLES = ENUM("admin", "super", "owner", name="ADMIN_ROLES", create_type=True)
 class AdminRoles(Enum):
@@ -92,9 +92,9 @@ class AdminRoles(Enum):
 
 class ForumAdmin(db.Model):
     __tablename__ = "forum_admins"
-    forum_id = db.Column(db.Integer, db.ForeignKey("forums.id", ondelete='CASCADE'), primary_key=True)
-    user_id = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
-    role = db.Column(ADMIN_ROLES, nullable=False, server_default=text(f"'{ADMIN_ROLES.enums[0]}'"))
+    forum_id: int = db.Column(db.Integer, db.ForeignKey("forums.id", ondelete='CASCADE'), primary_key=True)
+    user_id: int = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
+    role: str = db.Column(ADMIN_ROLES, nullable=False, server_default=text(f"'{ADMIN_ROLES.enums[0]}'"))
 
 
 ### Tables ###
