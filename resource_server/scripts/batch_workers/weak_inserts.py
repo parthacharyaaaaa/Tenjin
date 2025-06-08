@@ -38,7 +38,10 @@ if __name__ == "__main__":
     # Initialize empty caches for data types for insertions and templates
     dtypes_cache: dict[str, list[type]] = {}
     templates_cache: dict[str, str] = {}
+    pk_cache: dict[str, int] = {}
     query_groups: dict[str, list[dict[str, Any]]] = {}       # dict[<tablename> : argslist[dict[<attribute> : <value>]]]
+    flag_name_template: str = '{resource}:{identifiers}'
+    flag_names_mapping: dict[str, list[str]] = {}
 
     # Initialize configurations for this worker
     with open(os.path.join(os.path.dirname(__file__), "worker_config.json"), 'rb') as configFile:
@@ -78,9 +81,17 @@ if __name__ == "__main__":
                     table_data = {k : None if v == '' else v for k,v in query_data[1].items()}
                     table: str = table_data.pop('table')    # Remove and read helper field 'table'
                     if table not in dtypes_cache:
-                        dTypesList = getDtypes(dbCursor, table, includePrimaryKey=True)     # Discriminators for weak entities are provided in streams as they are PKs for assosciated strong entities
+                        dTypesList: list[type] = getDtypes(dbCursor, table, includePrimaryKey=True)     # Discriminators for weak entities are provided in streams as they are PKs for assosciated strong entities
+                        pk_dtypes: int = len(dTypesList) - len(getDtypes(dbCursor, table, includePrimaryKey=False))
                         dtypes_cache[table] = dTypesList
+                        pk_cache[table] = pk_dtypes
 
+                    # Format and append the goddamn string in the goddamn fucking goddamn
+                    if table not in flag_names_mapping:
+                        flag_names_mapping[table] = []
+                    
+                    flag_names_mapping[table].append(flag_name_template.format(resource=table, identifiers=':'.join(list(table_data.values())[:pk_cache[table]])))
+                    # identifiers would be colon-separated, ordered discriminators. Slicing is important here in case of additional attributes to the weak entity, such as 'vote' in post_votes and comment_votes
                     # Prepare Python/psycopg2 compatible mapping for this entry
                     table_data = {k : dtypes_cache[table][idx](v) if v else v for idx, (k,v) in enumerate(table_data.items())}
 
@@ -88,6 +99,7 @@ if __name__ == "__main__":
                         query_groups[table].append(table_data)
                     else:
                         query_groups[table] = [table_data]
+                    
                 except KeyError:
                     print(f"[{ID}]: Received invalid query params from entry: {query_data[0]}")
             
@@ -124,6 +136,10 @@ if __name__ == "__main__":
                     print(qargs)
                     print(template)
                     dbCursor.execute(f"ROLLBACK TO SAVEPOINT s{ID}")
+
+                # Clear all flags, irrespective of succeess or failure (to allow retries)
+                interface.delete(*flag_names_mapping[table])
+                flag_names_mapping.pop(table)
 
             interface.xtrim(streamName, minid=trimUB)   # Finally trim consumed substream
             query_groups.clear()
