@@ -74,14 +74,14 @@ def update_jwks(endpoint: str, currentMapping: dict[str, bytes], interface: Redi
 
             # Finally release lock and update cooldown
             pipe.delete('JWKS_POLL_LOCK')
-            pipe.set('JWKS_POLL_COOLDOWN', jwks_poll_cooldown)
+            pipe.set('JWKS_POLL_COOLDOWN', value=1, ex=jwks_poll_cooldown)
             pipe.execute()
 
         return currentMapping
     except Exception:
         with interface.pipeline() as pipe:
             pipe.delete('JWKS_POLL_LOCK')
-            pipe.set('JWKS_POLL_COOLDOWN', jwks_poll_cooldown)
+            pipe.set('JWKS_POLL_COOLDOWN', value=1, ex=jwks_poll_cooldown)
             pipe.execute()
         print(format_exc())
         return currentMapping
