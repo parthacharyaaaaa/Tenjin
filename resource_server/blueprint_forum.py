@@ -207,41 +207,66 @@ def create_forum() -> tuple[Response, int]:
 @enforce_json
 def delete_forum(forum_id: int) -> Response:
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
-    # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+    flag_key: str = f'delete:{cache_key}'
+    lock_key: str = f'lock:{flag_key}'
+
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(cache_key)
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        forum_mapping, latest_intent, lock = pipe.execute()
+    
+    if forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No forum with ID {forum_id} exists')
+    if lock or latest_intent:   # Either some other worker is trying to delete this forum, or this forum has already been queued for deletion but not flushed to database yet
+        raise Conflict(f'A request for this action is currently enqueued')
     
     confirmationText: str = g.REQUEST_JSON.get('confirmation')
     if not confirmationText:
         raise BadRequest('Please enter the name of the forum to follow through with deletion')
-    try:
-        # Check existence of this forum
-        _res: Row = db.session.execute(select(Forum, ForumAdmin)
-                                       .outerjoin(ForumAdmin, (ForumAdmin.forum_id == forum_id) & (ForumAdmin.role == 'owner') & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
-                                       .where(Forum.id == forum_id)).first()
-        if not _res:
-            # Broadcast non-existence
-            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
-            raise NotFound(f'No forum with id {forum_id} found. Perhaps you already deleted it?')
-        
-        target_forum, owner = _res
-        if not owner:
-            raise Forbidden("You do not have the necessary permissions to delete this forum")
-        if(target_forum._name != confirmationText):
-            raise BadRequest('Please enter the forum title correctly, as it is')
-        
-    except SQLAlchemyError: raise genericDBFetchException()
-    except KeyError: raise BadRequest("Missing mandatory field 'sid', please login again")
-
-    # Request carries the necessary permissions to delete this forum
-    RedisInterface.xadd("SOFT_DELETIONS", {'id' : forum_id, 'table' : Forum.__tablename__})
     
-    # Broadcast deletion
-    hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_WEAK)
-    res = {'message' : 'forum deleted'}
+    # Validating request
+    try:
+        if not forum_mapping:
+            # Check existence of this forum AND owner
+            joined_res: Row = db.session.execute(select(Forum, ForumAdmin)
+                                                 .outerjoin(ForumAdmin, (ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']) & (ForumAdmin.role == 'owner'))
+                                                 .where((Forum.id == forum_id) & (Forum.deleted.is_(False)))
+                                                 ).first()
+            if not joined_res:
+                # Broadcast non-existence
+                hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+                raise NotFound(f'No forum with id {forum_id} found')
+            forum_mapping = joined_res[0].__json_like__()
+            owner = joined_res[1]
+        else:
+            # Forum known, check only admins
+            owner = db.session.execute(select(ForumAdmin)
+                                         .where(ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']) & (ForumAdmin.role == 'owner')
+                                         ).scalar_one_or_none()
+    except SQLAlchemyError: raise genericDBFetchException()        
+    except KeyError: raise BadRequest("Missing mandatory field 'sid', please login again")
+    if not owner:
+        raise Forbidden("You do not have the necessary permissions to delete this forum")
+    if(forum_mapping['name'] != confirmationText):
+        raise BadRequest('Please enter the forum title correctly, as it is')
+
+    # Permission valid, and all other checks passed. Attempt to set lock for this action
+    lock = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock:
+        # Failed to acquire lock means another worker is performing this same request, treat this request as a duplicate
+        raise Conflict(f'A request for this action is currently enqueued')
+    try:
+        RedisInterface.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+        RedisInterface.xadd("SOFT_DELETIONS", {'id' : forum_id, 'table' : Forum.__tablename__})
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_WEAK)   # Broadcast deletion
+    finally:
+        RedisInterface.delete(lock_key) # Free lock no matter what happens
+    
+    res: dict = {'message' : 'forum deleted'}
     if 'redirect' in request.args:
-        res['redirect'] = url_for('templates.view_anime', anime_id = _res.anime)
+        res['redirect'] = url_for('templates.view_anime', anime_id = forum_mapping['anime'])
     return jsonify(res), 200
 
 @forum.route("/<int:forum_id>/admins", methods=['POST'])
