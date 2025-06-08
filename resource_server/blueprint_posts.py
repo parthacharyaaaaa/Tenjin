@@ -284,64 +284,86 @@ def delete_post(post_id: int) -> Response:
 @post.route("/<int:post_id>/vote", methods=["PATCH"])
 @token_required
 def vote_post(post_id: int) -> tuple[Response, int]:
-    cache_key: str = f'{Post.__tablename__}:{post_id}'
-    # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
-        raise NotFound(f'No post with ID {post_id} exists')
-    
     try:
         vote: int = int(request.args['type'])
         if vote != 0 and vote != 1:
-            raise ValueError
+            raise BadRequest("Invalid vote value (Should be 0 (downvote) or 1 (upvote))")
     except KeyError:
         raise BadRequest("Vote type (upvote/downvote) not specified")
     except ValueError:
         raise BadRequest("Invalid vote value (Should be 0 (downvote) or 1 (upvote))")
     
-    # Request valid at the surface level, check for votes existence in db
-    bSwitchVote: bool = False
-    previous_vote: int = None
-    vote_cache_key: str = f'votes:{post_id}:{g.DECODED_TOKEN["sid"]}'
+    # Request valid at the surface level
+    incoming_intent: str = RedisConfig.RESOURCE_CREATION_PENDING_FLAG if vote == 1 else RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG  # Alt flag is special value for downvotes. We need this here because a downvote is still resource creation, but different than an upvote obviously
     delta: int = 1
+    cache_key: str = f'{Post.__tablename__}:{post_id}'
+    flag_key: str = f'{PostVote.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
+    lock_key: str = f'lock:{RedisConfig.RESOURCE_CREATION_PENDING_FLAG}:{flag_key}'
 
-    # 1: Consult cache
-    try:
-        previous_vote = RedisInterface.get(vote_cache_key)
-        if previous_vote is not None:
-            previous_vote = int(previous_vote)
-    except RedisError: ...
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(cache_key)
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        post_mapping, latest_intent, lock = pipe.execute()
     
-    # 2: Fall back to DB
+    if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
+        raise NotFound(f'No post with ID {post_id} exists')
+    if lock or latest_intent == incoming_intent: # Race condition, or latest intent is same as the intent carried by this request. Reject
+        raise Conflict(f'A request for this action is currently enqueued')
+    
+    # Consult DB in case of partial/no information being read from cache
+    previous_vote: bool = True if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG else False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG else None
     try:
-        # Check if post exists AND if user has already casted a vote for this post
-        _res: Row = db.session.execute(select(Post)
-                                       .outerjoin(PostVote, (PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid']))
-                                       .where(Post.id == post_id)).first()
-        if not _res:
-            hset_with_ttl(RedisInterface, f'{Post.__tablename__}:{post_id}', {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
-            raise NotFound(f'No post with ID {post_id} exists')
-        
-        previous_vote = _res[1]
-        if previous_vote is not None:
-            if int(previous_vote) == vote:
-                # Casting the same vote twice, do nothing
-                raise Conflict('Same vote cannot be cast twice on the same post')
-            else:
-                # Going from upvote to downvote, or vice-versa. Counter will be incremented or decremented by 2
-                delta = 2
-                # Remove old record for user VOTES ON posts in advance
-                db.session.execute(delete(PostVote).where((PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid'])))
-                db.session.commit()
+        if not (post_mapping or latest_intent):
+            # Complete cache miss, read state from DB
+            joined_result: Row = db.session.execute(select(Post, PostVote.vote)
+                                                    .outerjoin(PostVote, (PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid']))
+                                                    .where(Post.id == post_id)).first()
+            if joined_result:
+                post_mapping: dict[str, str|int] = joined_result[0].__json_like__()
+                previous_vote = joined_result[1]
+        elif previous_vote is None:
+            previous_vote = bool(db.session.execute(select(PostVote)
+                                                    .where((PostVote.voter_id == g.DECODED_TOKEN['sid']) & (PostVote.post_id == post_id))
+                                                    ).scalar_one_or_none())
+        elif not post_mapping:
+            post: Post = db.session.execute(select(Post)
+                                            .where(Post.id == post_id)
+                                            ).scalar_one_or_none()
+            if post:
+                post_mapping = post.__json_like__()
     except SQLAlchemyError: genericDBFetchException()
+    if not post_mapping:
+        hset_with_ttl(RedisInterface, f'{Post.__tablename__}:{post_id}', {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+        raise NotFound(f'No post with ID {post_id} exists')
+    if ((previous_vote and incoming_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG) or 
+        (previous_vote is False and incoming_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG)):
+            raise Conflict(f'Post already {"upvoted" if vote else "downvoted"}')
+
+    if previous_vote is not None:
+        # At this stage, if a previous vote exists then the current intent is the opposite
+        delta = 2
+        db.session.execute(delete(PostReport)
+                           .where((PostReport.user_id == g.DECODED_TOKEN['sid']) & (PostReport.post_id == post_id)))
+        db.session.commit()
 
     if not vote: delta*=-1  # Negative vote for downvote
-
-    update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id)
-    RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__}) # Add post_votes record to insertion queue
-    RedisInterface.set(vote_cache_key, vote, ex=RedisConfig.TTL_EPHEMERAL)    # Ephemerally cache that bad boy
-
-    return jsonify({"message" : "Voted!"}), 202
+    # All checks passed, set lock
+    lock = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock:
+        # Failing to acquire lock means another worker is performing this same request, treat this request as a duplicate
+        raise Conflict(f'A request for this action is currently enqueued')
+    try:
+        RedisInterface.set(flag_key, value=incoming_intent, ex=RedisConfig.TTL_STRONGEST)   # Write latest intent as incoming intent
+        # Update global counters for this post's score, and user's aura
+        update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id)
+        update_global_counter(interface=RedisInterface, delta=delta, database=db, table=User.__tablename__, column='aura', identifier=post_mapping.get('author_id'))
+        RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__}) # Add post_votes record to insertion queue
+    finally:
+        RedisInterface.delete(lock_key)
+    
+    return jsonify({"message" : "Vote casted!"}), 202
 
 @post.route("/<int:post_id>/unvote", methods=["PATCH"])
 @token_required
