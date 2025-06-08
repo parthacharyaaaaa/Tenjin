@@ -119,8 +119,9 @@ def create_app() -> Flask:
     # Initial JWKS load
     jwks_mapping: dict[str, str] = RedisInterface.hgetall('JWKS_MAPPING')
     if not jwks_mapping:
+        from resource_server.redis_config import RedisConfig
         # updaet_jwks() already handles race conditions among multiple workers trying to update JWKS mapping, so no need to have separate logic here
-        jwks_mapping = update_jwks(endpoint=f"{app.config['AUTH_SERVER_URL']}/auth/jwks.json", currentMapping={}, interface=RedisInterface, current_app=app)
+        jwks_mapping = update_jwks(endpoint=f"{app.config['AUTH_SERVER_URL']}/auth/jwks.json", currentMapping={}, interface=RedisInterface, announcement_duration=RedisConfig.ANNOUNCEMENT_DURATION, jwks_poll_cooldown=RedisConfig.JWKS_POLL_COOLDOWN)
         if not jwks_mapping:
             raise RuntimeError("Failed to initialize JWKS mapping in Redis")
     app.config['KEY_VK_MAPPING'] = jwks_mapping
