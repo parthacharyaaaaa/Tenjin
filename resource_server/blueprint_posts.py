@@ -3,7 +3,7 @@ from werkzeug import Response
 from werkzeug.exceptions import NotFound, BadRequest, Forbidden, Conflict
 from sqlalchemy import select, update, delete, Row
 from sqlalchemy.exc import SQLAlchemyError
-from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostVote, PostReport, Comment, ReportTags
+from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostReport, PostVote, Comment, ReportTags
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
 from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, cache_layer_integrity_check, write_action_state
@@ -564,7 +564,7 @@ def report_post(post_id: int) -> tuple[Response, int]:
     
     # Incoming request valid at face value, now check Redis for state
     cache_key: str = f'{Post.__tablename__}:{post_id}'
-    flag_key: str = f'{PostReport.__tablename__}:{report_tag}:{g.DECODED_TOKEN["sid"]}:{post_id}'    # It is important to include report tag here to differentiate between same reports with different tags
+    flag_key: str = f'{PostReport.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}:{report_tag}'    # It is important to include report tag here to differentiate between same reports with different tags
     lock_key: str = f'lock:{flag_key}'
     with RedisInterface.pipeline() as pipe:
         pipe.hgetall(cache_key)
@@ -622,7 +622,7 @@ def report_post(post_id: int) -> tuple[Response, int]:
         # Incremenet global counter for reports on this post and insert record into post_reports
         RedisInterface.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
         update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='reports', identifier=post_id)    
-        RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'report_tag' : report_tag, 'table' : PostReport.__tablename__})   # Queue insertion for post_reports
+        RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_tag' : report_tag, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'table' : PostReport.__tablename__})   # Queue insertion for post_reports
     finally:
         RedisInterface.delete(lock_key)
         
