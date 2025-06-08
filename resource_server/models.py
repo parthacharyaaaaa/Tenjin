@@ -52,13 +52,14 @@ class ReportTags(Enum):
     @staticmethod
     def check_membership(arg: str) -> bool:
         return arg in [v.value for v in ReportTags.__members__.values()]
+
 class PostReport(db.Model):
     __tablename__ = "post_reports"
     user_id: int = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
     post_id: int = db.Column(db.BigInteger, db.ForeignKey("posts.id", ondelete='CASCADE'), primary_key=True)
+    report_tag: str = db.Column(REPORT_TAGS, nullable=False, primary_key=True)
     report_time: datetime = db.Column(TIMESTAMP, default = text('CURRENT_TIMESTAMP'))
     report_description: str = db.Column(VARCHAR(256), nullable = False)
-    report_tag: str = db.Column(REPORT_TAGS, nullable=False)
 
 class StreamLink(db.Model):
     __tablename__ = "stream_links"
