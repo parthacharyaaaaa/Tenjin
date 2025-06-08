@@ -412,55 +412,115 @@ def check_admin_permissions(forum_id: int) -> tuple[Response, int]:
 @token_required
 def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
+    flag_key: str = f'{ForumSubscription.__tablename__}:{g.DECODED_TOKEN["sid"]}:{forum_id}'
+    lock_key: str = f'lock:{flag_key}'
+
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(cache_key)
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        forum_mapping, latest_intent, lock = pipe.execute()
+     
     # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+    if forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No forum with ID {forum_id} exists')
+    if lock or latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG: # Lock set for same request, or repeated request
+        raise Conflict('A request for this action is already underway')
     
+    # In cases of partia/complete cache misses, consult DB
+    forum_exists: bool = bool(forum_mapping)
+    priorSubscription: bool = latest_intent != RedisConfig.RESOURCE_DELETION_PENDING_FLAG
     try:
-        _res: Row = db.session.execute(select(Forum)
-                                       .outerjoin(ForumSubscription, (ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))
-                                       .where(Forum.id == forum_id)).first()
-        if not _res:
-            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Ephemeral announcement
-            raise NotFound(f'No forum with ID {forum_id} exists')
-
-        if _res[1]:
-            raise Conflict('Forum already subscribed')
-
+        if not (forum_mapping or latest_intent):
+            joined_result: Row = db.session.execute(select(Forum, ForumSubscription)
+                                                    .outerjoin(ForumSubscription, (ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))
+                                                    .where(Forum.id == forum_id)).first()
+            if joined_result:
+                forum_exists, priorSubscription = joined_result
+        elif not latest_intent:
+            priorSubscription = db.session.execute(select(ForumSubscription)
+                                                   .where((ForumSubscription.user_id == g.DECODED_TOKEN['sid']) & (ForumSubscription.forum_id == forum_id))
+                                                   ).scalar_one_or_none()
+        elif not forum_mapping:
+            forum_exists = db.session.execute(select(Forum)
+                                              .where(Forum.id == forum_id)
+                                              ).scalar_one_or_none()
     except SQLAlchemyError: genericDBFetchException()
-    except KeyError: raise BadRequest('Invalid token, please login again')
+    if not forum_exists:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Ephemeral announcement
+        raise NotFound(f'No forum with ID {forum_id} exists')
+    if priorSubscription:
+        raise Conflict('Forum already subscribed')
 
-    update_global_counter(interface=RedisInterface, delta=1, database=db, table=Forum.__tablename__, column='subscribers', identifier=forum_id)
-    RedisInterface.xadd("WEAK_INSERTIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
-    return jsonify({'message' : 'subscribed!'}), 200
+    # All checks passed, acquire lock
+    lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock_set:
+        raise Conflict('A request for this action is already underway')
+    try:
+        RedisInterface.set(flag_key, value=RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+        update_global_counter(interface=RedisInterface, delta=1, database=db, table=Forum.__tablename__, column='subscribers', identifier=forum_id)
+        RedisInterface.xadd("WEAK_INSERTIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
+    finally:
+        RedisInterface.delete(lock_key)
+    
+    return jsonify({'message' : 'Forum subscribed!'}), 202
 
 @forum.route("/<int:forum_id>/unsubscribe", methods=['PATCH'])
 @token_required
 def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:    
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
-    # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
+    flag_key: str = f'{ForumSubscription.__tablename__}:{g.DECODED_TOKEN["sid"]}:{forum_id}'
+    lock_key: str = f'lock:{flag_key}'
+
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(cache_key)
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        forum_mapping, latest_intent, lock = pipe.execute()
+     
+    if forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No forum with ID {forum_id} exists')
-    
-    try:
-        _res: Row = db.session.execute(select(Forum)
-                                       .outerjoin(ForumSubscription, (ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))
-                                       .where(Forum.id == forum_id)).first()
-        if not _res:
-            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Ephemeral announcement
-            raise NotFound(f'No forum with ID {forum_id} exists')
-
-        if not _res[1]:
-            raise Conflict('Forum already unsubscribed')
+    if lock or latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG: # Lock set for same request, or repeated request
+        raise Conflict('A request for this action is already underway')
         
+    forum_exists: bool = bool(forum_mapping)
+    priorSubscription: bool = latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG
+    try:
+        if not (forum_mapping or latest_intent):
+            joined_result: Row = db.session.execute(select(Forum, ForumSubscription)
+                                                    .outerjoin(ForumSubscription, (ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))
+                                                    .where(Forum.id == forum_id)).first()
+            if joined_result:
+                forum_exists, priorSubscription = joined_result
+        elif not latest_intent:
+            priorSubscription = db.session.execute(select(ForumSubscription)
+                                                   .where((ForumSubscription.user_id == g.DECODED_TOKEN['sid']) & (ForumSubscription.forum_id == forum_id))
+                                                   ).scalar_one_or_none()
+        elif not forum_mapping:
+            forum_exists = db.session.execute(select(Forum)
+                                              .where(Forum.id == forum_id)
+                                              ).scalar_one_or_none()
     except SQLAlchemyError: genericDBFetchException()
-    except KeyError: raise BadRequest('Invalid token, please login again')
+    if not forum_exists:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Ephemeral announcement
+        raise NotFound(f'No forum with ID {forum_id} exists')
+    if not priorSubscription:
+        raise Conflict('Forum already subscribed')
 
-    update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='subscribers', identifier=forum_id)
-    RedisInterface.xadd("WEAK_DELETIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
-    return jsonify({'message' : 'unsubscribed!'}), 200
+    # All checks passed, acquire lock
+    lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock_set:
+        raise Conflict('A request for this action is already underway')
+    try:
+        RedisInterface.set(flag_key, value=RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+        update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='subscribers', identifier=forum_id)
+        RedisInterface.xadd("WEAK_DELETIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
+    finally:
+        RedisInterface.delete(lock_key)
+    
+    return jsonify({'message' : 'Forum unsibscribed!'}), 202
 
 @forum.route("/<int:forum_id>", methods=["PATCH"])
 @enforce_json
