@@ -547,48 +547,86 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
 @token_required
 @enforce_json
 def report_post(post_id: int) -> tuple[Response, int]:
-    cache_key: str = f'{Post.__tablename__}:{post_id}'
-
-    cached_mapping: dict = RedisInterface.hgetall(cache_key)
-    if cached_mapping and RedisConfig.NF_SENTINEL_KEY in cached_mapping:
-        raise NotFound(f'No post with ID {post_id} found')
-    
+    # NOTE: A user can report a post only once for a given reason (based on ReportTag enum). Because of this, the locking+intent logic here would include the report tag as well    
     try:
         reportDescription: str = str(g.REQUEST_JSON.get('desc'))
-        reportTag: str = str(g.REQUEST_JSON.get('tag'))
-
-        if not (reportDescription and reportTag):
+        report_tag: str = str(g.REQUEST_JSON.get('tag'))
+        if not (reportDescription and report_tag):
             raise BadRequest('Report request must contain description and a valid report reason')
         
         reportDescription = reportDescription.strip()
-        reportTag = reportTag.strip().lower()
+        report_tag = report_tag.strip().lower()
 
-        if not ReportTags.check_membership(reportTag):
+        if not ReportTags.check_membership(report_tag):
             raise BadRequest('Invalid report tag')
-
     except (ValueError, TypeError):
         raise BadRequest("Malformatted report request")
     
-    # Check if user has reported this post already. If so, do nothing
-    try:
-        # Check post exists, and that user has not already reported the post
-        if not cached_mapping:
-            _res: tuple[Post, PostReport|None] = db.session.execute(select(Post, PostReport)
-                                                                    .outerjoin(PostReport, (PostReport.post_id == post_id) & (PostReport.user_id == g.DECODED_TOKEN['sid']))
-                                                                    .where(Post.id == post_id)
-                                                                    ).first()
-            if not _res:
-                hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Broadcast non-existence ephemerally 
-                raise NotFound(f'No post with ID {post_id} found')
-            if _res[1]:
-                raise Conflict('Post already reported')
-    except SQLAlchemyError: genericDBFetchException()
+    # Incoming request valid at face value, now check Redis for state
+    cache_key: str = f'{Post.__tablename__}:{post_id}'
+    flag_key: str = f'{PostReport.__tablename__}:{report_tag}:{g.DECODED_TOKEN["sid"]}:{post_id}'    # It is important to include report tag here to differentiate between same reports with different tags
+    lock_key: str = f'lock:{flag_key}'
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(cache_key)
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        post_mapping, latest_intent, lock = pipe.execute()
 
-    # Incremenet global counter for reports on this post and insert record into post_reports
-    update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='reports', identifier=post_id)    
-    RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'report_tag' : reportTag, 'table' : PostReport.__tablename__})   # Queue insertion for post_reports
+    if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:    # Post doesn't exist
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
+        raise NotFound(f'No post with ID {post_id} exists')
     
-    return jsonify({"message" : "Reported!"}), 202
+    if lock or latest_intent:   # Either another worker is performing the same action (Same user, reporting the same post for the same reason) or this action is already in queue for the same reason
+        raise Conflict(f'A request for this action is currently enqueued')
+    
+    # Attempt to set lock for this action
+    lock = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock:
+        # Failing to acquire lock means another worker is performing this same request, treat this request as a duplicate
+        raise Conflict(f'A request for this action is currently enqueued')
+    
+    post_exists: bool = bool(post_mapping)
+    priorReport: PostReport = None
+    try:
+        if not (post_mapping or latest_intent):
+            # Nothing known at this point, query both Post and PostReport
+            _res = db.session.execute(select(Post.id, PostReport)
+                                             .outerjoin(PostReport, (PostReport.user_id == g.DECODED_TOKEN['sid']) & (PostReport.post_id == post_id) & (PostReport.report_tag == report_tag))
+                                             .where(Post.id == post_id)).first()
+            if _res:
+                post_exists, priorReport = _res
+        elif not latest_intent:
+            # Fetch PostRecord record to see if the user has already reported this post
+            priorReport = db.session.execute(select(PostReport)
+                                             .where((PostReport.user_id == g.DECODED_TOKEN['sid']) & (PostReport.post_id == post_id) & (PostReport.report_tag == report_tag))
+                                             ).scalar_one_or_none()
+            
+        elif not post_mapping:
+            post_exists = bool(db.session.execute(select(Post.id)
+                                                  .where(Post.id == post_id)).scalar_one_or_none())
+    except SQLAlchemyError: 
+        RedisInterface.delete(lock_key)
+        genericDBFetchException()
+    
+    if not post_exists:
+        RedisInterface.delete(lock_key)
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
+        raise NotFound(f'No post with ID {post_id} exists')
+    if priorReport:
+        # Post already reported for this reason
+        RedisInterface.delete(lock_key)
+        raise Conflict('You have already reported this post for this reason')
+    
+    # All validations passed, write state for this action
+    try:
+        # Incremenet global counter for reports on this post and insert record into post_reports
+        RedisInterface.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+        update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='reports', identifier=post_id)    
+        RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'report_tag' : report_tag, 'table' : PostReport.__tablename__})   # Queue insertion for post_reports
+    finally:
+        RedisInterface.delete(lock_key)
+        
+    return jsonify({"message" : "Post reported!"}), 202
 
 @post.route("/<int:post_id>/comment", methods=['POST'])
 @enforce_json
