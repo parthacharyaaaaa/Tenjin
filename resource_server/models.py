@@ -221,20 +221,20 @@ class Forum(db.Model):
     # Basic identification
     id: int = db.Column(INTEGER, nullable = False, autoincrement = True)
     _name: str = db.Column(VARCHAR(64), nullable = False, unique=True, index=True)
-    anime: int | None = db.Column(INTEGER, db.ForeignKey("animes.id"), index = True)
+    anime: int = db.Column(INTEGER, db.ForeignKey("animes.id"), index = True, nullable=True)
  
     # Appearance
     description: str = db.Column(VARCHAR(256), nullable = True)
 
     # Activity stats
-    subscribers: int = db.Column(BIGINT, nullable = False, default = 0)
-    posts: int = db.Column(BIGINT, nullable = False, default = 0)
+    subscribers: int = db.Column(BIGINT, nullable = False, default = 0, server_default=text('0'))
+    posts: int = db.Column(BIGINT, nullable = False, default = 0, server_default=text('0'))
     highlight_post_1: int = db.Column(BIGINT, nullable = True)
     highlight_post_2: int = db.Column(BIGINT, nullable = True)
     highlight_post_3: int = db.Column(BIGINT, nullable = True)
 
     created_at: datetime = db.Column(TIMESTAMP, nullable = False)
-    admin_count: int = db.Column(SMALLINT, default = 1)
+    admin_count: int = db.Column(SMALLINT, default = 1, server_default=text('1'), nullable=False)
 
     # Deletion metadata
     deleted: bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
@@ -324,8 +324,8 @@ class Post(db.Model):
     forum_id: int = db.Column(INTEGER, db.ForeignKey("forums.id", ondelete='CASCADE'), nullable = False)
 
     # Post statistics
-    score: int = db.Column(INTEGER, default = 0)
-    total_comments: int = db.Column(INTEGER, default = 0)
+    score: int = db.Column(INTEGER, default = 0, server_default=text('0'), nullable=False)
+    total_comments: int = db.Column(INTEGER, default = 0, server_default=text('0'), nullable=False)
 
     # Post details
     title: str = db.Column(VARCHAR(64), nullable = False, index=True)
@@ -333,8 +333,8 @@ class Post(db.Model):
     flair: str = db.Column(VARCHAR(16), index=True)
     closed: bool = db.Column(BOOLEAN, default=False)
     time_posted: datetime = db.Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
-    saves: int = db.Column(INTEGER, default=0)
-    reports: int = db.Column(INTEGER, default=0)
+    saves: int = db.Column(INTEGER, default=0, server_default=text('0'), nullable=False)
+    reports: int = db.Column(INTEGER, default=0, server_default=text('0'), nullable=False)
 
     # Deletion metadata
     deleted: bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
@@ -390,8 +390,7 @@ class Comment(db.Model):
     time_created: datetime = db.Column(TIMESTAMP, nullable = False, server_default=text("CURRENT_TIMESTAMP"))
     body: str = db.Column(VARCHAR(512), nullable=False)
     parent_post: int = db.Column(BIGINT, db.ForeignKey("posts.id", ondelete='CASCADE'), nullable=False, index=True)
-    score: int = db.Column(INTEGER, default = 0)
-    reports: int= db.Column(INTEGER, default = 0)
+    reports: int= db.Column(INTEGER, default = 0, server_default=text('0'), nullable=False)
 
     # Deletion metadata
     deleted : bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
@@ -414,7 +413,7 @@ class Comment(db.Model):
         self.time_deleted = None
 
     def __repr__(self) -> str:
-        return f"<Comment({self.id}, {self.author_id}, {self.parent_forum}, {self.time_created.strftime('%d/%m/%y, %H:%M:%S')}, {self.body}, {self.parent_post}, {self.score}, {self.reports})>"
+        return f"<Comment({self.id}, {self.author_id}, {self.parent_forum}, {self.time_created.strftime('%d/%m/%y, %H:%M:%S')}, {self.body}, {self.parent_post}, {self.reports})>"
     
     def __json_like__(self) -> dict:
         return {"id": self.id,
@@ -422,5 +421,4 @@ class Comment(db.Model):
                 "parent_forum": self.parent_forum,
                 "time_created": self.time_created.strftime('%d/%m/%y, %H:%M:%S'),
                 "body": self.body,
-                "parent_post": self.parent_post,
-                "score": self.score}
+                "parent_post": self.parent_post}
