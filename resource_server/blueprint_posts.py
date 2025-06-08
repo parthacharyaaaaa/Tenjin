@@ -218,16 +218,23 @@ def edit_post(post_id : int) -> tuple[Response, int]:
 @token_required
 def delete_post(post_id: int) -> Response:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
-    # NOTE: We try to fetch the entire mapping, instead of just sentinal mapping to avoid querying DB for post on cache hits
+    flag_key: str = f'delete:{cache_key}'           # User ID not included in intent flag, because multiple users (owner, admin) can delete a post
+    lock_key: str = f'lock:{flag_key}'
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(cache_key)
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        post_mapping, latest_intent, lock = pipe.execute()
 
-    post_mapping: dict = RedisInterface.hgetall(cache_key)
     if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:
-        raise NotFound(f'No post with ID {post_id} found') 
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
+        raise NotFound(f'No post with ID {post_id} exists')
+    if lock or latest_intent:
+        raise Conflict(f'A request for this action is currently enqueued')
     
-    redirect: bool = 'redirect' in request.args
     # Ensure post exists in the first place
-    try:
-        if not post_mapping:
+    if not post_mapping:
+        try:
             post: Post = db.session.execute(select(Post)
                                             .where((Post.id == post_id) & (Post.deleted.is_(False)))
                                             ).scalar_one_or_none()
@@ -236,34 +243,43 @@ def delete_post(post_id: int) -> Response:
                 raise NotFound('Post does not exist')
             else:
                 post_mapping = post.__json_like__()
-        
-        # Ensure post author is the issuer of this request
-        if int(post_mapping['author_id']) != g.DECODED_TOKEN['sid']:
-            # Check if admin of this forum
-            forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
-                                                        .where((ForumAdmin.forum_id == int(post_mapping['forum'])) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
-                                                        ).scalar_one_or_none()
-            if not forumAdmin:
-                raise Forbidden('You do not have the rights to alter this post as you are not its author')
-    except SQLAlchemyError: genericDBFetchException()
+        except SQLAlchemyError: genericDBFetchException()
+    
+    # Ensure post author/forum admin is the issuer of this request
+    if int(post_mapping['author_id']) != g.DECODED_TOKEN['sid']:
+        # Check if admin of this forum
+        forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
+                                                    .where((ForumAdmin.forum_id == int(post_mapping['forum'])) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
+                                                    ).scalar_one_or_none()
+        if not forumAdmin:
+            raise Forbidden('You do not have the rights to alter this post as you are not its author or an admin in its parent forum')
 
-    # Decrement global counters
-    update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='posts', identifier=post.forum_id)    
-    update_global_counter(interface=RedisInterface, delta=-1, database=db, table=User.__tablename__, column='total_posts', identifier=g.DECODED_TOKEN['sid'])    
-    # Post good to go for deletion
-    RedisInterface.xadd("SOFT_DELETIONS", {'id' : post_id, 'table' : Post.__tablename__})
+    # All checks passed, acquire lock and write intent
+    lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock_set:
+        raise Conflict('Failed to delete post, another request for deletion')
+    
+    RedisInterface.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)  # Write intent as deletion
+    try:
+        # Decrement global counters
+        update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='posts', identifier=post.forum_id)    
+        update_global_counter(interface=RedisInterface, delta=-1, database=db, table=User.__tablename__, column='total_posts', identifier=g.DECODED_TOKEN['sid'])    
+        # Post good to go for deletion
+        RedisInterface.xadd("SOFT_DELETIONS", {'id' : post_id, 'table' : Post.__tablename__})
+    finally:
+        RedisInterface.delete(lock_key)
     
     redirectionForum: str = None
-    if redirect:
+    if redirect := 'redirect' in request.args:
         try:
             redirectionForum = db.session.execute(select(Forum._name)
-                                                  .where(Forum.id == post.forum_id)
+                                                  .where(Forum.id == int(post_mapping['forum']))
                                                   ).scalar_one()
         except SQLAlchemyError: ... # Fail silently, ain't no way we have done all that and then do a 500 because we didn't get a redirection link >:(
 
     # Overwrite any existing cached entries for this post with 404 mapping, and then expire ephemerally
     hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
-    return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, forum_name = redirectionForum)}), 200
+    return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, forum_name = redirectionForum)}), 202
 
 @post.route("/<int:post_id>/vote", methods=["PATCH"])
 @token_required
