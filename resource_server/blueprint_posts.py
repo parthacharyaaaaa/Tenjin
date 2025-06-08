@@ -57,6 +57,7 @@ def create_post() -> tuple[Response, int]:
     # Write through can't be done here, since insertions is async. Incrementing the sequence would defeat the purpose of the stream anyways, so yeah :/
     update_global_counter(interface=RedisInterface, delta=1, database=db, table=Forum.__tablename__, column='posts', identifier=forumID)    
     update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='total_posts', identifier=g.DECODED_TOKEN['sid'])    
+    update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='aura', identifier=g.DECODED_TOKEN['sid'])
 
     return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
 
@@ -423,9 +424,10 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
     
     try:
         RedisInterface.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG)    # Write latest intent as unvoting this post
-        update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id)    
+        # Update counters for this post's score, and post author's aura
+        update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id) 
+        update_global_counter(interface=RedisInterface, delta=delta, database=db, table=User.__tablename__, column='aura', identifier=post_mapping.get('author_id')) 
         RedisInterface.xadd("WEAK_DELETIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostVote.__tablename__})
-        RedisInterface.delete(f'votes:{post_id}:{g.DECODED_TOKEN["sid"]}')    # Remove cached entry if exists
     finally:
         RedisInterface.delete(lock_key)
     
@@ -513,16 +515,16 @@ def save_post(post_id: int) -> tuple[Response, int]:
         raise Conflict(f'A request for this action is currently enqueued')
     
     # Lock acquired, perform all necessary valdiations
-    post_exists: bool = bool(post_mapping)
     isSaved: bool = False if latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG else True
     try:
         if not (post_mapping or latest_intent):
             # Nothing known at this point, query both Post and PostSave
-            _res = db.session.execute(select(Post.id, PostSave)
-                                             .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
-                                             .where((Post.id == post_id) & (Post.deleted.is_(False)))).first()
-            if _res:
-                post_exists, isSaved = _res
+            joined_result: Row = db.session.execute(select(Post, PostSave)
+                                                    .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
+                                                    .where((Post.id == post_id) & (Post.deleted.is_(False)))).first()
+            if joined_result:
+                post_mapping = joined_result[0].__json_like__()
+                isSaved = bool(joined_result[1]) 
         elif not latest_intent:
             # Fetch PostSave record to see if the user has already saved this post
             isSaved = bool(db.session.execute(select(PostSave)
@@ -530,12 +532,15 @@ def save_post(post_id: int) -> tuple[Response, int]:
                                               ).scalar_one_or_none())
             
         elif not post_mapping:
-            post_exists = bool(db.session.execute(select(Post.id)
-                                                  .where((Post.id == post_id) & (Post.deleted.is_(False)))).scalar_one_or_none())
+            post: Post = db.session.execute(select(Post.id)
+                                            .where((Post.id == post_id) & (Post.deleted.is_(False)))
+                                            ).scalar_one_or_none()
+            if post:
+                post_mapping = post.__json_like__()
     except SQLAlchemyError: 
         RedisInterface.delete(lock_key)
         genericDBFetchException()
-    if not post_exists:
+    if not post_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         RedisInterface.delete(lock_key)
         raise NotFound(f'No post with ID {post_id} exists')
@@ -549,7 +554,8 @@ def save_post(post_id: int) -> tuple[Response, int]:
     
     # Only queue database operations if state was written succesfully
     try:
-        update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)    
+        update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)   
+        update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='aura', identifier=post_mapping['sid'])   
         RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})
     finally:
         RedisInterface.delete(lock_key)
@@ -733,6 +739,7 @@ def comment_on_post(post_id: int) -> tuple[Response, int]:
     # Increment global counters for this post, and commenting user's 'total_comments' columns
     update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='total_comments', identifier=post_id)
     update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='total_comments', identifier=g.DECODED_TOKEN['sid'])
+    update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='aura', identifier=g.DECODED_TOKEN['sid'])
     
     # Queue insertion of new comment
     RedisInterface.xadd('INSERTIONS', rediserialize(comment.__attrdict__()) | {'table' : Comment.__tablename__})
