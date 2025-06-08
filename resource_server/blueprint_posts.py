@@ -462,7 +462,7 @@ def save_post(post_id: int) -> tuple[Response, int]:
             # Nothing known at this point, query both Post and PostSave
             _res = db.session.execute(select(Post.id, PostSave)
                                              .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
-                                             .where(Post.id == post_id)).first()
+                                             .where((Post.id == post_id) & (Post.deleted.is_(False)))).first()
             if _res:
                 post_exists, isSaved = _res
         elif not latest_intent:
@@ -473,8 +473,10 @@ def save_post(post_id: int) -> tuple[Response, int]:
             
         elif not post_mapping:
             post_exists = bool(db.session.execute(select(Post.id)
-                                                  .where(Post.id == post_id)).scalar_one_or_none())
-    except SQLAlchemyError: genericDBFetchException()
+                                                  .where((Post.id == post_id) & (Post.deleted.is_(False)))).scalar_one_or_none())
+    except SQLAlchemyError: 
+        RedisInterface.delete(lock_key)
+        genericDBFetchException()
     if not post_exists:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         RedisInterface.delete(lock_key)
@@ -526,7 +528,7 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
             # Nothing known at this point, query both Post and PostSave
             _res = db.session.execute(select(Post.id, PostSave)
                                              .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
-                                             .where(Post.id == post_id)).first()
+                                             .where((Post.id == post_id) & (Post.deleted.is_(False)))).first()
             if _res:
                 post_exists, isSaved = _res
         elif not latest_intent:
@@ -537,8 +539,11 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
             
         elif not post_mapping:
             post_exists = bool(db.session.execute(select(Post.id)
-                                                  .where(Post.id == post_id)).scalar_one_or_none())
-    except SQLAlchemyError: genericDBFetchException()
+                                                  .where((Post.id == post_id) & (Post.deleted.is_(False)))
+                                                  ).scalar_one_or_none())
+    except SQLAlchemyError: 
+        RedisInterface.delete(lock_key)
+        genericDBFetchException()
     if not post_exists:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         RedisInterface.delete(lock_key)
