@@ -19,6 +19,7 @@
     "user_activity_delete_batch_size" : 100,
     "user_activity_recovery_stream" : "USER_ACTIVITY_RECOVERY",
     "user_activity_recovery_batch_size" : 100,
+    "rtbf_hidden_resources" : ["comments", "posts"],
     
     "counter_metadata" : {
         "posts" : ["score", "saves", "reports", "total_comments"],
