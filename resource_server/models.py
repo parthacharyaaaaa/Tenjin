@@ -137,10 +137,9 @@ class User(db.Model):
     def __repr__(self) -> str:
         return f"<User({self.id}, {self.username}, {self.aura}, {self._alias}, {self.email}, {self.total_posts}, {self.total_comments}, {self.date_joined.strftime('%d/%m/%y, %H:%M:%S')}, {self.last_login.strftime('%d/%m/%y, %H:%M:%S')})>"
     
-    def __json_like__(self) -> dict:
+    def __json_like__(self) -> dict[str, str|int]:
         return {"id": self.id,
                 "username": self.username,
-                "alias": self._alias,
                 "aura": self.aura,
                 "posts": self.total_posts,
                 "comments": self.total_comments,
@@ -189,7 +188,7 @@ class Anime(db.Model):
     # Stream links are multi-valued, made into separate table
 
 
-    def __json_like__(self) -> dict:
+    def __json_like__(self) -> dict[str, int]:
         return {"id": self.id,
                 "title": self.title,
                 "rating": float(self.rating),
@@ -208,8 +207,8 @@ class Anime(db.Model):
 @dataclass
 class Genre(db.Model):
     __tablename__ = "genres"
-    id = db.Column(SMALLINT, autoincrement = True)
-    _name = db.Column(VARCHAR(16), nullable = False, unique = True, index = True)
+    id: int = db.Column(SMALLINT, autoincrement = True)
+    _name: str = db.Column(VARCHAR(16), nullable = False, unique = True, index = True)
 
     __table_args__ = (
         PrimaryKeyConstraint("id"),
@@ -261,12 +260,11 @@ class Forum(db.Model):
         self.deleted = False; self.time_deleted = None
     
     def __repr__(self) -> str:
-        return f"<Forum({self.id}, {self._name}, {self.pfp}, {self.description}, {self.subscribers}, {self.posts}, {self.highlight_post_1}, {self.highlight_post_2}, {self.highlight_post_3}, {self.created_at.strftime('%d/%m/%y, %H:%M:%S'), {self.admin_count}})>"
+        return f"<Forum({self.id}, {self._name}, {self.description}, {self.subscribers}, {self.posts}, {self.highlight_post_1}, {self.highlight_post_2}, {self.highlight_post_3}, {self.created_at.strftime('%d/%m/%y, %H:%M:%S'), {self.admin_count}})>"
     
-    def __json_like__(self) -> str:
+    def __json_like__(self) -> dict[str, str|int]:
         return {"id": self.id,
                 "name": self._name,
-                # "pfp": self.pfp,
                 "subscribers" : self.subscribers,
                 "description": self.description,
                 "posts": self.posts,
@@ -364,7 +362,7 @@ class Post(db.Model):
     def __repr__(self) -> str:
         return f"<Post({self.id}, {self.author_id}, {self.forum_id}, {self.score}, {self.total_comments}, {self.title if len(self.title) < 16 else self.title[:16] + '...'}, {self.body_text if len(self.body_text) < 32 else self.body_text[:32]+'...'}, {self.flair}, {self.closed}, {self.time_posted.strftime('%d/%m/%y, %H:%M:%S')}, {self.saves}, {self.reports})>"
     
-    def __json_like__(self) -> dict:
+    def __json_like__(self) -> dict[str, str|int]:
         return {"id": self.id,
                 "author_id": self.author_id,
                 "forum": self.forum_id,
@@ -415,7 +413,7 @@ class Comment(db.Model):
     def __repr__(self) -> str:
         return f"<Comment({self.id}, {self.author_id}, {self.parent_forum}, {self.time_created.strftime('%d/%m/%y, %H:%M:%S')}, {self.body}, {self.parent_post}, {self.reports})>"
     
-    def __json_like__(self) -> dict:
+    def __json_like__(self) -> dict[str, str|int]:
         return {"id": self.id,
                 "author_id": self.author_id,
                 "parent_forum": self.parent_forum,
