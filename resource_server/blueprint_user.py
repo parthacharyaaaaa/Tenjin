@@ -125,7 +125,7 @@ def delete_user() -> tuple[Response, int]:
     
     try:
         RedisInterface.set(flag_key, value=RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)    # Write latest intent to account deletion
-        RedisInterface.xadd('SOFT_DELETIONS', {'id' : targetUser.id, 'table' : User.__tablename__, 'rtbf' : int(targetUser.rtbf)})
+        RedisInterface.xadd('USER_ACTIVITY_DELETIONS', {'id' : targetUser.id, 'table' : User.__tablename__, 'rtbf' : int(targetUser.rtbf)})
         hset_with_ttl(RedisInterface, f'user:{targetUser.id}', {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_WEAK) # Broadcast user deletion
         enqueueEmail(RedisInterface, email=targetUser.email, subject='deletion', username=targetUser.username)
     except RedisError: 
@@ -176,11 +176,11 @@ def recover_user() -> Response:
     user_mapping: dict[str, str|int] = deadAccount.__json_like__()
     # Check cache for state
     cache_key: str = f'{User.__tablename__}:{deadAccount.id}'
-    flag_name: str = f'alive_status:{cache_key}'
-    lock_key: str = f'lock:{flag_name}'
+    flag_key: str = f'alive_status:{cache_key}'
+    lock_key: str = f'lock:{flag_key}'
 
     with RedisInterface.pipeline() as pipe:
-        pipe.get(flag_name)
+        pipe.get(flag_key)
         pipe.get(lock_key)
         latest_intent, lock = pipe.execute()
     
@@ -195,10 +195,8 @@ def recover_user() -> Response:
     
     # Account recovery good to go (TODO: Change this to an xadd to a dedicated stream for user recovery)
     try:
-        db.session.execute(update(User)
-                           .where(User.id == deadAccount.id)
-                           .values({"deleted" : False, "time_deleted" : None}))
-        db.session.commit()
+        RedisInterface.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+        RedisInterface.xadd("USER_ACTIVITY_RECOVERY", fields={'user_id' : deadAccount.id, 'rtbf' : int(deadAccount.rtbf), 'table' : User.__tablename__})
         hset_with_ttl(RedisInterface, cache_key, user_mapping, RedisConfig.TTL_STRONG, transaction=False)   # Write recovred account to cache
         enqueueEmail(RedisInterface, email=deadAccount.email, subject="recovery", username=deadAccount.username, user_id=deadAccount.id, time_restored=datetime.now().isoformat())
     except:
