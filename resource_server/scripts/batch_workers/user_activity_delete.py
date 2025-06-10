@@ -40,8 +40,10 @@ if __name__ == "__main__":
         print(f"{ID}: Failed to connect to Postgres instance.\n\tError: {e.__class__.__name__}\n\tError Logs: ", format_exc())
         exit(500)
 
-    # Initialize SQL template
+    # Initialize SQL templates
     SOFT_DELETION_SQL: str =  '''UPDATE {tablename} SET deleted_at = %s, deleted = true WHERE id = %s'''
+    RTBF_UPDATION_SQL: str = '''UPDATE {tablename} SET rtbf_hidden = true WHERE id IN ({ids_to_hide})'''
+
     # Initalize separate lists of ids, deleted_at pairs for RTBF and non-RTBF users
     rtbf_data: list[tuple[int, datetime]] = []
     non_rtbf_data: list[tuple[int, datetime]] = []
@@ -96,13 +98,12 @@ if __name__ == "__main__":
                                   argslist=rtbf_data+non_rtbf_data)
                     non_rtbf_data.clear()
                     
-                    # For RTFB users, update users table and posts+comments tables
+                    # For RTFB users exclusively, update posts+comments tables
+                    rtbf_ids_str: str = ','.join(str(entry[0]) for entry in rtbf_data)   # Fetch and format only user IDs for RTBF users
                     execute_batch(cur=CURSOR,
-                                  sql=SOFT_DELETION_SQL.format(tablename='posts'),
-                                  argslist=rtbf_data)
+                                  sql=RTBF_UPDATION_SQL.format(tablename='posts', ids_to_hide=rtbf_ids_str))
                     execute_batch(cur=CURSOR,
-                                  sql=SOFT_DELETION_SQL.format(tablename='comments'),
-                                  argslist=rtbf_data)
+                                  sql=RTBF_UPDATION_SQL.format(tablename='comments', ids_to_hide=rtbf_ids_str))
                     rtbf_data.clear()
 
                     CONNECTION.commit()
