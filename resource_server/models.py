@@ -236,8 +236,9 @@ class Forum(db.Model):
     admin_count: int = db.Column(SMALLINT, default = 1, server_default=text('1'), nullable=False)
 
     # Deletion metadata
-    deleted: bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
+    deleted: bool = db.Column(BOOLEAN, nullable=False, server_default=text("false"))
     time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
+    rtbf_hidden: bool = db.Column(BOOLEAN, nullable=True)
 
     __table_args__ = (
         PrimaryKeyConstraint("id"),
@@ -337,6 +338,7 @@ class Post(db.Model):
     # Deletion metadata
     deleted: bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
     time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
+    rtbf_hidden: bool = db.Column(BOOLEAN, nullable=True)
 
     def __init__(self, author_id: int, forum_id: int, title: str, body_text: str, epoch: datetime, flair: str = None, score: int = 0, total_comments: int = 0, closed: bool = False):
         self.author_id = author_id
@@ -393,6 +395,7 @@ class Comment(db.Model):
     # Deletion metadata
     deleted : bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
     time_deleted : datetime = db.Column(TIMESTAMP, nullable=True)
+    rtbf_hidden: bool = db.Column(BOOLEAN, nullable=True)
 
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_comments"),
