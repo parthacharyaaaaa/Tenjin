@@ -87,9 +87,9 @@ def get_post(post_id : int) -> tuple[Response, int]:
         # Cache miss
         try:
             resultSet: Row = db.session.execute(select(Post, User.deleted)
-                                                   .join(Post, Post.author_id == User.id)
-                                                   .where((Post.id == post_id) & (Post.deleted.is_(False)))
-                                                   ).first()
+                                                .join(Post, Post.author_id == User.id)
+                                                .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
+                                                ).first()
             if not resultSet:
                 hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
                 raise NotFound(f"Post with id {post_id} could not be found :(")
@@ -166,7 +166,7 @@ def edit_post(post_id : int) -> tuple[Response, int]:
     # Ensure user is owner of this post
     owner: User = db.session.execute(select(User)
                                      .join(Post, Post.author_id == User.id)
-                                     .where((Post.id == post_id) & (Post.deleted == False))
+                                     .where((Post.id == post_id) & (Post.deleted.is_(False)) & (Post.rtbf_hidden.isnot(True)))
                                      ).scalar_one_or_none()
     if not owner:
         raise Forbidden('You do not have the rights to edit this post')
@@ -237,7 +237,7 @@ def delete_post(post_id: int) -> Response:
     if not post_mapping:
         try:
             post: Post = db.session.execute(select(Post)
-                                            .where((Post.id == post_id) & (Post.deleted.is_(False)))
+                                            .where((Post.id == post_id) & (Post.deleted.is_(False)))   # This endpoint still allows RTBF hidden posts to be explicitly deleted
                                             ).scalar_one_or_none()
             if not post:
                 hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
@@ -320,7 +320,8 @@ def vote_post(post_id: int) -> tuple[Response, int]:
             # Complete cache miss, read state from DB
             joined_result: Row = db.session.execute(select(Post, PostVote.vote)
                                                     .outerjoin(PostVote, (PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid']))
-                                                    .where(Post.id == post_id)).first()
+                                                    .where((Post.id == post_id) & (Post.deleted.is_(False)) & (Post.rtbf_hidden.isnot(True)))
+                                                    ).first()
             if joined_result:
                 post_mapping: dict[str, str|int] = joined_result[0].__json_like__()
                 previous_vote = joined_result[1]
@@ -330,7 +331,7 @@ def vote_post(post_id: int) -> tuple[Response, int]:
                                                     ).scalar_one_or_none())
         elif not post_mapping:
             post: Post = db.session.execute(select(Post)
-                                            .where(Post.id == post_id)
+                                            .where((Post.id == post_id) & (Post.deleted.is_(False)) & (Post.rtbf_hidden.isnot(True)))
                                             ).scalar_one_or_none()
             if post:
                 post_mapping = post.__json_like__()
@@ -395,7 +396,8 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
             # Complete cache miss, read state from DB
             joined_result: Row = db.session.execute(select(Post, PostVote.vote)
                                                     .outerjoin(PostVote, (PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid']))
-                                                    .where(Post.id == post_id)).first()
+                                                    .where((Post.id == post_id) & (Post.deleted.is_(False)) & (Post.rtbf_hidden.isnot(True)))
+                                                    ).first()
             if joined_result:
                 post_mapping: dict[str, str|int] = joined_result[0].__json_like__()
                 previous_vote = joined_result[1]
@@ -405,7 +407,7 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
                                                     ).scalar_one_or_none())
         elif not post_mapping:
             post: Post = db.session.execute(select(Post)
-                                            .where(Post.id == post_id)
+                                            .where((Post.id == post_id) & (Post.deleted.is_(False)) & (Post.rtbf_hidden.isnot(True)))
                                             ).scalar_one_or_none()
             if post:
                 post_mapping = post.__json_like__()
@@ -521,7 +523,8 @@ def save_post(post_id: int) -> tuple[Response, int]:
             # Nothing known at this point, query both Post and PostSave
             joined_result: Row = db.session.execute(select(Post, PostSave)
                                                     .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
-                                                    .where((Post.id == post_id) & (Post.deleted.is_(False)))).first()
+                                                    .where((Post.id == post_id) & (Post.deleted.is_(False)) & (Post.rtbf_hidden.isnot(True)))
+                                                    ).first()
             if joined_result:
                 post_mapping = joined_result[0].__json_like__()
                 isSaved = bool(joined_result[1]) 
@@ -533,7 +536,7 @@ def save_post(post_id: int) -> tuple[Response, int]:
             
         elif not post_mapping:
             post: Post = db.session.execute(select(Post.id)
-                                            .where((Post.id == post_id) & (Post.deleted.is_(False)))
+                                            .where((Post.id == post_id) & (Post.deleted.is_(False)) & (Post.rtbf_hidden.isnot(True)))
                                             ).scalar_one_or_none()
             if post:
                 post_mapping = post.__json_like__()
@@ -592,7 +595,8 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
             # Nothing known at this point, query both Post and PostSave
             _res = db.session.execute(select(Post.id, PostSave)
                                              .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
-                                             .where((Post.id == post_id) & (Post.deleted.is_(False)))).first()
+                                             .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
+                                             ).first()
             if _res:
                 post_exists, isSaved = _res
         elif not latest_intent:
@@ -603,7 +607,7 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
             
         elif not post_mapping:
             post_exists = bool(db.session.execute(select(Post.id)
-                                                  .where((Post.id == post_id) & (Post.deleted.is_(False)))
+                                                  .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
                                                   ).scalar_one_or_none())
     except SQLAlchemyError: 
         RedisInterface.delete(lock_key)
@@ -677,7 +681,8 @@ def report_post(post_id: int) -> tuple[Response, int]:
             # Nothing known at this point, query both Post and PostReport
             _res = db.session.execute(select(Post.id, PostReport)
                                              .outerjoin(PostReport, (PostReport.user_id == g.DECODED_TOKEN['sid']) & (PostReport.post_id == post_id) & (PostReport.report_tag == report_tag))
-                                             .where(Post.id == post_id)).first()
+                                             .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
+                                             ).first()
             if _res:
                 post_exists, priorReport = _res
         elif not latest_intent:
@@ -688,7 +693,8 @@ def report_post(post_id: int) -> tuple[Response, int]:
             
         elif not post_mapping:
             post_exists = bool(db.session.execute(select(Post.id)
-                                                  .where(Post.id == post_id)).scalar_one_or_none())
+                                                  .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
+                                                  ).scalar_one_or_none())
     except SQLAlchemyError: 
         RedisInterface.delete(lock_key)
         genericDBFetchException()
@@ -729,7 +735,7 @@ def comment_on_post(post_id: int) -> tuple[Response, int]:
             
     try:
         post: Post = db.session.execute(select(Post)
-                                        .where(Post.id == post_id)
+                                        .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
                                         ).scalar_one_or_none()
         if not post:
             raise NotFound('No such post exists')
@@ -746,7 +752,6 @@ def comment_on_post(post_id: int) -> tuple[Response, int]:
 
     return jsonify({'message' : 'comment added!', 'body' : commentBody, 'author' : g.DECODED_TOKEN['sub']}), 202
 
-
 @post.route('/<int:post_id>/comments')
 def get_post_comments(post_id: int) -> tuple[Response, int]:
     try:
@@ -761,7 +766,7 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
     try:
         commentsDetails: list[tuple[str, Comment]] = db.session.execute(
             select(User, Comment)
-            .where((Comment.id > cursor) & (Comment.parent_post == post_id))
+            .where((Comment.id > cursor) & (Comment.parent_post == post_id) & (Comment.rtbf_hidden.isnot(True)))
             .join(User, Comment.author_id == User.id)
             .order_by(Comment.id)
             .limit(6)
@@ -820,7 +825,7 @@ def delete_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
             # A comment can be deleted by either a forum admin or the author of the comment
             joined_result: Row = db.session.execute(select(Comment, Post.deleted)
                                                     .join(Post, Post.id == Comment.parent_post)
-                                                    .where((Comment.id == comment_id) & (Comment.deleted.is_(False)))
+                                                    .where((Comment.id == comment_id) & (Comment.deleted.is_(False)))   # Allow explicit deletion of RTBF hidden comments too
                                                     ).first()
             if not joined_result:
                 raise NotFound(f"No comment with ID {comment_id} found")
