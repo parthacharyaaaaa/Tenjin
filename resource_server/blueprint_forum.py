@@ -278,20 +278,35 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
         raise BadRequest('Missing user id for new admin')
     if g.DECODED_TOKEN['sid'] == newAdminID:
         raise Conflict("You are already an admin in this forum")
+    
     newAdminRole: str = g.REQUEST_JSON.pop('role', 'admin')
-
     newAdminLevel: int = AdminRoles.getAdminAccessLevel(newAdminRole)
 
-    if (newAdminLevel == -1 or newAdminLevel == AdminRoles.owner) :
+    if (newAdminLevel == -1 or newAdminLevel == AdminRoles.owner):
         raise BadRequest("Forum administrators can only have 2 roles: admin and super")
-    # Request details valid at a surface level.
-    try:        
-        # Check to see if new admin actually exists is users table
-        newAdmin: int = db.session.execute(select(User.id)
-                                           .where(User.id == newAdminID)
-                                           ).scalar_one_or_none()
-        if not newAdmin:
-            raise NotFound('No user with this user id was found')
+    # Request details valid at a surface level
+
+    user_cache_key: str = f'{User.__tablename__}:{newAdminID}'
+    cache_key: str = f'{Forum.__tablename__}:{forum_id}'
+    flag_key: str = f'{ForumAdmin.__tablename__}:{forum_id}:{newAdminID}'   # Value here would be the admin role, not a creation flag
+    lock_key: str = f'lock:{flag_key}'
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(user_cache_key)
+        pipe.hgetall(cache_key)
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        user_mapping, forum_mapping, latest_intent, lock = pipe.execute()
+    
+    if forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping:  # Forum doesn't exist
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL, transaction=False) # Reannounce non-existence of this forum
+        raise NotFound(f'No forum with ID {forum_id} found')
+    if user_mapping and RedisConfig.NF_SENTINEL_KEY in user_mapping:    # User (to be made an admin) doesn't exist
+        hset_with_ttl(RedisInterface, user_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL, transaction=False) # Reannounce non-existence of this forum
+        raise NotFound(f'No forum with ID {forum_id} found')
+    if latest_intent in ('admin', 'super') or lock:
+        raise Conflict('A request for this action is already enqueued')
+    
+    try:
         # Check if user has necessary permissions
         userAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
                                                    .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
@@ -300,47 +315,98 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
             raise Forbidden(f"You do not have the necessary permissions to add admins to: {forum._name}")
         if AdminRoles.getAdminAccessLevel(userAdmin.role) <= newAdminLevel:
             raise Unauthorized("You do not have the necessary permissions to add this type of admin")
+        
+        # Consult DB in cases of partial/full cache misses
+        if not user_mapping:    # Check to see if new admin actually exists is users table
+            newAdmin: int = db.session.execute(select(User.id)
+                                            .where(User.id == newAdminID)
+                                            ).scalar_one_or_none()
+            if not newAdmin:
+                raise NotFound('No user with this user id was found')
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Mandatory claim "sid" missing in token. Please login again')
 
-    update_global_counter(interface=RedisInterface, delta=1, database=db, table=Forum.__tablename__, column='admin_count', identifier=forum_id)
-    RedisInterface.xadd('WEAK_INSERTIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : newAdminID, 'role' : newAdminRole})  # Queue forum_admins record for insertion
+    # All checks passed, set lock
+    lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock_set:
+        raise Conflict('Another process is performing this same request')
+    try:
+        RedisInterface.set(flag_key, value=newAdminRole, ex=RedisConfig.TTL_STRONGEST)  # Write intent as admin creation to newAdminRole
+        update_global_counter(interface=RedisInterface, delta=1, database=db, table=Forum.__tablename__, column='admin_count', identifier=forum_id)
+        RedisInterface.xadd('WEAK_INSERTIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : newAdminID, 'role' : newAdminRole})  # Queue forum_admins record for insertion
+    finally:
+        RedisInterface.delete(lock_key)    
+    
     return jsonify({"message" : "Added new admin", "userID" : newAdminID, "role" : newAdminRole}), 202
 
 @forum.route("/<int:forum_id>/admins", methods=['DELETE'])
 @enforce_json
 @token_required
 def remove_admin(forum_id: int) -> tuple[Response, int]:
-    targetAdminID: int = g.REQUEST_JSON.pop('user_id', None)
-    if not targetAdminID:
+    target_admin_id: int = g.REQUEST_JSON.pop('user_id', None)
+    if not target_admin_id:
         raise BadRequest('Missing user id for new admin')
-    # Request details valid at a surface level.
+    
+    user_cache_key: str = f'{User.__tablename__}:{target_admin_id}'
+    cache_key: str = f'{Forum.__tablename__}:{forum_id}'
+    flag_key: str = f'{ForumAdmin.__tablename__}:{forum_id}:{target_admin_id}'
+    lock_key: str = f'lock:{flag_key}'
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(user_cache_key)
+        pipe.hgetall(cache_key)
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        user_mapping, forum_mapping, latest_intent, lock = pipe.execute()
+    
+    if forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping:  # Forum doesn't exist
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL, transaction=False) # Reannounce non-existence of this forum
+        raise NotFound(f'No forum with ID {forum_id} found')
+    if user_mapping and RedisConfig.NF_SENTINEL_KEY in user_mapping:  # Forum doesn't exist
+        hset_with_ttl(RedisInterface, user_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL, transaction=False) # Reannounce non-existence of this forum
+        raise NotFound(f'No user with ID {target_admin_id} found')
+    if latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG or lock:
+        raise Conflict('Another worker is processing this request')
+    
     try:        
-        # Check if user has necessary permissions
-        userAdminRole: str = db.session.execute(select(ForumAdmin.role)
-                                                .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
-                                                ).scalar_one_or_none()
-        requestingUserLevel: int = AdminRoles.getAdminAccessLevel(userAdminRole)
-        if requestingUserLevel < 2:
-            raise Forbidden('You do not have the necessary permissions to delete an admin from this forum')
-        # Check to see if given user is actually an admin
-        targetAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
-                                                  .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetAdminID))
-                                                  .with_for_update(nowait=True)
+        # Check requesting user's permissions in this forum (This also confirms the existence of this forum)
+        user_admin_role: str = db.session.execute(select(ForumAdmin.role)
+                                                  .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
                                                   ).scalar_one_or_none()
-        if not targetAdmin:
-            raise NotFound("This user is not an admin")
-        targetAdminRole = AdminRoles.getAdminAccessLevel(targetAdmin.role)
-        # Must have higher access, pr same access but 
-        if (requestingUserLevel < targetAdminRole or not (requestingUserLevel == targetAdminRole and targetAdminID == g.DECODED_TOKEN['sid'])):
+        requesting_user_level: int = AdminRoles.getAdminAccessLevel(user_admin_role)
+        if requesting_user_level < 2:
+            raise Forbidden('You do not have the necessary permissions to delete an admin from this forum')
+        
+        if not latest_intent:
+            # Check to see if target user is actually an admin in this forum, if not found from cache
+            targetAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
+                                                        .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == target_admin_id))
+                                                        .with_for_update(nowait=True)
+                                                        ).scalar_one_or_none()
+            if not targetAdmin:
+                raise NotFound("This user is not an admin in this forum")
+            target_admin_level: int = AdminRoles.getAdminAccessLevel(targetAdmin.role)
+        else:
+            target_admin_level: int = AdminRoles.getAdminAccessLevel(latest_intent)
+
+        # Must have higher access, only other case allowed is if the admin removes themselves from their role 
+        if (requesting_user_level < target_admin_level or not (requesting_user_level == target_admin_level and target_admin_id == g.DECODED_TOKEN['sid'])):
             raise Forbidden('You do not have the necessary permissions to delete this admin from this forum')
     except SQLAlchemyError: genericDBFetchException()
     except KeyError: raise BadRequest('Mandatory claim "sid" missing in token. Please login again')
 
-    # Decrement global admin count and delete forum_admins record
-    update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='admin_count', identifier=forum_id)
-    RedisInterface.xadd('WEAK_DELETIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : targetAdminID})
-    return jsonify({"message" : "Removed admin", "userID" : targetAdminID}), 202
+    # Set lock for this action
+    lock_set = RedisInterface.set(lock_key, 1, RedisConfig.TTL_STRONG, nx=True)
+    if not lock_set:
+        raise Conflict('Another worker is already performing this action')
+    try:
+        RedisInterface.set(flag_key, value=RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)    # Write latest intent as deletion for this admin
+        # Decrement global admin count and delete forum_admins record
+        update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='admin_count', identifier=forum_id)
+        RedisInterface.xadd('WEAK_DELETIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : target_admin_id})
+    finally:
+        RedisInterface.delete(lock_key)
+    
+    return jsonify({"message" : "Removed admin", "userID" : target_admin_id, "role" : latest_intent or targetAdmin.role}), 202
 
 @forum.route("/<int:forum_id>/admins", methods=['PATCH'])
 @enforce_json
@@ -614,8 +680,8 @@ def add_highlight_post(forum_id: int) -> tuple[Response, int]:
     
     postID: int = int(postID)
     try:
-        userAdminRole: str = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
-        if not userAdminRole or userAdminRole not in ('super', 'owner'):
+        user_admin_role: str = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
+        if not user_admin_role or user_admin_role not in ('super', 'owner'):
             raise Forbidden('You do not have access rights to edit this forum')
 
         requestedPostID: int = db.session.execute(select(Post.id).where(Post.id == postID)).scalar_one_or_none()
@@ -654,8 +720,8 @@ def remove_highlight_post(forum_id: int) -> tuple[Response, int]:
     
     postID: int = int(postID)
     try:
-        userAdminRole: str = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
-        if not userAdminRole or userAdminRole not in ('super', 'owner'):
+        user_admin_role: str = db.session.execute(select(ForumAdmin).where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))).scalar_one_or_none()
+        if not user_admin_role or user_admin_role not in ('super', 'owner'):
             raise Forbidden('You do not have access rights to edit this forum')
 
         requestedPostID: int = db.session.execute(select(Post.id).where(Post.id == postID)).scalar_one_or_none()
