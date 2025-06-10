@@ -147,13 +147,14 @@ def recover_user() -> Response:
     if not OP:
         raise BadRequest(USER_DETAILS.get('error', "Invalid user details"))
     
+    # Fetch account details from DB (ID not known yet). NOTE: Clause 'User.deleted.is_(False)' is not included because DB might not be consistent yet
     deadAccount = db.session.execute(select(User)
-                                     .where((User.email == USER_DETAILS.get('email') if isEmail else User.username == USER_DETAILS['username'] & (User.deleted.is_(True))))
+                                     .where((User.email == USER_DETAILS.get('email') if isEmail else User.username == USER_DETAILS['username']))
                                      .with_for_update()
                                      ).scalar_one_or_none()
 
     if not deadAccount:
-        # Never existed, or hard deleted already
+        # Never existed
         nf = NotFound(f"No deleted account with this {'email' if isEmail else 'username'} exists.")
         nf.__setattr__("kwargs", {"info" : f"If you had believe that this account is still in the recovery period of {current_app['ACCOUNT_RECOVERY_PERIOD']} days, contact support",
                                   "_links" : {"tickets" : {"href" : url_for("tickets")}}})
@@ -169,20 +170,43 @@ def recover_user() -> Response:
         unauth = Unauthorized("Incorrect password")
         unauth.__setattr__("kwargs", {"info" : "If you have forgotten your password and want to recover your account, please perform the deleted account password recovery phase", 
                                       "_links" : {"recovery" : {"href" : url_for(".recovery")}}})
-        
-    # Account recovery good to go
+        raise unauth
+    
+    user_mapping: dict[str, str|int] = deadAccount.__json_like__()
+    # Check cache for state
+    cache_key: str = f'{User.__tablename__}:{deadAccount.id}'
+    flag_name: str = f'alive_status:{cache_key}'
+    lock_key: str = f'lock:{flag_name}'
+
+    with RedisInterface.pipeline() as pipe:
+        pipe.get(flag_name)
+        pipe.get(lock_key)
+        latest_intent, lock = pipe.execute()
+    
+    if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG or lock:
+        raise Conflict('A request for recovering this account is already underway')
+    if not deadAccount.deleted or latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG:  # If both cache and DB fail to verify the prior deletion of this account, raise Conflict
+        raise Conflict('Account not deleted')
+    
+    lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock_set:
+        raise Conflict('A request for recovering this account is already underway')
+    
+    # Account recovery good to go (TODO: Change this to an xadd to a dedicated stream for user recovery)
     try:
         db.session.execute(update(User)
                            .where(User.id == deadAccount.id)
                            .values({"deleted" : False, "time_deleted" : None}))
         db.session.commit()
+        hset_with_ttl(RedisInterface, cache_key, user_mapping, RedisConfig.TTL_STRONG, transaction=False)   # Write recovred account to cache
+        enqueueEmail(RedisInterface, email=deadAccount.email, subject="recovery", username=deadAccount.username, user_id=deadAccount.id, time_restored=datetime.now().isoformat())
     except:
         raise InternalServerError("Failed to recover your account. If this issue persists, please raise a user ticket immediately")
-    
-    enqueueEmail(RedisInterface, email=deadAccount.email, subject="recovery", username=deadAccount.username, user_id=deadAccount.id, time_restored=datetime.now().isoformat())
+    finally:
+        RedisInterface.delete(lock_key)
+
     return jsonify({"message" : "Account recovered succesfully",
-                   "username" : deadAccount.username,
-                   "email" : deadAccount.email,
+                   "user" : user_mapping,
                    "_links" : {"login" : {"href" : url_for(".login")}}}), 200
 
 @user.route("/recover-password", methods = ["POST"])
