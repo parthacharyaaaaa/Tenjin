@@ -1,11 +1,12 @@
 '''Blueprint module for all actions related to resource: users'''
 from flask import Blueprint, g, request, jsonify, current_app, url_for
 from werkzeug import Response
-from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized
+from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized, Forbidden
 from auxillary.decorators import enforce_json
 from auxillary.utils import hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
 from resource_server.resource_auxillary import processUserInfo, fetch_global_counters
 from resource_server.external_extensions import RedisInterface, hset_with_ttl
+from resource_server.resource_decorators import token_required
 from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum, ForumSubscription, Anime, AnimeSubscription
 from resource_server.scripts.mail import enqueueEmail
 from resource_server.redis_config import RedisConfig
@@ -582,7 +583,6 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
     cache_grouped_resource(RedisInterface, cacheKey, 'anime', {anime['id']:anime for anime in _animes}, RedisConfig.TTL_WEAK, RedisConfig.TTL_STRONG, newCursor, end)
     return jsonify({'animes' : _animes, 'cursor' : newCursor, 'end' : end})
 
-
 @user.route("/login", methods=["POST"])
 # @private
 @enforce_json
@@ -618,3 +618,60 @@ def login() -> Response:
     return jsonify({"message" : "authorization successful",
                     "sub" : user.username,
                     "sid" : user.id}), 200
+
+@user.route('/<int:user_id>/enable-rtbf', methods=['PATCH'])
+@enforce_json
+@token_required
+def enable_rtbf(user_id: int) -> tuple[Response, int]:
+    if user_id != g.DECODED_TOKEN['sid']:
+        raise Forbidden("Missing permissions to edit this user's data")
+    
+    confirmation_text: str = g.REQUEST_JSON.pop('confirmation', None)
+    if confirmation_text != g.DECODED_TOKEN['sub']:
+        raise Forbidden('Invalid confirmation text, please try again')
+    
+    user_rtbf: bool = db.session.execute(select(User.rtbf)
+                                         .where(User.id == user_id)
+                                         .with_for_update(nowait=True)
+                                         ).scalar_one_or_none()
+    if user_rtbf is None:
+        raise NotFound('This account could not be accessed at the moment')
+    if user_rtbf:
+        raise Conflict('RTBF already enabled for this account')
+    
+    try:
+        db.session.execute(update(User)
+                           .where(User.id == user_id)
+                           .values(rtbf=True))
+        db.session.commit()
+    except SQLAlchemyError: raise InternalServerError("Failed to update RTBF settings at the moment, please try again later") 
+    
+    return jsonify({'Message' : 'RTBF Enabled'}), 200
+
+@user.route('/<int:user_id>/disable-rtbf', methods=['PATCH'])
+@enforce_json
+@token_required
+def disable_rtbf(user_id: int) -> tuple[Response, int]:
+    if user_id != g.DECODED_TOKEN['sid']:
+        raise Forbidden("Missing permissions to edit this user's data")
+    
+    confirmation_text: str = g.REQUEST_JSON.pop('confirmation', None)
+    if confirmation_text != g.DECODED_TOKEN['sub']:
+        raise Forbidden('Invalid confirmation text, please try again')
+    
+    user_rtbf: bool = db.session.execute(select(User.rtbf)
+                                         .where(User.id == user_id)
+                                         .with_for_update(nowait=True)
+                                         ).scalar_one_or_none()
+    if user_rtbf is None:
+        raise NotFound('This account could not be accessed at the moment')
+    if not user_rtbf:
+        raise Conflict('RTBF already disabled for this account')
+    try:
+        db.session.execute(update(User)
+                           .where(User.id == user_id)
+                           .values(rtbf=False))
+        db.session.commit()
+    except SQLAlchemyError: raise InternalServerError("Failed to updatwe RTBF settings at the moment, please try again later") 
+    
+    return jsonify({'Message' : 'RTBF Disabled'}), 200
