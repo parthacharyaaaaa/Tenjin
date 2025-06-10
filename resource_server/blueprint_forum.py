@@ -412,50 +412,64 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
 @enforce_json
 @token_required
 def edit_admin_permissions(forum_id: int) -> tuple[Response, int]:
-    # Inital check to see if admin exists
+    targetID: int = g.REQUEST_JSON.pop('newAdmin', None)
+    newRole: str = g.REQUEST_JSON.pop('newRole', '').strip()
+
+    if not targetID:
+        raise BadRequest('Admin whose permission needs to be changed must be included')
+    if not newRole:
+        raise BadRequest('A role needs to be provided for this admin')
+    if not AdminRoles.check_membership(newRole) or AdminRoles[newRole] == AdminRoles.owner:
+        raise BadRequest('Invalid role, can only be super or admin')
+    
+    flag_key: str = f'{ForumAdmin.__tablename__}:{forum_id}:{targetID}'
+    latest_intent: str = RedisInterface.get(flag_key)
+    if latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG:
+        raise NotFound(f'No admin (ID: {targetID}) found for this forum (ID: {forum_id})')
+    
     try:
         # Check whether request is coming from owner
         forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
-                                            .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
-                                            ).scalar_one()
+                                                    .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']) & (ForumAdmin.role == 'owner'))
+                                                    ).scalar_one()
         
-        if forumAdmin.role != 'owner':
+        if not forumAdmin:
             raise Forbidden('You must be the owner of this forum to edit admin permissions')
-        
-        targetID: int = g.REQUEST_JSON.pop('newAdmin', None)
-        newRole: str = g.REQUEST_JSON.pop('newRole', None)
-
-        if not targetID:
-            raise BadRequest('Admin whose permission needs to be changed must be included')
-        if not newRole:
-            raise BadRequest('A role needs to be provided for this admin')
-        if not AdminRoles.check_membership(newRole) or AdminRoles[newRole] == AdminRoles.owner:
-            raise BadRequest('Invalid role, can only be super or admin')
         
         if targetID == forumAdmin.user_id:
             raise BadRequest('As owner, you cannot change your own permissions')
         
-        # Check if target is admin of this forum
-        targetAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
-                                                     .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetID))
-                                                     .with_for_update(nowait=True)
-                                                     ).scalar_one()
+        if not latest_intent:
+            # Check if target is admin of this forum
+            targetAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
+                                                        .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetID))
+                                                        .with_for_update(nowait=True)
+                                                        ).scalar_one()
+            if not targetAdmin:
+                raise NotFound('No such admin could be found for this forum')
+            latest_intent: str = targetAdmin.role
+        
     except SQLAlchemyError: genericDBFetchException()
-
-    if not targetAdmin:
-        raise NotFound('No such admin could be found')
-    
-    if targetAdmin.role == newRole:
+    if latest_intent == newRole:
         raise Conflict('This admin already has this role')
-    
+
     # Finally, all checks passed.
+    lock_key: str = f'lock:{flag_key}'
+    lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock_set:
+        raise Conflict('Failed to update admin permission as another request for this admin is being processed, please try again')
+    
+    with RedisInterface.pipeline() as pipe:
+        pipe.set(flag_key, value=newRole, ex=RedisConfig.TTL_STRONGEST)
+        pipe.delete(lock_key)
+        pipe.execute()
     try:
         db.session.execute(update(ForumAdmin)
-                            .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetID))
-                            .values(role=newRole))
-    except: raise InternalServerError('Failed to change admin role, please try again later')
+                           .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetID))
+                           .values(role=newRole))
+    except SQLAlchemyError: raise InternalServerError('Failed to change admin role, please try again later')
     
-    return jsonify({'message' : 'Admin role changed', 'admin_id' : targetID, 'new_role' : newRole}), 200
+    return jsonify({'message' : 'Admin role changed', 'admin_id' : targetID, 'new_role' : newRole, 'previous_role' : latest_intent or targetAdmin.role}), 200
 
 @forum.route("/<int:forum_id>/admins")
 @pass_user_details
@@ -615,20 +629,12 @@ def edit_forum(forum_id: int) -> tuple[Response, int]:
     try:
         op = RedisInterface.hgetall(cacheKey)
         if RedisConfig.NF_SENTINEL_KEY in op:
-            # Not 404, if __NF__ mapping is in cache then the forum was deleted very recently
-            raise Conflict('This forum was just deleted')
-        
+            raise NotFound(f'No forum with ID {forum_id} found')
     except RedisError: ...
-
-    colorTheme: str | int = g.REQUEST_JSON.get('color_theme')
-    if colorTheme and isinstance(colorTheme, str):
-         if not colorTheme.isnumeric():
-            raise BadRequest("Invalid color theme")
-         colorTheme = int(colorTheme)
         
-    description: str = g.REQUEST_JSON.pop('description', None)
-
-    if not (colorTheme or description):
+    description: str = g.REQUEST_JSON.pop('description', '').strip()
+    title: str = g.REQUEST_JSON.pop('title', '').strip()
+    if not (title or description):
         raise BadRequest("No changes provided")
     
     try:
@@ -650,10 +656,10 @@ def edit_forum(forum_id: int) -> tuple[Response, int]:
     except KeyError: raise BadRequest('Invalid token, missing mandatory field: sid. Please login again')
 
     updateClauses: dict = {}
-    if colorTheme:
-        updateClauses['color_theme'] = colorTheme
+    if title:
+        updateClauses['title'] = title
     if description:
-        updateClauses['description'] = description.strip()
+        updateClauses['description'] = description
     
     try:
         updatedForum: Forum = db.session.execute(update(Forum)
@@ -666,8 +672,9 @@ def edit_forum(forum_id: int) -> tuple[Response, int]:
         e.__setattr__('description', 'Failed to update this forum. Please try again later')
         raise e
 
-    hset_with_ttl(RedisInterface, cacheKey, updatedForum.__json_like__(), RedisConfig.TTL_WEAK)
-    return jsonify({'message' : 'Edited forum'}), 200
+    forum_mapping: dict[str, str|int] = updatedForum.__json_like__()
+    hset_with_ttl(RedisInterface, cacheKey, forum_mapping, RedisConfig.TTL_WEAK)
+    return jsonify({'message' : 'Forum edited succesfully', 'forum' : forum_mapping}), 200
 
 @forum.route("/<int:forum_id>/highlight-post", methods=['PATCH'])
 @token_required
