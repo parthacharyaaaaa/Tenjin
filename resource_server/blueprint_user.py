@@ -85,7 +85,7 @@ def register() -> tuple[Response, int]:
  
 @user.route("/", methods=["DELETE"])
 @enforce_json
-def delete_user() -> Response:
+def delete_user() -> tuple[Response, int]:
     if not (g.REQUEST_JSON.get("username") and
             g.REQUEST_JSON.get("password")):
         raise BadRequest("Requires username and password to be provided")
@@ -94,23 +94,44 @@ def delete_user() -> Response:
     if not OP:
         raise BadRequest(USER_DETAILS.get("error"))
     targetUser: User = db.session.execute(select(User)
-                                     .where((User.username == USER_DETAILS['username']) & (User.deleted.is_(False)))
-                                     .with_for_update(nowait=True)
-                                     ).scalar_one_or_none()
+                                          .where((User.username == USER_DETAILS['username']) & (User.deleted.is_(False)))
+                                          ).scalar_one_or_none()
     if not targetUser:
         raise NotFound("Requested user could not be found")
     
     if not verify_password(g.REQUEST_JSON['password'], targetUser.pw_hash, targetUser.pw_salt):
         raise Unauthorized('Invalid credentials')
     
+    cache_key: str = f'{User.__tablename__}:{targetUser.id}'
+    flag_key: str = f'alive_status:{cache_key}'
+    lock_key: str = f'lock:{flag_key}'
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(cache_key)
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        user_mapping, latest_intent, lock = pipe.execute()
+    
+    if user_mapping and RedisConfig.NF_SENTINEL_KEY in user_mapping:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+        raise NotFound('No user with this ID found. Perhaps you already deleted this account?')
+    if lock or latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG:
+        raise Conflict("Another request for this account's deletion is already underway")
+    
+    # All checks passed, set lock
+    lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock_set:
+        raise Conflict('Failed to perform this action, another request for the same action is being processed')
+    
     try:
+        RedisInterface.set(flag_key, value=RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)    # Write latest intent to account deletion
         RedisInterface.xadd('SOFT_DELETIONS', {'id' : targetUser.id, 'table' : User.__tablename__, 'rtbf' : int(targetUser.rtbf)})
-        # Broadcast user deletion
+        hset_with_ttl(RedisInterface, f'user:{targetUser.id}', {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_WEAK) # Broadcast user deletion
+        enqueueEmail(RedisInterface, email=targetUser.email, subject='deletion', username=targetUser.username)
     except RedisError: 
         raise InternalServerError("Failed to perform account deletion, please try again. If the issue persists, please raise a ticket")
+    finally:
+        RedisInterface.delete(lock_key)
     
-    hset_with_ttl(RedisInterface, f'user:{targetUser.id}', {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_WEAK) # Non ephemeral timing? idk seems right
-    enqueueEmail(RedisInterface, email=targetUser.email, subject='deletion', username=targetUser.username)
     return jsonify({"message" : "account deleted succesfully", "username" : user.username, "time_deleted" : user.time_deleted}), 203
 
 @user.route("/recover", methods=["PATCH"])
