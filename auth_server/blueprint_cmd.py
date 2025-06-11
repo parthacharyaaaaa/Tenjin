@@ -47,7 +47,7 @@ def admin_login() -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
     
     if not verify_password(password, admin.password_hash, admin.password_salt):
-        report_suspicious_activity(admin.id, 'Incorrect password')
+        report_suspicious_activity(admin.id, 'Incorrect password', force_logout=False)
         raise Unauthorized('Incorrect passwword')
 
     # Exists in DB, check SyncedStore to see if session is already active
