@@ -1,4 +1,5 @@
 import os
+import threading
 from flask import Flask
 from flask.cli import with_appcontext
 from flask_migrate import Migrate
@@ -109,20 +110,23 @@ def create_app() -> Flask:
                 exit(500)     
 
     fetch_genres(db)
-    # from resource_server.external_extensions import RedisInterface
-    # background_poll(current_app=app, RedisInterface=RedisInterface)
+    
+    from resource_server.redis_config import RedisConfig
     from resource_server.external_extensions import RedisInterface
-    from resource_server.resource_auxillary import update_jwks
+    from resource_server.resource_auxillary import update_jwks, background_poll
 
+    background_poller: threading.Thread = threading.Thread(target=background_poll, daemon=True,
+                                                           kwargs={'current_app':app, 'interface':RedisInterface, 'announcement_duration':RedisConfig.ANNOUNCEMENT_DURATION, 'interval':RedisConfig.TTL_STRONG})
     # Initial JWKS load
     jwks_mapping: dict[str, str] = RedisInterface.hgetall('JWKS_MAPPING')
     if not jwks_mapping:
-        from resource_server.redis_config import RedisConfig
         # updaet_jwks() already handles race conditions among multiple workers trying to update JWKS mapping, so no need to have separate logic here
         jwks_mapping = update_jwks(endpoint=f"{app.config['AUTH_SERVER_URL']}/auth/jwks.json", currentMapping={}, interface=RedisInterface, announcement_duration=RedisConfig.ANNOUNCEMENT_DURATION, jwks_poll_cooldown=RedisConfig.JWKS_POLL_COOLDOWN)
         if not jwks_mapping:
             raise RuntimeError("Failed to initialize JWKS mapping in Redis")
     app.config['KEY_VK_MAPPING'] = jwks_mapping
+
+    background_poller.start()
     return app
 
 from resource_server.models import *
