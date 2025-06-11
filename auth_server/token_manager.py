@@ -253,7 +253,7 @@ class TokenManager:
                 
         # Try to fetch a valid key with this KID 
         key: KeyData = self.db.session.execute(select(KeyData)
-                                                 .where((KeyData.kid == kid) & (KeyData.expired_at.issnot(None)))
+                                                 .where((KeyData.kid == kid) & (KeyData.expired_at.isnot(None)))
                                                  ).scalar_one_or_none()
         if not key:
             # Announce non existence to other workers in case they also receive this invalid key
