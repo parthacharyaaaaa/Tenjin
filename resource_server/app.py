@@ -41,14 +41,6 @@ def create_app() -> Flask:
     app.register_blueprint(anime)
     app.register_blueprint(misc)
 
-    ### Additional commands ###
-    def fetch_genres(db: SQLAlchemy) -> None:
-        with app.app_context():
-            with db.engine.connect() as conn:
-                GENRES: tuple[str] = conn.execute(text('SELECT _name, id FROM genres;')).fetchall()
-
-                app.config['GENRES'] = MappingProxyType({genre[0] : genre[1] for genre in GENRES})
-
     ### Additional CLI commands ###
    # Instantiate the database
     @app.cli.command("make_db")
@@ -108,8 +100,6 @@ def create_app() -> Flask:
                 print(f"[{app.name}]: Mismatch in schema definition, tables {','.join(table for table in tables)} not specified in database configuration but found in database")
                 print(f"[{app.name}] Exiting app factory...")
                 exit(500)     
-
-    fetch_genres(db)
     
     from resource_server.redis_config import RedisConfig
     from resource_server.external_extensions import RedisInterface
@@ -127,6 +117,13 @@ def create_app() -> Flask:
     app.config['KEY_VK_MAPPING'] = jwks_mapping
 
     background_poller.start()
+
+    # Load genres into config
+    with app.app_context():
+        with db.engine.connect() as conn:
+            GENRES: tuple[str] = conn.execute(text('SELECT _name, id FROM genres;')).fetchall()
+            app.config['GENRES'] = MappingProxyType({genre[0] : genre[1] for genre in GENRES})
+
     return app
 
 from resource_server.models import *
