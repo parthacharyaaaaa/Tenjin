@@ -433,11 +433,11 @@ def rotate_keys() -> tuple[Response, int]:
 
         # Check whether max capacity has been reached. If so, purge oldest key
         valid_key_count: int = db.session.execute(select(func.count()).select_from(KeyData).where(KeyData.expired_at == None)).scalar_one()
-        if valid_key_count >= current_app.config['MAX_VALID_KEYS']:
+        if valid_key_count > current_app.config['MAX_VALID_KEYS']:
             overflow=True
             # Select and lock oldest, non-expired valid key
             purgeID: int = db.session.execute(select(KeyData.kid)
-                               .where((KeyData.rotated_out_at.isnot(None)) & (KeyData.expired_at == False))
+                               .where((KeyData.rotated_out_at.isnot(None)) & (KeyData.expired_at.is_(None)))
                                .with_for_update(nowait=True)
                                .order_by(KeyData.rotated_out_at.desc())
                                .limit(1)
@@ -448,6 +448,7 @@ def rotate_keys() -> tuple[Response, int]:
             
     except SQLAlchemyError:
         db.session.rollback()
+        SyncedStore.delete('KEY_ROTATION_LOCK')
         raise InternalServerError('An error occured in performing key rotation (Database level)')
 
     # Update files
