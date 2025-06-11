@@ -34,7 +34,7 @@ def update_jwks(endpoint: str, currentMapping: dict[str, bytes], interface: Redi
         
         global_mapping: dict[str, str] = poll_global_key_mapping(interface=interface) 
         
-        return {kid:pub_pem.encode() for kid, pub_pem in global_mapping}
+        return {kid:pub_pem.encode() for kid, pub_pem in global_mapping.items()}
     
     try:
         print('[JWKS POLLER] Attempting to update JWKS...')
@@ -87,19 +87,16 @@ def update_jwks(endpoint: str, currentMapping: dict[str, bytes], interface: Redi
         return currentMapping
 
 def background_poll(current_app: Flask, interface: Redis, interval: int = 300, announcement_duration: int = 300):
-    def run():
-        while True:
-            try:
-                update_jwks(endpoint=f'{current_app.config["AUTH_SERVER_URL"]}/auth/jwks.json',
-                            currentMapping= current_app.config['KEY_VK_MAPPING'],
-                            announcement_duration=announcement_duration,
-                            interface=interface)
-            except Exception:
-                print(f"[JWKS POLLER]: Error: {format_exc()}")
-            finally:
-                time.sleep(interval)
-    background_poll_thread: threading.Thread = threading.Thread(target=run, daemon=True)
-    background_poll_thread.run()
+    while True:
+        try:
+            update_jwks(endpoint=f'{current_app.config["AUTH_SERVER_URL"]}/auth/jwks.json',
+                        currentMapping= current_app.config['KEY_VK_MAPPING'],
+                        announcement_duration=announcement_duration,
+                        interface=interface)
+        except Exception:
+            print(f"[JWKS POLLER]: Error: {format_exc()}")
+        finally:
+            time.sleep(interval)
 
 def processUserInfo(**kwargs) -> tuple[bool, dict]:
     '''Validate and process user details\n
