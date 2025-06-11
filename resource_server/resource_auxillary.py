@@ -22,9 +22,9 @@ def poll_global_key_mapping(interface: Redis) -> dict[str, bytes]:
     return {kid : pub_pem.encode() for kid, pub_pem in res.items()}  # interface has decoded responses, but PyJWT needs public pem in bytes
 
 
-def update_jwks(endpoint: str, currentMapping: dict[str, bytes], interface: Redis, announcement_duration: int = 300, jwks_poll_cooldown: int = 300, timeout: int = 3, max_global_mapping_polls: int = 10) -> dict[str, str|int]:
+def update_jwks(endpoint: str, currentMapping: dict[str, bytes], interface: Redis, lock_ttl: int = 300, jwks_poll_cooldown: int = 300, timeout: int = 3, max_global_mapping_polls: int = 10) -> dict[str, str|int]:
     '''Fetch JWKS from auth server and load any new key mappings into currentMapping'''
-    res: int = interface.set('JWKS_POLL_LOCK', 1, ex=announcement_duration, nx=True)
+    res: int = interface.set('JWKS_POLL_LOCK', 1, ex=lock_ttl, nx=True)
     if not res:
         # Another worker is currently polling JWKS, wait until lock is released and then read global key mapping
         while(interface.get('JWKS_POLL_LOCK') and max_global_mapping_polls):
@@ -77,6 +77,7 @@ def update_jwks(endpoint: str, currentMapping: dict[str, bytes], interface: Redi
             pipe.set('JWKS_POLL_COOLDOWN', value=1, ex=jwks_poll_cooldown)
             pipe.execute()
 
+        print(currentMapping)
         return currentMapping
     except Exception:
         with interface.pipeline() as pipe:
@@ -86,12 +87,19 @@ def update_jwks(endpoint: str, currentMapping: dict[str, bytes], interface: Redi
         print(format_exc())
         return currentMapping
 
-def background_poll(current_app: Flask, interface: Redis, interval: int = 300, announcement_duration: int = 300):
+def background_poll(current_app: Flask, interface: Redis, interval: int = 300, lock_ttl: int = 300) -> None:
+    '''Poll Redis and JWKS endpoints indefinitely to keep a given app's mappings consistent
+    Args:
+        current_app: Flask instance for which the poll needs to be done
+        interface: Redis instance connected to server holding the `JWKS_MAPPING` hashmap
+        interval: Time in seconds to wait before subsequent polls
+        lock_ttl: Time in seconds for a lock to persist when polling
+    '''
     while True:
         try:
             update_jwks(endpoint=f'{current_app.config["AUTH_SERVER_URL"]}/auth/jwks.json',
                         currentMapping= current_app.config['KEY_VK_MAPPING'],
-                        announcement_duration=announcement_duration,
+                        lock_ttl=lock_ttl,
                         interface=interface)
         except Exception:
             print(f"[JWKS POLLER]: Error: {format_exc()}")
