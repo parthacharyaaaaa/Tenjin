@@ -20,11 +20,11 @@ class FlaskConfig:
         # TODO: Add JWT signing key, peer server metadata, and Redis data. (Maybe session configs too if we use a hybrid approach instead of pure REST?)
 
         ### Database Configurations ###
-        SQLALCHEMY_DATABASE_URI : str = "postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}".format(username=os.environ["POSTGRES_USERNAME"],
-                                                                                                                    password=os.environ["POSTGRES_PASSWORD"],
-                                                                                                                    host=os.environ["POSTGRES_HOST"],
-                                                                                                                    port=os.environ.get("POSTGRES_PORT", 5432),
-                                                                                                                    database=os.environ["POSTGRES_DATABASE"])
+        SQLALCHEMY_DATABASE_URI : str = "postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}".format(username=os.environ["RESOURCE_SERVER_POSTGRES_USERNAME"],
+                                                                                                                    password=os.environ["RESOURCE_SERVER_POSTGRES_PASSWORD"],
+                                                                                                                    host=os.environ["RESOURCE_SERVER_POSTGRES_HOST"],
+                                                                                                                    port=os.environ.get("RESOURCE_SERVER_POSTGRES_PORT", 5432),
+                                                                                                                    database=os.environ["RESOURCE_SERVER_POSTGRES_DATABASE"])
         SQLALCHEMY_POOL_SIZE = int(os.environ.get("SQLALCHEMY_POOL_SIZE", 10))
         SQLALCHEMY_MAX_OVERFLOW = int(os.environ.get("SQLALCHEMY_MAX_OVERFLOW", 5))
         SQLALCHEMY_POOL_RECYCLE = int(os.environ.get("SQLALCHEMY_POOL_RECYCLE", 600))

@@ -30,11 +30,11 @@ if __name__ == '__main__':
         raise ConnectionError()
 
     CONNECTION_KWARGS : dict[str, int | str] = {
-        "user" : os.environ["POSTGRES_USERNAME"],
-        "password" : os.environ["POSTGRES_PASSWORD"],
-        "host" : os.environ["POSTGRES_HOST"],
-        "port" : int(os.environ["POSTGRES_PORT"]),
-        "database" : os.environ["POSTGRES_DATABASE"]
+        "user" : os.environ["WORKER_POSTGRES_USERNAME"],
+        "password" : os.environ["WORKER_POSTGRES_PASSWORD"],
+        "host" : os.environ["WORKER_POSTGRES_HOST"],
+        "port" : int(os.environ["WORKER_POSTGRES_PORT"]),
+        "database" : os.environ["WORKER_POSTGRES_DATABASE"]
     }
 
     CONNECTION: pg.extensions.connection = pg.connect(**CONNECTION_KWARGS)
