@@ -1,0 +1,26 @@
+resource_server:
+  DML:
+    # SELECT and UPDATE permissions will be namespaced to specify columns within tables
+    SELECT : ["*::*"]
+    UPDATE : ["forums::title:description", "forum_admins::role", "posts::closed:body_text:title", "users::rtbf:pw_hash:pw_salt:last_login"]
+    # DELETE AND INSERT permissions apply on the entire record, so no need to specify columns
+    DELETE : ["users", "password_recovery_tokens"]
+    INSERT : ["forums", "forum_admins", "users", "password_recovery_tokens"]
+  MISC:
+    ["CONNECT", "EXECUTE"]
+
+workers:
+  DML:
+    SELECT : ["*::*"]
+    UPDATE : ["posts::score:total_comments:reports:saves", "comments::score:reports", "forums::subscribers:admin_count:total_posts", "animes::members", "users::deleted_at:deleted:rtbf:aura:total_posts:total_comments"]
+    DELETE : ["posts", "comments", "forums", "post_votes", "post_saves", "post_reports", "comment_votes", "comment_reports"]
+    INSERT : ["posts", "comments", "forums", "post_votes", "post_saves", "post_reports", "comment_votes", "comment_reports"]
+  MISC:
+    ["CONNECT", "EXECUTE"]
+  
+creator:
+  DML:
+    SELECT : ["*::*"]
+    INSERT : ["users", "forums", "genres", "animes", "anime_genres", "stream_links", "forum_admins"]
+  MISC:
+    ["CONNECT", "EXECUTE"]
