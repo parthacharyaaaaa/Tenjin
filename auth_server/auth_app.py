@@ -37,7 +37,10 @@ def create_app() -> Flask:
     # Extensions
     redis_config_filepath: os.PathLike = os.path.join(APP_CTX_CWD, 'config', os.environ['REDIS_CONFIG_FILENAME'])
     redis_config_kwargs: dict[str, dict[str, Any]] = toml.load(f=redis_config_filepath)
-
+    # Inject Redis username and password from env
+    redis_config_kwargs['synced_store'].update({'username' : os.environ['AUTH_WORKER_REDIS_USERNAME'], 'password' : os.environ['AUTH_WORKER_REDIS_PASSWORD']})
+    redis_config_kwargs['token_store'].update({'username' : os.environ['AUTH_WORKER_REDIS_USERNAME'], 'password' : os.environ['AUTH_WORKER_REDIS_PASSWORD']})
+    
     from auth_server.redis_manager import init_redis, init_syncedstore
     init_redis(**redis_config_kwargs['token_store'])
     init_syncedstore(**redis_config_kwargs['synced_store'])
