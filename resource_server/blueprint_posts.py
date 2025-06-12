@@ -42,7 +42,7 @@ def create_post() -> tuple[Response, int]:
     if not author:
         nf: NotFound = NotFound("Invalid author ID")
         nf.__setattr__("kwargs", {"help" : "If you believe that this is an erorr, please contact support",
-                                "_links" : {"login" : {"href" : url_for(".")}}})  #TODO: Replace this with an actual user support endpoint
+                                "_links" : {"login" : {"href" : url_for("misc.issue_ticket")}}})
     forum: Forum = db.session.execute(select(Forum).where(Forum.id == forumID)).scalar_one_or_none()
     if not forum:
         raise NotFound("This forum could not be found")
