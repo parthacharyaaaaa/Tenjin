@@ -8,7 +8,6 @@ resource_server:
     INSERT : ["forums", "forum_admins", "users", "password_recovery_tokens"]
   MISC:
     ["CONNECT", "EXECUTE"]
-  PASSWORD:
 
 batch_worker:
   DML:
@@ -18,7 +17,6 @@ batch_worker:
     INSERT : ["posts", "comments", "forums", "post_votes", "post_saves", "post_reports", "comment_votes", "comment_reports"]
   MISC:
     ["CONNECT", "EXECUTE"]
-  PASSWORD:
   
 db_populator:
   DML:
@@ -26,4 +24,3 @@ db_populator:
     INSERT : ["users", "forums", "genres", "animes", "anime_genres", "stream_links", "forum_admins"]
   MISC:
     ["CONNECT", "EXECUTE"]
-  PASSWORD:
