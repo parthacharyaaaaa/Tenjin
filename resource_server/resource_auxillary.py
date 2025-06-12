@@ -245,7 +245,7 @@ def pipeline_exec(client: Redis, op_mapping: Mapping[FunctionType, Mapping[str, 
     pipe: Pipeline = client.pipeline(transaction=transaction)
     try:
         for operation, kwargs in op_mapping.items():
-            if not (isinstance(operation, FunctionType) and 'Pipeline' in operation.__qualname__):
+            if not isinstance(operation, FunctionType):
                 raise TypeError(f"{operation} must be an unbound Pipeline method reference (e.g., Pipeline.set, Pipeline.xadd)")
             operation(pipe, **kwargs)   # Pass pipeline instance as self
         pipe.execute()
