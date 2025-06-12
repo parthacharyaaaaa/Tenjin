@@ -20,10 +20,8 @@ def batch_hset_with_ttl(interface: Redis, names: Iterable[str], mappings: Iterab
             pp.expire(name=names[idx], time=ttl)
         pp.execute()
 
-def init_redis(app: Flask):
+def init_redis(**constructor_kwargs):
     global RedisInterface
-    RedisInterface = Redis(host=app.config["REDIS_HOST"],
-                                  port=app.config["REDIS_PORT"],
-                                  decode_responses=True)
+    RedisInterface = Redis(**constructor_kwargs)
     if not RedisInterface.ping():
         raise ConnectionError()

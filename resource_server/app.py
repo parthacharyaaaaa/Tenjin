@@ -6,8 +6,9 @@ from flask_migrate import Migrate
 from traceback import format_exc
 from resource_server.flask_config import FLASK_CONFIG_OBJECT
 from auxillary.utils import generic_error_handler
-from resource_server.resource_auxillary import background_poll
 from types import MappingProxyType
+from typing import Any
+import toml
 
 APP_CTX_CWD : os.PathLike = os.path.dirname(__file__)
 def create_app() -> Flask:
@@ -25,9 +26,17 @@ def create_app() -> Flask:
     db.init_app(app)
     migrate = Migrate(app, db)
 
-    ### External Extensions ###
+    ### Redis ###
+    redis_config_fpath: str = os.path.join(APP_CTX_CWD, 'config', os.environ['redis_config_filename'])
+    if not os.path.isfile(redis_config_fpath):
+        raise FileNotFoundError("Redis config toml file not found")
+    
+    redis_config_kwargs: dict[str, Any] = toml.load(f=redis_config_fpath)
+    redis_config_kwargs.update({'username' : os.environ['RESOURCE_SERVER_REDIS_USERNAME'], 'password' : os.environ['RESOURCE_SERVER_REDIS_PASSWORD']})   # Inject login credentials through env
+    print(redis_config_kwargs)
+    
     from resource_server.external_extensions import init_redis
-    init_redis(app)
+    init_redis(**redis_config_kwargs)
 
     ### Blueprints registaration ###
     from resource_server.blueprint_forum import forum
