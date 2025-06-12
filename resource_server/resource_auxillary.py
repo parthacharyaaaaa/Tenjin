@@ -4,12 +4,14 @@ import re
 from auxillary.utils import from_base64url
 import ecdsa
 from redis import Redis
+from redis.client import Pipeline
 from flask import Flask
 import time
 from traceback import format_exc
-import threading
 from sqlalchemy import text
 from flask_sqlalchemy import SQLAlchemy
+from typing import Any, Mapping
+from types import FunctionType
 
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
 
@@ -77,7 +79,6 @@ def update_jwks(endpoint: str, currentMapping: dict[str, bytes], interface: Redi
             pipe.set('JWKS_POLL_COOLDOWN', value=1, ex=jwks_poll_cooldown)
             pipe.execute()
 
-        print(currentMapping)
         return currentMapping
     except Exception:
         with interface.pipeline() as pipe:
@@ -224,3 +225,29 @@ def cache_layer_integrity_check(interface: Redis, mapping_key: str, flag_key: st
         pipe.get(flag_key)
         nf_sentinel, current_action_state = pipe.execute()
     return nf_sentinel == nf_sentinel_value, current_action_state == action_state
+
+def pipeline_exec(client: Redis, op_mapping: Mapping[FunctionType, Mapping[str, Any]], transaction: bool = False) -> None:
+    """
+    Execute multiple Redis operations in a single network round-trip using a pipeline.
+    Args:
+        client (redis.Redis): An instance of redis.Redis connected to the target Redis server.
+        op_mapping (Mapping[FunctionType, Mapping[str, Any]]): 
+            A mapping of unbound Pipeline function references to dictionaries of keyword arguments.
+            Example:
+                {
+                    Redis.set: {"key": "example", "value": "example", "nx": True},
+                    Redis.xadd: {"name": "mystream", "fields": {"event": "login"}}
+                }
+        transaction (bool, optional): 
+            Whether to execute the pipeline within a MULTI/EXEC transaction block. 
+            Defaults to False.
+    """
+    pipe: Pipeline = client.pipeline(transaction=transaction)
+    try:
+        for operation, kwargs in op_mapping.items():
+            if not (isinstance(operation, FunctionType) and 'Pipeline' in operation.__qualname__):
+                raise TypeError(f"{operation} must be an unbound Pipeline method reference (e.g., Pipeline.set, Pipeline.xadd)")
+            operation(pipe, **kwargs)   # Pass pipeline instance as self
+        pipe.execute()
+    finally:
+        pipe.close()
