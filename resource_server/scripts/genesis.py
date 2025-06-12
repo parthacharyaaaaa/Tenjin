@@ -43,11 +43,11 @@ assert not REQUIRED_ENTITIES - ENTITIES, "Invalid database/configuration schema 
 
 
 CONNECTION_KWARGS: dict[str, int | str] = {
-    "user" : os.environ["POSTGRES_USERNAME"],
-    "password" : os.environ["POSTGRES_PASSWORD"],
-    "host" : os.environ["POSTGRES_HOST"],
-    "port" : int(os.environ["POSTGRES_PORT"]),
-    "database" : os.environ["POSTGRES_DATABASE"]
+    "user" : os.environ["SUPERUSER_POSTGRES_USERNAME"],
+    "password" : os.environ["SUPERUSER_POSTGRES_USERNAME"],
+    "host" : os.environ["RESOURCE_SERVER_POSTGRES_HOST"],
+    "port" : int(os.environ["RESOURCE_SERVER_POSTGRES_PORT"]),
+    "database" : os.environ["RESOURCE_SERVER_POSTGRES_DATABASE"]
 }
 
 CONNECTION: pg.extensions.connection = pg.connect(**CONNECTION_KWARGS)

@@ -33,8 +33,7 @@ def create_app() -> Flask:
     
     redis_config_kwargs: dict[str, Any] = toml.load(f=redis_config_fpath)
     redis_config_kwargs.update({'username' : os.environ['RESOURCE_SERVER_REDIS_USERNAME'], 'password' : os.environ['RESOURCE_SERVER_REDIS_PASSWORD']})   # Inject login credentials through env
-    print(redis_config_kwargs)
-    
+
     from resource_server.external_extensions import init_redis
     init_redis(**redis_config_kwargs)
 

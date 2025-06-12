@@ -13,8 +13,9 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from redis import Redis
 from traceback import format_exc
 
-from typing import Literal
+from typing import Literal, Any
 from uuid import uuid4
+import toml
 
 if not load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")):
     raise FileNotFoundError()
@@ -123,7 +124,13 @@ def backoff(default_time = float(os.environ["SMTP_BACKOFF_TIME"])):
 
 if __name__ == "__main__":
     ### Redis setup ###
-    RedisInterface: Redis = Redis(os.environ['REDIS_HOST'], os.environ['REDIS_PORT'], decode_responses=True)    # I've chosen to assign a separate instance to each mail worker to make them independent from RedisInterface instance used universally in resource server. This allows the mail workers to work regardless of whatever happens to the Flask workers
+    redis_config_fpath: os.PathLike = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', os.environ['redis_config_filename'])
+    if not os.path.isfile(redis_config_fpath):
+        raise FileNotFoundError("Redis config toml file not found")
+    
+    redis_config_kwargs: dict[str, Any] = toml.load(f=redis_config_fpath)
+    redis_config_kwargs.update({'username' : os.environ['BATCH_SERVER_REDIS_USERNAME'], 'password' : os.environ['BATCH_SERVER_REDIS_PASSWORD']})   # Inject login credentials through env
+    RedisInterface: Redis = Redis(**redis_config_kwargs)
 
     ### Email templates for all possible scenarios ###
     #NOTE: It is CRUCIAL for the file names to match with the *args in the Literal type hint in the signature for sendMail, otherwise a keyError would be raised when trying to load an email template

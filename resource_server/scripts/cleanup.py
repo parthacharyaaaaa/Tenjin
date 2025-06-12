@@ -17,6 +17,8 @@ import psycopg2 as pg
 from datetime import datetime, timedelta
 from traceback import format_exc
 from redis import Redis
+from typing import Any
+import toml
 
 if __name__ == "__main__":
     loaded = load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env"))
@@ -24,20 +26,25 @@ if __name__ == "__main__":
         raise FileNotFoundError()
 
     CONNECTION_KWARGS : dict[str, int | str] = {
-        "user" : os.environ["POSTGRES_USERNAME"],
-        "password" : os.environ["POSTGRES_PASSWORD"],
-        "host" : os.environ["POSTGRES_HOST"],
-        "port" : int(os.environ["POSTGRES_PORT"]),
-        "database" : os.environ["POSTGRES_DATABASE"]
+        "user" : os.environ["WORKER_POSTGRES_USERNAME"],
+        "password" : os.environ["WORKER_POSTGRES_PASSWORD"],
+        "host" : os.environ["RESOURCE_SERVER_POSTGRES_HOST"],
+        "port" : int(os.environ["RESOURCE_SERVER_POSTGRES_PORT"]),
+        "database" : os.environ["RESOURCE_SERVER_POSTGRES_DATABASE"]
     }
 
- 
     # Connect to Postgres
     CONNECTION : pg.extensions.connection = pg.connect(**CONNECTION_KWARGS)
     del CONNECTION_KWARGS
 
     # Connect to Redis
-    interface: Redis = Redis(os.environ['REDIS_HOST'], os.environ['REDIS_PORT'])
+    redis_config_fpath: os.PathLike = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', os.environ['redis_config_filename'])
+    if not os.path.isfile(redis_config_fpath):
+        raise FileNotFoundError("Redis config toml file not found")
+    
+    redis_config_kwargs: dict[str, Any] = toml.load(f=redis_config_fpath)
+    redis_config_kwargs.update({'username' : os.environ['BATCH_SERVER_REDIS_USERNAME'], 'password' : os.environ['BATCH_SERVER_REDIS_PASSWORD']})   # Inject login credentials through env
+    interface: Redis = Redis(**redis_config_kwargs)
 
     # Initialize other constants
     now: datetime = datetime.now()

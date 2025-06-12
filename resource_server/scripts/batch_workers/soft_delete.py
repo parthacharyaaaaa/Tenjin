@@ -12,11 +12,13 @@ from psycopg2.extras import execute_batch
 from redis import Redis
 from redis import exceptions as redisExceptions
 import os
-import json
 from dotenv import load_dotenv
 from time import sleep
 from datetime import datetime
 from traceback import format_exc
+from typing import Any
+import json
+import toml
 
 if __name__ == '__main__':
     loaded = load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"))
@@ -25,16 +27,20 @@ if __name__ == '__main__':
 
     ID: int = os.getpid()
 
-    interface: Redis = Redis(os.environ["REDIS_HOST"], int(os.environ["REDIS_PORT"]), decode_responses=True)
-    if not interface.ping():
-        raise ConnectionError()
+    redis_config_fpath: os.PathLike = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config', os.environ['redis_config_filename'])
+    if not os.path.isfile(redis_config_fpath):
+        raise FileNotFoundError("Redis config toml file not found")
+    
+    redis_config_kwargs: dict[str, Any] = toml.load(f=redis_config_fpath)
+    redis_config_kwargs.update({'username' : os.environ['BATCH_SERVER_REDIS_USERNAME'], 'password' : os.environ['BATCH_SERVER_REDIS_PASSWORD']})   # Inject login credentials through env
+    interface: Redis = Redis(**redis_config_kwargs)
 
     CONNECTION_KWARGS : dict[str, int | str] = {
         "user" : os.environ["WORKER_POSTGRES_USERNAME"],
         "password" : os.environ["WORKER_POSTGRES_PASSWORD"],
-        "host" : os.environ["WORKER_POSTGRES_HOST"],
-        "port" : int(os.environ["WORKER_POSTGRES_PORT"]),
-        "database" : os.environ["WORKER_POSTGRES_DATABASE"]
+        "host" : os.environ["RESOURCE_SERVER_POSTGRES_HOST"],
+        "port" : int(os.environ["RESOURCE_SERVER_POSTGRES_PORT"]),
+        "database" : os.environ["RESOURCE_SERVER_POSTGRES_DATABASE"]
     }
 
     CONNECTION: pg.extensions.connection = pg.connect(**CONNECTION_KWARGS)
