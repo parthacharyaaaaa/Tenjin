@@ -6,8 +6,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostReport, PostVote, Comment, ReportTags, CommentVote
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec
 from resource_server.redis_config import RedisConfig
+from redis.client import Pipeline
 from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 from typing import Any, Optional
@@ -63,7 +64,7 @@ def create_post() -> tuple[Response, int]:
 @post.route("/<int:post_id>", methods=["GET"])
 @pass_user_details
 def get_post(post_id : int) -> tuple[Response, int]:
-    cacheKey: str = f'{Post._tablename__}:{post_id}'
+    cacheKey: str = f'{Post.__tablename__}:{post_id}'
     fetch_relation: bool = 'fetch_relation' in request.args and g.REQUESTING_USER
     post_mapping: Optional[dict[str, Any]] = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION,RedisConfig.TTL_EPHEMERAL)
     
@@ -259,13 +260,13 @@ def delete_post(post_id: int) -> Response:
     if not lock_set:
         raise Conflict('Failed to delete post, another request for deletion')
     
-    RedisInterface.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)  # Write intent as deletion
     try:
         # Decrement global counters
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='posts', identifier=post.forum_id)    
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=User.__tablename__, column='total_posts', identifier=g.DECODED_TOKEN['sid'])    
         # Post good to go for deletion
-        RedisInterface.xadd("SOFT_DELETIONS", {'id' : post_id, 'table' : Post.__tablename__})
+        pipeline_exec(RedisInterface, op_mapping={Pipeline.set: {'name':flag_key, 'value':RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex':RedisConfig.TTL_STRONGEST},
+                                                  Pipeline.xadd: {'name':"SOFT_DELETIONS", 'fields':{'id' : post_id, 'table' : Post.__tablename__}}})
     finally:
         RedisInterface.delete(lock_key)
     
@@ -356,11 +357,12 @@ def vote_post(post_id: int) -> tuple[Response, int]:
         # Failing to acquire lock means another worker is performing this same request, treat this request as a duplicate
         raise Conflict(f'A request for this action is currently enqueued')
     try:
-        RedisInterface.set(flag_key, value=incoming_intent, ex=RedisConfig.TTL_STRONGEST)   # Write latest intent as incoming intent
         # Update global counters for this post's score, and user's aura
         update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id)
         update_global_counter(interface=RedisInterface, delta=delta, database=db, table=User.__tablename__, column='aura', identifier=post_mapping.get('author_id'))
-        RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__}) # Add post_votes record to insertion queue
+        # Write latest intent based on incoming vote and append query request to weak insertions stream
+        pipeline_exec(RedisInterface, {Pipeline.set : {'name' : flag_key, 'value' : incoming_intent, 'ex' : RedisConfig.TTL_STRONGEST},
+                                       Pipeline.xadd : {'name' : "WEAK_INSERTIONS", 'fields' : {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__}}})
     finally:
         RedisInterface.delete(lock_key)
     
@@ -423,11 +425,12 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
         raise Conflict(f'A request for this action is currently enqueued')
     
     try:
-        RedisInterface.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG)    # Write latest intent as unvoting this post
         # Update counters for this post's score, and post author's aura
         update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id) 
         update_global_counter(interface=RedisInterface, delta=delta, database=db, table=User.__tablename__, column='aura', identifier=post_mapping.get('author_id')) 
-        RedisInterface.xadd("WEAK_DELETIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostVote.__tablename__})
+        # Write intent as deletion, append deletion query request to weak deletions stream
+        pipeline_exec(RedisInterface, {Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
+                                       Pipeline.xadd : {'name' : "WEAK_DELETIONS", 'fields' : {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostVote.__tablename__}}})
     finally:
         RedisInterface.delete(lock_key)
     
@@ -551,13 +554,14 @@ def save_post(post_id: int) -> tuple[Response, int]:
         raise Conflict('Post already saved')
     
     # All validations passed, change state for this action
-    RedisInterface.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG)    # Write/Update flag to show latest intent as post save
     
     # Only queue database operations if state was written succesfully
     try:
         update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)   
         update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='aura', identifier=post_mapping['sid'])   
-        RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})
+        # Write creation intent and append query data to weak insertions stream
+        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_CREATION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
+                                                  Pipeline.xadd : {'name' : 'WEAK_INSERTIONS', 'fields' : {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__}}})
     finally:
         RedisInterface.delete(lock_key)
     return jsonify({"message" : "Post saved!"}), 202
@@ -619,12 +623,12 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
         RedisInterface.delete(lock_key)
         raise Conflict('Post not saved in the first place')
     
-    # All validations passed, change state for this action
-    RedisInterface.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG)    # Write/Update flag to show latest intent as post unsave
-    
+    # All validations passed, change state for this action    
     try:
-        update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)    
-        RedisInterface.xadd("WEAK_DELETIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})  # Queue post_saves record for deletion
+        update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)
+        # Write intent as deletion, and append deletion query to weak deletions stream
+        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
+                                                  Pipeline.xadd : {'name' : 'WEAK_DELETIONS', 'fields' : {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__}}})
     finally:
         RedisInterface.delete(lock_key)
     
@@ -709,9 +713,9 @@ def report_post(post_id: int) -> tuple[Response, int]:
     # All validations passed, write state for this action
     try:
         # Incremenet global counter for reports on this post and insert record into post_reports
-        RedisInterface.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
-        update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='reports', identifier=post_id)    
-        RedisInterface.xadd("WEAK_INSERTIONS", {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_tag' : report_tag, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'table' : PostReport.__tablename__})   # Queue insertion for post_reports
+        update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='reports', identifier=post_id)
+        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_CREATION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
+                                                  Pipeline.xadd : {'name' : 'WEAK_INSERTIONS', 'fields' : {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_tag' : report_tag, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'table' : PostReport.__tablename__}}})
     finally:
         RedisInterface.delete(lock_key)
         
@@ -747,7 +751,6 @@ def comment_on_post(post_id: int) -> tuple[Response, int]:
     
     # Queue insertion of new comment
     RedisInterface.xadd('INSERTIONS', rediserialize(comment.__attrdict__()) | {'table' : Comment.__tablename__})
-
     return jsonify({'message' : 'comment added!', 'body' : commentBody, 'author' : g.DECODED_TOKEN['sub']}), 202
 
 @post.route('/<int:post_id>/comments')
@@ -846,15 +849,15 @@ def delete_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
         raise Conflict(f'A request for this action is currently enqueued')
     
     try:
-        RedisInterface.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)  # Write flag for deleting this comment, NOTE: It's not required to have the pending value here, since intent is checked only by presence of this flag and not value. I've only used it to follow convention
-
         # Decrement global counters for this post, and the user's total comments
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Post.__tablename__, column='total_comments', identifier=post_id)
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=User.__tablename__, column='total_comments', identifier=g.DECODED_TOKEN['sid'])
         
-        # Queue comment for soft deletion
-        RedisInterface.xadd('SOFT_DELETIONS', {'id' : comment_id, 'table' : Comment.__tablename__})
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL) # Announce deletion
+        # Queue comment for soft deletion, write intent as deleiton, and write cache with NF Sentinel mapping
+        pipeline_exec(RedisInterface, op_mapping={Pipeline.set: {'name' : flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
+                                                  Pipeline.xadd: {'name' : 'SOFT_DELETIONS', 'fields' : {'id' : comment_id, 'table' : Comment.__tablename__}},
+                                                  Pipeline.hset: {'name' : cache_key, 'mapping' : {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}},
+                                                  Pipeline.expire: {'name' : cache_key, 'time' : RedisConfig.TTL_EPHEMERAL}})
     finally:
         RedisInterface.delete(lock_key)
     return jsonify({'message' : 'Comment deleted'}), 202
@@ -934,11 +937,13 @@ def vote_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
         # Failing to acquire lock means another worker is performing this same request, treat this request as a duplicate
         raise Conflict(f'A request for this action is currently enqueued')
     try:
-        RedisInterface.set(flag_key, value=incoming_intent, ex=RedisConfig.TTL_STRONGEST)   # Write latest intent as incoming intent
         # Update global counters for this post's score, and user's aura
         update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Comment.__tablename__, column='score', identifier=comment_id)
         update_global_counter(interface=RedisInterface, delta=delta, database=db, table=User.__tablename__, column='aura', identifier=comment_mapping.get('author_id'))
-        RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "comment_id" : comment_id, 'vote' : vote, 'table' : CommentVote.__tablename__}) # Add post_votes record to insertion queue
+
+        # Write intent as vote type and append insertion to stream
+        pipeline_exec(RedisInterface, op_mapping={Pipeline.xadd : {'name' : 'WEAK_INSERTIONS', 'fields' : {"voter_id" : g.DECODED_TOKEN['sid'], "comment_id" : comment_id, 'vote' : vote, 'table' : CommentVote.__tablename__}},
+                                                  Pipeline.set : {'name' : flag_key, 'value' : incoming_intent, 'ex' : RedisConfig.TTL_STRONGEST}})
     finally:
         RedisInterface.delete(lock_key)
     

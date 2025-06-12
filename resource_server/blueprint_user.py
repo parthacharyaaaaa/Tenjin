@@ -4,12 +4,13 @@ from werkzeug import Response
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized, Forbidden
 from auxillary.decorators import enforce_json
 from auxillary.utils import hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
-from resource_server.resource_auxillary import processUserInfo, fetch_global_counters
+from resource_server.resource_auxillary import processUserInfo, fetch_global_counters, pipeline_exec
 from resource_server.external_extensions import RedisInterface, hset_with_ttl
 from resource_server.resource_decorators import token_required
 from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum, ForumSubscription, Anime, AnimeSubscription
 from resource_server.scripts.mail import enqueueEmail
 from resource_server.redis_config import RedisConfig
+from redis.client import Pipeline
 from sqlalchemy import select, insert, update, delete
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from datetime import datetime
@@ -124,9 +125,11 @@ def delete_user() -> tuple[Response, int]:
         raise Conflict('Failed to perform this action, another request for the same action is being processed')
     
     try:
-        RedisInterface.set(flag_key, value=RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)    # Write latest intent to account deletion
-        RedisInterface.xadd('USER_ACTIVITY_DELETIONS', {'id' : targetUser.id, 'table' : User.__tablename__, 'rtbf' : int(targetUser.rtbf)})
-        hset_with_ttl(RedisInterface, f'user:{targetUser.id}', {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_WEAK) # Broadcast user deletion
+        # Write intent as account recovery (represented by the usual creation flag), add user ID to account recovery stream, and write user mapping to cache
+        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
+                                                  Pipeline.xadd : {'name' : 'USER_ACTIVITY_DELETIONS', 'fields' : {'user_id' : targetUser.id, 'rtbf' : int(targetUser.rtbf), 'table' : User.__tablename__}},
+                                                  Pipeline.hset : {'name' : cache_key, 'mapping' : {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}},
+                                                  Pipeline.expire : {'name' : cache_key, 'time' : RedisConfig.TTL_WEAK}})
         enqueueEmail(RedisInterface, email=targetUser.email, subject='deletion', username=targetUser.username)
     except RedisError: 
         raise InternalServerError("Failed to perform account deletion, please try again. If the issue persists, please raise a ticket")
@@ -195,9 +198,11 @@ def recover_user() -> Response:
     
     # Account recovery good to go (TODO: Change this to an xadd to a dedicated stream for user recovery)
     try:
-        RedisInterface.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
-        RedisInterface.xadd("USER_ACTIVITY_RECOVERY", fields={'user_id' : deadAccount.id, 'rtbf' : int(deadAccount.rtbf), 'table' : User.__tablename__})
-        hset_with_ttl(RedisInterface, cache_key, user_mapping, RedisConfig.TTL_STRONG, transaction=False)   # Write recovred account to cache
+        # Write intent as account recovery (represented by the usual creation flag), add user ID to account recovery stream, and write user mapping to cache
+        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_CREATION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
+                                                  Pipeline.xadd : {'name' : 'USER_ACTIVITY_RECOVERY', 'fields' : {'user_id' : deadAccount.id, 'rtbf' : int(deadAccount.rtbf), 'table' : User.__tablename__}},
+                                                  Pipeline.hset : {'name' : cache_key, 'mapping' : user_mapping},
+                                                  Pipeline.expire : {'name' : cache_key, 'time' : RedisConfig.TTL_STRONG}})
         enqueueEmail(RedisInterface, email=deadAccount.email, subject="recovery", username=deadAccount.username, user_id=deadAccount.id, time_restored=datetime.now().isoformat())
     except:
         raise InternalServerError("Failed to recover your account. If this issue persists, please raise a user ticket immediately")
@@ -240,7 +245,6 @@ def recover_password() -> Response:
         db.session.commit()
     except:
         raise InternalServerError("There seems to be an issue with our password recovery service")
-    print(url_for('templates.recover_password', _external=True, digest=temp_url))
     enqueueEmail(RedisInterface, email=recoveryAccount.email, subject="password", username=recoveryAccount.username, password_recovery_link=url_for('templates.recover_password', _external=True, digest=temp_url))
     return jsonify({"message" : "An email has been sent to account"}), 200    
 
@@ -510,7 +514,6 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
                            cursor=newCursor, end=end)
     
     return jsonify({'forums' : _forums, 'cursor' : newCursor, 'end' : end})
-
 
 @user.route('profile/<int:user_id>/animes')
 def get_user_animes(user_id: int) -> tuple[Response, int]:

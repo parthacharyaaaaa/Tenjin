@@ -5,9 +5,10 @@ from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from resource_server.resource_decorators import token_required, pass_user_details
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec
 from resource_server.external_extensions import RedisInterface, hset_with_ttl
 from resource_server.redis_config import RedisConfig
+from redis.client import Pipeline
 from sqlalchemy import select, update, insert, desc, Row
 from sqlalchemy.exc import SQLAlchemyError
 from typing import Any
@@ -258,9 +259,11 @@ def delete_forum(forum_id: int) -> Response:
         # Failed to acquire lock means another worker is performing this same request, treat this request as a duplicate
         raise Conflict(f'A request for this action is currently enqueued')
     try:
-        RedisInterface.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
-        RedisInterface.xadd("SOFT_DELETIONS", {'id' : forum_id, 'table' : Forum.__tablename__})
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_WEAK)   # Broadcast deletion
+        # Write intent to deletion, append query request to soft deletions stream, and write cache_key as NF sentinel mapping for deletion
+        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
+                                                  Pipeline.xadd : {'name' : 'SOFT_DELETIONS', 'fields' : {'id' : forum_id, 'table' : Forum.__tablename__}},
+                                                  Pipeline.hset : {'name' : cache_key, 'mapping' : {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}},
+                                                  Pipeline.expire : {'name' : cache_key, 'time' : RedisConfig.TTL_WEAK}})
     finally:
         RedisInterface.delete(lock_key) # Free lock no matter what happens
     
@@ -331,9 +334,10 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
     if not lock_set:
         raise Conflict('Another process is performing this same request')
     try:
-        RedisInterface.set(flag_key, value=newAdminRole, ex=RedisConfig.TTL_STRONGEST)  # Write intent as admin creation to newAdminRole
         update_global_counter(interface=RedisInterface, delta=1, database=db, table=Forum.__tablename__, column='admin_count', identifier=forum_id)
-        RedisInterface.xadd('WEAK_INSERTIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : newAdminID, 'role' : newAdminRole})  # Queue forum_admins record for insertion
+        # Write intent as this admin's role and append query request to weak insertions streams
+        pipeline_exec(RedisInterface, {Pipeline.set : {'name' : flag_key, 'value' : newAdminRole, 'ex' : RedisConfig.TTL_STRONGEST},
+                                       Pipeline.xadd : {'name' : 'WEAK_INSERTIONS', 'fields' : {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : newAdminID, 'role' : newAdminRole}}})
     finally:
         RedisInterface.delete(lock_key)    
     
@@ -399,10 +403,10 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
     if not lock_set:
         raise Conflict('Another worker is already performing this action')
     try:
-        RedisInterface.set(flag_key, value=RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)    # Write latest intent as deletion for this admin
-        # Decrement global admin count and delete forum_admins record
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='admin_count', identifier=forum_id)
-        RedisInterface.xadd('WEAK_DELETIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : target_admin_id})
+        # Write intent as deletion and add deletion request to stream
+        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
+                                                  Pipeline.xadd : {'name' : 'WEAK_DELETIONS', 'fields' : {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : target_admin_id}}})
     finally:
         RedisInterface.delete(lock_key)
     
@@ -547,10 +551,11 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     if not lock_set:
         raise Conflict('A request for this action is already underway')
     try:
-        RedisInterface.set(flag_key, value=RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
         update_global_counter(interface=RedisInterface, delta=1, database=db, table=Forum.__tablename__, column='subscribers', identifier=forum_id)
         update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='aura', identifier=ownerID)
-        RedisInterface.xadd("WEAK_INSERTIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
+        # Write intent as creation and append weak insertion request to stream
+        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_CREATION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
+                                                  Pipeline.xadd : {'name' : 'WEAK_INSERTIONS', 'fields' : {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__}}})
     finally:
         RedisInterface.delete(lock_key)
     
@@ -611,10 +616,11 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
     if not lock_set:
         raise Conflict('A request for this action is already underway')
     try:
-        RedisInterface.set(flag_key, value=RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='subscribers', identifier=forum_id)
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=User.__tablename__, column='aura', identifier=ownerID)
-        RedisInterface.xadd("WEAK_DELETIONS", {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
+        # Write intent as deletion and append weak deletion request to stream
+        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
+                                                  Pipeline.xadd : {'name' : 'WEAK_DELETIONS', 'fields' : {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__}}})
     finally:
         RedisInterface.delete(lock_key)
     
