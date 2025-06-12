@@ -1,0 +1,2 @@
+user auth_worker on allkeys +@all -@dangerous -@admin >
+user admin on allkeys +@all >

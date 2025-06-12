@@ -1,0 +1,9 @@
+auth_server:
+  DML:
+    # SELECT and UPDATE permissions will be namespaced to specify columns within tables
+    SELECT : ["*::*"]
+    UPDATE : ["admins::time_deleted:last_login", "keydata::expired_at:rotated_out_at:rotated_by:manual_rotation"]
+    # INSERT permissions apply on the entire record, so no need to specify columns
+    INSERT : ["keydata", "admins", "suspicious_activities"]
+  MISC:
+    ["CONNECT", "EXECUTE"]
