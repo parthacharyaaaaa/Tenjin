@@ -61,6 +61,20 @@ class PostReport(db.Model):
     report_time: datetime = db.Column(TIMESTAMP, default = text('CURRENT_TIMESTAMP'))
     report_description: str = db.Column(VARCHAR(256), nullable = False)
 
+class CommentReport(db.Model):
+    __tablename__ = "comment_reports"
+    user_id: int = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
+    comment_id: int = db.Column(db.BigInteger, db.ForeignKey("comments.id", ondelete='CASCADE'), primary_key=True)
+    report_tag: str = db.Column(REPORT_TAGS, nullable=False, primary_key=True)
+    report_time: datetime = db.Column(TIMESTAMP, default = text('CURRENT_TIMESTAMP'))
+    report_description: str = db.Column(VARCHAR(256), nullable = False)
+
+class CommentVote(db.Model):
+    __tablename__ = "comment_votes"
+    voter_id: int = db.Column(db.BigInteger, db.ForeignKey("users.id"), primary_key=True)
+    comment_id: int = db.Column(db.BigInteger, db.ForeignKey("comments.id", ondelete='CASCADE'), primary_key=True)
+    vote: bool = db.Column(db.Boolean, nullable=False)
+
 class StreamLink(db.Model):
     __tablename__ = "stream_links"
     anime_id: int = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
