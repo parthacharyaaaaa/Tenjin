@@ -273,17 +273,14 @@ class TokenManager:
         while True:
             try:
                 valid_keys: list[bytes] = self._SyncedStore.lrange('VALID_KEYS', 0, -1)
-                print("Fetch keys: ", valid_keys)
                 
                 if not valid_keys:
                     raise RuntimeError('Valid keys list empty or not found')
 
                 global_valid_keyset: frozenset[str] = frozenset(key.decode() for key in valid_keys)
                 local_valid_keyset: frozenset[str] = frozenset(self.key_mapping.keys())
-                print("Locally valid keys: ", local_valid_keyset)
 
                 new_valid_keys: frozenset[str] = global_valid_keyset - local_valid_keyset
-                print("New valid keys", new_valid_keys)
                 for new_key in new_valid_keys:
                     print(f'[BACKGROUND POLLER]: Adding verification new key {new_key}...')
                     result: KeyMetadata = self.fetch_unexpired_key(new_key)
@@ -293,13 +290,11 @@ class TokenManager:
 
                 # Eliminate expired keys from memory. This is done after adding any new keys to local mapping
                 expired_local_keys: frozenset[str] = local_valid_keyset - global_valid_keyset
-                print("Expired local keys", expired_local_keys)
                 for expired_key in expired_local_keys:
                     print(f'[BACKGROUND POLLER]: Invalidating local key {expired_key}...')
                     self.invalidate_key(expired_key)
                     print(f'[BACKGROUND POLLER]: Invalidated local key {expired_key}')
                 
-                print("Active key: ", self.active_key)
             except Exception:
                 print(f'[BACKGROUND POLLER]: Exception encountered. Traceback:')
                 print(format_exc())

@@ -4,18 +4,18 @@ from flask import Flask
 SyncedStore: Redis = None
 RedisInterface: Redis = None
 
-def init_redis(app: Flask) -> None:
+def init_redis(**constructor_kwargs) -> None:
     global RedisInterface
     '''Initialize a Redis instance based on a Flask app's "REDIS_KWARGS" config key'''
-    RedisInterface = Redis(**app.config['REDIS_KWARGS'])
+    RedisInterface = Redis(**constructor_kwargs)
 
     if not RedisInterface.ping():
         raise ConnectionError('Failed to connect to Redis instance')
 
-def init_syncedstore(app: Flask) -> None:
+def init_syncedstore(**constructor_kwargs) -> None:
     global SyncedStore
     '''Initialize a Redis instance based on a Flask app's "REDIS_SYNCED_STORE_KWARGS" config key'''
-    SyncedStore = Redis(**app.config['REDIS_SYNCED_STORE_KWARGS'])
+    SyncedStore = Redis(**constructor_kwargs)
 
     if not SyncedStore.ping():
         raise ConnectionError('Failed to connect to Redis instance')

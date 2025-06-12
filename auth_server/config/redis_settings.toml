@@ -1,0 +1,11 @@
+[synced_store]
+    host = "localhost"
+    port = 6100
+    db = 0
+    decode_responses=false
+
+[token_store]
+    host = "localhost"
+    port = 6200
+    db = 0
+    decode_responses=false

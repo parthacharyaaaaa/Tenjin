@@ -11,6 +11,8 @@ import os
 import ujson
 import ecdsa
 import traceback
+import toml
+from typing import Any
 
 APP_CTX_CWD: os.PathLike = os.path.dirname(__file__)
 def create_app() -> Flask:
@@ -33,9 +35,12 @@ def create_app() -> Flask:
     migrate = Migrate(auth_app, db)
 
     # Extensions
+    redis_config_filepath: os.PathLike = os.path.join(APP_CTX_CWD, 'config', os.environ['REDIS_CONFIG_FILENAME'])
+    redis_config_kwargs: dict[str, dict[str, Any]] = toml.load(f=redis_config_filepath)
+
     from auth_server.redis_manager import init_redis, init_syncedstore
-    init_redis(auth_app)
-    init_syncedstore(auth_app)
+    init_redis(**redis_config_kwargs['token_store'])
+    init_syncedstore(**redis_config_kwargs['synced_store'])
     from auth_server.redis_manager import RedisInterface, SyncedStore
 
     from auth_server.token_manager import init_token_manager
