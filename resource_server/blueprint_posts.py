@@ -3,15 +3,14 @@ from werkzeug import Response
 from werkzeug.exceptions import NotFound, BadRequest, Forbidden, Conflict
 from sqlalchemy import select, update, delete, Row
 from sqlalchemy.exc import SQLAlchemyError
-from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostReport, PostVote, Comment, ReportTags
+from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostReport, PostVote, Comment, ReportTags, CommentVote
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, cache_layer_integrity_check, write_action_state
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters
 from resource_server.redis_config import RedisConfig
 from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 from typing import Any, Optional
-from redis.exceptions import RedisError
 from resource_server.external_extensions import hset_with_ttl
 import base64
 import binascii
@@ -389,7 +388,6 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
     previous_vote: bool = (True if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG 
                            else False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG
                            else None)
-    print(previous_vote)
     # Consult DB for partial/complete cache misses
     try:
         if not (post_mapping or latest_intent):
@@ -860,3 +858,88 @@ def delete_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
     finally:
         RedisInterface.delete(lock_key)
     return jsonify({'message' : 'Comment deleted'}), 202
+
+@post.route("/<int:post_id>/comments/<int:comment_id>/vote", methods=["PATCH"])
+@token_required
+def vote_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
+    try:
+        vote: int = int(request.args['type'])
+        if vote != 0 and vote != 1:
+            raise BadRequest("Invalid vote value (Should be 0 (downvote) or 1 (upvote))")
+    except KeyError:
+        raise BadRequest("Vote type (upvote/downvote) not specified")
+    except ValueError:
+        raise BadRequest("Invalid vote value (Should be 0 (downvote) or 1 (upvote))")
+    
+    # Request valid at the surface level
+    incoming_intent: str = RedisConfig.RESOURCE_CREATION_PENDING_FLAG if vote == 1 else RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG  # Alt flag is special value for downvotes. We need this here because a downvote is still resource creation, but different than an upvote obviously
+    delta: int = 1
+    cache_key: str = f'{Comment.__tablename__}:{post_id}'
+    flag_key: str = f'{CommentVote.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
+    lock_key: str = f'lock:{RedisConfig.RESOURCE_CREATION_PENDING_FLAG}:{flag_key}'
+
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(cache_key)
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        comment_mapping, latest_intent, lock = pipe.execute()
+
+    if comment_mapping and RedisConfig.NF_SENTINEL_KEY in comment_mapping:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
+        raise NotFound(f'No comment with ID {comment_id} exists')
+    if lock or latest_intent == incoming_intent: # Race condition, or latest intent is same as the intent carried by this request. Reject
+        raise Conflict(f'A request for this action is currently enqueued')
+    
+    # Consult DB in case of partial/no information being read from cache
+    previous_vote: bool = True if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG else False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG else None
+    try:
+        if not (comment_mapping or latest_intent):
+            # Complete cache miss, read state from DB
+            joined_result: Row = db.session.execute(select(Comment, CommentVote.vote)
+                                                    .outerjoin(CommentVote, (CommentVote.post_id == post_id) & (CommentVote.voter_id == g.DECODED_TOKEN['sid']))
+                                                    .where((Comment.id == comment_id) & (Comment.deleted.is_(False)) & (Comment.rtbf_hidden.isnot(True)))
+                                                    ).first()
+            if joined_result:
+                comment_mapping: dict[str, str|int] = joined_result[0].__json_like__()
+                previous_vote = joined_result[1]
+        elif previous_vote is None:
+            previous_vote = bool(db.session.execute(select(CommentVote)
+                                                    .where((CommentVote.voter_id == g.DECODED_TOKEN['sid']) & (CommentVote.post_id == post_id))
+                                                    ).scalar_one_or_none())
+        elif not comment_mapping:
+            comment: Comment = db.session.execute(select(Comment)
+                                                  .where((Comment.id == post_id) & (Comment.deleted.is_(False)) & (Comment.rtbf_hidden.isnot(True)))
+                                                  ).scalar_one_or_none()
+            if comment:
+                comment_mapping = comment.__json_like__()
+    except SQLAlchemyError: genericDBFetchException()
+    if not comment_mapping:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+        raise NotFound(f'No comment with ID {comment_id} exists')
+    if ((previous_vote and incoming_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG) or 
+        (previous_vote is False and incoming_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG)):
+            raise Conflict(f'Comment already {"upvoted" if vote else "downvoted"}')
+
+    if previous_vote is not None:
+        # At this stage, if a previous vote exists then the current intent is the opposite
+        delta = 2
+        db.session.execute(delete(CommentVote)
+                           .where((CommentVote.user_id == g.DECODED_TOKEN['sid']) & (CommentVote.comment_id == comment_id)))
+        db.session.commit()
+
+    if not vote: delta*=-1  # Negative vote for downvote
+    # All checks passed, set lock
+    lock = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock:
+        # Failing to acquire lock means another worker is performing this same request, treat this request as a duplicate
+        raise Conflict(f'A request for this action is currently enqueued')
+    try:
+        RedisInterface.set(flag_key, value=incoming_intent, ex=RedisConfig.TTL_STRONGEST)   # Write latest intent as incoming intent
+        # Update global counters for this post's score, and user's aura
+        update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Comment.__tablename__, column='score', identifier=comment_id)
+        update_global_counter(interface=RedisInterface, delta=delta, database=db, table=User.__tablename__, column='aura', identifier=comment_mapping.get('author_id'))
+        RedisInterface.xadd("WEAK_INSERTIONS", {"voter_id" : g.DECODED_TOKEN['sid'], "comment_id" : comment_id, 'vote' : vote, 'table' : CommentVote.__tablename__}) # Add post_votes record to insertion queue
+    finally:
+        RedisInterface.delete(lock_key)
+    
+    return jsonify({"message" : "Vote casted!"}), 202
