@@ -436,64 +436,6 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Removed vote!"}), 202
 
-@post.route('/<int:post_id>/is-saved', methods=['GET'])
-@pass_user_details
-def check_post_saved(post_id: int) -> tuple[Response, int]:
-    if not (g.REQUESTING_USER and g.REQUESTING_USER.get('sid')):
-        return jsonify(False), 200
-    
-    cacheKey: str = f"saves:{post_id}:{g.REQUESTING_USER['sid']}"
-    isSaved = RedisInterface.get(cacheKey)
-    if isSaved:
-        RedisInterface.set(cacheKey, int(isSaved), RedisConfig.TTL_EPHEMERAL)
-        return jsonify(int(isSaved)), 200
-    
-    try:
-        isSaved: int = int(bool(db.session.execute(select(PostSave)
-                                                .where((PostSave.post_id == post_id) & (PostSave.user_id == g.REQUESTING_USER['sid']))
-                                                ).scalar_one_or_none()))
-
-        RedisInterface.set(cacheKey, isSaved, RedisConfig.TTL_EPHEMERAL)
-        return jsonify(isSaved), 200
-    
-    except SQLAlchemyError:
-        res = jsonify(False)
-        res.headers['Error'] = 'An error occured when trying to check if you have saved this post'
-        return res, 500
-
-@post.route('/<int:post_id>/is-voted', methods=['GET'])
-@pass_user_details
-def check_post_vote(post_id: int) -> tuple[Response, int]:
-    # Flags:
-    # -1: Not voted
-    #  0: Downvoted
-    #  1: Upvoted
-
-    if not (g.REQUESTING_USER and g.REQUESTING_USER.get('sid')):
-        return jsonify(-1), 200
-    
-    cacheKey: str = f'votes:{post_id}:{g.REQUESTING_USER["sid"]}'
-    postVote = RedisInterface.get(cacheKey)
-    if postVote:
-        RedisInterface.set(cacheKey, postVote, RedisConfig.TTL_EPHEMERAL)   # No promotion for an ephemeral key, just reset TTL
-        return jsonify(int(postVote)), 200
-    
-    try:
-        # Comment Of Shame: This line used to be select(PostVote.voter_id), massive skill issue
-        postVote = db.session.execute(select(PostVote.vote)
-                                      .where((PostVote.post_id == post_id) & (PostVote.voter_id == g.REQUESTING_USER['sid']))
-                                      ).scalars().one_or_none()
-        
-        # 0 is falsey, hence 'not postVote' won't work as intended here
-        if postVote == None:
-            RedisInterface.set(cacheKey, -1, RedisConfig.TTL_EPHEMERAL)
-            return jsonify(-1), 200
-    except: genericDBFetchException()
-
-    postVote = int(postVote)
-    RedisInterface.set(cacheKey, postVote, RedisConfig.TTL_EPHEMERAL)
-    return jsonify(postVote), 200
-
 @post.route("/<int:post_id>/save", methods=["PATCH"])
 @token_required
 def save_post(post_id: int) -> tuple[Response, int]:
