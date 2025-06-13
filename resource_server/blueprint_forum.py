@@ -110,9 +110,30 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
     except (ValueError, TypeError, binascii.Error):
             raise BadRequest("Failed to load more posts. Please refresh this page")
     
+    # Confirm forum existence
+    cache_key: str = f'{Forum.__tablename__}:{forum_id}'
+    deletion_flag_key: str = f'delete:{cache_key}'
+    with RedisInterface.pipeline() as pipe:
+        pipe.hgetall(cache_key)
+        pipe.get(deletion_flag_key)
+        forum_mapping, deletion_intent = pipe.execute()
+    
+    if deletion_intent:
+        raise Gone('This forum has just been deleted')
+    if forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping:
+        raise NotFound('This forum does not exist')
+    
     whereClause = (Post.forum_id == forum_id) & (Post.time_posted >= TIMEFRAMES[timeFrame](datetime.now()))
     if not init:
         whereClause &= (Post.id < cursor)
+    
+    if not forum_mapping:
+        forum_exists: bool = bool(db.session.execute(select(Forum)
+                                                     .where((Forum.id == forum_id) & (Forum.deleted.is_(False)))
+                                                     ).scalar_one_or_none())
+        if not forum_exists:
+            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+            raise NotFound(f'No forum with ID {forum_id} could be found')
 
     query = (select(Post, User.username)
              .join(User, Post.author_id == User.id)
