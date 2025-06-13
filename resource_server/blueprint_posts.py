@@ -970,7 +970,7 @@ def report_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
     
     # Incoming request valid at face value, now check Redis for state
     parent_post_cache_key: str = f'{Post.__tablename__}:{post_id}'
-    parent_post_flag_key: str = f'delete:{parent_post_flag_key}'    # Deletion intent, so existence alone proves that this post is queued for deletion
+    parent_post_flag_key: str = f'delete:{parent_post_cache_key}'    # Deletion intent, so existence alone proves that this post is queued for deletion
     comment_cache_key: str = f'{Comment.__tablename__}:{comment_id}'
     comment_flag_key: str = f'{CommentReport.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}:{report_tag}'    # Reserved for this report tag only, existence would hence imply duplication
     lock_key: str = f'lock:{comment_flag_key}'
