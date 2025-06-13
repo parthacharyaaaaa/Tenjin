@@ -1,8 +1,9 @@
 '''Auxillary functions for batch workers'''
 import psycopg2 as pg
-from typing import Mapping, Callable, Any
-from types import MappingProxyType
+from psycopg2 import sql
 from redis import Redis
+from typing import Mapping, Sequence, Any
+from types import MappingProxyType
 from datetime import datetime
 
 # We got reinvented SQLAlchemy before GTA VI
@@ -101,3 +102,14 @@ def batch_cache_write(interface: Redis, cache_entries: Mapping[str, Mapping[str,
             pipe.hset(name, mapping=entry)
             pipe.expire(name, ttl)
         pipe.execute()
+
+def enqueue_cascade_soft_deletes(cursor: pg.extensions.cursor, client: Redis, target_table: str, fk_colname: str, parent_pk_seq: list[int],
+                  stream_name: str = 'SOFT_DELETIONS') -> None:
+    query: sql.SQL = sql.SQL("SELECT id FROM {} WHERE {} = ANY(%s);").format(sql.Identifier(target_table), sql.Identifier(fk_colname))
+    cursor.execute(query, (parent_pk_seq,))
+    children_ids: list[int] = [row_tuple[0] for row_tuple in cursor.fetchall()]
+
+    with client.pipeline(transaction=False) as pipe:
+        for child_id in children_ids:
+            pipe.xadd(name=stream_name, fields={'table' : target_table, 'id' : child_id})
+            pipe.execute()
