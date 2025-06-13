@@ -515,7 +515,7 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
     
     return jsonify({'forums' : _forums, 'cursor' : newCursor, 'end' : end})
 
-@user.route('profile/<int:user_id>/animes')
+@user.route('/<int:user_id>/animes')
 def get_user_animes(user_id: int) -> tuple[Response, int]:
     try:
         rawCursor = request.args.get('cursor', '0').strip()
