@@ -1,6 +1,6 @@
 from flask import Blueprint, g, jsonify, request, url_for
 from werkzeug import Response
-from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict, Unauthorized, InternalServerError
+from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict, Unauthorized, InternalServerError, Gone
 from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
@@ -30,11 +30,16 @@ TIMEFRAMES: MappingProxyType = MappingProxyType({0 : lambda dt : dt - timedelta(
 @forum.route('/<int:forum_id>')
 @pass_user_details
 def get_forum(forum_id: int) -> tuple[Response, int]:
-    cacheKey: str = f'forum:{forum_id}'
+    cache_key: str = f'forum:{forum_id}'
+    deletion_flag_key: str = f'delete:{cache_key}'
     fetch_relation: bool = 'fetch_relation' in request.args and g.REQUESTING_USER
-    forumMapping: dict = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION, RedisConfig.TTL_EPHEMERAL)
-    global_subcount, global_postcount = fetch_global_counters(RedisInterface, f'{cacheKey}:subscribers', f'{cacheKey}:posts')
+    deletion_intent: bool = bool(RedisInterface.get(deletion_flag_key))
+    forumMapping: dict = consult_cache(RedisInterface, cache_key, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION, RedisConfig.TTL_EPHEMERAL)
+    global_subcount, global_postcount = fetch_global_counters(RedisInterface, f'{cache_key}:subscribers', f'{cache_key}:posts')
 
+    if deletion_intent:
+        raise Gone('This forum has just been deleted')
+    
     if forumMapping:
         if RedisConfig.NF_SENTINEL_KEY in forumMapping:
             raise NotFound('No forum with this ID exists')
@@ -49,10 +54,10 @@ def get_forum(forum_id: int) -> tuple[Response, int]:
     else:
         try:
             fetchedForum: Forum = db.session.execute(select(Forum)
-                                                    .where(Forum.id== forum_id)
+                                                    .where((Forum.id == forum_id) & (Forum.deleted.is_(False) & (Forum.rtbf_hidden.is_(False))))
                                                     ).scalar_one_or_none()
             if not fetchedForum:
-                hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+                hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
                 raise NotFound('No forum with this ID could be found')
             
             forumMapping: dict = rediserialize(fetchedForum.__json_like__())
@@ -63,7 +68,7 @@ def get_forum(forum_id: int) -> tuple[Response, int]:
             if global_subcount is not None:
                 forumMapping['subscribers'] = global_subcount
             # Cache mapping with updated counters
-            hset_with_ttl(RedisInterface, cacheKey, forumMapping, RedisConfig.TTL_STRONG)
+            hset_with_ttl(RedisInterface, cache_key, forumMapping, RedisConfig.TTL_STRONG)
         except SQLAlchemyError: genericDBFetchException()
 
     try:
@@ -163,9 +168,9 @@ def create_forum() -> tuple[Response, int]:
         raise BadRequest("Malformmatted values provided for forum creation")
     
     # 1: Consult cache
-    cacheKey: str = f'forum:{forumName}:{forumAnimeID}'
+    cache_key: str = f'forum:{forumName}:{forumAnimeID}'
     try:
-        exists: bool = bool(RedisInterface.hget(cacheKey))
+        exists: bool = bool(RedisInterface.hget(cache_key))
         if exists:
             raise Conflict("A forum with this name for this anime already exists")
     except: ...
@@ -200,7 +205,7 @@ def create_forum() -> tuple[Response, int]:
         sqlErr.__setattr__("description", "An error occured while trying to create the forum. This is most likely an issue with our servers")
         raise sqlErr
 
-    hset_with_ttl(RedisInterface, cacheKey, rediserialize(newForum.__json_like__()), RedisConfig.TTL_STRONG)
+    hset_with_ttl(RedisInterface, cache_key, rediserialize(newForum.__json_like__()), RedisConfig.TTL_STRONG)
     return jsonify({"message" : "Forum created succesfully"}), 202
 
 @forum.route("/<int:forum_id>", methods = ["DELETE"])
@@ -631,9 +636,9 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
 @token_required
 def edit_forum(forum_id: int) -> tuple[Response, int]:
     # Ensure forum existence via Redis first >:3
-    cacheKey: str = f'forum:{forum_id}'
+    cache_key: str = f'forum:{forum_id}'
     try:
-        op = RedisInterface.hgetall(cacheKey)
+        op = RedisInterface.hgetall(cache_key)
         if RedisConfig.NF_SENTINEL_KEY in op:
             raise NotFound(f'No forum with ID {forum_id} found')
     except RedisError: ...
@@ -679,7 +684,7 @@ def edit_forum(forum_id: int) -> tuple[Response, int]:
         raise e
 
     forum_mapping: dict[str, str|int] = updatedForum.__json_like__()
-    hset_with_ttl(RedisInterface, cacheKey, forum_mapping, RedisConfig.TTL_WEAK)
+    hset_with_ttl(RedisInterface, cache_key, forum_mapping, RedisConfig.TTL_WEAK)
     return jsonify({'message' : 'Forum edited succesfully', 'forum' : forum_mapping}), 200
 
 @forum.route("/<int:forum_id>/highlight-post", methods=['PATCH'])
