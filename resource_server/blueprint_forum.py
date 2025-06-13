@@ -251,19 +251,23 @@ def create_forum() -> tuple[Response, int]:
 @enforce_json
 def delete_forum(forum_id: int) -> Response:
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
-    flag_key: str = f'delete:{cache_key}'
-    lock_key: str = f'lock:{flag_key}'
+    deletion_flag_key: str = f'delete:{cache_key}'
+    lock_key: str = f'lock:{deletion_flag_key}'
 
     with RedisInterface.pipeline() as pipe:
         pipe.hgetall(cache_key)
-        pipe.get(flag_key)
+        pipe.get(deletion_flag_key)
         pipe.get(lock_key)
-        forum_mapping, latest_intent, lock = pipe.execute()
+        forum_mapping, deletion_intent, lock = pipe.execute()
     
     if forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No forum with ID {forum_id} exists')
-    if lock or latest_intent:   # Either some other worker is trying to delete this forum, or this forum has already been queued for deletion but not flushed to database yet
+    
+    if deletion_intent:
+        raise Gone(f'This forum has just been deleted')
+    
+    if lock:   # Some other worker is trying to delete this forum
         raise Conflict(f'A request for this action is currently enqueued')
     
     confirmationText: str = g.REQUEST_JSON.get('confirmation')
@@ -278,19 +282,20 @@ def delete_forum(forum_id: int) -> Response:
                                                  .outerjoin(ForumAdmin, (ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']) & (ForumAdmin.role == 'owner'))
                                                  .where((Forum.id == forum_id) & (Forum.deleted.is_(False)))
                                                  ).first()
-            if not joined_res:
-                # Broadcast non-existence
-                hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
-                raise NotFound(f'No forum with id {forum_id} found')
-            forum_mapping = joined_res[0].__json_like__()
-            owner = joined_res[1]
+            if joined_res:
+                forum_mapping = joined_res[0].__json_like__()
+                owner = joined_res[1]
         else:
-            # Forum known, check only admins
+            # Forum known, check only forum ownership
             owner = db.session.execute(select(ForumAdmin)
                                          .where(ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']) & (ForumAdmin.role == 'owner')
                                          ).scalar_one_or_none()
-    except SQLAlchemyError: raise genericDBFetchException()        
+    except SQLAlchemyError: raise genericDBFetchException()
     except KeyError: raise BadRequest("Missing mandatory field 'sid', please login again")
+    if not forum_mapping:
+        # Broadcast non-existence
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+        raise NotFound(f'No forum with id {forum_id} found')
     if not owner:
         raise Forbidden("You do not have the necessary permissions to delete this forum")
     if(forum_mapping['name'] != confirmationText):
@@ -303,10 +308,12 @@ def delete_forum(forum_id: int) -> Response:
         raise Conflict(f'A request for this action is currently enqueued')
     try:
         # Write intent to deletion, append query request to soft deletions stream, and write cache_key as NF sentinel mapping for deletion
-        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
-                                                  Pipeline.xadd : {'name' : 'SOFT_DELETIONS', 'fields' : {'id' : forum_id, 'table' : Forum.__tablename__}},
-                                                  Pipeline.hset : {'name' : cache_key, 'mapping' : {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}},
-                                                  Pipeline.expire : {'name' : cache_key, 'time' : RedisConfig.TTL_WEAK}})
+        with RedisInterface.pipeline() as pipe:
+            pipe.set(deletion_flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)   # Intent value not relevant, as existence of this key alone is an indicator of deletion intent
+            pipe.xadd('SOFT_DELETIONS', {'id' : forum_id, 'table' : Forum.__tablename__})
+            pipe.hset(cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE})
+            pipe.expire(cache_key, RedisConfig.TTL_WEAK)
+            pipe.execute()
     finally:
         RedisInterface.delete(lock_key) # Free lock no matter what happens
     
