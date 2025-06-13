@@ -178,46 +178,55 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
 def create_forum() -> tuple[Response, int]:
     try:
         userID: int = g.DECODED_TOKEN['sid']
-        forumName: str = str(g.REQUEST_JSON.pop('forum_name')).strip()
-        if not forumName:
-            raise ValueError()
-        forumAnimeID: int = int(g.REQUEST_JSON.pop('anime_id'))
+        forum_name: str = str(g.REQUEST_JSON.pop('forum_name')).strip()
+        if not forum_name:
+            raise BadRequest('Forum creation requires a title')
+        parent_anime_id: int = int(g.REQUEST_JSON.pop('anime_id'))
         description: str | None = None if 'desc' not in g.REQUEST_JSON else str(g.REQUEST_JSON.pop('desc')).strip()
     except KeyError:
         raise BadRequest("Mandatory details for forum creation missing")
     except (TypeError, ValueError):
-        raise BadRequest("Malformmatted values provided for forum creation")
+        raise BadRequest("Malformed values provided for forum creation")
     
     # 1: Consult cache
-    cache_key: str = f'forum:{forumName}:{forumAnimeID}'
-    try:
-        exists: bool = bool(RedisInterface.hget(cache_key))
-        if exists:
-            raise Conflict("A forum with this name for this anime already exists")
-    except: ...
-    
-    # 2: Fallback to DB
-    try:
-        forumExisting: Forum = db.session.execute(select(Forum)
-                                                  .where((Forum._name == forumName) & (Forum.anime == forumAnimeID))
-                                                  ).scalar_one_or_none()
-        if forumExisting:
-            raise Conflict("A forum with this name for this anime already exists")
-        anime: Anime = db.session.execute(select(Anime)
-                                          .where(Anime.id == forumAnimeID)
-                                          ).scalar_one_or_none()
-        if not anime:
-            # Set 404 mapping ephemerally for this anime ID
-            hset_with_ttl(RedisInterface, f'anime:{forumAnimeID}', {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
-            raise NotFound(f"No anime with ID: {forumAnimeID} could be found")
-    except SQLAlchemyError: genericDBFetchException()
+    anime_cache_key: str = f'{Anime.__tablename__}:{parent_anime_id}'
+    anime_mapping = RedisInterface.hgetall(anime_cache_key)
 
-    # All checks passed, push >:3
+    if anime_mapping and RedisConfig.NF_SENTINEL_KEY in anime_mapping:
+        raise NotFound(f'No anime with ID {parent_anime_id} exists')
+    
+    # 2: Consult DB in case of cache misses (and also to check for unique forum name)
+    conflicting_forum: Forum = None
+    try:
+        if not anime_mapping:
+            joined_result: Row = db.session.execute(select(Anime, Forum)
+                                                    .outerjoin(Forum, (Forum.anime == Anime.id) & (Forum._name == forum_name) & (Forum.deleted.is_(False)))
+                                                    .where(Anime.id == parent_anime_id)
+                                                    ).first()
+            if joined_result:
+                anime_mapping: dict[str, Any] = rediserialize(joined_result[0].__json_like__())
+                conflicting_forum = joined_result[1]
+        else:
+            conflicting_forum: Forum = db.session.execute(select(Forum)
+                                                          .where((Forum._name == forum_name) & (Forum.deleted.is_(False)))
+                                                          ).scalar_one_or_none()
+    except SQLAlchemyError: genericDBFetchException()
+    if not anime_mapping:   # Both cache and DB failed to verify this anime's existence
+        hset_with_ttl(RedisInterface, anime_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+        raise NotFound(f'No anime with ID {parent_anime_id} found')
+    if conflicting_forum:
+        # Non-deleted forum with same name for the same anime exists. As a last saving effort, check cache for deletion intent flag
+        deletion_intent = RedisInterface.get(f'delete:{conflicting_forum.id}')
+        if not deletion_intent: # No intention to delete this forum either, this request shall not pass >:(
+            conflict: Conflict = Conflict(f'A forum with this name, for anime with ID {parent_anime_id} already exists')
+            conflict.__setattr__('kwargs', {'forum' : conflicting_forum.__json_like__()})
+            raise conflict
+    
+    # No duplicate forums, and parent anime actually exists
     try:
         newForum: Forum = db.session.execute(insert(Forum)
-                                 .values(_name = forumName, anime=forumAnimeID, description=description, created_at=datetime.now())
+                                 .values(_name = forum_name, anime=parent_anime_id, description=description, created_at=datetime.now())
                                  .returning(Forum)).scalar_one_or_none()
-        db.session.commit()
         db.session.execute(insert(ForumAdmin)
                            .values(forum_id=newForum.id, user_id=userID, role='owner'))
         db.session.commit()
@@ -226,8 +235,16 @@ def create_forum() -> tuple[Response, int]:
         sqlErr.__setattr__("description", "An error occured while trying to create the forum. This is most likely an issue with our servers")
         raise sqlErr
 
-    hset_with_ttl(RedisInterface, cache_key, rediserialize(newForum.__json_like__()), RedisConfig.TTL_STRONG)
-    return jsonify({"message" : "Forum created succesfully"}), 202
+    forum_cache_key: str = f'{Forum.__tablename__}:{newForum.id}'
+    with RedisInterface.pipeline() as pipe:
+        # Cache both newly made forum and its parent anime
+        pipe.hset(forum_cache_key, mapping=rediserialize(newForum.__json_like__()))
+        pipe.expire(forum_cache_key, RedisConfig.TTL_STRONG)
+        pipe.hset(anime_cache_key, mapping=anime_mapping)
+        pipe.expire(anime_cache_key, RedisConfig.TTL_STRONG)
+        pipe.execute()
+
+    return jsonify({"message" : "Forum created succesfully"}), 201
 
 @forum.route("/<int:forum_id>", methods = ["DELETE"])
 @token_required
