@@ -3,7 +3,6 @@ Tables affected:
 - posts
 - comments
 - forums
-- users
 
 Works on the assumption that a soft deletion is represented as a true value in the `deleted` column, accompanied with a TIMESTAMP value in `time_deleted
 `'''
@@ -11,6 +10,7 @@ import psycopg2 as pg
 from psycopg2.extras import execute_batch
 from redis import Redis
 from redis import exceptions as redisExceptions
+from resource_server.scripts.batch_workers.worker_utils import enqueue_cascade_soft_deletes
 import os
 from dotenv import load_dotenv
 from time import sleep
@@ -44,9 +44,10 @@ if __name__ == '__main__':
     }
 
     CONNECTION: pg.extensions.connection = pg.connect(**CONNECTION_KWARGS)
-    
+    DEPENDENT_MAPPING: dict[str, dict[str, str]] = {'forums' : {'posts' : 'parent_forum'},
+                                                    'posts' : {'comments' : 'parent_post'}}
     # Initialize updation SQL
-    UPDATION_SQL: str = "UPDATE {tablename} SET time_deleted = %s, deleted = true WHERE id IN ({ids_to_delete})"
+    UPDATION_SQL: str = "UPDATE {tablename} SET time_deleted = %s, deleted = true WHERE id IN ({ids_to_delete});"
 
     # Initalize configuration for this worker
     with open(os.path.join(os.path.dirname(__file__), "worker_config.json"), 'rb') as configFile:
@@ -85,17 +86,22 @@ if __name__ == '__main__':
                     # Prepare table groups with mappings containing table names as keys and list of 2 lists, with IDs to delete and their deleted timestamps as pairs at equal indices
                     try:
                         table: str = queryData[1].pop('table')
+                        if table not in table_groups:
+                            table_groups[table] = [[], []]
+                        
                         timestamp: float = float(queryData[0].split("-")[0]) / 1000
                         time_deleted: datetime = datetime.fromtimestamp(timestamp)
-                        if table in table_groups:
-                            table_groups[table][0].append(queryData[1].pop('id'))
-                            table_groups[table][1].append(time_deleted)
-                        else:
-                            table_groups[table] = (queryData[1].pop('id'), [time_deleted])
+
+                        streamed_id: int = int(queryData[1].pop('id'))
+                        # Add to table groups
+                        table_groups[table][0].append(streamed_id)
+                        table_groups[table][1].append(time_deleted)
+
                     except KeyError:
                         print(f"[{ID}]: Received invalid query params from entry: {queryData[0]}")
                         print(format_exc())
 
+                # All fetched records now arranged table-wise
                 CURSOR.execute(f'SAVEPOINT s{ID}')
                 for table, targetList in table_groups.items():
                     # Oh boy, here I go killing again
@@ -103,6 +109,11 @@ if __name__ == '__main__':
                         execute_batch(CURSOR, UPDATION_SQL.format(tablename=table, ids_to_delete=table_groups[table][0]),
                                     argslist=[table_groups[table][1]])
                         CONNECTION.commit()
+
+                        # And not just the men, but the women and the children too!
+                        if table in DEPENDENT_MAPPING:
+                            for dependent_table, dependent_fk in DEPENDENT_MAPPING[table].items():
+                                enqueue_cascade_soft_deletes(CURSOR, interface, target_table=dependent_table, fk_colname=dependent_fk, parent_pk_seq=table_groups[table][0], stream_name=streamName)
                     except (pg.errors.ModifyingSqlDataNotPermitted):
                         print(f"[{ID}]: Permission error, aborting script...")
                         exit(500)
