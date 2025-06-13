@@ -1,9 +1,9 @@
 from flask import Blueprint, jsonify, g, url_for, request
 from werkzeug import Response
-from werkzeug.exceptions import NotFound, BadRequest, Forbidden, Conflict
+from werkzeug.exceptions import NotFound, BadRequest, Forbidden, Conflict, Gone
 from sqlalchemy import select, update, delete, Row
 from sqlalchemy.exc import SQLAlchemyError
-from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostReport, PostVote, Comment, ReportTags, CommentVote
+from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostReport, PostVote, Comment, ReportTags, CommentVote, CommentReport
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
 from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec
@@ -948,3 +948,130 @@ def vote_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
         RedisInterface.delete(lock_key)
     
     return jsonify({"message" : "Vote casted!"}), 202
+
+@post.route("/<int:post_id>/comments/<int:comment_id>/report", methods=['POST'])
+@token_required
+@enforce_json
+def report_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
+    # NOTE: A user can report a comment only once for a given reason (based on ReportTag enum). Because of this, the locking+intent logic here would include the report tag as well    
+    try:
+        reportDescription: str = str(g.REQUEST_JSON.get('desc'))
+        report_tag: str = str(g.REQUEST_JSON.get('tag'))
+        if not (reportDescription and report_tag):
+            raise BadRequest('Report request must contain description and a valid report reason')
+        
+        reportDescription = reportDescription.strip()
+        report_tag = report_tag.strip().lower()
+
+        if not ReportTags.check_membership(report_tag):
+            raise BadRequest('Invalid report tag')
+    except (ValueError, TypeError):
+        raise BadRequest("Malformatted report request")
+    
+    # Incoming request valid at face value, now check Redis for state
+    parent_post_cache_key: str = f'{Post.__tablename__}:{post_id}'
+    parent_post_flag_key: str = f'delete:{parent_post_flag_key}'    # Deletion intent, so existence alone proves that this post is queued for deletion
+    comment_cache_key: str = f'{Comment.__tablename__}:{comment_id}'
+    comment_flag_key: str = f'{CommentReport.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}:{report_tag}'    # Reserved for this report tag only, existence would hence imply duplication
+    lock_key: str = f'lock:{comment_flag_key}'
+
+    # For this pipeline operation, we'll need to check for post's existence too
+    with RedisInterface.pipeline() as pipe:
+        # Post
+        pipe.hgetall(parent_post_cache_key)
+        pipe.get(parent_post_flag_key)
+        # Comment
+        pipe.hgetall(comment_cache_key)
+        pipe.get(comment_flag_key)
+        pipe.get(lock_key)
+        post_mapping, post_latest_intent, comment_mapping, comment_latest_intent, lock = pipe.execute()
+    
+    if (post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping) or post_latest_intent:    # Post doesn't exist, or has been queued for deletion
+        hset_with_ttl(RedisInterface, parent_post_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
+        raise Gone(f'This comment belongs to a deleted post (id: {post_id}), and hence cannot be interacted with.')
+    
+    if comment_mapping and RedisConfig.NF_SENTINEL_KEY in comment_mapping:    # Comment doesn't exist, or has been queued for reporting already
+        hset_with_ttl(RedisInterface, comment_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
+        raise Gone(f'This comment is deleted, and hence cannot be interacted with.')
+    
+    if comment_latest_intent or lock:   # Another worker is performing the same action (Same user, reporting the same post for the same reason)
+        raise Conflict(f'A request for this action is currently enqueued')
+    
+    # Attempt to set lock for this action
+    lock = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock:
+        # Failing to acquire lock means another worker is performing this same request, treat this request as a duplicate
+        raise Conflict(f'A request for this action is currently enqueued')
+    
+    priorReport: PostReport = None 
+    try:
+        if not (post_mapping or comment_mapping):
+            # Post and comment existence unknown, as well as latest intent unknown
+            
+            joined_result: Row = db.session.execute(select(Post, Comment, CommentReport)
+                                                    .outerjoin(Comment, Comment.parent_post == post_id)
+                                                    .outerjoin(CommentReport, CommentReport.comment_id == Comment.id)
+                                                    .where(Comment.deleted.is_(False) & 
+                                                           (CommentReport.user_id == g.DECODED_TOKEN['sid']) & 
+                                                           (CommentReport.report_tag == report_tag) &
+                                                           (Post.id == post_id) & (Post.deleted.is_(False)))
+                                                    ).first()
+            if joined_result:
+                post_mapping: dict[str, Any] = joined_result[0].__json_like__() # First result is guaranteed to exist if joined_result is truthy
+                comment_mapping: dict[str, str|int] = joined_result[1] if not joined_result[1] else joined_result[1].__json_like__()  # Either None (comment doesn't exist) or serialise to JSON
+                priorReport: CommentReport = joined_result[2]
+
+        elif not post_mapping:  # Comment exists, post not known.
+            joined_result: Row = db.session.execute(select(Post, CommentReport)
+                                                    .outerjoin(Comment, Comment.parent_post == post_id)
+                                                    .outerjoin(CommentReport, (CommentReport.user_id == g.DECODED_TOKEN['sid']) &
+                                                               (CommentReport.comment_id == Comment.id))
+                                                    .where((Post.id == post_id) &
+                                                           (Post.deleted.is_(False)) & 
+                                                           (Comment.deleted.is_(False)) &
+                                                           (CommentReport.report_tag == report_tag))
+                                                    ).first()
+            if joined_result:
+                post_mapping: dict[str, Any] = joined_result[0].__json_like__()
+                priorReport: CommentReport = joined_result[1]
+            
+        elif not comment_mapping:   # Post exists, comment not known
+            joined_result: Row = db.session.execute(select(Comment, CommentReport)
+                                                  .outerjoin(CommentReport, (CommentReport.user_id == g.DECODED_TOKEN['sid']) &
+                                                             (CommentReport.comment_id == comment_id))
+                                                  .where((Comment.id == comment_id) &
+                                                         (Comment.parent_post == post_id) &
+                                                         (Comment.deleted.is_(False)) &
+                                                         (CommentReport.report_tag == report_tag))
+                                                  ).first()
+            if joined_result:
+                comment_mapping: dict[str, str|int] = joined_result[0].__json_like__()
+                priorReport: CommentReport = joined_result[1]
+        
+    except SQLAlchemyError: 
+        RedisInterface.delete(lock_key)
+        genericDBFetchException()
+    
+    if not post_mapping:    # Both cache and DB failed to indicate that post exists
+        RedisInterface.delete(lock_key)
+        hset_with_ttl(RedisInterface, parent_post_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Ephemeral announcement
+        raise NotFound(f'No post with ID {post_id} exists')
+    if not comment_mapping:     # Both cache and DB failed to indicate that comment exists
+        RedisInterface.delete(lock_key)
+        hset_with_ttl(RedisInterface, comment_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Ephemeral announcement
+        raise NotFound(f'No comment with ID {comment_id} exists')
+    if priorReport:     # Post already reported for this reason
+        RedisInterface.delete(lock_key)
+        raise Conflict('You have already reported this post for this reason')
+    
+    # All validations passed, write state for this action
+    try:
+        # Incremenet global counter for reports on this comment and insert record into comment_reports
+        update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='reports', identifier=post_id)
+        # Write intent as creation for this report, and append weak insertion entry to stream
+        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : comment_flag_key, 'value' : RedisConfig.RESOURCE_CREATION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
+                                                  Pipeline.xadd : {'name' : 'WEAK_INSERTIONS', 'fields' : {"user_id" : g.DECODED_TOKEN['sid'], "comment_id" : comment_id, 'report_tag' : report_tag, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'table' : CommentReport.__tablename__}}})
+    finally:
+        RedisInterface.delete(lock_key)
+        
+    return jsonify({"message" : "Comment reported!"}), 202
