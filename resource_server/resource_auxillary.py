@@ -245,3 +245,30 @@ def posts_cache_precheck(client: Redis, post_id: str, post_cache_key: str, post_
         raise Conflict(f'This action for post {post_id} has already been requested')
     
     return post_mapping, latest_intent  # post_mapping and latest intent may be required by the endpoint later
+
+def resource_existence_cache_precheck(client: Redis, identifier: int|str, resource_name: str, cache_key: Optional[str] = None, deletion_flag_key: Optional[str] = None) -> dict[str, Any]:
+    '''Generic check for a resource's existence in cache. Raises appropriate HTTP exception if non-existence is guarenteed
+    Args:
+        client: Redis client connected to cache server
+        identifier: Unique identifier (Typically PK) of resource
+        resource_name: Cache key for this resource
+        deletion_flag_key: Cache key for deletion flag for this resource
+        
+    Returns:
+        resource_mapping (dict[str, Any]) on cache hit'''
+    if not cache_key: 
+        cache_key: str = f'{resource_name}:{identifier}'
+    if not deletion_flag_key:
+        deletion_flag_key: str = f'delete:{cache_key}'
+     
+    with client.pipeline() as pipe:
+        pipe.hgetall(cache_key)
+        pipe.get(deletion_flag_key)
+        resource_mapping, deletion_intent = pipe.execute()
+    if deletion_intent:
+        raise Gone('This resource was just deleted')
+    if resource_mapping and RedisConfig.NF_SENTINEL_KEY in resource_mapping:
+        hset_with_ttl(client, cache_key, resource_mapping, RedisConfig.TTL_EPHEMERAL)
+        raise NotFound(f"No {resource_name} with ID {identifier} found")
+    
+    return resource_mapping
