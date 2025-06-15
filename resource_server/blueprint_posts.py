@@ -743,66 +743,65 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
         'end': end
     }), 200
 
-@post.route('/<int:post_id>/comments/<int:comment_id>', methods=['DELETE'])
+@post.route('/comments/<int:comment_id>', methods=['DELETE'])
 @token_required
-def delete_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
+def delete_comment(comment_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Comment.__tablename__}:{comment_id}'
     flag_key: str = f'delete:{cache_key}'
     lock_key: str = f'lock:{flag_key}'
-    with RedisInterface.pipeline() as pipe:
-        pipe.hgetall(cache_key)
-        pipe.get(flag_key)
-        pipe.get(lock_key)
-        comment_mapping, latest_intent, lock = pipe.execute()
+    comment_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=comment_id, resource_name=Comment.__tablename__, cache_key=cache_key, deletion_flag_key=flag_key)
 
-    if comment_mapping and RedisConfig.NF_SENTINEL_KEY in comment_mapping:    # Comment doesn't exist
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
-        raise NotFound(f'No comment with ID {comment_id} exists. This may be because the parent post has been deleted')
-    # NOTE: We are not checking for a post's existence, because a comment will be deleted upon the deletion of its parent post
-    
-    if lock or latest_intent:   # Either another worker is performing the same action (Same user, reporting the same post for the same reason) or this action is already in queue for the same reason
-        raise Conflict(f'A request for this action is currently enqueued')
-    
-    try:
-        if not comment_mapping:
-            # A comment can be deleted by either a forum admin or the author of the comment
-            joined_result: Row = db.session.execute(select(Comment, Post.deleted)
-                                                    .join(Post, Post.id == Comment.parent_post)
-                                                    .where((Comment.id == comment_id) & (Comment.deleted.is_(False)))   # Allow explicit deletion of RTBF hidden comments too
-                                                    ).first()
-            if not joined_result:
-                raise NotFound(f"No comment with ID {comment_id} found")
-            if joined_result[1]:
-                raise NotFound(f'Comment with ID {comment_id} belongs to a deleted post, and was hence deleted')
-            comment_mapping: dict[str, Any] = joined_result[0].__json_like__()
-    except SQLAlchemyError: genericDBFetchException()
-
-    if int(comment_mapping.get('author_id')) != g.DECODED_TOKEN.get('sid'):
-        # Check whether admin
-        forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
-                                                    .where((ForumAdmin.forum_id == int(comment_mapping.get('parent_forum'))) & (ForumAdmin.user_id == g.DECODED_TOKEN.get('sid')))
-                                                    ).scalar_one_or_none()
-        if not forumAdmin:
-            raise Unauthorized('You do not have the necessary permissions to delete this comment')
-    # All checks passed, attempt to set lock for this action
+    # Cache prechecks passed, attempt to set lock for this action
     lock = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
     if not lock:
         # Failing to acquire lock means another worker is performing this same request, treat this request as a duplicate
         raise Conflict(f'A request for this action is currently enqueued')
+
+    try:
+        if not comment_mapping:
+            # A comment can be deleted by either a forum admin or the author of the comment
+            comment: Comment = db.session.execute(select(Comment)
+                                                  .where((Comment.id == comment_id) & 
+                                                         (Comment.deleted.is_(False)))   # Allow explicit deletion of RTBF hidden comments too
+                                                    ).scalar_one_or_none()
+            if not comment:
+                RedisInterface.delete(lock_key)
+                raise NotFound(f"No comment with ID {comment_id} found")
+
+            comment_mapping: dict[str, Any] = comment.__json_like__()
+
+        # Check permissions
+        if int(comment_mapping.get('author_id')) != g.DECODED_TOKEN.get('sid'):
+            # Check whether admin
+            forumAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
+                                                        .where((ForumAdmin.forum_id == int(comment_mapping.get('parent_forum'))) & 
+                                                                (ForumAdmin.user_id == g.DECODED_TOKEN.get('sid')))
+                                                        ).scalar_one_or_none()
+            if not forumAdmin:
+                RedisInterface.delete(lock_key)
+                raise Unauthorized('You do not have the necessary permissions to delete this comment')
+    except SQLAlchemyError: 
+        RedisInterface.delete(lock_key)
+        genericDBFetchException()
+    except Exception as e:
+        RedisInterface.delete(lock_key)
+        raise e
     
     try:
         # Decrement global counters for this post, and the user's total comments
-        update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Post.__tablename__, column='total_comments', identifier=post_id)
+        update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Post.__tablename__, column='total_comments', identifier=int(comment_mapping['parent_post']))
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=User.__tablename__, column='total_comments', identifier=g.DECODED_TOKEN['sid'])
         
         # Queue comment for soft deletion, write intent as deleiton, and write cache with NF Sentinel mapping
-        pipeline_exec(RedisInterface, op_mapping={Pipeline.set: {'name' : flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
-                                                  Pipeline.xadd: {'name' : 'SOFT_DELETIONS', 'fields' : {'id' : comment_id, 'table' : Comment.__tablename__}},
-                                                  Pipeline.hset: {'name' : cache_key, 'mapping' : {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}},
-                                                  Pipeline.expire: {'name' : cache_key, 'time' : RedisConfig.TTL_EPHEMERAL}})
+        with RedisInterface.pipeline(transaction=False) as pipe:
+            pipe.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+            pipe.xadd('SOFT_DELETIONS', {'id' : comment_id, 'table' : Comment.__tablename__})
+            pipe.hset(cache_key, mapping={RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE})
+            pipe.expire(cache_key, RedisConfig.TTL_EPHEMERAL)
+            pipe.execute()
     finally:
         RedisInterface.delete(lock_key)
-    return jsonify({'message' : 'Comment deleted'}), 202
+    return jsonify({'message' : 'Comment deleted', 'comment' : comment_mapping}), 202
 
 @post.route("/<int:post_id>/comments/<int:comment_id>/vote", methods=["PATCH"])
 @token_required
