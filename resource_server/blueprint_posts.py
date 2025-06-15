@@ -6,7 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostReport, PostVote, Comment, ReportTags, CommentVote, CommentReport
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, posts_cache_precheck
 from resource_server.redis_config import RedisConfig
 from redis.client import Pipeline
 from auxillary.decorators import enforce_json
@@ -442,23 +442,11 @@ def save_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     flag_key: str = f'{PostSave.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
     lock_key: str = f'lock:{RedisConfig.RESOURCE_CREATION_PENDING_FLAG}:{flag_key}'    
-    with RedisInterface.pipeline() as pipe:
-        pipe.hgetall(cache_key)
-        pipe.get(flag_key)
-        pipe.get(lock_key)
-        post_mapping, latest_intent, lock = pipe.execute()
-    
-    if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
-        raise NotFound(f'No post with ID {post_id} exists')
-    if lock or latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG:
-        raise Conflict(f'A request for this action is currently enqueued')
-    # Attempt to set lock for this action
-    lock = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
-    if not lock:
-        # Failed to acquire lock means another worker is performing this same request, treat this request as a duplicate
-        raise Conflict(f'A request for this action is currently enqueued')
-    
+    post_mapping, latest_intent = posts_cache_precheck(client=RedisInterface, post_id=post_id, post_cache_key=cache_key, post_deletion_intent_flag=f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key, conflicting_intent=RedisConfig.RESOURCE_CREATION_PENDING_FLAG)
+    # Cache precheck passed, set lock
+    lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock_set:
+            raise Conflict('Another worker is processing this exact request at the moment')
     # Lock acquired, perform all necessary valdiations
     isSaved: bool = False if latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG else True
     try:
@@ -478,14 +466,17 @@ def save_post(post_id: int) -> tuple[Response, int]:
                                               ).scalar_one_or_none())
             
         elif not post_mapping:
-            post: Post = db.session.execute(select(Post.id)
+            post: Post = db.session.execute(select(Post)
                                             .where((Post.id == post_id) & (Post.deleted.is_(False)) & (Post.rtbf_hidden.isnot(True)))
                                             ).scalar_one_or_none()
-            if post:
-                post_mapping = post.__json_like__()
-    except SQLAlchemyError: 
+            if post: post_mapping = post.__json_like__()
+    except SQLAlchemyError:
         RedisInterface.delete(lock_key)
         genericDBFetchException()
+    except Exception as e:
+        RedisInterface.delete(lock_key)
+        raise e
+    
     if not post_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         RedisInterface.delete(lock_key)
@@ -494,16 +485,16 @@ def save_post(post_id: int) -> tuple[Response, int]:
     if isSaved and latest_intent != RedisConfig.RESOURCE_DELETION_PENDING_FLAG:
         RedisInterface.delete(lock_key)
         raise Conflict('Post already saved')
-    
-    # All validations passed, change state for this action
-    
+
     # Only queue database operations if state was written succesfully
     try:
         update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)   
-        update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='aura', identifier=post_mapping['sid'])   
+        update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='aura', identifier=g.DECODED_TOKEN['sid'])   
         # Write creation intent and append query data to weak insertions stream
-        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_CREATION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
-                                                  Pipeline.xadd : {'name' : 'WEAK_INSERTIONS', 'fields' : {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__}}})
+        with RedisInterface.pipeline() as pipe:
+            pipe.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+            pipe.xadd('WEAK_INSERTIONS', {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})
+            pipe.execute()
     finally:
         RedisInterface.delete(lock_key)
     return jsonify({"message" : "Post saved!"}), 202
@@ -514,35 +505,19 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     flag_key: str = f'{PostSave.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
     lock_key: str = f'lock:{RedisConfig.RESOURCE_DELETION_PENDING_FLAG}:{flag_key}'    
-    with RedisInterface.pipeline() as pipe:
-        pipe.hgetall(cache_key)
-        pipe.get(flag_key)
-        pipe.get(lock_key)
-        post_mapping, latest_intent, lock = pipe.execute()
+    post_mapping, latest_intent = posts_cache_precheck(client=RedisInterface, post_id=post_id, post_cache_key=cache_key, post_deletion_intent_flag=f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key, conflicting_intent=RedisConfig.RESOURCE_DELETION_PENDING_FLAG)
 
-    if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
-        raise NotFound(f'No post with ID {post_id} exists')
-    
-    if lock or latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG:
-        raise Conflict(f'A request for this action is currently enqueued')
-    # Attempt to set lock for this action
-    lock = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
-    if not lock:
-        # Failed to acquire lock means another worker is performing this same request, treat this request as a duplicate
-        raise Conflict(f'A request for this action is currently enqueued')
-    
-    post_exists: bool = bool(post_mapping)
     isSaved: bool = False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG else True
     try:
         if not (post_mapping or latest_intent):
             # Nothing known at this point, query both Post and PostSave
-            _res = db.session.execute(select(Post.id, PostSave)
-                                             .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
-                                             .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
-                                             ).first()
-            if _res:
-                post_exists, isSaved = _res
+            joined_result: Row = db.session.execute(select(Post, PostSave)
+                                                    .outerjoin(PostSave, (PostSave.post_id == post_id) & (PostSave.user_id == g.DECODED_TOKEN['sid']))
+                                                    .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
+                                                    ).first()
+            if joined_result:
+                post_mapping: dict[str, Any] = joined_result[1].__json_like__()
+                isSaved = bool(joined_result[1])
         elif not latest_intent:
             # Fetch PostSave record to see if the user has already saved this post
             isSaved = bool(db.session.execute(select(PostSave)
@@ -550,13 +525,17 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
                                               ).scalar_one_or_none())
             
         elif not post_mapping:
-            post_exists = bool(db.session.execute(select(Post.id)
-                                                  .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
-                                                  ).scalar_one_or_none())
+            post: Post = db.session.execute(select(Post)
+                                            .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
+                                            ).scalar_one_or_none()
+            if post: post_mapping = post.__json_like__()
     except SQLAlchemyError: 
         RedisInterface.delete(lock_key)
         genericDBFetchException()
-    if not post_exists:
+    except Exception as e:
+        RedisInterface.delete(lock_key)
+        raise e
+    if not post_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         RedisInterface.delete(lock_key)
         raise NotFound(f'No post with ID {post_id} exists')
@@ -569,8 +548,10 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
     try:
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Post.__tablename__, column='saves', identifier=post_id)
         # Write intent as deletion, and append deletion query to weak deletions stream
-        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
-                                                  Pipeline.xadd : {'name' : 'WEAK_DELETIONS', 'fields' : {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__}}})
+        with RedisInterface.pipeline() as pipe:
+            pipe.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+            pipe.xadd('WEAK_DELETIONS', {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostSave.__tablename__})
+            pipe.execute()
     finally:
         RedisInterface.delete(lock_key)
     
