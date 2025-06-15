@@ -8,7 +8,7 @@ from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, NUMERI
 import orjson, os
 from enum import Enum
 from datetime import datetime
-
+from typing import Any
 from dataclasses import dataclass
 
 CONFIG: dict = {}
@@ -68,6 +68,13 @@ class CommentReport(db.Model):
     report_tag: str = db.Column(REPORT_TAGS, nullable=False, primary_key=True)
     report_time: datetime = db.Column(TIMESTAMP, default = text('CURRENT_TIMESTAMP'))
     report_description: str = db.Column(VARCHAR(256), nullable = False)
+
+    def __json_like__(self) -> dict[str, int|str]:
+        return {'user' : self.user_id,
+                'comment' : self.comment_id,
+                'tag' : self.report_tag,
+                'description' : self.report_description,
+                'time' : self.report_time.isoformat()}
 
 class CommentVote(db.Model):
     __tablename__ = "comment_votes"
@@ -344,7 +351,7 @@ class Post(db.Model):
     title: str = db.Column(VARCHAR(64), nullable = False, index=True)
     body_text: str = db.Column(TEXT, nullable = False)
     flair: str = db.Column(VARCHAR(16), index=True)
-    closed: bool = db.Column(BOOLEAN, default=False)
+    closed: bool = db.Column(BOOLEAN, default=False, server_default=text("false"))
     time_posted: datetime = db.Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
     saves: int = db.Column(INTEGER, default=0, server_default=text('0'), nullable=False)
     reports: int = db.Column(INTEGER, default=0, server_default=text('0'), nullable=False)
@@ -404,6 +411,7 @@ class Comment(db.Model):
     time_created: datetime = db.Column(TIMESTAMP, nullable = False, server_default=text("CURRENT_TIMESTAMP"))
     body: str = db.Column(VARCHAR(512), nullable=False)
     parent_post: int = db.Column(BIGINT, db.ForeignKey("posts.id", ondelete='CASCADE'), nullable=False, index=True)
+    score: int = db.Column(BIGINT, nullable=False, default=0, server_default=text('0'))
     reports: int= db.Column(INTEGER, default = 0, server_default=text('0'), nullable=False)
 
     # Deletion metadata
