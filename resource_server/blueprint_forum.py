@@ -5,7 +5,7 @@ from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from resource_server.resource_decorators import token_required, pass_user_details
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, admin_cache_precheck
 from resource_server.external_extensions import RedisInterface, hset_with_ttl
 from resource_server.redis_config import RedisConfig
 from redis.client import Pipeline
@@ -508,20 +508,50 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
 @enforce_json
 @token_required
 def edit_admin_permissions(forum_id: int) -> tuple[Response, int]:
-    targetID: int = g.REQUEST_JSON.pop('newAdmin', None)
+    target_admin_id: int = g.REQUEST_JSON.pop('newAdmin', None)
     newRole: str = g.REQUEST_JSON.pop('newRole', '').strip()
 
-    if not targetID:
+    if not target_admin_id:
         raise BadRequest('Admin whose permission needs to be changed must be included')
     if not newRole:
         raise BadRequest('A role needs to be provided for this admin')
     if not AdminRoles.check_membership(newRole) or AdminRoles[newRole] == AdminRoles.owner:
         raise BadRequest('Invalid role, can only be super or admin')
     
-    flag_key: str = f'{ForumAdmin.__tablename__}:{forum_id}:{targetID}'
-    latest_intent: str = RedisInterface.get(flag_key)
-    if latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG:
-        raise NotFound(f'No admin (ID: {targetID}) found for this forum (ID: {forum_id})')
+    # Cache precheck
+    user_cache_key: str = f'{User.__tablename__}:{target_admin_id}'
+    user_status_flag_key: str = f'alive_status:{target_admin_id}'
+    forum_cache_key: str = f'{Forum.__tablename__}:{forum_id}'
+    forum_deletion_flag_key: str = f'delete:{forum_cache_key}'  # Existence of this flag alone is sufficient to exit early
+    admin_flag_key: str = f'{ForumAdmin.__tablename__}:{forum_id}:{target_admin_id}'   # Value here would be the admin role, not a creation flag
+    lock_key: str = f'lock:{admin_flag_key}'
+    # Fetch all values through a single pipeline
+    with RedisInterface.pipeline(transaction=False) as pipe:
+        # User
+        pipe.get(user_status_flag_key)
+        pipe.hgetall(user_cache_key)
+        # Forum
+        pipe.get(forum_deletion_flag_key)
+        pipe.hgetall(forum_cache_key)
+        # Race/intent
+        pipe.get(admin_flag_key)
+        pipe.get(lock_key)
+        user_status, user_mapping, forum_mapping, forum_deletion_intent, latest_intent, lock = pipe.execute()
+    
+    if (forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping) or forum_deletion_intent:  # Forum doesn't exist, or has very recently been queued for deletion
+        hset_with_ttl(RedisInterface, forum_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL, transaction=False) # Reannounce non-existence of this forum
+        raise NotFound(f'No forum with ID {forum_id} found')
+    
+    if (user_mapping and RedisConfig.NF_SENTINEL_KEY in user_mapping) or user_status == RedisConfig.RESOURCE_DELETION_PENDING_FLAG:    # User (to be made an admin) doesn't exist or has been deleted
+        hset_with_ttl(RedisInterface, user_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL, transaction=False) # Reannounce non-existence of this forum
+        raise NotFound(f'No user with ID {target_admin_id} exists')
+    
+    if latest_intent == newRole:    # Admin has this role already
+        raise Conflict('This admin already has this role')
+    
+    if lock:    # Parallel worker performing same request
+        raise Conflict('A request for this action is already underway, changes will be reflected soon')
+    
     
     try:
         # Check whether request is coming from owner
@@ -532,13 +562,13 @@ def edit_admin_permissions(forum_id: int) -> tuple[Response, int]:
         if not forumAdmin:
             raise Forbidden('You must be the owner of this forum to edit admin permissions')
         
-        if targetID == forumAdmin.user_id:
+        if target_admin_id == forumAdmin.user_id:
             raise BadRequest('As owner, you cannot change your own permissions')
         
         if not latest_intent:
             # Check if target is admin of this forum
             targetAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
-                                                        .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetID))
+                                                        .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == target_admin_id))
                                                         .with_for_update(nowait=True)
                                                         ).scalar_one()
             if not targetAdmin:
@@ -550,22 +580,23 @@ def edit_admin_permissions(forum_id: int) -> tuple[Response, int]:
         raise Conflict('This admin already has this role')
 
     # Finally, all checks passed.
-    lock_key: str = f'lock:{flag_key}'
     lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
     if not lock_set:
         raise Conflict('Failed to update admin permission as another request for this admin is being processed, please try again')
     
-    with RedisInterface.pipeline() as pipe:
-        pipe.set(flag_key, value=newRole, ex=RedisConfig.TTL_STRONGEST)
-        pipe.delete(lock_key)
-        pipe.execute()
     try:
         db.session.execute(update(ForumAdmin)
-                           .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == targetID))
+                           .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == target_admin_id))
                            .values(role=newRole))
-    except SQLAlchemyError: raise InternalServerError('Failed to change admin role, please try again later')
+    except SQLAlchemyError: 
+        RedisInterface.delete(lock_key)
+        raise InternalServerError('Failed to change admin role, please try again later')
+    with RedisInterface.pipeline() as pipe:
+        pipe.set(admin_flag_key, value=newRole, ex=RedisConfig.TTL_STRONGEST)
+        pipe.delete(lock_key)
+        pipe.execute()
     
-    return jsonify({'message' : 'Admin role changed', 'admin_id' : targetID, 'new_role' : newRole, 'previous_role' : latest_intent or targetAdmin.role}), 200
+    return jsonify({'message' : 'Admin role changed', 'admin_id' : target_admin_id, 'new_role' : newRole, 'previous_role' : latest_intent or targetAdmin.role}), 200
 
 @forum.route("/<int:forum_id>/admins")
 @pass_user_details
