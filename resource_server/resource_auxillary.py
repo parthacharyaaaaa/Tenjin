@@ -6,11 +6,14 @@ import ecdsa
 from redis import Redis
 from redis.client import Pipeline
 from flask import Flask
+from werkzeug.exceptions import Gone, Conflict, NotFound
+from resource_server.external_extensions import hset_with_ttl
+from resource_server.redis_config import RedisConfig
 import time
 from traceback import format_exc
 from sqlalchemy import text
 from flask_sqlalchemy import SQLAlchemy
-from typing import Any, Mapping
+from typing import Any, Mapping, Optional
 from types import FunctionType
 
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
@@ -205,3 +208,40 @@ def pipeline_exec(client: Redis, op_mapping: Mapping[FunctionType, Mapping[str, 
         pipe.execute()
     finally:
         pipe.close()
+
+def posts_cache_precheck(client: Redis, post_id: str, post_cache_key: str, post_deletion_intent_flag: str, action_flag: str, lock_name: str, conflicting_intent: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
+    '''
+    Consult cache and perform a check on a given post to try to validate the request thriugh cache and minimize DB lookups. Although this cannot guarantee post validity, if a post is found to be invalid through cache, an appropriate HTTP exception is raised. If all checks pass, then the post_mapping (if found) and the latest intent (if found) are returned
+    Args:
+        client: Redis client instance connected to cache server
+        post_id: Unique identifier for post
+        post_cache_key: cache key for this post
+        post_deletion_intent_flag: Deletion flag name for this post
+        action_flag: Flag name to check for latest user intent for this post
+        lock_name: Name of lock for this action
+        conflicting_intent: If specified, latest user intent is checked against this value for early rejection
+
+    Returns:
+        post_mapping (dict), latest_intent (str)
+    '''
+    with client.pipeline() as pipe:
+        # Post
+        pipe.hgetall(post_cache_key)
+        pipe.get(post_deletion_intent_flag)  # Existence alone is enough to prove post deletion
+        
+        pipe.get(action_flag)   # Get latest intent (if any) for this action
+        pipe.get(lock_name)
+
+        post_mapping, post_deletion_intent, latest_intent, lock = pipe.execute()
+
+    if post_deletion_intent:    # Deletion written in cache
+        raise Gone('This post has been permanently deleted, and will soon be unavailable')
+    if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:    # Post non-existence written in cache
+        hset_with_ttl(client, post_cache_key, post_mapping, RedisConfig.TTL_EPHEMERAL)  # Reannounce post non-existence
+        raise NotFound(f'No post with ID {post_id} could be found (Never existed, or deleted)')
+    if lock:    # Stop race condition early
+        raise Conflict('Another worker is processing this exact request at the moment')
+    if (latest_intent and not conflicting_intent) or (conflicting_intent and latest_intent == conflicting_intent):  # Stop duplicate requests
+        raise Conflict(f'This action for post {post_id} has already been requested')
+    
+    return post_mapping, latest_intent  # post_mapping and latest intent may be required by the endpoint later
