@@ -452,7 +452,16 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
     if latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG or lock:
         raise Conflict('A request for deleting this forum admin is already enqueued')
     
-    try:  
+    try:
+        if not forum_mapping:
+            forum: Forum = db.session.execute(select(Forum)
+                                              .where((Forum.id == forum_id) & (Forum.deleted.is_(False)))
+                                              ).scalar_one_or_none()
+            if not forum:
+                hset_with_ttl(RedisInterface, forum_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL, transaction=False) # Reannounce non-existence of this forum
+                raise NotFound(f'No forum with ID {forum_id} found')
+            forum_mapping: dict[str, Any] = forum.__json_like__()
+
         # Check requesting user's permissions in this forum (This also indirectly confirms Forum existence)
         user_admin_role: str = db.session.execute(select(ForumAdmin.role)
                                                 .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
