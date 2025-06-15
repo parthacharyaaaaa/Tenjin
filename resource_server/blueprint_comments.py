@@ -12,9 +12,9 @@ from resource_server.external_extensions import RedisInterface, hset_with_ttl
 from resource_server.redis_config import RedisConfig
 from typing import Any
 
-comments_bp: Blueprint = Blueprint('comments', 'comments', url_prefix='/comments')
+COMMENTS_BLUEPRINT: Blueprint = Blueprint('comments', 'comments', url_prefix='/comments')
 
-@comments_bp.route('/<int:comment_id>', methods=['DELETE'])
+@COMMENTS_BLUEPRINT.route('/<int:comment_id>', methods=['DELETE'])
 @token_required
 def delete_comment(comment_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Comment.__tablename__}:{comment_id}'
@@ -73,7 +73,7 @@ def delete_comment(comment_id: int) -> tuple[Response, int]:
         RedisInterface.delete(lock_key)
     return jsonify({'message' : 'Comment deleted', 'comment' : comment_mapping}), 202
 
-@comments_bp.route("/<int:comment_id>/vote", methods=["POST"])
+@COMMENTS_BLUEPRINT.route("/<int:comment_id>/vote", methods=["POST"])
 @token_required
 def vote_comment(comment_id: int) -> tuple[Response, int]:
     try:
@@ -162,7 +162,7 @@ def vote_comment(comment_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Vote casted!"}), 202
 
-@comments_bp.route("/<int:comment_id>/report", methods=['POST'])
+@COMMENTS_BLUEPRINT.route("/<int:comment_id>/report", methods=['POST'])
 @token_required
 @enforce_json
 def report_comment(comment_id: int) -> tuple[Response, int]:

@@ -16,7 +16,7 @@ import ujson
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
-anime = Blueprint('animes', 'animes', url_prefix="/animes")
+ANIMES_BLUEPRINT: Blueprint = Blueprint('animes', 'animes', url_prefix="/animes")
 
 RANDOMIZER_SQL = (select(Anime).where(Anime.id >= func.floor(func.random() * select(func.max(Anime.id)).scalar_subquery())).order_by(Anime.id).limit(50))
 def getRandomAnimes(database: SQLAlchemy) -> list[Anime]:
@@ -25,7 +25,7 @@ def getRandomAnimes(database: SQLAlchemy) -> list[Anime]:
 randomAnimes: list[Anime] = []
 executor = ThreadPoolExecutor(2)
 
-@anime.route("/<int:anime_id>")
+@ANIMES_BLUEPRINT.route("/<int:anime_id>")
 def get_anime(anime_id: int) -> tuple[Response, int]:
     # 1: Redis
     cacheKey: str = f'anime:{anime_id}'
@@ -57,7 +57,7 @@ def get_anime(anime_id: int) -> tuple[Response, int]:
 
     return jsonify({'anime' : animeMapping}), 200
 
-@anime.route("/random")
+@ANIMES_BLUEPRINT.route("/random")
 def get_random_anime():
     global randomAnimes
     maxTries: int = 3
@@ -85,7 +85,7 @@ def get_random_anime():
     except SQLAlchemyError: genericDBFetchException()
     return redirect(url_for('templates.view_anime', _external=False, anime_id = anime.id, random_prefetch=anime))
 
-@anime.route("/<int:anime_id>/subscribe", methods=["PATCH"])
+@ANIMES_BLUEPRINT.route("/<int:anime_id>/subscribe", methods=["PATCH"])
 @token_required
 def sub_anime(anime_id: int) -> tuple[Response, int]:
     cacheKey: str = f'{Anime.__tablename__}:{anime_id}'
@@ -111,7 +111,7 @@ def sub_anime(anime_id: int) -> tuple[Response, int]:
     
     return jsonify({'message' : 'subscribed!'}), 202
 
-@anime.route("/<int:anime_id>/unsubscribe", methods=["PATCH"])
+@ANIMES_BLUEPRINT.route("/<int:anime_id>/unsubscribe", methods=["PATCH"])
 @token_required
 def unsub_anime(anime_id: int) -> tuple[Response, int]:
     cacheKey: str = f'{Anime.__tablename__}:{anime_id}'
@@ -137,7 +137,7 @@ def unsub_anime(anime_id: int) -> tuple[Response, int]:
     
     return jsonify({'message' : 'unsubscribed!'}), 202
     
-@anime.route("/")
+@ANIMES_BLUEPRINT.route("/")
 def get_animes() -> tuple[Response, int]:
     try:
         rawCursor = request.args.get('cursor', '0').strip()
@@ -196,7 +196,7 @@ def get_animes() -> tuple[Response, int]:
     result = [anime.__json_like__() | {'genres': genres.get(anime.id, [])} for anime in animes]
     return jsonify({'animes' : result, 'cursor' : cursor}), 200
 
-@anime.route("<int:anime_id>/links")
+@ANIMES_BLUEPRINT.route("<int:anime_id>/links")
 def get_anime_links(anime_id: int) -> tuple[Response, int]:
     try:
         streamLinks: dict[str, str] = dict(db.session.execute(select(StreamLink.website, StreamLink.url)
@@ -204,7 +204,7 @@ def get_anime_links(anime_id: int) -> tuple[Response, int]:
     except SQLAlchemyError: genericDBFetchException()
     return jsonify({'stream_links' : streamLinks})
 
-@anime.route("<int:anime_id>/forums")
+@ANIMES_BLUEPRINT.route("<int:anime_id>/forums")
 def get_anime_forums(anime_id: int) -> tuple[Response, int]:
     try:
         rawCursor = request.args.get('cursor', '0').strip()

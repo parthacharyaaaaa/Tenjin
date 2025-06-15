@@ -5,7 +5,7 @@ from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from resource_server.resource_decorators import token_required, pass_user_details
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, admin_cache_precheck
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec
 from resource_server.external_extensions import RedisInterface, hset_with_ttl
 from resource_server.redis_config import RedisConfig
 from redis.client import Pipeline
@@ -18,7 +18,7 @@ from redis.exceptions import RedisError
 import base64
 import binascii
 
-forum = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/forums")
+FORUMS_BLUEPRINT: Blueprint = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/forums")
 
 TIMEFRAMES: MappingProxyType = MappingProxyType({0 : lambda dt : dt - timedelta(hours=1),
                                                  1 : lambda dt : dt - timedelta(days=1),
@@ -27,7 +27,7 @@ TIMEFRAMES: MappingProxyType = MappingProxyType({0 : lambda dt : dt - timedelta(
                                                  4 : lambda dt : dt - timedelta(days=364),
                                                  5 : lambda _ : datetime.min})
 
-@forum.route('/<int:forum_id>')
+@FORUMS_BLUEPRINT.route('/<int:forum_id>')
 @pass_user_details
 def get_forum(forum_id: int) -> tuple[Response, int]:
     cache_key: str = f'forum:{forum_id}'
@@ -86,7 +86,7 @@ def get_forum(forum_id: int) -> tuple[Response, int]:
 
     return jsonify(forumMapping), 200
 
-@forum.route("/<int:forum_id>/posts")
+@FORUMS_BLUEPRINT.route("/<int:forum_id>/posts")
 def get_forum_posts(forum_id: int) -> tuple[Response, int]:
     try:
         rawCursor = request.args.get('cursor', '0').strip()
@@ -172,7 +172,7 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
 
     return jsonify({'posts' : postsJSON, 'cursor' : cursor, 'end' : end}), 200
 
-@forum.route("/", methods=["POST"])
+@FORUMS_BLUEPRINT.route("/", methods=["POST"])
 @enforce_json
 @token_required
 def create_forum() -> tuple[Response, int]:
@@ -246,7 +246,7 @@ def create_forum() -> tuple[Response, int]:
 
     return jsonify({"message" : "Forum created succesfully"}), 201
 
-@forum.route("/<int:forum_id>", methods = ["DELETE"])
+@FORUMS_BLUEPRINT.route("/<int:forum_id>", methods = ["DELETE"])
 @token_required
 @enforce_json
 def delete_forum(forum_id: int) -> Response:
@@ -322,7 +322,7 @@ def delete_forum(forum_id: int) -> Response:
         res['redirect'] = url_for('templates.view_anime', anime_id = forum_mapping['anime'])
     return jsonify(res), 200
 
-@forum.route("/<int:forum_id>/admins", methods=['POST'])
+@FORUMS_BLUEPRINT.route("/<int:forum_id>/admins", methods=['POST'])
 @enforce_json
 @token_required
 def add_admin(forum_id: int) -> tuple[Response, int]:
@@ -414,7 +414,7 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Added new admin", "userID" : newAdminID, "role" : newAdminRole}), 202
 
-@forum.route("/<int:forum_id>/admins", methods=['DELETE'])
+@FORUMS_BLUEPRINT.route("/<int:forum_id>/admins", methods=['DELETE'])
 @enforce_json
 @token_required
 def remove_admin(forum_id: int) -> tuple[Response, int]:
@@ -504,7 +504,7 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Removed admin", "userID" : target_admin_id, "role" : latest_intent or targetAdmin.role}), 202
 
-@forum.route("/<int:forum_id>/admins", methods=['PATCH'])
+@FORUMS_BLUEPRINT.route("/<int:forum_id>/admins", methods=['PATCH'])
 @enforce_json
 @token_required
 def edit_admin_permissions(forum_id: int) -> tuple[Response, int]:
@@ -598,7 +598,7 @@ def edit_admin_permissions(forum_id: int) -> tuple[Response, int]:
     
     return jsonify({'message' : 'Admin role changed', 'admin_id' : target_admin_id, 'new_role' : newRole, 'previous_role' : latest_intent or targetAdmin.role}), 200
 
-@forum.route("/<int:forum_id>/admins")
+@FORUMS_BLUEPRINT.route("/<int:forum_id>/admins")
 @pass_user_details
 def check_admin_permissions(forum_id: int) -> tuple[Response, int]:
     if not g.REQUESTING_USER:
@@ -615,7 +615,7 @@ def check_admin_permissions(forum_id: int) -> tuple[Response, int]:
     print(AdminRoles.getAdminAccessLevel(userRole))
     return jsonify(AdminRoles.getAdminAccessLevel(userRole)), 200
 
-@forum.route("/<int:forum_id>/subscribe", methods=['PATCH'])
+@FORUMS_BLUEPRINT.route("/<int:forum_id>/subscribe", methods=['PATCH'])
 @token_required
 def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
@@ -684,7 +684,7 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     
     return jsonify({'message' : 'Forum subscribed!'}), 202
 
-@forum.route("/<int:forum_id>/unsubscribe", methods=['PATCH'])
+@FORUMS_BLUEPRINT.route("/<int:forum_id>/unsubscribe", methods=['PATCH'])
 @token_required
 def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:    
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
@@ -749,7 +749,7 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
     
     return jsonify({'message' : 'Forum unsibscribed!'}), 202
 
-@forum.route("/<int:forum_id>", methods=["PATCH"])
+@FORUMS_BLUEPRINT.route("/<int:forum_id>", methods=["PATCH"])
 @enforce_json
 @token_required
 def edit_forum(forum_id: int) -> tuple[Response, int]:
@@ -805,7 +805,7 @@ def edit_forum(forum_id: int) -> tuple[Response, int]:
     hset_with_ttl(RedisInterface, cache_key, forum_mapping, RedisConfig.TTL_WEAK)
     return jsonify({'message' : 'Forum edited succesfully', 'forum' : forum_mapping}), 200
 
-@forum.route("/<int:forum_id>/highlight-post", methods=['PATCH'])
+@FORUMS_BLUEPRINT.route("/<int:forum_id>/highlight-post", methods=['PATCH'])
 @token_required
 def add_highlight_post(forum_id: int) -> tuple[Response, int]:
     postID: str = request.args.get('post')
@@ -845,7 +845,7 @@ def add_highlight_post(forum_id: int) -> tuple[Response, int]:
     
     return jsonify({'message' : 'Post highlighted'}), 200
 
-@forum.route("/<int:forum_id>/highlight-post", methods=['DELETE'])
+@FORUMS_BLUEPRINT.route("/<int:forum_id>/highlight-post", methods=['DELETE'])
 @token_required
 def remove_highlight_post(forum_id: int) -> tuple[Response, int]:
     postID: str = request.args.get('post')

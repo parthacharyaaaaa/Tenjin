@@ -1,8 +1,6 @@
 from flask import Blueprint, jsonify, current_app, g
 from werkzeug import Response
 from werkzeug.exceptions import BadRequest
-misc = Blueprint('Misc', 'misc', url_prefix="/")
-
 from resource_server.models import UserTicket
 from auxillary.decorators import enforce_json
 from resource_server.resource_decorators import pass_user_details
@@ -11,11 +9,13 @@ from resource_server.external_extensions import RedisInterface
 import re
 from datetime import datetime
 
-@misc.route('/genres', methods=['GET'])
+MISC_BLUEPRINT: Blueprint = Blueprint('Misc', 'misc', url_prefix="/")
+
+@MISC_BLUEPRINT.route('/genres', methods=['GET'])
 def get_genres() -> tuple[Response, int]:
     return jsonify(dict(current_app.config['GENRES'])), 200
 
-@misc.route('/ticket', methods=['POST'])
+@MISC_BLUEPRINT.route('/ticket', methods=['POST'])
 @enforce_json
 @pass_user_details
 def issue_ticket() -> tuple[Response, int]:

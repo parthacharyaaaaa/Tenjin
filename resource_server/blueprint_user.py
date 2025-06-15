@@ -19,9 +19,9 @@ from uuid import uuid4
 import base64
 from hashlib import sha256
 
-user = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/users")
+USERS_BLUEPRINT: Blueprint = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/users")
 
-@user.route("/", methods=["POST"])
+@USERS_BLUEPRINT.route("/", methods=["POST"])
 # @private
 @enforce_json
 def register() -> tuple[Response, int]:
@@ -85,7 +85,7 @@ def register() -> tuple[Response, int]:
                     "email" : USER_DETAILS["email"], 
                     **response_kwargs}), 201
  
-@user.route("/", methods=["DELETE"])
+@USERS_BLUEPRINT.route("/", methods=["DELETE"])
 @enforce_json
 def delete_user() -> tuple[Response, int]:
     if not (g.REQUEST_JSON.get("username") and
@@ -136,9 +136,9 @@ def delete_user() -> tuple[Response, int]:
     finally:
         RedisInterface.delete(lock_key)
     
-    return jsonify({"message" : "account deleted succesfully", "username" : user.username, "time_deleted" : user.time_deleted}), 203
+    return jsonify({"message" : "account deleted succesfully", "username" : targetUser.username, "time_deleted" : targetUser.time_deleted}), 203
 
-@user.route("/recover", methods=["PATCH"])
+@USERS_BLUEPRINT.route("/recover", methods=["PATCH"])
 @enforce_json
 def recover_user() -> Response:
     if not (g.REQUEST_JSON.get("identity") and g.REQUEST_JSON.get("password")):
@@ -213,7 +213,7 @@ def recover_user() -> Response:
                    "user" : user_mapping,
                    "_links" : {"login" : {"href" : url_for(".login")}}}), 200
 
-@user.route("/recover-password", methods = ["POST"])
+@USERS_BLUEPRINT.route("/recover-password", methods = ["POST"])
 @enforce_json
 def recover_password() -> Response:
     if not g.REQUEST_JSON.get('identity'):
@@ -248,7 +248,7 @@ def recover_password() -> Response:
     enqueueEmail(RedisInterface, email=recoveryAccount.email, subject="password", username=recoveryAccount.username, password_recovery_link=url_for('templates.recover_password', _external=True, digest=temp_url))
     return jsonify({"message" : "An email has been sent to account"}), 200    
 
-@user.route("/update-password/<string:temp_url>", methods=["PATCH"])
+@USERS_BLUEPRINT.route("/update-password/<string:temp_url>", methods=["PATCH"])
 @enforce_json
 def update_password(temp_url: str) -> Response:
     if len(temp_url) < 15:
@@ -293,7 +293,7 @@ def update_password(temp_url: str) -> Response:
     return jsonify({"message" : "password updated succesfully",
                     "_links" : {"login" : {"href" : url_for("templates.login")}}})
 
-@user.route("/<int:user_id>", methods=["GET"])
+@USERS_BLUEPRINT.route("/<int:user_id>", methods=["GET"])
 def get_user(user_id: int) -> tuple[Response, int]:
     cacheKey: str = f'user:{user_id}'
     userMapping: dict[str, str|int] = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION,RedisConfig.TTL_EPHEMERAL)
@@ -330,7 +330,7 @@ def get_user(user_id: int) -> tuple[Response, int]:
     hset_with_ttl(RedisInterface, cacheKey, userMapping, RedisConfig.TTL_STRONG)
     return jsonify({'user' : userMapping}), 200
 
-@user.route('/<int:user_id>/posts')
+@USERS_BLUEPRINT.route('/<int:user_id>/posts')
 def get_user_posts(user_id: int) -> tuple[Response, int]:
     try:
         rawCursor = request.args.get('cursor', '0').strip()
@@ -427,7 +427,7 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
 
     return jsonify({'posts' : _posts, 'cursor' : nextCursor, 'end' : end})
 
-@user.route('/<int:user_id>/forums')
+@USERS_BLUEPRINT.route('/<int:user_id>/forums')
 def get_user_forums(user_id: int) -> tuple[Response, int]:
     try:
         rawCursor = request.args.get('cursor', '0').strip()
@@ -515,7 +515,7 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
     
     return jsonify({'forums' : _forums, 'cursor' : newCursor, 'end' : end})
 
-@user.route('/<int:user_id>/animes')
+@USERS_BLUEPRINT.route('/<int:user_id>/animes')
 def get_user_animes(user_id: int) -> tuple[Response, int]:
     try:
         rawCursor = request.args.get('cursor', '0').strip()
@@ -584,7 +584,7 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
     cache_grouped_resource(RedisInterface, cacheKey, 'anime', {anime['id']:anime for anime in _animes}, RedisConfig.TTL_WEAK, RedisConfig.TTL_STRONG, newCursor, end)
     return jsonify({'animes' : _animes, 'cursor' : newCursor, 'end' : end})
 
-@user.route("/login", methods=["POST"])
+@USERS_BLUEPRINT.route("/login", methods=["POST"])
 # @private
 @enforce_json
 def login() -> Response:
@@ -637,7 +637,7 @@ def login() -> Response:
                     "sub" : user.username,
                     "sid" : user.id}), 200
 
-@user.route('/<int:user_id>/enable-rtbf', methods=['PATCH'])
+@USERS_BLUEPRINT.route('/<int:user_id>/enable-rtbf', methods=['PATCH'])
 @enforce_json
 @token_required
 def enable_rtbf(user_id: int) -> tuple[Response, int]:
@@ -666,7 +666,7 @@ def enable_rtbf(user_id: int) -> tuple[Response, int]:
     
     return jsonify({'Message' : 'RTBF Enabled'}), 200
 
-@user.route('/<int:user_id>/disable-rtbf', methods=['PATCH'])
+@USERS_BLUEPRINT.route('/<int:user_id>/disable-rtbf', methods=['PATCH'])
 @enforce_json
 @token_required
 def disable_rtbf(user_id: int) -> tuple[Response, int]:

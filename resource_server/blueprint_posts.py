@@ -17,9 +17,9 @@ import base64
 import binascii
 from datetime import datetime
 
-post = Blueprint("post", "post", url_prefix="/posts")
+POSTS_BLUEPRINT: Blueprint = Blueprint("post", "post", url_prefix="/posts")
 
-@post.route("/", methods=["POST", ])
+@POSTS_BLUEPRINT.route("/", methods=["POST", ])
 @enforce_json
 @token_required
 def create_post() -> tuple[Response, int]:
@@ -61,7 +61,7 @@ def create_post() -> tuple[Response, int]:
 
     return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
 
-@post.route("/<int:post_id>", methods=["GET"])
+@POSTS_BLUEPRINT.route("/<int:post_id>", methods=["GET"])
 @pass_user_details
 def get_post(post_id : int) -> tuple[Response, int]:
     cacheKey: str = f'{Post.__tablename__}:{post_id}'
@@ -153,7 +153,7 @@ def get_post(post_id : int) -> tuple[Response, int]:
 
     return jsonify(res), 200
 
-@post.route("/<int:post_id>", methods=["PATCH"])
+@POSTS_BLUEPRINT.route("/<int:post_id>", methods=["PATCH"])
 @enforce_json
 @token_required
 def edit_post(post_id : int) -> tuple[Response, int]:
@@ -235,7 +235,7 @@ def edit_post(post_id : int) -> tuple[Response, int]:
                     "post" : post_mapping,
                     **update_kw, **additional_kw}), 202
 
-@post.route("/<int:post_id>", methods=["DELETE"])
+@POSTS_BLUEPRINT.route("/<int:post_id>", methods=["DELETE"])
 @token_required
 def delete_post(post_id: int) -> Response:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
@@ -302,7 +302,7 @@ def delete_post(post_id: int) -> Response:
     hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
     return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, forum_name = redirectionForum)}), 202
 
-@post.route("/<int:post_id>/vote", methods=["PATCH"])
+@POSTS_BLUEPRINT.route("/<int:post_id>/vote", methods=["PATCH"])
 @token_required
 def vote_post(post_id: int) -> tuple[Response, int]:
     try:
@@ -388,7 +388,7 @@ def vote_post(post_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Vote casted!"}), 202
 
-@post.route("/<int:post_id>/unvote", methods=["PATCH"])
+@POSTS_BLUEPRINT.route("/<int:post_id>/unvote", methods=["PATCH"])
 @token_required
 def unvote_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
@@ -452,7 +452,7 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Removed vote!", 'delta' : delta}), 202
 
-@post.route("/<int:post_id>/save", methods=["PATCH"])
+@POSTS_BLUEPRINT.route("/<int:post_id>/save", methods=["PATCH"])
 @token_required
 def save_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
@@ -515,7 +515,7 @@ def save_post(post_id: int) -> tuple[Response, int]:
         RedisInterface.delete(lock_key)
     return jsonify({"message" : "Post saved!"}), 202
 
-@post.route("/<int:post_id>/unsave", methods=["PATCH"])
+@POSTS_BLUEPRINT.route("/<int:post_id>/unsave", methods=["PATCH"])
 @token_required
 def unsave_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
@@ -573,7 +573,7 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Removed from saved posts"}), 202
 
-@post.route("/<int:post_id>/report", methods=['POST'])
+@POSTS_BLUEPRINT.route("/<int:post_id>/report", methods=['POST'])
 @token_required
 @enforce_json
 def report_post(post_id: int) -> tuple[Response, int]:
@@ -654,7 +654,7 @@ def report_post(post_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Post reported!", 'reason' : report_tag, 'description' : report_desc}), 202
 
-@post.route("/<int:post_id>/comment", methods=['POST'])
+@POSTS_BLUEPRINT.route("/<int:post_id>/comment", methods=['POST'])
 @enforce_json
 @token_required
 def comment_on_post(post_id: int) -> tuple[Response, int]:
@@ -695,7 +695,7 @@ def comment_on_post(post_id: int) -> tuple[Response, int]:
     RedisInterface.xadd('INSERTIONS', rediserialize(comment.__attrdict__()) | {'table' : Comment.__tablename__})
     return jsonify({'message' : 'comment added!', 'body' : body, 'author' : g.DECODED_TOKEN['sub'], 'time' : comment.time_created.isoformat()}), 202
 
-@post.route('/<int:post_id>/comments')
+@POSTS_BLUEPRINT.route('/<int:post_id>/comments')
 def get_post_comments(post_id: int) -> tuple[Response, int]:
     try:
         rawCursor = request.args.get('cursor', '0').strip()

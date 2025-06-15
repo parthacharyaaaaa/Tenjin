@@ -38,18 +38,18 @@ def create_app() -> Flask:
     init_redis(**redis_config_kwargs)
 
     ### Blueprints registaration ###
-    from resource_server.blueprint_forum import forum
-    from resource_server.blueprint_user import user
-    from resource_server.blueprint_posts import post
-    from resource_server.blueprint_comments import comments_bp
-    from resource_server.blueprint_animes import anime
-    from resource_server.blueprint_misc import misc
-    app.register_blueprint(forum)
-    app.register_blueprint(user)
-    app.register_blueprint(post)
-    app.register_blueprint(anime)
-    app.register_blueprint(misc)
-    app.register_blueprint(comments_bp)
+    from resource_server.blueprint_forum import FORUMS_BLUEPRINT
+    from resource_server.blueprint_user import USERS_BLUEPRINT
+    from resource_server.blueprint_posts import POSTS_BLUEPRINT
+    from resource_server.blueprint_comments import COMMENTS_BLUEPRINT
+    from resource_server.blueprint_animes import ANIMES_BLUEPRINT
+    from resource_server.blueprint_misc import MISC_BLUEPRINT
+    app.register_blueprint(FORUMS_BLUEPRINT)
+    app.register_blueprint(USERS_BLUEPRINT)
+    app.register_blueprint(POSTS_BLUEPRINT)
+    app.register_blueprint(ANIMES_BLUEPRINT)
+    app.register_blueprint(MISC_BLUEPRINT)
+    app.register_blueprint(COMMENTS_BLUEPRINT)
 
     ### Additional CLI commands ###
    # Instantiate the database
