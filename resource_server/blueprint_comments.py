@@ -162,6 +162,78 @@ def vote_comment(comment_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Vote casted!"}), 202
 
+@COMMENTS_BLUEPRINT.route("/<int:comment_id>/unvote", methods=["DELETE"])
+@token_required
+def unvote_comment(comment_id: int) -> tuple[Response, int]:    
+    cache_key: str = f'{Comment.__tablename__}:{comment_id}'
+    # Verify comment's existence first
+    comment_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=comment_id, resource_name=Comment.__tablename__, cache_key=cache_key, deletion_flag_key=f'delete:{cache_key}')
+    
+    # Verify that this unvote request is not duplicate
+    flag_key: str = f'{CommentVote}:{g.DECODED_TOKEN["sid"]}:{comment_id}'
+    lock_key: str = f'lock:{flag_key}'
+    with RedisInterface.pipeline(transaction=False) as pipe:
+        pipe.get(flag_key)
+        pipe.get(lock_key)
+        latest_intent, lock = pipe.execute()
+    
+    if lock or latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG: # Race condition, or latest intent is same as the intent carried by this request. Reject
+        raise Conflict(f'A request for this action is currently enqueued')
+    
+    # Consult DB in case of partial/no information being read from cache
+    previous_vote: bool = True if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG else False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG else None
+    try:
+        if not (comment_mapping or latest_intent):
+            # Complete cache miss, read state from DB
+            joined_result: Row = db.session.execute(select(Comment, CommentVote.vote)
+                                                    .outerjoin(CommentVote, (CommentVote.voter_id == g.DECODED_TOKEN['sid']) & (CommentVote.comment_id == Comment.id))
+                                                    .where((Comment.id == comment_id) &
+                                                           (Comment.deleted.is_(False)) &
+                                                           (Comment.rtbf_hidden.isnot(True)))
+                                                    ).first()
+            if joined_result:
+                comment_mapping: dict[str, str|int] = joined_result[0].__json_like__()
+                previous_vote = joined_result[1]
+        elif not comment_mapping:
+            comment: Comment = db.session.execute(select(Comment)
+                                                  .where((Comment.id == comment_id) &
+                                                         (Comment.deleted.is_(False)) &
+                                                         (Comment.rtbf_hidden.isnot(True)))
+                                                  ).scalar_one_or_none()
+            if comment:
+                comment_mapping: dict[str, Any] = comment.__json_like__()
+        elif not latest_intent:
+            previous_vote: bool = db.session.execute(select(CommentVote.vote)
+                                                     .where((CommentVote.voter_id == g.DECODED_TOKEN['sid']) & (CommentVote.comment_id == comment_id))
+                                                     ).scalar_one_or_none()
+    except SQLAlchemyError: genericDBFetchException()
+    if not comment_mapping:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+        raise NotFound(f'No comment with ID {comment_id} exists')
+    if previous_vote is None:
+        raise Conflict(f'No vote casted on this comment (ID: {comment_id})')
+    delta: int = -1 if previous_vote else 1
+
+    # All checks passed, set lock
+    lock = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock:
+        # Failing to acquire lock means another worker is performing this same request, treat this request as a duplicate
+        raise Conflict(f'A request for this action is currently enqueued')
+    try:
+        # Update global counters for this post's score, and user's aura
+        update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Comment.__tablename__, column='score', identifier=comment_id)
+        update_global_counter(interface=RedisInterface, delta=delta, database=db, table=User.__tablename__, column='aura', identifier=comment_mapping.get('author_id'))
+
+        # Write intent as vote type and append insertion to stream
+        with RedisInterface.pipeline(transaction=False) as pipe:
+            pipe.xadd('WEAK_DELETIONS', fields={"voter_id" : g.DECODED_TOKEN['sid'], "comment_id" : comment_id, 'table' : CommentVote.__tablename__})
+            pipe.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+            pipe.execute()
+    finally:
+        RedisInterface.delete(lock_key)
+    
+    return jsonify({"message" : "Vote removed!"}), 202
+
 @COMMENTS_BLUEPRINT.route("/<int:comment_id>/report", methods=['POST'])
 @token_required
 @enforce_json
