@@ -41,6 +41,7 @@ def create_app() -> Flask:
     from resource_server.blueprint_forum import forum
     from resource_server.blueprint_user import user
     from resource_server.blueprint_posts import post
+    from resource_server.blueprint_comments import comments_bp
     from resource_server.blueprint_animes import anime
     from resource_server.blueprint_misc import misc
     app.register_blueprint(forum)
@@ -48,6 +49,7 @@ def create_app() -> Flask:
     app.register_blueprint(post)
     app.register_blueprint(anime)
     app.register_blueprint(misc)
+    app.register_blueprint(comments_bp)
 
     ### Additional CLI commands ###
    # Instantiate the database
