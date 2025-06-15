@@ -149,7 +149,7 @@ class User(db.Model):
     )
 
     def __repr__(self) -> str:
-        return f"<User({self.id}, {self.username}, {self.aura}, {self._alias}, {self.email}, {self.total_posts}, {self.total_comments}, {self.date_joined.strftime('%d/%m/%y, %H:%M:%S')}, {self.last_login.strftime('%d/%m/%y, %H:%M:%S')})>"
+        return f"<User({self.id}, {self.username}, {self.aura}, {self.email}, {self.total_posts}, {self.total_comments}, {self.time_joined.isoformat()}, {None if not self.last_login else self.last_login.isoformat()})>"
     
     def __json_like__(self) -> dict[str, str|int]:
         return {"id": self.id,
@@ -157,8 +157,8 @@ class User(db.Model):
                 "aura": self.aura,
                 "posts": self.total_posts,
                 "comments": self.total_comments,
-                "epoch": self.time_joined.strftime('%d/%m/%y, %H:%M:%S'),
-                "last_login": self.last_login.strftime('%d/%m/%y, %H:%M:%S')}
+                "epoch": self.time_joined.isoformat(),
+                "last_login": self.last_login.isoformat()}
 
 @dataclass
 class UserTicket(db.Model):
@@ -275,7 +275,7 @@ class Forum(db.Model):
         self.deleted = False; self.time_deleted = None
     
     def __repr__(self) -> str:
-        return f"<Forum({self.id}, {self._name}, {self.description}, {self.subscribers}, {self.posts}, {self.highlight_post_1}, {self.highlight_post_2}, {self.highlight_post_3}, {self.created_at.strftime('%d/%m/%y, %H:%M:%S'), {self.admin_count}})>"
+        return f"<Forum({self.id}, {self._name}, {self.description}, {self.subscribers}, {self.posts}, {self.highlight_post_1}, {self.highlight_post_2}, {self.highlight_post_3}, {self.created_at.isoformat(), {self.admin_count}})>"
     
     def __json_like__(self) -> dict[str, str|int]:
         return {"id": self.id,
@@ -286,7 +286,7 @@ class Forum(db.Model):
                 "highlight_1": self.highlight_post_1,
                 "highlight_2": self.highlight_post_2,
                 "highlight_3": self.highlight_post_3,
-                "epoch": self.created_at.strftime('%d/%m/%y, %H:%M:%S'), 
+                "epoch": self.created_at.isoformat(), 
                 "admin_count": self.admin_count}
 
 class ForumRules(db.Model):
@@ -317,7 +317,7 @@ class ForumRules(db.Model):
         self.time_created = time_created or datetime.now()
 
     def __repr__(self) -> str:
-        return f"<Forum_Rules(f{self.forum_id}, {self.rule_number}, {self.title if len(self.title) < 16 else self.title[:16]+'...'}, {self.body if len(self.body) < 16 else self.body[:16]+'...'}, {self.author}, {self.time_created.strftime('%d/%m/%y, %H:%M:%S')})>"
+        return f"<Forum_Rules(f{self.forum_id}, {self.rule_number}, {self.title if len(self.title) < 16 else self.title[:16]+'...'}, {self.body if len(self.body) < 16 else self.body[:16]+'...'}, {self.author}, {self.time_created.isoformat()})>"
     
     def __json_like__(self) -> dict:
         return {"forum_id": self.forum_id,
@@ -325,7 +325,7 @@ class ForumRules(db.Model):
                 "title": self.title,
                 "body": self.body,
                 "author": self.author,
-                "epoch": self.time_created.strftime('%d/%m/%y, %H:%M:%S')}
+                "epoch": self.time_created.isoformat()}
 
 class Post(db.Model):
     __tablename__ = "posts"
@@ -376,7 +376,7 @@ class Post(db.Model):
     )
 
     def __repr__(self) -> str:
-        return f"<Post({self.id}, {self.author_id}, {self.forum_id}, {self.score}, {self.total_comments}, {self.title if len(self.title) < 16 else self.title[:16] + '...'}, {self.body_text if len(self.body_text) < 32 else self.body_text[:32]+'...'}, {self.flair}, {self.closed}, {self.time_posted.strftime('%d/%m/%y, %H:%M:%S')}, {self.saves}, {self.reports})>"
+        return f"<Post({self.id}, {self.author_id}, {self.forum_id}, {self.score}, {self.total_comments}, {self.title if len(self.title) < 16 else self.title[:16] + '...'}, {self.body_text if len(self.body_text) < 32 else self.body_text[:32]+'...'}, {self.flair}, {self.closed}, {self.time_posted.isoformat()}, {self.saves}, {self.reports})>"
     
     def __json_like__(self) -> dict[str, str|int]:
         return {"id": self.id,
@@ -428,12 +428,12 @@ class Comment(db.Model):
         self.time_deleted = None
 
     def __repr__(self) -> str:
-        return f"<Comment({self.id}, {self.author_id}, {self.parent_forum}, {self.time_created.strftime('%d/%m/%y, %H:%M:%S')}, {self.body}, {self.parent_post}, {self.reports})>"
+        return f"<Comment({self.id}, {self.author_id}, {self.parent_forum}, {self.time_created.isoformat()}, {self.body}, {self.parent_post}, {self.reports})>"
     
     def __json_like__(self) -> dict[str, str|int]:
         return {"id": self.id,
                 "author_id": self.author_id,
                 "parent_forum": self.parent_forum,
-                "time_created": self.time_created.strftime('%d/%m/%y, %H:%M:%S'),
+                "time_created": self.time_created.isoformat(),
                 "body": self.body,
                 "parent_post": self.parent_post}
