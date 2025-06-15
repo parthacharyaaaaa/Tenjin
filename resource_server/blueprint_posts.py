@@ -559,43 +559,31 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
 def report_post(post_id: int) -> tuple[Response, int]:
     # NOTE: A user can report a post only once for a given reason (based on ReportTag enum). Because of this, the locking+intent logic here would include the report tag as well    
     try:
-        reportDescription: str = str(g.REQUEST_JSON.get('desc'))
+        report_desc: str = str(g.REQUEST_JSON.get('desc'))
         report_tag: str = str(g.REQUEST_JSON.get('tag'))
-        if not (reportDescription and report_tag):
+        if not (report_desc and report_tag):
             raise BadRequest('Report request must contain description and a valid report reason')
         
-        reportDescription = reportDescription.strip()
+        report_desc = report_desc.strip()
         report_tag = report_tag.strip().lower()
 
         if not ReportTags.check_membership(report_tag):
             raise BadRequest('Invalid report tag')
     except (ValueError, TypeError):
-        raise BadRequest("Malformatted report request")
+        raise BadRequest("Malformed report request")
     
     # Incoming request valid at face value, now check Redis for state
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     flag_key: str = f'{PostReport.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}:{report_tag}'    # It is important to include report tag here to differentiate between same reports with different tags
     lock_key: str = f'lock:{flag_key}'
-    with RedisInterface.pipeline() as pipe:
-        pipe.hgetall(cache_key)
-        pipe.get(flag_key)
-        pipe.get(lock_key)
-        post_mapping, latest_intent, lock = pipe.execute()
 
-    if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:    # Post doesn't exist
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
-        raise NotFound(f'No post with ID {post_id} exists')
-    
-    if lock or latest_intent:   # Either another worker is performing the same action (Same user, reporting the same post for the same reason) or this action is already in queue for the same reason
-        raise Conflict(f'A request for this action is currently enqueued')
-    
-    # Attempt to set lock for this action
+    post_mapping, latest_intent = posts_cache_precheck(client=RedisInterface, post_id=post_id, post_cache_key=cache_key, post_deletion_intent_flag=f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key)
+    # Cache precheck passed, attempt to set lock for this action
     lock = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
     if not lock:
         # Failing to acquire lock means another worker is performing this same request, treat this request as a duplicate
         raise Conflict(f'A request for this action is currently enqueued')
     
-    post_exists: bool = bool(post_mapping)
     priorReport: PostReport = None
     try:
         if not (post_mapping or latest_intent):
@@ -613,12 +601,16 @@ def report_post(post_id: int) -> tuple[Response, int]:
                                              ).scalar_one_or_none()
             
         elif not post_mapping:
-            post_exists = bool(db.session.execute(select(Post.id)
-                                                  .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
-                                                  ).scalar_one_or_none())
+            post: Post = db.session.execute(select(Post.id)
+                                            .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
+                                            ).scalar_one_or_none()
+            if post: post_mapping: dict[str, Any] = post.__json_like__()
     except SQLAlchemyError: 
         RedisInterface.delete(lock_key)
         genericDBFetchException()
+    except Exception as e:
+        RedisInterface.delete(lock_key)
+        raise e
     
     if not post_exists:
         RedisInterface.delete(lock_key)
@@ -633,32 +625,32 @@ def report_post(post_id: int) -> tuple[Response, int]:
     try:
         # Incremenet global counter for reports on this post and insert record into post_reports
         update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='reports', identifier=post_id)
-        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_CREATION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
-                                                  Pipeline.xadd : {'name' : 'WEAK_INSERTIONS', 'fields' : {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_tag' : report_tag, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'table' : PostReport.__tablename__}}})
+        with RedisInterface.pipeline() as pipe:
+            pipe.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)    # Flag value is irrelevant here since existence alone is used in cache prechecks, included only for consistency
+            pipe.xadd('WEAK_INSERTIONS', {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_tag' : report_tag, 'report_time' : datetime.now().isoformat(), 'report_description' : report_desc, 'table' : PostReport.__tablename__})
+            pipe.execute()
     finally:
         RedisInterface.delete(lock_key)
-        
-    return jsonify({"message" : "Post reported!"}), 202
+    
+    return jsonify({"message" : "Post reported!", 'reason' : report_tag, 'description' : report_desc}), 202
 
 @post.route("/<int:post_id>/comment", methods=['POST'])
 @enforce_json
 @token_required
-def comment_on_post(post_id: int) -> tuple[Response, int]:
+def comment_on_post(post_id: int) -> tuple[Response, int]: 
     commentBody = g.REQUEST_JSON.get('body')
-    if not commentBody:
-        raise BadRequest("Comment body missing")
+    if not commentBody: raise BadRequest("Comment body missing")
     
     if not isinstance(commentBody, str):
-        try:
-            commentBody = str(commentBody)
-        except:
-            raise BadRequest('Invalid comment body')
+        try: commentBody = str(commentBody)
+        except: raise BadRequest('Invalid comment body')
             
     try:
         post: Post = db.session.execute(select(Post)
                                         .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
                                         ).scalar_one_or_none()
         if not post:
+            hset_with_ttl(RedisInterface, )
             raise NotFound('No such post exists')
     except SQLAlchemyError: genericDBFetchException()
     comment: Comment = Comment(g.DECODED_TOKEN['sid'], post.forum_id, datetime.now(), commentBody.strip(), post_id, None, None)
@@ -874,12 +866,12 @@ def vote_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
 def report_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
     # NOTE: A user can report a comment only once for a given reason (based on ReportTag enum). Because of this, the locking+intent logic here would include the report tag as well    
     try:
-        reportDescription: str = str(g.REQUEST_JSON.get('desc'))
+        report_desc: str = str(g.REQUEST_JSON.get('desc'))
         report_tag: str = str(g.REQUEST_JSON.get('tag'))
-        if not (reportDescription and report_tag):
+        if not (report_desc and report_tag):
             raise BadRequest('Report request must contain description and a valid report reason')
         
-        reportDescription = reportDescription.strip()
+        report_desc = report_desc.strip()
         report_tag = report_tag.strip().lower()
 
         if not ReportTags.check_membership(report_tag):
@@ -989,7 +981,7 @@ def report_comment(post_id: int, comment_id: int) -> tuple[Response, int]:
         update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='reports', identifier=post_id)
         # Write intent as creation for this report, and append weak insertion entry to stream
         pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : comment_flag_key, 'value' : RedisConfig.RESOURCE_CREATION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
-                                                  Pipeline.xadd : {'name' : 'WEAK_INSERTIONS', 'fields' : {"user_id" : g.DECODED_TOKEN['sid'], "comment_id" : comment_id, 'report_tag' : report_tag, 'report_time' : datetime.now().isoformat(), 'report_description' : reportDescription, 'table' : CommentReport.__tablename__}}})
+                                                  Pipeline.xadd : {'name' : 'WEAK_INSERTIONS', 'fields' : {"user_id" : g.DECODED_TOKEN['sid'], "comment_id" : comment_id, 'report_tag' : report_tag, 'report_time' : datetime.now().isoformat(), 'report_description' : report_desc, 'table' : CommentReport.__tablename__}}})
     finally:
         RedisInterface.delete(lock_key)
         
