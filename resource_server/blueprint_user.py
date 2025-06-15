@@ -1,7 +1,7 @@
 '''Blueprint module for all actions related to resource: users'''
 from flask import Blueprint, g, request, jsonify, current_app, url_for
 from werkzeug import Response
-from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized, Forbidden
+from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized, Forbidden, Gone
 from auxillary.decorators import enforce_json
 from auxillary.utils import hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
 from resource_server.resource_auxillary import processUserInfo, fetch_global_counters, pipeline_exec
@@ -601,19 +601,36 @@ def login() -> Response:
     else:
         if not 5 < len(identity) <= 64:
             raise BadRequest("Provided username must be between 5 and 64 characters long")
-
-    user: User = db.session.execute(select(User)
-                                    .where((User.email == identity if isEmail else User.username == identity) & (User.deleted.is_(False)))
-                                    .with_for_update()
-                                    ).scalar_one_or_none()
+    # NOTE: We can't do a cache precheck since that requires user ID, and we don't have that yet
+    try:
+        user: User = db.session.execute(select(User)
+                                        .where((User.email == identity if isEmail else User.username == identity) & (User.deleted.is_(False)))
+                                        .with_for_update()
+                                        ).scalar_one_or_none()
+    except SQLAlchemyError: genericDBFetchException()
     if not user:
         raise NotFound(f"No user with {'email' if isEmail else 'username'} {identity} could be found")
+    
+    # Even if account found, check cache for deletion intent
+    deletion_intent_flag: str = f'alive_status:{user.id}'
+    deletion_intent = RedisInterface.get(deletion_intent_flag)
+    if deletion_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG:
+        gone: Gone = Gone('This account has been deleted. If you wish to undo this, please visit account recovery')
+        gone.kwargs = {'links' : {'account recovery' : {'_href' : url_for('.recover_user', _external=True)}}}
+        raise gone
+    # Account exists and is not queued for deletion
     if not verify_password(g.REQUEST_JSON['password'], user.pw_hash, user.pw_salt):
         raise Unauthorized("Incorrect password")
     
     epoch = datetime.now()
-    db.session.execute(update(User).where(User.id == user.id).values(last_login = epoch))
-    db.session.commit()
+    try:
+        db.session.execute(update(User)
+                           .where(User.id == user.id)
+                           .values(last_login = epoch))
+        db.session.commit()
+    except:
+        db.session.rollback()
+        raise InternalServerError('Failed to login, please try again later')
 
     # Communicate with auth server
     return jsonify({"message" : "authorization successful",
