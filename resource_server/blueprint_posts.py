@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, g, url_for, request
 from werkzeug import Response
-from werkzeug.exceptions import NotFound, BadRequest, Forbidden, Conflict, Gone
+from werkzeug.exceptions import NotFound, BadRequest, Forbidden, Conflict, Gone, InternalServerError
 from sqlalchemy import select, update, delete, Row
 from sqlalchemy.exc import SQLAlchemyError
 from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostReport, PostVote, Comment, ReportTags, CommentVote, CommentReport
@@ -287,12 +287,9 @@ def delete_post(post_id: int) -> Response:
 def vote_post(post_id: int) -> tuple[Response, int]:
     try:
         vote: int = int(request.args['type'])
-        if vote != 0 and vote != 1:
-            raise BadRequest("Invalid vote value (Should be 0 (downvote) or 1 (upvote))")
-    except KeyError:
-        raise BadRequest("Vote type (upvote/downvote) not specified")
-    except ValueError:
-        raise BadRequest("Invalid vote value (Should be 0 (downvote) or 1 (upvote))")
+        if vote != 0 and vote != 1: raise BadRequest("Invalid vote value (Should be 0 (downvote) or 1 (upvote))")
+    except KeyError: raise BadRequest("Vote type (upvote/downvote) not specified")
+    except ValueError: raise BadRequest("Invalid vote value (Should be 0 (downvote) or 1 (upvote))")
     
     # Request valid at the surface level
     incoming_intent: str = RedisConfig.RESOURCE_CREATION_PENDING_FLAG if vote == 1 else RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG  # Alt flag is special value for downvotes. We need this here because a downvote is still resource creation, but different than an upvote obviously
@@ -300,23 +297,15 @@ def vote_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     flag_key: str = f'{PostVote.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
     lock_key: str = f'lock:{RedisConfig.RESOURCE_CREATION_PENDING_FLAG}:{flag_key}'
-
-    with RedisInterface.pipeline() as pipe:
-        pipe.hgetall(cache_key)
-        pipe.get(flag_key)
-        pipe.get(lock_key)
-        post_mapping, latest_intent, lock = pipe.execute()
-
-    if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
-        raise NotFound(f'No post with ID {post_id} exists')
-    if lock or latest_intent == incoming_intent: # Race condition, or latest intent is same as the intent carried by this request. Reject
-        raise Conflict(f'A request for this action is currently enqueued')
+    post_mapping, latest_intent = posts_cache_precheck(client=RedisInterface, post_id=post_id, post_cache_key=cache_key, post_deletion_intent_flag=f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key, conflicting_intent=incoming_intent)
+    
+    previous_vote: bool = True if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG else False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG else None
+    lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_EPHEMERAL, nx=True)
+    if not lock_set: raise Conflict('Another worker is already performing this action')
     
     # Consult DB in case of partial/no information being read from cache
-    previous_vote: bool = True if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG else False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG else None
     try:
-        if not (post_mapping or latest_intent):
+        if not (post_mapping or previous_vote):
             # Complete cache miss, read state from DB
             joined_result: Row = db.session.execute(select(Post, PostVote.vote)
                                                     .outerjoin(PostVote, (PostVote.post_id == post_id) & (PostVote.voter_id == g.DECODED_TOKEN['sid']))
@@ -326,43 +315,54 @@ def vote_post(post_id: int) -> tuple[Response, int]:
                 post_mapping: dict[str, str|int] = joined_result[0].__json_like__()
                 previous_vote = joined_result[1]
         elif previous_vote is None:
-            previous_vote = bool(db.session.execute(select(PostVote)
+            previous_vote = bool(db.session.execute(select(PostVote.vote)
                                                     .where((PostVote.voter_id == g.DECODED_TOKEN['sid']) & (PostVote.post_id == post_id))
                                                     ).scalar_one_or_none())
         elif not post_mapping:
             post: Post = db.session.execute(select(Post)
                                             .where((Post.id == post_id) & (Post.deleted.is_(False)) & (Post.rtbf_hidden.isnot(True)))
                                             ).scalar_one_or_none()
-            if post:
-                post_mapping = post.__json_like__()
-    except SQLAlchemyError: genericDBFetchException()
+            if post: post_mapping = post.__json_like__()
+    except SQLAlchemyError: 
+        RedisInterface.delete(lock_key)
+        genericDBFetchException()
+    except Exception as e: 
+        RedisInterface.delete(lock_key)
+        raise e
+    
     if not post_mapping:
         hset_with_ttl(RedisInterface, f'{Post.__tablename__}:{post_id}', {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+        RedisInterface.delete(lock_key)
         raise NotFound(f'No post with ID {post_id} exists')
-    if ((previous_vote and incoming_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG) or 
-        (previous_vote is False and incoming_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG)):
-            raise Conflict(f'Post already {"upvoted" if vote else "downvoted"}')
+    if ((previous_vote and incoming_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG) or (previous_vote is False and incoming_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG)):
+        RedisInterface.delete(lock_key)
+        raise Conflict(f'Post already {"upvoted" if vote else "downvoted"}')
 
     if previous_vote is not None:
         # At this stage, if a previous vote exists then the current intent is the opposite
         delta = 2
-        db.session.execute(delete(PostReport)
-                           .where((PostReport.user_id == g.DECODED_TOKEN['sid']) & (PostReport.post_id == post_id)))
-        db.session.commit()
+        try:
+            db.session.execute(delete(PostVote)
+                               .where((PostVote.voter_id == g.DECODED_TOKEN['sid']) & (PostVote.post_id == post_id)))
+            db.session.commit()
+        except SQLAlchemyError: 
+            RedisInterface.delete(lock_key)
+            db.session.rollback()
+            raise InternalServerError('Failed to case vote on this post, please try again sometime later')
+        except Exception as e: 
+            RedisInterface.delete(lock_key)
+            raise e
 
     if not vote: delta*=-1  # Negative vote for downvote
-    # All checks passed, set lock
-    lock = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
-    if not lock:
-        # Failing to acquire lock means another worker is performing this same request, treat this request as a duplicate
-        raise Conflict(f'A request for this action is currently enqueued')
     try:
         # Update global counters for this post's score, and user's aura
         update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id)
         update_global_counter(interface=RedisInterface, delta=delta, database=db, table=User.__tablename__, column='aura', identifier=post_mapping.get('author_id'))
         # Write latest intent based on incoming vote and append query request to weak insertions stream
-        pipeline_exec(RedisInterface, {Pipeline.set : {'name' : flag_key, 'value' : incoming_intent, 'ex' : RedisConfig.TTL_STRONGEST},
-                                       Pipeline.xadd : {'name' : "WEAK_INSERTIONS", 'fields' : {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__}}})
+        with RedisInterface.pipeline() as pipe:
+            pipe.set(flag_key, incoming_intent, ex=RedisConfig.TTL_STRONGEST)
+            pipe.xadd('WEAK_INSERTIONS', {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'vote' : vote, 'table' : PostVote.__tablename__})
+            pipe.execute()
     finally:
         RedisInterface.delete(lock_key)
     
@@ -374,22 +374,13 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     flag_key: str = f'{PostVote.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
     lock_key: str = f'lock:{RedisConfig.RESOURCE_CREATION_PENDING_FLAG}:{flag_key}'
+    post_mapping, latest_intent = posts_cache_precheck(client=RedisInterface, post_id=post_id, post_cache_key=cache_key, post_deletion_intent_flag=f'delete:{post_id}', action_flag=flag_key, lock_name=lock_key, conflicting_intent=RedisConfig.RESOURCE_DELETION_PENDING_FLAG)
 
-    with RedisInterface.pipeline() as pipe:
-        pipe.hgetall(cache_key)
-        pipe.get(flag_key)
-        pipe.get(lock_key)
-        post_mapping, latest_intent, lock = pipe.execute()
-    
-    if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
-        raise NotFound(f'No post with ID {post_id} exists')
-    if lock or latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG: # Race condition, or latest intent is same as the intent carried by this request (unvote). Reject
-        raise Conflict(f'A request for this action is currently enqueued')
-    
-    previous_vote: bool = (True if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG 
-                           else False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG
-                           else None)
+    # Cache checks passed, set lock
+    lock_set = RedisInterface.set(lock_key, value=1, ex=RedisConfig.TTL_STRONG, nx=True)
+    if not lock_set: raise Conflict(f'A request for this action is currently enqueued')
+
+    delta: int = 1 if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG else -1 if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG else 0
     # Consult DB for partial/complete cache misses
     try:
         if not (post_mapping or latest_intent):
@@ -401,40 +392,45 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
             if joined_result:
                 post_mapping: dict[str, str|int] = joined_result[0].__json_like__()
                 previous_vote = joined_result[1]
-        elif previous_vote is None:
-            previous_vote = bool(db.session.execute(select(PostVote)
-                                                    .where((PostVote.voter_id == g.DECODED_TOKEN['sid']) & (PostVote.post_id == post_id))
-                                                    ).scalar_one_or_none())
+        elif not delta:
+            previous_vote: bool = db.session.execute(select(PostVote.vote)
+                                                     .where((PostVote.voter_id == g.DECODED_TOKEN['sid']) & (PostVote.post_id == post_id))
+                                                     ).scalar_one_or_none()
+            if previous_vote is not None:
+                delta = 1 if previous_vote else -1
         elif not post_mapping:
             post: Post = db.session.execute(select(Post)
                                             .where((Post.id == post_id) & (Post.deleted.is_(False)) & (Post.rtbf_hidden.isnot(True)))
                                             ).scalar_one_or_none()
             if post:
                 post_mapping = post.__json_like__()
-    except SQLAlchemyError: genericDBFetchException()
+    except SQLAlchemyError: 
+        RedisInterface.delete(lock_key)
+        genericDBFetchException()
+    except Exception as e:
+        RedisInterface.delete(lock_key)
+        raise e
     if not post_mapping:
+        RedisInterface.delete(lock_key)
         hset_with_ttl(RedisInterface, f'{Post.__tablename__}:{post_id}', {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
         raise NotFound(f'No post with ID {post_id} exists')
-    if previous_vote is None:   # Neither cache nor DB was able to prove that the user has previously voted on this post, hence this request is invalid. Begone >:3
-            raise Conflict(f'Post not voted prior to unvote request')
-
-    delta: int = -1 if previous_vote else 1 # No possibility of previous_vote being None at this state
-    # All checks passed, set lock
-    lock_set = RedisInterface.set(lock_key, value=1, ex=RedisConfig.TTL_STRONG, nx=True)
-    if not lock_set:    # Catch race condition, suuuuuper rare, but equally troublesome >:(
-        raise Conflict(f'A request for this action is currently enqueued')
+    if not delta:   # Neither cache nor DB was able to prove that the user has previously voted on this post, hence this request is invalid. Begone >:3
+        RedisInterface.delete(lock_key)
+        raise Conflict(f'Post not voted prior to unvote request')
     
     try:
         # Update counters for this post's score, and post author's aura
         update_global_counter(interface=RedisInterface, delta=delta, database=db, table=Post.__tablename__, column='score', identifier=post_id) 
         update_global_counter(interface=RedisInterface, delta=delta, database=db, table=User.__tablename__, column='aura', identifier=post_mapping.get('author_id')) 
         # Write intent as deletion, append deletion query request to weak deletions stream
-        pipeline_exec(RedisInterface, {Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
-                                       Pipeline.xadd : {'name' : "WEAK_DELETIONS", 'fields' : {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostVote.__tablename__}}})
+        with RedisInterface.pipeline() as pipe:
+            pipe.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+            pipe.xadd('WEAK_DELETIONS', {"voter_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'table' : PostVote.__tablename__})
+            pipe.execute()
     finally:
         RedisInterface.delete(lock_key)
     
-    return jsonify({"message" : "Removed vote!"}), 202
+    return jsonify({"message" : "Removed vote!", 'delta' : delta}), 202
 
 @post.route("/<int:post_id>/save", methods=["PATCH"])
 @token_required
