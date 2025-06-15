@@ -272,3 +272,40 @@ def resource_existence_cache_precheck(client: Redis, identifier: int|str, resour
         raise NotFound(f"No {resource_name} with ID {identifier} found")
     
     return resource_mapping
+
+def resource_cache_precheck(client: Redis, identifier: int|str, cache_key: str, deletion_intent_flag: str, action_flag: str, lock_name: str, resource_name: Optional[str] = None, conflicting_intent: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
+    '''
+    Consult cache and perform a check on a given resource to try to validate the request thr0ugh cache and minimize DB lookups. Although this cannot guarantee resource validity, if it is found to be invalid through cache, an appropriate HTTP exception is raised. If all checks pass, then the resource_mapping (if found) and the latest intent (if found) are returned
+    Args:
+        client: Redis client instance connected to cache server
+        identifier: Unique identifier for resource (Typically PK)
+        cache_key: cache key for this resource
+        deletion_intent_flag: Deletion flag name for this resource
+        action_flag: Flag name to check for latest user intent for this resource
+        lock_name: Name of lock for this action
+        conflicting_intent: If specified, latest user intent is checked against this value for early rejection
+
+    Returns:
+        resource_mapping (dict), latest_intent (str)
+    '''
+    with client.pipeline() as pipe:
+        # Post
+        pipe.hgetall(cache_key)
+        pipe.get(deletion_intent_flag)  # Existence alone is enough to prove deletion intent
+        
+        pipe.get(action_flag)   # Get latest intent (if any) for this action
+        pipe.get(lock_name)
+
+        resource_mapping, deletion_intent, latest_intent, lock = pipe.execute()
+
+    if deletion_intent:    # Deletion written in cache
+        raise Gone('This post has been permanently deleted, and will soon be unavailable')
+    if resource_mapping and RedisConfig.NF_SENTINEL_KEY in resource_mapping:    # Non-existence written in cache
+        hset_with_ttl(client, cache_key, resource_mapping, RedisConfig.TTL_EPHEMERAL)  # Reannounce non-existence
+        raise NotFound(f'No {resource_name} with ID {identifier} could be found (Never existed, or deleted)')
+    if lock:    # Stop race condition early
+        raise Conflict('Another worker is processing this exact request at the moment')
+    if (latest_intent and not conflicting_intent) or (conflicting_intent and latest_intent == conflicting_intent):  # Stop duplicate requests
+        raise Conflict(f'This action for resource {identifier} has already been requested')
+    
+    return resource_mapping, latest_intent  # post_mapping and latest intent may be required by the endpoint later
