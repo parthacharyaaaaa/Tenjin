@@ -6,7 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostReport, PostVote, Comment, ReportTags, CommentVote, CommentReport
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, posts_cache_precheck
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, posts_cache_precheck, resource_existence_cache_precheck
 from resource_server.redis_config import RedisConfig
 from redis.client import Pipeline
 from auxillary.decorators import enforce_json
@@ -158,26 +158,42 @@ def get_post(post_id : int) -> tuple[Response, int]:
 @token_required
 def edit_post(post_id : int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
-    # Check for 404 sentinal value
-    if RedisInterface.hget(cache_key, RedisConfig.NF_SENTINEL_KEY) == RedisConfig.NF_SENTINEL_VALUE:
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
-        raise NotFound(f'No post with ID {post_id} exists')
+    post_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=post_id, resource_name=Post.__tablename__, cache_key=cache_key, deletion_flag_key=f'delete:{cache_key}')
     
-    # Ensure user is owner of this post
-    owner: User = db.session.execute(select(User)
-                                     .join(Post, Post.author_id == User.id)
-                                     .where((Post.id == post_id) & (Post.deleted.is_(False)) & (Post.rtbf_hidden.isnot(True)))
-                                     ).scalar_one_or_none()
+    if post_mapping and int(post_mapping['author_id']) != g.DECODED_TOKEN['sid']:
+        raise Forbidden('You do not have the permission to edit this post as you are not its owner')
+    
+    # We'll need to hit DB once to verify that the requesting user actually owns this post. In case of a cache miss on post_id, we can do an outerjoin and limit calls to 1 always
+    try:
+        if not post_mapping:
+            joined_result: Row = db.session.execute(select(Post, User)
+                                                    .join(User, Post.author_id == User.id)
+                                                    .where((Post.id == post_id) &
+                                                           (Post.deleted.is_(False)) &
+                                                           (Post.rtbf_hidden.isnot(True)) &
+                                                           (User.deleted.is_(False)))
+                                                    ).first()
+            print(joined_result)
+            if joined_result:
+                post_mapping: dict[str, Any] = joined_result[0].__json_like__()
+                owner: User = joined_result[1]
+        else:
+            owner: User = db.session.execute(select(User)
+                                             .where((User.id == post_mapping['author_id']) & (User.deleted.is_(False)))
+                                             ).scalar_one_or_none()
+    except SQLAlchemyError:
+        genericDBFetchException()
+    if not post_mapping:
+        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+        raise NotFound(f'No post with id {post_id} exists')
     if not owner:
         raise Forbidden('You do not have the rights to edit this post')
     
-    if not (g.REQUEST_JSON.get('title') or 
-            g.REQUEST_JSON.get('body') or 
-            g.REQUEST_JSON.get('closed')):
+    if not (g.REQUEST_JSON.get('title') or g.REQUEST_JSON.get('body') or g.REQUEST_JSON.get('closed')):
         raise BadRequest("No changes sent")
     
-    update_kw = {}
-    additional_kw = {}
+    update_kw: dict[str, str] = {}
+    additional_kw: dict[str, str] = {}
     if title := g.REQUEST_JSON.pop('title', None):
         title: str = title.strip()
         if title:
@@ -199,20 +215,24 @@ def edit_post(post_id : int) -> tuple[Response, int]:
         badReq = BadRequest("Empty request for updating post")
         badReq.__setattr__('kwargs', additional_kw)
         raise badReq
-
-    updatedPost: Post = db.session.execute(update(Post)
-                       .where(Post.id == post_id)
-                       .values(**update_kw)
-                       .returning(Post))
-    db.session.commit()
-
+    try:
+        updatedPost: Post = db.session.execute(update(Post)
+                                            .where(Post.id == post_id)
+                                            .values(**update_kw)
+                                            .returning(Post)
+                                            ).scalar_one()
+        db.session.commit()
+    except SQLAlchemyError:
+        db.session.rollback()
+        raise InternalServerError('An error occured when editing your post, please try again later')
+    
+    post_mapping = updatedPost.__json_like__()  # Update post_mapping with updated post
+    
     # Enforce write-through
-    if RedisInterface.hgetall(cache_key):
-        #NOTE: The hashmap for 404 ({RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}) would logically never be encountered since control reaching here indicates that the post obviously exists
-        hset_with_ttl(RedisInterface, cache_key, updatedPost.__json_like__(), RedisConfig.TTL_STRONG)
+    hset_with_ttl(RedisInterface, cache_key, rediserialize(post_mapping), RedisConfig.TTL_WEAK)
 
     return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected",
-                    "post_id" : post_id,
+                    "post" : post_mapping,
                     **update_kw, **additional_kw}), 202
 
 @post.route("/<int:post_id>", methods=["DELETE"])
