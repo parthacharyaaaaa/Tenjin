@@ -657,23 +657,34 @@ def report_post(post_id: int) -> tuple[Response, int]:
 @post.route("/<int:post_id>/comment", methods=['POST'])
 @enforce_json
 @token_required
-def comment_on_post(post_id: int) -> tuple[Response, int]: 
-    commentBody = g.REQUEST_JSON.get('body')
-    if not commentBody: raise BadRequest("Comment body missing")
+def comment_on_post(post_id: int) -> tuple[Response, int]:
+    body = g.REQUEST_JSON.get('body')
+    if not body: raise BadRequest("Comment body missing")
     
-    if not isinstance(commentBody, str):
-        try: commentBody = str(commentBody)
+    if not isinstance(body, str):   
+        try: body = str(body)
         except: raise BadRequest('Invalid comment body')
-            
-    try:
-        post: Post = db.session.execute(select(Post)
-                                        .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
-                                        ).scalar_one_or_none()
-        if not post:
-            hset_with_ttl(RedisInterface, )
-            raise NotFound('No such post exists')
-    except SQLAlchemyError: genericDBFetchException()
-    comment: Comment = Comment(g.DECODED_TOKEN['sid'], post.forum_id, datetime.now(), commentBody.strip(), post_id, None, None)
+    
+    post_cache_key: str = f'{Post.__tablename__}:{post_id}'
+    post_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=post_id, resource_name=Post.__tablename__, cache_key=post_cache_key)
+
+    # Check if post is closed, if yes then reject
+    if post_mapping.get('closed') == '1':   # Cached resources have been serialized and hence booleans are casted to 0/1 str
+        raise Conflict('Post is closed')
+    if not post_mapping:
+        try:
+            post: Post = db.session.execute(select(Post)
+                                            .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
+                                            ).scalar_one_or_none()
+            if not post:
+                hset_with_ttl(RedisInterface, post_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+                raise NotFound(f'No post with ID {post_id} exists')
+            if post.closed:
+                raise Conflict('Post is closed')
+            post_mapping: dict[str, Any] = post.__json_like__()
+        except SQLAlchemyError: genericDBFetchException()
+    
+    comment: Comment = Comment(authorID=g.DECODED_TOKEN['sid'], parentForum=post.forum_id, epoch=datetime.now(), body=body.strip(), parentPost=post_id)
 
     # Increment global counters for this post, and commenting user's 'total_comments' columns
     update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='total_comments', identifier=post_id)
@@ -682,7 +693,7 @@ def comment_on_post(post_id: int) -> tuple[Response, int]:
     
     # Queue insertion of new comment
     RedisInterface.xadd('INSERTIONS', rediserialize(comment.__attrdict__()) | {'table' : Comment.__tablename__})
-    return jsonify({'message' : 'comment added!', 'body' : commentBody, 'author' : g.DECODED_TOKEN['sub']}), 202
+    return jsonify({'message' : 'comment added!', 'body' : body, 'author' : g.DECODED_TOKEN['sub'], 'time' : comment.time_created.isoformat()}), 202
 
 @post.route('/<int:post_id>/comments')
 def get_post_comments(post_id: int) -> tuple[Response, int]:
