@@ -289,7 +289,7 @@ def resource_existence_cache_precheck(client: Redis, identifier: int|str, resour
 
 def resource_cache_precheck(client: Redis, identifier: int|str, cache_key: str, deletion_intent_flag: str, action_flag: str, lock_name: str, resource_name: Optional[str] = None, conflicting_intent: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
     '''
-    Consult cache and perform a check on a given resource to try to validate the request thr0ugh cache and minimize DB lookups. Although this cannot guarantee resource validity, if it is found to be invalid through cache, an appropriate HTTP exception is raised. If all checks pass, then the resource_mapping (if found) and the latest intent (if found) are returned
+    Consult cache and perform a check on a given resource to try to validate the request through cache and minimize DB lookups. Although this cannot guarantee resource validity, if it is found to be invalid through cache, an appropriate HTTP exception is raised. If all checks pass, then the resource_mapping (if found) and the latest intent (if found) are returned
     Args:
         client: Redis client instance connected to cache server
         identifier: Unique identifier for resource (Typically PK)
@@ -313,7 +313,7 @@ def resource_cache_precheck(client: Redis, identifier: int|str, cache_key: str, 
         resource_mapping, deletion_intent, latest_intent, lock = pipe.execute()
 
     if deletion_intent:    # Deletion written in cache
-        raise Gone('This post has been permanently deleted, and will soon be unavailable')
+        raise Gone('This resource has been permanently deleted, and will soon be unavailable')
     if resource_mapping and RedisConfig.NF_SENTINEL_KEY in resource_mapping:    # Non-existence written in cache
         hset_with_ttl(client, cache_key, resource_mapping, RedisConfig.TTL_EPHEMERAL)  # Reannounce non-existence
         raise NotFound(f'No {resource_name} with ID {identifier} could be found (Never existed, or deleted)')
