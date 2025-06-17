@@ -4,20 +4,21 @@ from werkzeug import Response
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized, Forbidden, Gone
 from auxillary.decorators import enforce_json
 from auxillary.utils import hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
-from resource_server.resource_auxillary import processUserInfo, fetch_global_counters, hset_with_ttl
+from resource_server.resource_auxillary import processUserInfo, fetch_global_counters, hset_with_ttl, resource_existence_cache_precheck
 from resource_server.external_extensions import RedisInterface
 from resource_server.resource_decorators import token_required
 from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum, ForumSubscription, Anime, AnimeSubscription
 from resource_server.scripts.mail import enqueueEmail
 from resource_server.redis_config import RedisConfig
-from redis.client import Pipeline
 from sqlalchemy import select, insert, update, delete
+from sqlalchemy.sql.expression import BinaryExpression
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from datetime import datetime
 from redis.exceptions import RedisError
 from uuid import uuid4
 import base64
 from hashlib import sha256
+from typing import Sequence, Any
 
 USERS_BLUEPRINT: Blueprint = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/users")
 
@@ -337,256 +338,195 @@ def get_user(user_id: int) -> tuple[Response, int]:
 @USERS_BLUEPRINT.route('/<int:user_id>/posts')
 def get_user_posts(user_id: int) -> tuple[Response, int]:
     try:
-        rawCursor = request.args.get('cursor', '0').strip()
-        if rawCursor == '0':
+        raw_cursor = request.args.get('cursor', '0').strip()
+        if raw_cursor == '0':
             cursor: int = 0
         else:
-            cursor = int(base64.b64decode(rawCursor).decode())
+            cursor = int(base64.b64decode(raw_cursor).decode())
     except (ValueError, TypeError):
-            raise BadRequest("Failed to load more posts. Please refresh this page")
-    
-    # 1: Redis
-    cacheKey: str = f'profile:{user_id}:posts:{cursor}'     # cacheKey here will just be a list of key names for individually cached posts
-    counter_names: list[str] = []
-    global_counters: list[int] = []
+            raise BadRequest("Failed to load more posts. Please try again later")
 
-    resources, end, nextCursor = fetch_group_resources(RedisInterface, cacheKey)
-    if resources and all(resources):
-        for resource in resources:  # Prep name list in advance
-            counter_names.extend([f'post:{resource["id"]}:score', f'forum:{resource["id"]}:saves', f'forum:{resource["id"]}:total_comments'])
-        
-        global_counters = fetch_global_counters(RedisInterface, *counter_names)
-        post_idx: int = 0
-        # Update with global counters
-        for i in range(0, len(global_counters), 3):
-            if global_counters[i] is not None:  # Post score
-                resources[post_idx]['score'] = global_counters[i]
-            if global_counters[i+1] is not None:  # Post saves
-                resources[post_idx]['saves'] = global_counters[i+1]
-            if global_counters[i+2] is not None:  # Post comments
-                resources[post_idx]['comments'] = global_counters[i+2]
-            post_idx+=1
-        # All resources exist in cache, promote TTL and return results
-        promote_group_ttl(interface=RedisInterface, group_key=cacheKey,
-                          promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
-        return jsonify({'posts' : resources, 'cursor' : nextCursor, 'end' : end})
+    cache_key: str = f'{User.__tablename__}:{user_id}'
+    pagination_cache_key: str = f'{cache_key}:{Post.__tablename__}:{cursor}'
+    user_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=user_id, resource_name=User.__tablename__, cache_key=cache_key)
+
+    if not user_mapping:
+        # Ensure user exists before trying to fetch their posts
+        try:
+            user: User = db.session.execute(select(User)
+                                            .where((User.id == user_id) & (User.deleted.is_(False)))
+                                            ).scalar_one_or_none()
+            if not user:
+                hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+                raise NotFound(f'No user with ID {user_id} could be found')
+            user_mapping: dict[str, Any] = user.__json_like__()
+        except SQLAlchemyError: genericDBFetchException()
     
-    # Cache failure, either missing key in set or set does not exist. Either way, we'll have to bother the DB >:3
+    posts, end, next_cursor = fetch_group_resources(RedisInterface, group_key=pagination_cache_key)
+    counter_attrs: list[str] = ['score', 'total_comments', 'saves']
+    if posts and all(posts):
+        counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Post.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[post['id'] for post in posts])
+        for idx, (attribute, counters) in enumerate(counters_mapping.items()):
+            posts[idx][attribute] = counters[idx]
+        # Return paginated result with updated counters
+        promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
+        return jsonify({'posts' : posts, 'cursor' : next_cursor, 'end' : end}), 200
+    # Cache miss
     try:
-        user: User = db.session.execute(select(User)
-                                        .where((User.id == user_id) & (User.deleted.is_(False)))
-                                        ).scalar_one_or_none()
-        if not user:
-            # Broadcast non-existence
-            hset_with_ttl(RedisInterface, f'user:{user_id}', {"__NF__" : -1}, RedisConfig.TTL_EPHEMERAL)
-            raise NotFound('No user with this ID exists')
-        
         whereClause = (Post.author_id == user_id)
         if cursor:      # Cursor value at 0 will evaluate to False
             whereClause &= (Post.id < cursor)
-        
-        recentPosts: list[Post] = db.session.execute(select(Post)
-                                                     .where(whereClause)
-                                                     .order_by(Post.time_posted.desc())
-                                                     .limit(6)
-                                                     ).scalars().all()
+        next_posts: list[Post] = db.session.execute(select(Post)
+                                                    .where(whereClause)
+                                                    .order_by(Post.time_posted.desc())
+                                                    .limit(6)
+                                                    ).scalars().all()
     except SQLAlchemyError: genericDBFetchException()
-
-    if not recentPosts:
-        with RedisInterface.pipeline() as pipe:
-            pipe.lpush(cacheKey, RedisConfig.NF_SENTINEL_KEY)  # Announce non-existence
-            pipe.expire(cacheKey, RedisConfig.TTL_WEAK)
-            pipe.execute()
-
-        return jsonify({'posts' : None, 'cursor' : None, 'end' : True})
+    if not next_posts:
+        return jsonify({'posts' : None, 'end' : True, 'cursor' : cursor})
     
-    end: bool = len(recentPosts) < 6
+    end: bool = len(next_posts) < 6
     if not end:
-        recentPosts.pop(-1)
+        next_posts.pop(-1)
+    next_cursor: str = base64.b64encode(str(next_posts[-1].id).encode('utf-8')).decode()
 
-    nextCursor = base64.b64encode(str(recentPosts[-1].id).encode('utf-8')).decode()
-    _posts = [rediserialize(post.__json_like__()) for post in recentPosts]
-
-    for post in _posts:  # Prep name list in advance
-        counter_names.extend([f'post:{post["id"]}:score', f'forum:{post["id"]}:saves', f'forum:{post["id"]}:total_comments'])
-        
-        global_counters = fetch_global_counters(RedisInterface, *counter_names)
-        post_idx: int = 0
-        # Update with global counters
-        for i in range(0, len(global_counters), 3):
-            if global_counters[i] is not None:  # Post score
-                _posts[post_idx]['score'] = global_counters[i]
-            if global_counters[i+1] is not None:  # Post saves
-                _posts[post_idx]['saves'] = global_counters[i+1]
-            if global_counters[i+2] is not None:  # Post comments
-                _posts[post_idx]['comments'] = global_counters[i+2]
-            post_idx+=1
-
+    jsonified_posts: list[dict[str, Any]] = [post.__json_like__() | {'username' : user_mapping['username']} for post in next_posts]
     # Cache grouped resources with updated counters
-    cache_grouped_resource(interface=RedisInterface,
-                           group_key=cacheKey, resource_type='post',
-                           resources= {post['id']:post for post in _posts},
-                           weak_ttl= RedisConfig.TTL_WEAK, strong_ttl= RedisConfig.TTL_STRONG,
-                           cursor=nextCursor, end=end)
+    cache_grouped_resource(RedisInterface, group_key=pagination_cache_key,
+                           resource_type=Post.__tablename__, resources={jsonified_post['id'] : rediserialize(jsonified_post) for jsonified_post in jsonified_posts},
+                           weak_ttl=RedisConfig.TTL_WEAK, strong_ttl=RedisConfig.TTL_STRONG,
+                           cursor=next_cursor, end=end)
 
-    return jsonify({'posts' : _posts, 'cursor' : nextCursor, 'end' : end})
+    return jsonify({'posts' : jsonified_posts, 'cursor' : next_cursor, 'end' : end})
 
 @USERS_BLUEPRINT.route('/<int:user_id>/forums')
 def get_user_forums(user_id: int) -> tuple[Response, int]:
     try:
-        rawCursor = request.args.get('cursor', '0').strip()
-        if rawCursor == '0':
+        raw_cursor = request.args.get('cursor', '0').strip()
+        if raw_cursor == '0':
             cursor: int = 0
         else:
-            cursor = int(base64.b64decode(rawCursor).decode())
+            cursor = int(base64.b64decode(raw_cursor).decode())
     except (ValueError, TypeError):
-            raise BadRequest("Failed to load more Forums. Please refresh this page")
+            raise BadRequest("Failed to load more forums. Please try again")
 
-    cacheKey: str = f'profile:{user_id}:forums:{cursor}'
-    counter_names: list[str] = []
-    global_counters: list[int] = []
+    cache_key: str = f'{User.__tablename__}:{user_id}'
+    pagination_cache_key: str = f'{cache_key}:{Forum.__tablename__}:{cursor}'
+    user_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=user_id, resource_name=User.__tablename__, cache_key=cache_key)
 
-    resources, end, newCursor = fetch_group_resources(RedisInterface, cacheKey)
-    if resources and all(resources):
-        # Group cache is valid
-        # Fetch updated global counters if in memory
-        for resource in resources:  # Prep name list in advance
-            counter_names.extend([f'forum:{resource["id"]}:posts', f'forum:{resource["id"]}:subscribers', f'forum:{resource["id"]}:admin_count'])
-
-        global_counters = fetch_global_counters(RedisInterface, *counter_names)
-        forum_idx: int = 0
-        # Update with global counters
-        for i in range(0, len(global_counters), 3):
-            if global_counters[i] is not None:  # Forum posts
-                resources[forum_idx]['posts'] = global_counters[i]
-            if global_counters[i+1] is not None:  # Forum subscribers
-                resources[forum_idx]['subscribers'] = global_counters[i+1]
-            if global_counters[i+2] is not None:  # Forum admins
-                resources[forum_idx]['admins'] = global_counters[i+2]
-            forum_idx+=1
-
-        promote_group_ttl(RedisInterface, cacheKey, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
-        return jsonify({'forums' : resources, 'cursor' : newCursor, 'end' : end}), 200
-
-    try:
-        userID: int = db.session.execute(select(User.id)
-                                         .where((User.id == user_id) & (User.deleted.is_(False)))
-                                         ).scalar_one_or_none()
-        if not userID:
-            hset_with_ttl(RedisInterface, f'user:{user_id}', {"__NF__" : -1}, RedisConfig.TTL_EPHEMERAL)
-            raise NotFound(f'No user with ID {userID} exists')
-        
-        forums: list[Forum] = db.session.execute(select(Forum)
-                                                 .join(ForumSubscription, ForumSubscription.user_id == userID)
-                                                 .where((Forum.id == ForumSubscription.forum_id) & (Forum.id > cursor))
-                                                 .limit(6)
-                                                 ).scalars().all()
-    except SQLAlchemyError: genericDBFetchException()
-
-    if not forums:
-        with RedisInterface.pipeline() as pipe:
-            pipe.lpush(cacheKey, RedisConfig.NF_SENTINEL_KEY)
-            pipe.expire(cacheKey, RedisConfig.TTL_EPHEMERAL)
-            pipe.execute()
-        return jsonify({'forums' : None, 'cursor' : cursor, 'end' : True})
-
-    end: bool = len(forums) < 6
-    if not end:
-        forums.pop(-1)
-
-    newCursor: str = base64.b64encode(str(forums[-1].id).encode('utf-8')).decode()
-    _forums = [rediserialize(forum.__json_like__()) for forum in forums]
-
-    # Update _forums with global counters
-    for forum in _forums:
-        counter_names.extend([f'forum:{forum["id"]}:posts', f'forum:{forum["id"]}:subscribers', f'forum:{forum["id"]}:admin_count'])
-    global_counters = fetch_global_counters(RedisInterface, *counter_names)
-    forum_idx: int = 0
-    # Update with global counters
-    for i in range(0, len(global_counters), 3):
-        if global_counters[i] is not None:  # Forum posts
-            _forums[forum_idx]['posts'] = global_counters[i]
-        if global_counters[i+1] is not None:  # Forum subscribers
-            _forums[forum_idx]['subscribers'] = global_counters[i+1]
-        if global_counters[i+2] is not None:  # Forum admins
-            _forums[forum_idx]['admins'] = global_counters[i+2]
-        forum_idx+=1
-
-    # Group cache with updated counters
-    cache_grouped_resource(RedisInterface, cacheKey, 'forum', {forum['id']:forum for forum in _forums},
-                           RedisConfig.TTL_WEAK, RedisConfig.TTL_STRONG,
-                           cursor=newCursor, end=end)
+    if not user_mapping:
+        # Ensure user exists before trying to fetch their subscribed forums
+        try:
+            user: User = db.session.execute(select(User)
+                                            .where((User.id == user_id) & (User.deleted.is_(False)))
+                                            ).scalar_one_or_none()
+            if not user:
+                hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+                raise NotFound(f'No user with ID {user_id} could be found')
+            user_mapping: dict[str, Any] = user.__json_like__()
+        except SQLAlchemyError: genericDBFetchException()
     
-    return jsonify({'forums' : _forums, 'cursor' : newCursor, 'end' : end})
+    forums, end, next_cursor = fetch_group_resources(RedisInterface, group_key=pagination_cache_key)
+    counter_attrs: list[str] = ['subscribers', 'posts', 'admin_count']
+    if forums and all(forums):
+        counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Post.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[forum['id'] for forum in forums])
+        for idx, (attribute, counters) in enumerate(counters_mapping.items()):
+            forums[idx][attribute] = counters[idx]
+        # Return paginated result with updated counters
+        promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
+        return jsonify({'posts' : forums, 'cursor' : next_cursor, 'end' : end}), 200
+    # Cache miss
+    try:
+        where_clause: BinaryExpression = (Forum.deleted.is_(False))
+        if cursor:
+            where_clause &= (Forum.id > cursor)
+        joined_forum_res: list[tuple[Forum, datetime]] = db.session.execute(select(Forum, ForumSubscription.time_subscribed)
+                                                                            .join(ForumSubscription, (Forum.id == ForumSubscription.forum_id) & (ForumSubscription.user_id == user_id))
+                                                                            .where(where_clause)
+                                                                            .limit(6)
+                                                                            .order_by(ForumSubscription.time_subscribed.desc())
+                                                                            ).all()
+    except SQLAlchemyError: genericDBFetchException()
+    if not joined_forum_res:
+        return jsonify({'forums' : None, 'end' : True, 'cursor' : cursor})
+    
+    end: bool = len(joined_forum_res) < 6
+    if not end:
+        joined_forum_res.pop(-1)
+    next_cursor: str = base64.b64encode(str(joined_forum_res[-1][0].id).encode('utf-8')).decode()
+    jsonified_forums: list[dict[str, Any]] = [res[0].__json_like__() | {'time_subscribed' : res[1]} for res in joined_forum_res]
+
+    # Cache grouped resources with updated counters
+    cache_grouped_resource(RedisInterface, group_key=pagination_cache_key,
+                           resource_type=Post.__tablename__, resources={jsonified_forum['id'] : rediserialize(jsonified_forum) for jsonified_forum in jsonified_forums},
+                           weak_ttl=RedisConfig.TTL_WEAK, strong_ttl=RedisConfig.TTL_STRONG,
+                           cursor=next_cursor, end=end)
+
+    return jsonify({'forums' : jsonified_forums, 'cursor' : next_cursor, 'end' : end})
 
 @USERS_BLUEPRINT.route('/<int:user_id>/animes')
 def get_user_animes(user_id: int) -> tuple[Response, int]:
     try:
-        rawCursor = request.args.get('cursor', '0').strip()
-        if rawCursor == '0':
+        raw_cursor = request.args.get('cursor', '0').strip()
+        if raw_cursor == '0':
             cursor: int = 0
         else:
-            cursor = int(base64.b64decode(rawCursor).decode())
+            cursor = int(base64.b64decode(raw_cursor).decode())
     except (ValueError, TypeError):
-            raise BadRequest("Failed to load more animes. Please refresh this page")
+            raise BadRequest("Failed to load more posts. Please try again later")
+
+    cache_key: str = f'{User.__tablename__}:{user_id}'
+    pagination_cache_key: str = f'{cache_key}:{Anime.__tablename__}:{cursor}'
+    user_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=user_id, resource_name=User.__tablename__, cache_key=cache_key)
+
+    if not user_mapping:
+        # Ensure user exists before trying to fetch their posts
+        try:
+            user: User = db.session.execute(select(User)
+                                            .where((User.id == user_id) & (User.deleted.is_(False)))
+                                            ).scalar_one_or_none()
+            if not user:
+                hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+                raise NotFound(f'No user with ID {user_id} could be found')
+            user_mapping: dict[str, Any] = user.__json_like__()
+        except SQLAlchemyError: genericDBFetchException()
     
-    cacheKey: str = f'profile:{user_id}:animes:{cursor}'
-    counter_names: list[str] = []
-    global_counters: list[int] = []
-
-    resources, end, newCursor = fetch_group_resources(RedisInterface, cacheKey)
-    if resources and all(resources):
-        # Fetch updated global counters if in memory
-        for resource in resources:  # Prep name list in advance
-            counter_names.append(f'anime:{resource["id"]}:members')
-
-        global_counters = fetch_global_counters(RedisInterface, *counter_names)
-        # Update with global counters
-        for anime_idx, counter in enumerate(global_counters):
-            if counter is not None:  # Anime members
-                resources[anime_idx]['members'] = counter
-            anime_idx+=1
-
-        promote_group_ttl(RedisInterface, cacheKey, RedisConfig.TTL_PROMOTION, RedisConfig.TTL_CAP)
-        return jsonify({'animes' : resources, 'cursor' : newCursor, 'end' : end}), 200
-
+    animes, end, next_cursor = fetch_group_resources(RedisInterface, group_key=pagination_cache_key)
+    counter_attrs: list[str] = ['members']
+    if animes and all(animes):
+        counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Post.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[anime['id'] for anime in animes])
+        for idx, (attribute, counters) in enumerate(counters_mapping.items()):
+            animes[idx][attribute] = counters[idx]
+        # Return paginated result with updated counters
+        promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
+        return jsonify({'animes' : animes, 'cursor' : next_cursor, 'end' : end}), 200
+    
+    where_clause: BinaryExpression = (AnimeSubscription.user_id == user_id)
+    if cursor:
+        where_clause &= (Anime.id > cursor)
+    # Cache miss
     try:
-        user: User = db.session.execute(select(User)
-                                        .where((User.id == user_id) & (User.deleted.is_(False)))
-                                        ).scalar_one_or_none()
-        if not user:
-            hset_with_ttl(RedisInterface, f'user:{user_id}', {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
-            raise NotFound('No user with this ID exists')
-        
-        animes: list[Anime] = db.session.execute(select(Anime)
-                                                .join(AnimeSubscription, AnimeSubscription.user_id == user.id)
-                                                .where((Anime.id == AnimeSubscription.anime_id) & (Anime.id > cursor))
-                                                .limit(6)).scalars().all()
-        if not animes:
-            return jsonify({'animes' : None, 'cursor' : cursor, 'end' : True})
-        
-        end: bool = True
-        if len(animes) >= 6:
-            end = False
-            animes.pop(-1)
+        next_anime_res: list[tuple[Anime, datetime]] = db.session.execute(select(Anime, AnimeSubscription.time_subscribed)
+                                                                          .join(AnimeSubscription, AnimeSubscription.anime_id == Anime.id)
+                                                                          .where(where_clause)
+                                                                          .limit(6)
+                                                                          .order_by(AnimeSubscription.time_subscribed.desc())
+                                                                          ).all()
     except SQLAlchemyError: genericDBFetchException()
+    if not next_anime_res:
+        return jsonify({'animes' : None, 'end' : True, 'cursor' : raw_cursor})
+    end: bool = len(next_anime_res) < 6
+    if not end:
+        next_anime_res.pop(-1)
+    next_cursor: str = base64.b64encode(str(next_anime_res[-1][0].id).encode('utf-8')).decode()
+    jsonified_animes: list[dict[str, Any]] = [row[0].__json_like__() | {'time_subscribed' :row[1].isoformat()} for row in next_anime_res]
+    # Cache grouped resources with updated counters
+    cache_grouped_resource(RedisInterface, group_key=pagination_cache_key,
+                           resource_type=Anime.__tablename__, resources={jsonified_anime['id'] : jsonified_anime for jsonified_anime in jsonified_animes},
+                           weak_ttl=RedisConfig.TTL_WEAK, strong_ttl=RedisConfig.TTL_STRONG,
+                           cursor=next_cursor, end=end)
 
-    newCursor: str = base64.b64encode(str(animes[-1].id).encode('utf-8')).decode()
-    _animes = [rediserialize(anime.__json_like__()) for anime in animes]
-
-    for anime in _animes:  # Prep name list in advance
-        counter_names.append(f'anime:{anime["id"]}:members')
-
-        global_counters = fetch_global_counters(RedisInterface, *counter_names)
-        # Update with global counters
-        for anime_idx, counter in enumerate(global_counters):
-            if counter is not None:  # Anime members
-                _animes[anime_idx]['members'] = counter
-            anime_idx+=1
-
-    # Cache as a group with updated counters
-    cache_grouped_resource(RedisInterface, cacheKey, 'anime', {anime['id']:anime for anime in _animes}, RedisConfig.TTL_WEAK, RedisConfig.TTL_STRONG, newCursor, end)
-    return jsonify({'animes' : _animes, 'cursor' : newCursor, 'end' : end})
+    return jsonify({'animes' : jsonified_animes, 'cursor' : next_cursor, 'end' : end})
 
 @USERS_BLUEPRINT.route("/login", methods=["POST"])
 # @private
