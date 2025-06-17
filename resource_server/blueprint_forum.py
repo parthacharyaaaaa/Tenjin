@@ -460,7 +460,6 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
 def edit_admin_permissions(forum_id: int) -> tuple[Response, int]:
     admin_id: int = g.REQUEST_JSON.pop('user_id', None)
     new_role: str = g.REQUEST_JSON.pop('role', '').strip()
-    print(AdminRoles.check_membership(new_role))
 
     if not admin_id: raise BadRequest('Admin whose permission needs to be changed must be included')
     if not new_role: raise BadRequest('A role needs to be provided for this admin')
