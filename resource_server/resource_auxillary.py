@@ -323,3 +323,44 @@ def resource_cache_precheck(client: Redis, identifier: int|str, cache_key: str, 
         raise Conflict(f'This action for resource {identifier} has already been requested')
     
     return resource_mapping, latest_intent  # post_mapping and latest intent may be required by the endpoint later
+
+def admin_cache_precheck(client: Redis, user_id: int|str, user_cache_key: str, forum_id: int|str, forum_cache_key: str, admin_flag: str, lock_name: Optional[str] = None, user_status_flag: Optional[str] = None, forum_deletion_flag: Optional[str] = None, conflicting_intents: Optional[Sequence[str]] = None, message: Optional[str] = None) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]], Optional[str]]:
+    if not user_status_flag:
+        user_status_flag: str = f'alive_status:{user_id}'
+    if not forum_deletion_flag:
+        forum_deletion_flag: str = f'delete:{forum_id}'
+    if not lock_name:
+        lock_name: str = f'lock:{admin_flag}'
+    with client.pipeline(transaction=False) as pipe:
+        # User
+        pipe.get(user_status_flag)
+        pipe.hgetall(user_cache_key)
+        # Forum
+        pipe.get(forum_deletion_flag)
+        pipe.hgetall(forum_cache_key)
+        # Forum admin status
+        pipe.get(admin_flag)
+        # Race
+        pipe.get(lock_name)
+        user_status, user_mapping, forum_mapping, forum_deletion_intent, latest_intent, lock = pipe.execute()
+    
+    # Forum checks
+    if forum_deletion_intent:
+        raise Gone(f'Forum with id {forum_id} has just been deleted')
+    if (forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping):
+        hset_with_ttl(client, forum_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL) # Reannounce non-existence of this forum
+        raise NotFound(f'No forum with ID {forum_id} found')
+    
+    # User checks
+    if user_status == RedisConfig.RESOURCE_DELETION_PENDING_FLAG:
+        raise Gone(f'User with id {user_id} has just been deleted')
+    if (user_mapping and RedisConfig.NF_SENTINEL_KEY in user_mapping):    # User (to be made an admin) doesn't exist or has been deleted
+        hset_with_ttl(client, user_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL) # Reannounce non-existence of this forum
+        raise NotFound(f'No user with ID {user_id} found')
+    
+    if (conflicting_intents and latest_intent in conflicting_intents) or (not conflicting_intents and latest_intent):
+        raise Conflict(message or f'This action is currently invalid, as the request may be logically invalid or duplicate')
+    if lock:
+        raise Conflict('A request for this action is already enqueued')
+    
+    return forum_mapping, user_mapping, latest_intent
