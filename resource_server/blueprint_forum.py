@@ -5,7 +5,7 @@ from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from resource_server.resource_decorators import token_required, pass_user_details
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, hset_with_ttl, admin_cache_precheck
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, hset_with_ttl, admin_cache_precheck, resource_cache_precheck
 from resource_server.external_extensions import RedisInterface
 from resource_server.redis_config import RedisConfig
 from redis.client import Pipeline
@@ -312,7 +312,7 @@ def delete_forum(forum_id: int) -> Response:
         with RedisInterface.pipeline() as pipe:
             pipe.set(deletion_flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)   # Intent value not relevant, as existence of this key alone is an indicator of deletion intent
             pipe.xadd('SOFT_DELETIONS', {'id' : forum_id, 'table' : Forum.__tablename__})
-            pipe.hset(cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE})
+            pipe.hset(cache_key, mapping={RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE})
             pipe.expire(cache_key, RedisConfig.TTL_WEAK)
             pipe.execute()
     finally:
@@ -552,21 +552,10 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     flag_key: str = f'{ForumSubscription.__tablename__}:{g.DECODED_TOKEN["sid"]}:{forum_id}'
     lock_key: str = f'lock:{flag_key}'
 
-    with RedisInterface.pipeline() as pipe:
-        pipe.hgetall(cache_key)
-        pipe.get(flag_key)
-        pipe.get(lock_key)
-        forum_mapping, latest_intent, lock = pipe.execute()
-     
-    # Check for 404 sentinal value
-    if forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping:
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
-        raise NotFound(f'No forum with ID {forum_id} exists')
-    if lock or latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG: # Lock set for same request, or repeated request
-        raise Conflict('A request for this action is already underway')
+    forum_mapping, latest_intent = resource_cache_precheck(client=RedisInterface, identifier=forum_id, cache_key=cache_key, deletion_intent_flag=f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key, resource_name=Forum.__tablename__, conflicting_intent=RedisConfig.RESOURCE_CREATION_PENDING_FLAG)
     
     # In cases of partia/complete cache misses, consult DB
-    priorSubscription: bool = latest_intent != RedisConfig.RESOURCE_DELETION_PENDING_FLAG
+    prior_sub: bool = latest_intent != RedisConfig.RESOURCE_DELETION_PENDING_FLAG
     try:
         if not (forum_mapping or latest_intent):
             joined_result: Row = db.session.execute(select(Forum, ForumSubscription)
@@ -574,9 +563,9 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
                                                     .where(Forum.id == forum_id)).first()
             if joined_result:
                 forum_mapping: dict[str, Any] = joined_result[0].__json_like__()
-                priorSubscription = joined_result[1]
+                prior_sub = joined_result[1]
         elif not latest_intent:
-            priorSubscription = db.session.execute(select(ForumSubscription)
+            prior_sub = db.session.execute(select(ForumSubscription)
                                                    .where((ForumSubscription.user_id == g.DECODED_TOKEN['sid']) & (ForumSubscription.forum_id == forum_id))
                                                    ).scalar_one_or_none()
         elif not forum_mapping:
@@ -589,10 +578,10 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     if not forum_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Ephemeral announcement
         raise NotFound(f'No forum with ID {forum_id} exists')
-    if priorSubscription:
+    if prior_sub:
         raise Conflict('Forum already subscribed')
     
-    # Fetch forum owner
+    # Fetch forum owner (aura increase on owned forums gaining subscribers)
     ownerID: int = db.session.execute(select(ForumAdmin.user_id)
                                       .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.role == 'owner'))
                                       ).scalar_one_or_none()
@@ -607,8 +596,10 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
         update_global_counter(interface=RedisInterface, delta=1, database=db, table=Forum.__tablename__, column='subscribers', identifier=forum_id)
         update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='aura', identifier=ownerID)
         # Write intent as creation and append weak insertion request to stream
-        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_CREATION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
-                                                  Pipeline.xadd : {'name' : 'WEAK_INSERTIONS', 'fields' : {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__}}})
+        with RedisInterface.pipeline(transaction=False) as pipe:
+            pipe.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+            pipe.xadd('WEAK_INSERTIONS', {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
+            pipe.execute()
     finally:
         RedisInterface.delete(lock_key)
     
@@ -621,46 +612,51 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
     flag_key: str = f'{ForumSubscription.__tablename__}:{g.DECODED_TOKEN["sid"]}:{forum_id}'
     lock_key: str = f'lock:{flag_key}'
 
+    # Even if a forum is deleted, a user should be still allowed to unsubscribe from it
     with RedisInterface.pipeline() as pipe:
+        pipe.get(f'delete:{cache_key}')
         pipe.hgetall(cache_key)
         pipe.get(flag_key)
         pipe.get(lock_key)
-        forum_mapping, latest_intent, lock = pipe.execute()
-     
-    if forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping:
+        deletion_intent, forum_mapping, latest_intent, lock = pipe.execute()
+    
+    if (forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping) and not deletion_intent:  # Forum not found
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No forum with ID {forum_id} exists')
+    
     if lock or latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG: # Lock set for same request, or repeated request
         raise Conflict('A request for this action is already underway')
         
-    forum_exists: bool = bool(forum_mapping)
-    priorSubscription: bool = latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG
+    prior_sub: bool = latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG
     try:
         if not (forum_mapping or latest_intent):
             joined_result: Row = db.session.execute(select(Forum, ForumSubscription)
                                                     .outerjoin(ForumSubscription, (ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.DECODED_TOKEN['sid']))
                                                     .where(Forum.id == forum_id)).first()
             if joined_result:
-                forum_exists, priorSubscription = joined_result
+                forum_mapping: dict[str, Any] = joined_result[0].__json_like__()
+                prior_sub = joined_result[1]
         elif not latest_intent:
-            priorSubscription = db.session.execute(select(ForumSubscription)
+            prior_sub = db.session.execute(select(ForumSubscription)
                                                    .where((ForumSubscription.user_id == g.DECODED_TOKEN['sid']) & (ForumSubscription.forum_id == forum_id))
                                                    ).scalar_one_or_none()
         elif not forum_mapping:
-            forum_exists = db.session.execute(select(Forum)
-                                              .where(Forum.id == forum_id)
-                                              ).scalar_one_or_none()
+            forum: Forum = db.session.execute(select(Forum)
+                                               .where(Forum.id == forum_id)
+                                               ).scalar_one_or_none()
+            if forum: forum_mapping: dict[str, Any] = forum.__json_like__()
+        
+        # Fetch forum owner to reduce aura
+        ownerID: int = db.session.execute(select(ForumAdmin.user_id)
+                                          .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.role == 'owner'))
+                                          ).scalar_one_or_none()
     except SQLAlchemyError: genericDBFetchException()
-    if not forum_exists:
+    if not forum_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Ephemeral announcement
         raise NotFound(f'No forum with ID {forum_id} exists')
-    if not priorSubscription:
+    if not prior_sub:
         raise Conflict('Forum already subscribed')
     
-    # Fetch forum owner
-    ownerID: int = db.session.execute(select(ForumAdmin.user_id)
-                                      .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.role == 'owner'))
-                                      ).scalar_one_or_none()
     if not ownerID:
         raise InternalServerError('An error occured when subscribing to this forum. Please try again sometime later')
 
@@ -672,12 +668,14 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='subscribers', identifier=forum_id)
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=User.__tablename__, column='aura', identifier=ownerID)
         # Write intent as deletion and append weak deletion request to stream
-        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
-                                                  Pipeline.xadd : {'name' : 'WEAK_DELETIONS', 'fields' : {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__}}})
+        with RedisInterface.pipeline(transaction=False) as pipe:
+            pipe.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+            pipe.xadd('WEAK_DELETIONS', {'user_id' : g.DECODED_TOKEN['sid'], 'forum_id' : forum_id, 'table' : ForumSubscription.__tablename__})
+            pipe.execute()
     finally:
         RedisInterface.delete(lock_key)
     
-    return jsonify({'message' : 'Forum unsibscribed!'}), 202
+    return jsonify({'message' : 'Forum unsubscribed!'}), 202
 
 @FORUMS_BLUEPRINT.route("/<int:forum_id>", methods=["PATCH"])
 @enforce_json
