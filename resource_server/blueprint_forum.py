@@ -5,8 +5,8 @@ from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from resource_server.resource_decorators import token_required, pass_user_details
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec
-from resource_server.external_extensions import RedisInterface, hset_with_ttl
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, hset_with_ttl
+from resource_server.external_extensions import RedisInterface
 from resource_server.redis_config import RedisConfig
 from redis.client import Pipeline
 from sqlalchemy import select, update, insert, desc, Row

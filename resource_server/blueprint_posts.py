@@ -6,13 +6,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostReport, PostVote, Comment, ReportTags
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, posts_cache_precheck, resource_existence_cache_precheck
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, posts_cache_precheck, resource_existence_cache_precheck, hset_with_ttl
 from resource_server.redis_config import RedisConfig
 from redis.client import Pipeline
 from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 from typing import Any, Optional
-from resource_server.external_extensions import hset_with_ttl
 import base64
 import binascii
 from datetime import datetime

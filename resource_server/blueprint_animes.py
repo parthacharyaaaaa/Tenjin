@@ -1,8 +1,8 @@
 from flask import Blueprint, g, jsonify, request, redirect, url_for
 from werkzeug import Response
 from werkzeug.exceptions import BadRequest, NotFound, Conflict
-from resource_server.resource_auxillary import update_global_counter
-from resource_server.external_extensions import RedisInterface, hset_with_ttl
+from resource_server.resource_auxillary import update_global_counter, hset_with_ttl
+from resource_server.external_extensions import RedisInterface
 from resource_server.redis_config import RedisConfig
 from resource_server.resource_decorators import token_required
 from resource_server.models import db, Anime, AnimeGenre, Genre, StreamLink, Forum, AnimeSubscription

@@ -4,8 +4,8 @@ from werkzeug import Response
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized, Forbidden, Gone
 from auxillary.decorators import enforce_json
 from auxillary.utils import hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
-from resource_server.resource_auxillary import processUserInfo, fetch_global_counters, pipeline_exec
-from resource_server.external_extensions import RedisInterface, hset_with_ttl
+from resource_server.resource_auxillary import processUserInfo, fetch_global_counters, pipeline_exec, hset_with_ttl
+from resource_server.external_extensions import RedisInterface
 from resource_server.resource_decorators import token_required
 from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum, ForumSubscription, Anime, AnimeSubscription
 from resource_server.scripts.mail import enqueueEmail

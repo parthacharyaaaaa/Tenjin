@@ -7,13 +7,12 @@ from redis import Redis
 from redis.client import Pipeline
 from flask import Flask
 from werkzeug.exceptions import Gone, Conflict, NotFound
-from resource_server.external_extensions import hset_with_ttl
 from resource_server.redis_config import RedisConfig
 import time
 from traceback import format_exc
 from sqlalchemy import text
 from flask_sqlalchemy import SQLAlchemy
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 from types import FunctionType
 
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
@@ -26,6 +25,21 @@ def poll_global_key_mapping(interface: Redis) -> dict[str, bytes]:
     
     return {kid : pub_pem.encode() for kid, pub_pem in res.items()}  # interface has decoded responses, but PyJWT needs public pem in bytes
 
+def hset_with_ttl(interface: Redis, name: str, mapping: dict, ttl: int, transaction: bool = True):
+    with interface.pipeline(transaction) as pp:
+        pp.hset(name=name, mapping=mapping)
+        pp.expire(name=name, time=ttl)
+        pp.execute()
+
+def batch_hset_with_ttl(interface: Redis, names: Sequence[str], mappings: Sequence[dict], ttl: int, transaction: bool = True):
+    if len(names) != len(mappings):
+        raise ValueError('Names and mappings do not match')
+    
+    with interface.pipeline(transaction) as pp:
+        for idx, mapping in enumerate(mappings):
+            pp.hset(name=names[idx], mapping=mapping)
+            pp.expire(name=names[idx], time=ttl)
+        pp.execute()
 
 def update_jwks(endpoint: str, currentMapping: dict[str, bytes], interface: Redis, lock_ttl: int = 300, jwks_poll_cooldown: int = 300, timeout: int = 3, max_global_mapping_polls: int = 10) -> dict[str, str|int]:
     '''Fetch JWKS from auth server and load any new key mappings into currentMapping'''

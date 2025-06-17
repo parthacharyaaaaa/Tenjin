@@ -6,9 +6,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from resource_server.models import db, Comment, CommentReport, ForumAdmin, CommentVote, CommentReport, Post, User, ReportTags
 from auxillary.utils import genericDBFetchException
 from auxillary.decorators import enforce_json
-from resource_server.resource_auxillary import resource_existence_cache_precheck, update_global_counter
+from resource_server.resource_auxillary import resource_existence_cache_precheck, update_global_counter, hset_with_ttl
 from resource_server.resource_decorators import token_required
-from resource_server.external_extensions import RedisInterface, hset_with_ttl
+from resource_server.external_extensions import RedisInterface
 from resource_server.redis_config import RedisConfig
 from typing import Any
 
