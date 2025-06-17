@@ -5,7 +5,7 @@ from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from resource_server.resource_decorators import token_required, pass_user_details
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, hset_with_ttl, admin_cache_precheck, resource_cache_precheck
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, hset_with_ttl, admin_cache_precheck, resource_cache_precheck, resource_existence_cache_precheck
 from resource_server.external_extensions import RedisInterface
 from resource_server.redis_config import RedisConfig
 from redis.client import Pipeline
@@ -535,15 +535,15 @@ def check_admin_permissions(forum_id: int) -> tuple[Response, int]:
         return jsonify(-1), 200
     
     try:
-        userRole: str = db.session.execute(select(ForumAdmin.role)
+        role: str = db.session.execute(select(ForumAdmin.role)
                                            .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.REQUESTING_USER.get('sid')))
                                            ).scalar_one()
-        if not userRole:
+        if not role:
             return jsonify(-1), 200
     except: return jsonify(-1), 200
 
-    print(AdminRoles.getAdminAccessLevel(userRole))
-    return jsonify(AdminRoles.getAdminAccessLevel(userRole)), 200
+    print(AdminRoles.getAdminAccessLevel(role))
+    return jsonify(AdminRoles.getAdminAccessLevel(role)), 200
 
 @FORUMS_BLUEPRINT.route("/<int:forum_id>/subscribe", methods=['POST'])
 @token_required
@@ -681,38 +681,35 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
 @enforce_json
 @token_required
 def edit_forum(forum_id: int) -> tuple[Response, int]:
-    # Ensure forum existence via Redis first >:3
-    cache_key: str = f'forum:{forum_id}'
-    try:
-        op = RedisInterface.hgetall(cache_key)
-        if RedisConfig.NF_SENTINEL_KEY in op:
-            raise NotFound(f'No forum with ID {forum_id} found')
-    except RedisError: ...
-        
     description: str = g.REQUEST_JSON.pop('description', '').strip()
     title: str = g.REQUEST_JSON.pop('title', '').strip()
     if not (title or description):
         raise BadRequest("No changes provided")
     
+    # Ensure forum existence via Redis first >:3
+    cache_key: str = f'forum:{forum_id}'
+    forum_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=forum_id, resource_name=Forum.__tablename__, cache_key=cache_key, deletion_flag_key=f'delete:{cache_key}')
+
+    admin_clause: BinaryExpression = (ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid'])
     try:
-        # Ensure user has access rights for this action
-        userRole: str = db.session.execute(select(ForumAdmin.role)
-                                           .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
-                                           ).scalar_one_or_none()
+        # Even though we may have had a cache hit on forum, we still need to lock it at a DB level
+        joined_result: Row = db.session.execute(select(Forum, ForumAdmin.role)
+                                                .outerjoin(ForumAdmin, admin_clause)
+                                                .where((Forum.id == forum_id) & (Forum.deleted.is_(False)))
+                                                .with_for_update(of=Forum, nowait=True)
+                                                ).first()
+        if not joined_result:
+            hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+            raise NotFound(f'No forum with id {forum_id} exists')
 
-        if userRole not in ('super', 'owner'):
+        forum_mapping: dict[str, Any] = joined_result[0].__json_like__()
+        role: str = joined_result[1]
+  
+        if role not in ('super', 'owner'):  # Works for role being None too
             raise Forbidden('You do not have access rights to edit this forum')
-        
-        # Lock forum
-        forum: Forum = db.session.execute(select(Forum)
-                                          .where(Forum.id == forum_id)
-                                          .with_for_update(nowait=True)
-                                          ).scalar_one()    # Forum existence is guaranteed if access control check is passed
-
     except SQLAlchemyError: genericDBFetchException()
-    except KeyError: raise BadRequest('Invalid token, missing mandatory field: sid. Please login again')
 
-    updateClauses: dict = {}
+    updateClauses: dict[str, str] = {}
     if title:
         updateClauses['title'] = title
     if description:
@@ -730,7 +727,7 @@ def edit_forum(forum_id: int) -> tuple[Response, int]:
         raise e
 
     forum_mapping: dict[str, str|int] = updatedForum.__json_like__()
-    hset_with_ttl(RedisInterface, cache_key, forum_mapping, RedisConfig.TTL_WEAK)
+    hset_with_ttl(RedisInterface, cache_key, rediserialize(forum_mapping), RedisConfig.TTL_WEAK)
     return jsonify({'message' : 'Forum edited succesfully', 'forum' : forum_mapping}), 200
 
 @FORUMS_BLUEPRINT.route("/<int:forum_id>/highlight-post", methods=['PATCH'])
