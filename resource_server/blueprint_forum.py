@@ -344,7 +344,7 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
     forum_cache_key: str = f'{Forum.__tablename__}:{forum_id}'
     admin_flag_key: str = f'{ForumAdmin.__tablename__}:{forum_id}:{admin_id}'   # Value here would be the admin role, not a creation flag
     lock_key: str = f'lock:{admin_flag_key}'
-    forum_mapping, user_mapping = admin_cache_precheck(client=RedisInterface, user_id=admin_id, user_cache_key=user_cache_key, forum_id=forum_id, forum_cache_key=forum_cache_key, admin_flag=admin_flag_key, 
+    forum_mapping, user_mapping, _ = admin_cache_precheck(client=RedisInterface, user_id=admin_id, user_cache_key=user_cache_key, forum_id=forum_id, forum_cache_key=forum_cache_key, admin_flag=admin_flag_key, 
                                                        conflicting_intents=AdminRoles.__members__.keys(), message='This admin has already been added to this forum')
     
     try:
@@ -404,7 +404,7 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
     admin_flag_key: str = f'{ForumAdmin.__tablename__}:{forum_id}:{admin_id}'
     lock_key: str = f'lock:{admin_flag_key}'
 
-    forum_mapping, user_mapping = admin_cache_precheck(client=RedisInterface, user_id=admin_id, user_cache_key=user_cache_key, forum_id=forum_id, forum_cache_key=forum_cache_key, admin_flag=admin_flag_key, 
+    forum_mapping, user_mapping, _ = admin_cache_precheck(client=RedisInterface, user_id=admin_id, user_cache_key=user_cache_key, forum_id=forum_id, forum_cache_key=forum_cache_key, admin_flag=admin_flag_key, 
                                                        conflicting_intents=[RedisConfig.RESOURCE_DELETION_PENDING_FLAG], message='This admin has already been removed from this forum')    
     try:
         if not forum_mapping:
