@@ -2,20 +2,18 @@ from flask import Blueprint, g, jsonify, request, url_for
 from werkzeug import Response
 from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict, Unauthorized, InternalServerError, Gone
 from auxillary.decorators import enforce_json
-from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
+from auxillary.utils import rediserialize, genericDBFetchException, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from resource_server.resource_decorators import token_required, pass_user_details
 from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, hset_with_ttl, admin_cache_precheck, resource_cache_precheck, resource_existence_cache_precheck
 from resource_server.external_extensions import RedisInterface
 from resource_server.redis_config import RedisConfig
-from redis.client import Pipeline
 from sqlalchemy import select, update, insert, desc, Row
 from sqlalchemy.sql.expression import BinaryExpression
 from sqlalchemy.exc import SQLAlchemyError
-from typing import Any
+from typing import Any, Sequence
 from types import MappingProxyType
 from datetime import datetime, timedelta
-from redis.exceptions import RedisError
 import base64
 import binascii
 
@@ -109,30 +107,35 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
             timeFrame = int(timeFrame)
         
     except (ValueError, TypeError, binascii.Error):
-            raise BadRequest("Failed to load more posts. Please refresh this page")
+            raise BadRequest("Failed to load more posts. Please try again later")
     
     # Confirm forum existence
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
-    deletion_flag_key: str = f'delete:{cache_key}'
-    with RedisInterface.pipeline() as pipe:
-        pipe.hgetall(cache_key)
-        pipe.get(deletion_flag_key)
-        forum_mapping, deletion_intent = pipe.execute()
-    
-    if deletion_intent:
-        raise Gone('This forum has just been deleted')
-    if forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping:
-        raise NotFound('This forum does not exist')
-    
+    pagination_cache_key: str = f'{cache_key}:{Post.__tablename__}:{cursor}:{timeFrame}'
+    counter_names: list[str] = []
+    forum_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=forum_id, resource_name=Forum, cache_key=cache_key)
+
+    # Even if forum is deleted, until it is persisted to DB, allow posts to be fetched
+    posts, end, next_cursor = fetch_group_resources(RedisInterface, group_key=pagination_cache_key)
+    counter_attrs: list[str] = ['score', 'total_comments', 'saves']
+    if posts and all(posts):
+        counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Post.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[post['id'] for post in posts])
+        for idx, (attribute, counters) in enumerate(counters_mapping.items()):
+            posts[idx][attribute] = counters[idx]
+        
+        # Return paginated result with updated counters
+        promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
+        return jsonify({'posts' : posts, 'cursor' : next_cursor, 'end' : end}), 200
+        
     whereClause = (Post.forum_id == forum_id) & (Post.time_posted >= TIMEFRAMES[timeFrame](datetime.now()))
     if not init:
         whereClause &= (Post.id < cursor)
     
     if not forum_mapping:
-        forum_exists: bool = bool(db.session.execute(select(Forum)
-                                                     .where((Forum.id == forum_id) & (Forum.deleted.is_(False)))
-                                                     ).scalar_one_or_none())
-        if not forum_exists:
+        forum: Forum = db.session.execute(select(Forum)
+                                          .where((Forum.id == forum_id) & (Forum.deleted.is_(False)))
+                                          ).scalar_one_or_none()
+        if not forum:
             hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
             raise NotFound(f'No forum with ID {forum_id} could be found')
 
@@ -142,36 +145,24 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
              .order_by(desc(Post.score if sortOption == '1' else Post.time_posted))
              .limit(6))
     
-    nextPosts: list[Post] = db.session.execute(query).all()
-    if not nextPosts:
+    next_posts: list[Post] = db.session.execute(query).all()
+    if not next_posts:
         return jsonify({'posts' : None, 'cursor' : None}), 200
-    end: bool = len(nextPosts) < 6
-    postsJSON: list[dict[str, Any]] = [post.__json_like__() | {'username' : username} for post, username in nextPosts]
+    
+    jsonified_posts: list[dict[str, Any]] = [post.__json_like__() | {'username' : username} for post, username in next_posts]
+    end: bool = len(next_posts) < 6
+    next_cursor: str = base64.b64encode(str(next_posts[-1][0].id).encode('utf-8')).decode()
 
-    # Fetching each post's global counters
-    global_counters: list[int] = []
+    cache_grouped_resource(RedisInterface, group_key=pagination_cache_key,
+                           resource_type=Post.__tablename__, resources={jsonified_post['id'] : rediserialize(jsonified_post) for jsonified_post in jsonified_posts},
+                           weak_ttl=RedisConfig.TTL_WEAK, strong_ttl=RedisConfig.TTL_STRONG,
+                           cursor=next_cursor, end=end)
+    # Update newly fetched
+    counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Post.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[post['id'] for post in jsonified_posts])
+    for idx, (attribute, counters) in enumerate(counters_mapping.items()):
+        jsonified_posts[idx][attribute] = counters[idx]
 
-    # Prepping names for counters in advance
-    counter_names: list[str] = []
-    for post in postsJSON:
-        counter_names.append(f'post:{post["id"]}:score')
-        counter_names.append(f'post:{post["id"]}:total_comments')
-        counter_names.append(f'post:{post["id"]}:saves')
-
-    global_counters = fetch_global_counters(RedisInterface, *counter_names)
-    post_idx: int = 0
-    for i in range(0, len(global_counters), 3): # global_counters will always have elements in multiple of 3, since a missing counter is still returned as None
-        if global_counters[i] is not None:  # post score
-            postsJSON[post_idx]['score'] = global_counters[i]
-        if global_counters[i+1] is not None: # post comments
-            postsJSON[post_idx]['comments'] = global_counters[i+1]
-        if global_counters[i+2] is not None: # post saves
-            postsJSON[post_idx]['saves'] = global_counters[i+2]
-        post_idx+=1
-        
-    cursor = base64.b64encode(str(nextPosts[-1][0].id).encode('utf-8')).decode()
-
-    return jsonify({'posts' : postsJSON, 'cursor' : cursor, 'end' : end}), 200
+    return jsonify({'posts' : jsonified_posts, 'cursor' : next_cursor, 'end' : end}), 200
 
 @FORUMS_BLUEPRINT.route("/", methods=["POST"])
 @enforce_json
