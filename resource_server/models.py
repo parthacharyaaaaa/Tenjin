@@ -29,6 +29,7 @@ class AnimeSubscription(db.Model):
     __tablename__ = "anime_subscriptions"
     user_id: int = db.Column(db.BigInteger, db.ForeignKey("users.id", ondelete='CASCADE'), primary_key=True)
     anime_id: int = db.Column(db.Integer, db.ForeignKey("animes.id", ondelete='CASCADE'), primary_key=True)
+    time_subscribed: datetime = db.Column(db.TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
 
 class PostVote(db.Model):
     __tablename__ = "post_votes"
