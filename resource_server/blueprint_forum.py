@@ -112,7 +112,6 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
     # Confirm forum existence
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
     pagination_cache_key: str = f'{cache_key}:{Post.__tablename__}:{cursor}:{timeFrame}'
-    counter_names: list[str] = []
     forum_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=forum_id, resource_name=Forum, cache_key=cache_key)
 
     # Even if forum is deleted, until it is persisted to DB, allow posts to be fetched
