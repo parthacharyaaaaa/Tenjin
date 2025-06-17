@@ -6,7 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostReport, PostVote, Comment, ReportTags
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, posts_cache_precheck, resource_existence_cache_precheck, hset_with_ttl
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, posts_cache_precheck, resource_existence_cache_precheck, hset_with_ttl
 from resource_server.redis_config import RedisConfig
 from redis.client import Pipeline
 from auxillary.decorators import enforce_json
@@ -172,7 +172,6 @@ def edit_post(post_id : int) -> tuple[Response, int]:
                                                            (Post.rtbf_hidden.isnot(True)) &
                                                            (User.deleted.is_(False)))
                                                     ).first()
-            print(joined_result)
             if joined_result:
                 post_mapping: dict[str, Any] = joined_result[0].__json_like__()
                 owner: User = joined_result[1]
@@ -284,8 +283,10 @@ def delete_post(post_id: int) -> Response:
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='posts', identifier=post.forum_id)    
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=User.__tablename__, column='total_posts', identifier=g.DECODED_TOKEN['sid'])    
         # Post good to go for deletion
-        pipeline_exec(RedisInterface, op_mapping={Pipeline.set: {'name':flag_key, 'value':RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex':RedisConfig.TTL_STRONGEST},
-                                                  Pipeline.xadd: {'name':"SOFT_DELETIONS", 'fields':{'id' : post_id, 'table' : Post.__tablename__}}})
+        with RedisInterface.pipeline(transaction=False) as pipe:
+            pipe.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+            pipe.xadd('SOFT_DELETIONS', fields={'id' : post_id, 'table' : Post.__tablename__})
+            pipe.execute()
     finally:
         RedisInterface.delete(lock_key)
     

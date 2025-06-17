@@ -5,7 +5,7 @@ from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from resource_server.resource_decorators import token_required, pass_user_details
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, hset_with_ttl, admin_cache_precheck, resource_cache_precheck, resource_existence_cache_precheck
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, hset_with_ttl, admin_cache_precheck, resource_cache_precheck, resource_existence_cache_precheck
 from resource_server.external_extensions import RedisInterface
 from resource_server.redis_config import RedisConfig
 from redis.client import Pipeline
@@ -542,7 +542,6 @@ def check_admin_permissions(forum_id: int) -> tuple[Response, int]:
             return jsonify(-1), 200
     except: return jsonify(-1), 200
 
-    print(AdminRoles.getAdminAccessLevel(role))
     return jsonify(AdminRoles.getAdminAccessLevel(role)), 200
 
 @FORUMS_BLUEPRINT.route("/<int:forum_id>/subscribe", methods=['POST'])

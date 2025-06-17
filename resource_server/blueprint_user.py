@@ -4,7 +4,7 @@ from werkzeug import Response
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized, Forbidden, Gone
 from auxillary.decorators import enforce_json
 from auxillary.utils import hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
-from resource_server.resource_auxillary import processUserInfo, fetch_global_counters, pipeline_exec, hset_with_ttl
+from resource_server.resource_auxillary import processUserInfo, fetch_global_counters, hset_with_ttl
 from resource_server.external_extensions import RedisInterface
 from resource_server.resource_decorators import token_required
 from resource_server.models import db, User, PasswordRecoveryToken, Post, Forum, ForumSubscription, Anime, AnimeSubscription
@@ -126,10 +126,12 @@ def delete_user() -> tuple[Response, int]:
     
     try:
         # Write intent as account recovery (represented by the usual creation flag), add user ID to account recovery stream, and write user mapping to cache
-        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
-                                                  Pipeline.xadd : {'name' : 'USER_ACTIVITY_DELETIONS', 'fields' : {'user_id' : targetUser.id, 'rtbf' : int(targetUser.rtbf), 'table' : User.__tablename__}},
-                                                  Pipeline.hset : {'name' : cache_key, 'mapping' : {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}},
-                                                  Pipeline.expire : {'name' : cache_key, 'time' : RedisConfig.TTL_WEAK}})
+        with RedisInterface.pipeline(transaction=False) as pipe:
+            pipe.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_EPHEMERAL)
+            pipe.xadd('USER_ACTIVITY_DELETIONS', {'user_id' : targetUser.id, 'rtbf' : int(targetUser.rtbf), 'table' : User.__tablename__})
+            pipe.hset(cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE})
+            pipe.expire(cache_key, RedisConfig.TTL_WEAK)
+            pipe.execute()
         enqueueEmail(RedisInterface, email=targetUser.email, subject='deletion', username=targetUser.username)
     except RedisError: 
         raise InternalServerError("Failed to perform account deletion, please try again. If the issue persists, please raise a ticket")
@@ -199,10 +201,12 @@ def recover_user() -> Response:
     # Account recovery good to go (TODO: Change this to an xadd to a dedicated stream for user recovery)
     try:
         # Write intent as account recovery (represented by the usual creation flag), add user ID to account recovery stream, and write user mapping to cache
-        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : flag_key, 'value' : RedisConfig.RESOURCE_CREATION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
-                                                  Pipeline.xadd : {'name' : 'USER_ACTIVITY_RECOVERY', 'fields' : {'user_id' : deadAccount.id, 'rtbf' : int(deadAccount.rtbf), 'table' : User.__tablename__}},
-                                                  Pipeline.hset : {'name' : cache_key, 'mapping' : user_mapping},
-                                                  Pipeline.expire : {'name' : cache_key, 'time' : RedisConfig.TTL_STRONG}})
+        with RedisInterface.pipeline(transaction=False) as pipe:
+            pipe.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+            pipe.xadd('USER_ACTIVITY_RECOVERY', {'user_id' : deadAccount.id, 'rtbf' : int(deadAccount.rtbf), 'table' : User.__tablename__})
+            pipe.hset(cache_key, user_mapping)
+            pipe.expire(cache_key, RedisConfig.TTL_STRONG)
+            pipe.execute()
         enqueueEmail(RedisInterface, email=deadAccount.email, subject="recovery", username=deadAccount.username, user_id=deadAccount.id, time_restored=datetime.now().isoformat())
     except:
         raise InternalServerError("Failed to recover your account. If this issue persists, please raise a user ticket immediately")

@@ -197,32 +197,6 @@ def fetch_global_counters(interface: Redis, *counter_names: str) -> list[int]:
         counters = pipe.execute()
     return list(map(lambda counter:None if not counter else int(counter), counters))
 
-def pipeline_exec(client: Redis, op_mapping: Mapping[FunctionType, Mapping[str, Any]], transaction: bool = False) -> None:
-    """
-    Execute multiple Redis operations in a single network round-trip using a pipeline.
-    Args:
-        client (redis.Redis): An instance of redis.Redis connected to the target Redis server.
-        op_mapping (Mapping[FunctionType, Mapping[str, Any]]): 
-            A mapping of unbound Pipeline function references to dictionaries of keyword arguments.
-            Example:
-                {
-                    Redis.set: {"key": "example", "value": "example", "nx": True},
-                    Redis.xadd: {"name": "mystream", "fields": {"event": "login"}}
-                }
-        transaction (bool, optional): 
-            Whether to execute the pipeline within a MULTI/EXEC transaction block. 
-            Defaults to False.
-    """
-    pipe: Pipeline = client.pipeline(transaction=transaction)
-    try:
-        for operation, kwargs in op_mapping.items():
-            if not isinstance(operation, FunctionType):
-                raise TypeError(f"{operation} must be an unbound Pipeline method reference (e.g., Pipeline.set, Pipeline.xadd)")
-            operation(pipe, **kwargs)   # Pass pipeline instance as self
-        pipe.execute()
-    finally:
-        pipe.close()
-
 def posts_cache_precheck(client: Redis, post_id: str, post_cache_key: str, post_deletion_intent_flag: str, action_flag: str, lock_name: str, conflicting_intent: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
     '''
     Consult cache and perform a check on a given post to try to validate the request thriugh cache and minimize DB lookups. Although this cannot guarantee post validity, if a post is found to be invalid through cache, an appropriate HTTP exception is raised. If all checks pass, then the post_mapping (if found) and the latest intent (if found) are returned
