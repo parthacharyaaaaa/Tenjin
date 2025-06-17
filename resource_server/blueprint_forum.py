@@ -5,7 +5,7 @@ from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from resource_server.resource_decorators import token_required, pass_user_details
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, hset_with_ttl
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, pipeline_exec, hset_with_ttl, admin_cache_precheck
 from resource_server.external_extensions import RedisInterface
 from resource_server.redis_config import RedisConfig
 from redis.client import Pipeline
@@ -326,48 +326,25 @@ def delete_forum(forum_id: int) -> Response:
 @enforce_json
 @token_required
 def add_admin(forum_id: int) -> tuple[Response, int]:
-    newAdminID: int = g.REQUEST_JSON.pop('user_id', None)
-    if not newAdminID:
+    admin_id: int = g.REQUEST_JSON.pop('user_id', None)
+    if not admin_id:
         raise BadRequest('Missing user id for new admin')
-    if g.DECODED_TOKEN['sid'] == newAdminID:
+    if g.DECODED_TOKEN['sid'] == admin_id:
         raise Conflict("You are already an admin in this forum")
     
-    newAdminRole: str = g.REQUEST_JSON.pop('role', 'admin')
-    newAdminLevel: int = AdminRoles.getAdminAccessLevel(newAdminRole)
+    admin_role: str = g.REQUEST_JSON.pop('role', 'admin')
+    newAdminLevel: int = AdminRoles.getAdminAccessLevel(admin_role)
 
     if (newAdminLevel == -1 or newAdminLevel == AdminRoles.owner):
         raise BadRequest("Forum administrators can only have 2 roles: admin and super")
     # Request details valid at a surface level
 
-    user_cache_key: str = f'{User.__tablename__}:{newAdminID}'
-    user_status_flag_key: str = f'alive_status:{newAdminID}'
+    user_cache_key: str = f'{User.__tablename__}:{admin_id}'
     forum_cache_key: str = f'{Forum.__tablename__}:{forum_id}'
-    forum_deletion_flag_key: str = f'delete:{forum_cache_key}'  # Existence of this flag alone is sufficient to exit early
-    admin_flag_key: str = f'{ForumAdmin.__tablename__}:{forum_id}:{newAdminID}'   # Value here would be the admin role, not a creation flag
+    admin_flag_key: str = f'{ForumAdmin.__tablename__}:{forum_id}:{admin_id}'   # Value here would be the admin role, not a creation flag
     lock_key: str = f'lock:{admin_flag_key}'
-    # Fetch all values through a single pipeline
-    with RedisInterface.pipeline(transaction=False) as pipe:
-        # User
-        pipe.get(user_status_flag_key)
-        pipe.hgetall(user_cache_key)
-        # Forum
-        pipe.get(forum_deletion_flag_key)
-        pipe.hgetall(forum_cache_key)
-        # Race/intent
-        pipe.get(admin_flag_key)
-        pipe.get(lock_key)
-        user_status, user_mapping, forum_mapping, forum_deletion_intent, latest_intent, lock = pipe.execute()
-    
-    if (forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping) or forum_deletion_intent:  # Forum doesn't exist, or has very recently been queued for deletion
-        hset_with_ttl(RedisInterface, forum_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL, transaction=False) # Reannounce non-existence of this forum
-        raise NotFound(f'No forum with ID {forum_id} found')
-    
-    if (user_mapping and RedisConfig.NF_SENTINEL_KEY in user_mapping) or user_status == RedisConfig.RESOURCE_DELETION_PENDING_FLAG:    # User (to be made an admin) doesn't exist or has been deleted
-        hset_with_ttl(RedisInterface, user_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL, transaction=False) # Reannounce non-existence of this forum
-        raise NotFound(f'No user with ID {newAdminID} found')
-    
-    if latest_intent in ('admin', 'super') or lock: # Latest intent may be deletion flag as well, but we can allow that since an admin creation request after the the same admin's deletion is fine
-        raise Conflict('A request for this action is already enqueued')
+    forum_mapping, user_mapping = admin_cache_precheck(client=RedisInterface, user_id=admin_id, user_cache_key=user_cache_key, forum_id=forum_id, forum_cache_key=forum_cache_key, admin_flag=admin_flag_key, 
+                                                       conflicting_intents=AdminRoles.__members__.keys(), message='This admin has already been added to this forum')
     
     try:
         if not forum_mapping:
@@ -391,12 +368,11 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
         # Consult DB in cases of partial/full cache misses
         if not user_mapping:    # Check to see if new admin actually exists is users table
             newAdmin: int = db.session.execute(select(User.id)
-                                            .where(User.id == newAdminID)
+                                            .where(User.id == admin_id)
                                             ).scalar_one_or_none()
             if not newAdmin:
                 raise NotFound('No user with this user id was found')
     except SQLAlchemyError: genericDBFetchException()
-    except KeyError: raise BadRequest('Mandatory claim "sid" missing in token. Please login again')
 
     # All checks passed, set lock
     lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
@@ -406,13 +382,13 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
         update_global_counter(interface=RedisInterface, delta=1, database=db, table=Forum.__tablename__, column='admin_count', identifier=forum_id)
         # Write intent as this admin's role and append query request to weak insertions streams
         with RedisInterface.pipeline(transaction=False) as pipe:
-            pipe.set(admin_flag_key, newAdminRole, ex=RedisConfig.TTL_STRONGEST)
-            pipe.xadd('WEAK_INSERTIONS', fields={'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : newAdminID, 'role' : newAdminRole})
+            pipe.set(admin_flag_key, admin_role, ex=RedisConfig.TTL_STRONGEST)
+            pipe.xadd('WEAK_INSERTIONS', fields={'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : admin_id, 'role' : admin_role})
             pipe.execute()
     finally:
         RedisInterface.delete(lock_key)    
     
-    return jsonify({"message" : "Added new admin", "userID" : newAdminID, "role" : newAdminRole}), 202
+    return jsonify({"message" : "Added new admin", "user_id" : admin_id, "role" : admin_role, "forum" : forum_mapping['name']}), 201
 
 @FORUMS_BLUEPRINT.route("/<int:forum_id>/admins", methods=['DELETE'])
 @enforce_json
