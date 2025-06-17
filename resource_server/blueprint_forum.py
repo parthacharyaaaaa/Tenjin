@@ -394,40 +394,17 @@ def add_admin(forum_id: int) -> tuple[Response, int]:
 @enforce_json
 @token_required
 def remove_admin(forum_id: int) -> tuple[Response, int]:
-    target_admin_id: int = g.REQUEST_JSON.pop('user_id', None)
-    if not target_admin_id:
+    admin_id: int = g.REQUEST_JSON.pop('user_id', None)
+    if not admin_id:
         raise BadRequest('Missing user id for new admin')
     
-    user_cache_key: str = f'{User.__tablename__}:{target_admin_id}'
-    user_status_flag_key: str = f'alive_status:{target_admin_id}'
+    user_cache_key: str = f'{User.__tablename__}:{admin_id}'
     forum_cache_key: str = f'{Forum.__tablename__}:{forum_id}'
-    forum_deletion_flag_key: str = f'delete:{forum_cache_key}'  # Existence of this flag alone is sufficient to exit early
-    admin_flag_key: str = f'{ForumAdmin.__tablename__}:{forum_id}:{target_admin_id}'   # Value here would be the admin role, not a creation flag
+    admin_flag_key: str = f'{ForumAdmin.__tablename__}:{forum_id}:{admin_id}'
     lock_key: str = f'lock:{admin_flag_key}'
-    # Fetch all values through a single pipeline
-    with RedisInterface.pipeline(transaction=False) as pipe:
-        # User
-        pipe.get(user_status_flag_key)
-        pipe.hgetall(user_cache_key)
-        # Forum
-        pipe.get(forum_deletion_flag_key)
-        pipe.hgetall(forum_cache_key)
-        # Race/intent
-        pipe.get(admin_flag_key)
-        pipe.get(lock_key)
-        user_status, user_mapping, forum_mapping, forum_deletion_intent, latest_intent, lock = pipe.execute()
-    
-    if (forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping) or forum_deletion_intent:  # Forum doesn't exist, or has very recently been queued for deletion
-        hset_with_ttl(RedisInterface, forum_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL, transaction=False) # Reannounce non-existence of this forum
-        raise NotFound(f'No forum with ID {forum_id} found')
-    
-    if (user_mapping and RedisConfig.NF_SENTINEL_KEY in user_mapping) or user_status == RedisConfig.RESOURCE_DELETION_PENDING_FLAG:    # User (to be made an admin) doesn't exist or has been deleted
-        hset_with_ttl(RedisInterface, user_cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL, transaction=False) # Reannounce non-existence of this forum
-        raise NotFound(f'No user with ID {target_admin_id} exists')
-    
-    if latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG or lock:
-        raise Conflict('A request for deleting this forum admin is already enqueued')
-    
+
+    forum_mapping, user_mapping = admin_cache_precheck(client=RedisInterface, user_id=admin_id, user_cache_key=user_cache_key, forum_id=forum_id, forum_cache_key=forum_cache_key, admin_flag=admin_flag_key, 
+                                                       conflicting_intents=[RedisConfig.RESOURCE_DELETION_PENDING_FLAG], message='This admin has already been removed from this forum')    
     try:
         if not forum_mapping:
             forum: Forum = db.session.execute(select(Forum)
@@ -440,31 +417,24 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
 
         # Check requesting user's permissions in this forum (This also indirectly confirms Forum existence)
         user_admin_role: str = db.session.execute(select(ForumAdmin.role)
-                                                .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
-                                                ).scalar_one_or_none()
+                                                  .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.DECODED_TOKEN['sid']))
+                                                  ).scalar_one_or_none()
         if not user_admin_role:
-            raise Forbidden('Permission denied')
-        requesting_user_level: int = AdminRoles.getAdminAccessLevel(user_admin_role)
-        if requesting_user_level < 2:
-            raise Forbidden('You do not have the necessary permissions to delete an admin from this forum')
+            raise Forbidden('You are not an admin in this forum, and hance cannot perform this action')
         
-        if not latest_intent:
-            # Check to see if target user is actually an admin in this forum, if not found from cache
-            targetAdmin: ForumAdmin = db.session.execute(select(ForumAdmin)
-                                                        .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == target_admin_id))
-                                                        .with_for_update(nowait=True)
-                                                        ).scalar_one_or_none()
-            if not targetAdmin:
-                raise NotFound("This user is not an admin in this forum")
-            target_admin_level: int = AdminRoles.getAdminAccessLevel(targetAdmin.role)
-        else:
-            target_admin_level: int = AdminRoles.getAdminAccessLevel(latest_intent)
+        # Check to see if target user is actually an admin in this forum
+        forum_admin: ForumAdmin = db.session.execute(select(ForumAdmin)
+                                                    .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == admin_id))
+                                                    .with_for_update(nowait=True)
+                                                    ).scalar_one_or_none()
+        if not forum_admin:
+            raise NotFound("This user is not an admin in this forum")
 
-        # Must have higher access, only other case allowed is if the admin removes themselves from their role 
-        if (requesting_user_level < target_admin_level or not (requesting_user_level == target_admin_level and target_admin_id == g.DECODED_TOKEN['sid'])):
-            raise Forbidden('You do not have the necessary permissions to delete this admin from this forum')
+        if not(AdminRoles.getAdminAccessLevel(user_admin_role) > AdminRoles.getAdminAccessLevel(forum_admin.role) or 
+               admin_id == g.DECODED_TOKEN['sid']):
+            # Must have higher access, only other case allowed is if the admin removes themselves from their role 
+            raise Forbidden(f'You do not have the necessary permissions to delete admins with role {forum_admin.role} from this forum')        
     except SQLAlchemyError: genericDBFetchException()
-    except KeyError: raise BadRequest('Mandatory claim "sid" missing in token. Please login again')
 
     # Set lock for this action
     lock_set = RedisInterface.set(lock_key, 1, RedisConfig.TTL_STRONG, nx=True)
@@ -473,12 +443,15 @@ def remove_admin(forum_id: int) -> tuple[Response, int]:
     try:
         update_global_counter(interface=RedisInterface, delta=-1, database=db, table=Forum.__tablename__, column='admin_count', identifier=forum_id)
         # Write intent as deletion and add deletion request to stream
-        pipeline_exec(RedisInterface, op_mapping={Pipeline.set : {'name' : admin_flag_key, 'value' : RedisConfig.RESOURCE_DELETION_PENDING_FLAG, 'ex' : RedisConfig.TTL_STRONGEST},
-                                                  Pipeline.xadd : {'name' : 'WEAK_DELETIONS', 'fields' : {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : target_admin_id}}})
+        with RedisInterface.pipeline(transaction=False) as pipe:
+            pipe.set(admin_flag_key, value=RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)
+            pipe.xadd('WEAK_DELETIONS', {'table' : ForumAdmin.__tablename__, 'forum_id' : forum_id, 'user_id' : admin_id})
+            pipe.execute()
+
     finally:
         RedisInterface.delete(lock_key)
     
-    return jsonify({"message" : "Removed admin", "userID" : target_admin_id, "role" : latest_intent or targetAdmin.role}), 202
+    return jsonify({"message" : "Removed admin", "user_id" : admin_id, "role" : forum_admin.role, "forum" : forum_id, "forum_name" : forum_mapping['name']}), 202
 
 @FORUMS_BLUEPRINT.route("/<int:forum_id>/admins", methods=['PATCH'])
 @enforce_json
