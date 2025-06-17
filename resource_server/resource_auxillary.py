@@ -25,7 +25,7 @@ def poll_global_key_mapping(interface: Redis) -> dict[str, bytes]:
     
     return {kid : pub_pem.encode() for kid, pub_pem in res.items()}  # interface has decoded responses, but PyJWT needs public pem in bytes
 
-def hset_with_ttl(interface: Redis, name: str, mapping: dict, ttl: int, transaction: bool = True):
+def hset_with_ttl(interface: Redis, name: str, mapping: dict, ttl: int, transaction: bool = False):
     with interface.pipeline(transaction) as pp:
         pp.hset(name=name, mapping=mapping)
         pp.expire(name=name, time=ttl)
