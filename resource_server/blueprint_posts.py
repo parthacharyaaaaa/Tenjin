@@ -239,17 +239,20 @@ def delete_post(post_id: int) -> Response:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     flag_key: str = f'delete:{cache_key}'           # User ID not included in intent flag, because multiple users (owner, admin) can delete a post
     lock_key: str = f'lock:{flag_key}'
+    # NOTE: Not using resource_existence_cache_precheck here since we also need to fetch lock for this action
     with RedisInterface.pipeline() as pipe:
         pipe.hgetall(cache_key)
         pipe.get(flag_key)
         pipe.get(lock_key)
-        post_mapping, latest_intent, lock = pipe.execute()
+        post_mapping, deletion_intent, lock = pipe.execute()
 
+    if deletion_intent:
+        raise Gone('This post has already been deleted')
     if post_mapping and RedisConfig.NF_SENTINEL_KEY in post_mapping:
         hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
         raise NotFound(f'No post with ID {post_id} exists')
-    if lock or latest_intent:
-        raise Conflict(f'A request for this action is currently enqueued')
+    if lock:
+        raise Conflict(f'A request for this action is currently being processed')
     
     # Ensure post exists in the first place
     if not post_mapping:
