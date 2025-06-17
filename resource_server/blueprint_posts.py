@@ -301,7 +301,7 @@ def delete_post(post_id: int) -> Response:
     hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
     return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, forum_name = redirectionForum)}), 202
 
-@POSTS_BLUEPRINT.route("/<int:post_id>/vote", methods=["PATCH"])
+@POSTS_BLUEPRINT.route("/<int:post_id>/vote", methods=["POST"])
 @token_required
 def vote_post(post_id: int) -> tuple[Response, int]:
     try:
@@ -387,7 +387,7 @@ def vote_post(post_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Vote casted!"}), 202
 
-@POSTS_BLUEPRINT.route("/<int:post_id>/unvote", methods=["PATCH"])
+@POSTS_BLUEPRINT.route("/<int:post_id>/unvote", methods=["DELETE"])
 @token_required
 def unvote_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
@@ -451,7 +451,7 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Removed vote!", 'delta' : delta}), 202
 
-@POSTS_BLUEPRINT.route("/<int:post_id>/save", methods=["PATCH"])
+@POSTS_BLUEPRINT.route("/<int:post_id>/save", methods=["POST"])
 @token_required
 def save_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
@@ -514,7 +514,7 @@ def save_post(post_id: int) -> tuple[Response, int]:
         RedisInterface.delete(lock_key)
     return jsonify({"message" : "Post saved!"}), 202
 
-@POSTS_BLUEPRINT.route("/<int:post_id>/unsave", methods=["PATCH"])
+@POSTS_BLUEPRINT.route("/<int:post_id>/unsave", methods=["DELETE"])
 @token_required
 def unsave_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
