@@ -189,13 +189,19 @@ def update_global_counter(interface: Redis, delta: int, database: SQLAlchemy, ta
         # Counter made by another worker, update in place
         interface.hincrby(hashmap_key, identifier, delta)
 
-def fetch_global_counters(interface: Redis, *counter_names: str) -> list[int]:
-    counters: list[int] = []
-    with interface.pipeline(transaction=False) as pipe:
-        for counter_name in counter_names:
-            pipe.get(counter_name)
-        counters = pipe.execute()
-    return list(map(lambda counter:None if not counter else int(counter), counters))
+def fetch_global_counters(client: Redis, hashmaps: Sequence[str], identifiers: Sequence[int|str]) -> dict[str, Sequence[int|None]]:
+    with client.pipeline(transaction=False) as pipe:
+        for hashmap in hashmaps:
+            for identifer in identifiers:
+                pipe.hget(hashmap, identifer)
+        _counters: list[int|None] = [res if res is None else int(res) for res in pipe.execute()]
+    counter_mapping: dict[str, Sequence[int]] = {}
+    step: int = len(identifiers)
+
+    for idx, hashmap in enumerate(hashmaps):
+        counter_mapping[hashmap] = _counters[step*idx:step*(idx+1)]
+    return counter_mapping
+    
 
 def posts_cache_precheck(client: Redis, post_id: str, post_cache_key: str, post_deletion_intent_flag: str, action_flag: str, lock_name: str, conflicting_intent: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
     '''
