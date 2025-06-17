@@ -102,7 +102,7 @@ class AdminRoles(Enum):
 
     @staticmethod
     def check_membership(arg: str) -> bool:
-        return arg in [v.value for v in AdminRoles.__members__.values()]
+        return arg in AdminRoles.__members__.keys()
     
     @staticmethod
     def getAdminAccessLevel(role: str) -> int:
