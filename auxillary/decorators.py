@@ -1,9 +1,6 @@
 from functools import wraps
 from flask import request, current_app, g
 from werkzeug.exceptions import BadRequest, Unauthorized, InternalServerError
-from datetime import timedelta
-from jwt import decode, get_unverified_header
-from jwt.exceptions import PyJWTError, ExpiredSignatureError
 
 def enforce_json(endpoint):
     @wraps(endpoint)

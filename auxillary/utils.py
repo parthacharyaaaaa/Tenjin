@@ -1,15 +1,12 @@
 '''Helper functions'''
 import datetime
 import hashlib
-import re
 from flask import jsonify
 import os
 import traceback
 from typing import Mapping, Callable, Literal, Any, Iterable
 from types import NoneType
 import base64
-import requests
-import ecdsa
 import ujson
 from redis import Redis
 from redis.client import Pipeline
@@ -25,7 +22,6 @@ def generic_error_handler(e : Exception):
 
     All of these attributes are dictionaries and are **optional**, since in their absense a generic HTTP 500 code is thrown
     '''
-    print(traceback.format_exc())
     response = jsonify({"message" : getattr(e, "description", "An error occured"),
                         **getattr(e, "kwargs", {})})
     if getattr(e, "header_kwargs", None):
