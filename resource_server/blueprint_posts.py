@@ -2,16 +2,16 @@ from flask import Blueprint, jsonify, g, url_for, request
 from werkzeug import Response
 from werkzeug.exceptions import NotFound, BadRequest, Forbidden, Conflict, Gone, InternalServerError
 from sqlalchemy import select, update, delete, Row
+from sqlalchemy.sql.expression import BinaryExpression
 from sqlalchemy.exc import SQLAlchemyError
 from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostReport, PostVote, Comment, ReportTags
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
 from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, posts_cache_precheck, resource_existence_cache_precheck, hset_with_ttl
 from resource_server.redis_config import RedisConfig
-from redis.client import Pipeline
 from auxillary.decorators import enforce_json
-from auxillary.utils import rediserialize, genericDBFetchException, consult_cache
-from typing import Any, Optional
+from auxillary.utils import rediserialize, genericDBFetchException, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
+from typing import Any, Optional, Sequence
 import base64
 import binascii
 from datetime import datetime
@@ -660,47 +660,69 @@ def report_post(post_id: int) -> tuple[Response, int]:
 @POSTS_BLUEPRINT.route('/<int:post_id>/comments')
 def get_post_comments(post_id: int) -> tuple[Response, int]:
     try:
-        rawCursor = request.args.get('cursor', '0').strip()
-        if rawCursor == '0':
-            cursor = 0
+        raw_cursor = request.args.get('cursor', '0').strip()
+        if raw_cursor == '0':
+            cursor: int = 0
         else:
-            cursor = int(base64.b64decode(rawCursor).decode())
+            cursor = int(base64.b64decode(raw_cursor).decode())
     except (ValueError, TypeError, binascii.Error):
-        raise BadRequest("Failed to load more posts. Please refresh this page")
+            raise BadRequest("Failed to load more comments. Please try again later")
 
+    cache_key: str = f'{Post.__tablename__}:{post_id}'
+    pagination_cache_key: str = f'{cache_key}:{Comment.__tablename__}:{cursor}'
+    post_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=post_id, resource_name=User.__tablename__, cache_key=cache_key)
+
+    if not post_mapping:
+        # Ensure post exists before trying to fetch its comments
+        try:
+            post: Post = db.session.execute(select(Post)
+                                            .where((Post.id == post_id) &
+                                                   (Post.rtbf_hidden.isnot(True)) &
+                                                   (Post.deleted.is_(False)))
+                                            ).scalar_one_or_none()
+            if not post:
+                hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+                raise NotFound(f'No post with ID {post_id} could be found')
+            
+            post_mapping: dict[str, str|int] = rediserialize(post.__json_like__())
+            hset_with_ttl(RedisInterface, cache_key, post_mapping, RedisConfig.TTL_WEAK)
+        except SQLAlchemyError: genericDBFetchException()
+    
+    comments, end, next_cursor = fetch_group_resources(RedisInterface, group_key=pagination_cache_key)
+    counter_attrs: list[str] = ['score']
+    if comments and all(comments):
+        counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Comment.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[comment['id'] for comment in comments])
+        for idx, (attribute, counters) in enumerate(counters_mapping.items()):
+            comments[idx][attribute] = counters[idx]
+        
+        # Return paginated result with updated counters
+        promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
+        return jsonify({'comments' : comments, 'cursor' : next_cursor, 'end' : end}), 200
+    # Cache miss
     try:
-        commentsDetails: list[tuple[str, Comment]] = db.session.execute(
-            select(User, Comment)
-            .where((Comment.id > cursor) & (Comment.parent_post == post_id) & (Comment.rtbf_hidden.isnot(True)))
-            .join(User, Comment.author_id == User.id)
-            .order_by(Comment.id)
-            .limit(6)
-        ).all()
-    except SQLAlchemyError:
-        return jsonify({'comments': None, 'cursor': cursor, 'end': True}), 200
+        where_clause: BinaryExpression = (Comment.parent_post == post_id) & (Comment.deleted.is_(False)) & (Comment.rtbf_hidden.isnot(True))
+        if cursor:
+            where_clause &= (Comment.id > cursor)
+        next_comments: list[tuple[Comment, str]] = db.session.execute(select(Comment, User.username)
+                                                                      .join(User, User.id == Comment.author_id)
+                                                                      .where(where_clause)
+                                                                      .limit(10)
+                                                                      .order_by(Comment.time_created.desc())
+                                                                      ).all()
+    except SQLAlchemyError: genericDBFetchException()
+    if not next_comments:
+        return jsonify({'comments' : None, 'end' : True, 'cursor' : raw_cursor})
+    
+    end: bool = len(next_comments) < 6
+    if not end:
+        next_comments.pop(-1)
+    next_cursor: str = base64.b64encode(str(next_comments[-1][0].id).encode('utf-8')).decode()
 
-    end: bool = False
-    if len(commentsDetails) < 6:
-        end = True
-    else:
-        commentsDetails.pop(-1)
+    jsonified_comments: list[dict[str, Any]] = [comment_data[0].__json_like__() | {'username' : comment_data[1]} for comment_data in next_comments]
+    # Cache grouped resources with updated counters
+    cache_grouped_resource(RedisInterface, group_key=pagination_cache_key,
+                           resource_type=Comment.__tablename__, resources={jsonified_comment['id'] : rediserialize(jsonified_comment) for jsonified_comment in jsonified_comments},
+                           weak_ttl=RedisConfig.TTL_WEAK, strong_ttl=RedisConfig.TTL_STRONG,
+                           cursor=next_cursor, end=end)
 
-    comments: list[dict] = []
-    new_cursor = cursor
-
-    for user, comment in commentsDetails:
-        comments.append({
-            'id': comment.id,
-            'author': None if user.deleted else user.username,
-            'body': comment.body,
-            'created_at': comment.time_created.isoformat()
-        })
-        new_cursor = max(new_cursor, comment.id)
-
-    encoded_cursor = base64.b64encode(str(new_cursor).encode()).decode()
-
-    return jsonify({
-        'comments': comments,
-        'cursor': encoded_cursor,
-        'end': end
-    }), 200
+    return jsonify({'comments' : jsonified_comments, 'cursor' : next_cursor, 'end' : end}), 200
