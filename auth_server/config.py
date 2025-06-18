@@ -44,6 +44,7 @@ class FlaskConfig:
 
         # Resource server metadata
         RESOURCE_SERVER_ORIGIN = os.environ["RS_DOMAIN"].lower()
+        RESOURCE_SERVER_URL_PREFIX = os.environ['RS_URL_PREFIX'].lower()
         PROTOCOL = os.environ.get("RS_COMMUNICATION_PROTOCOL", "http").lower()
 
         # Business logic

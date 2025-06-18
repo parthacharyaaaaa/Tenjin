@@ -30,7 +30,7 @@ def login():
     if not ("identity" in g.REQUEST_JSON and "password" in g.REQUEST_JSON):
         raise BadRequest(f"POST /{request.root_path} expects identity and password in HTTP body")
     for key in current_app.config["PRIVATE_COMM_KEYS"]:
-        valid = requests.post(f"{current_app.config['PROTOCOL']}://{current_app.config['RESOURCE_SERVER_ORIGIN']}/users/login",
+        valid = requests.post(f"{current_app.config['PROTOCOL']}://{current_app.config['RESOURCE_SERVER_ORIGIN']}{current_app.config['RESOURCE_SERVER_URL_PREFIX']}/users/login",
                             json = {"identity" : g.REQUEST_JSON["identity"], "password" : g.REQUEST_JSON["password"]},
                             headers={"PRIVATE-API-KEY" : key})
         
@@ -92,7 +92,7 @@ def register():
     
     g.REQUEST_JSON.update({"authprovider" : "babel-auth"})
     for key in current_app.config["PRIVATE_COMM_KEYS"]:
-        valid = requests.post(f"{current_app.config['PROTOCOL']}://{current_app.config['RESOURCE_SERVER_ORIGIN']}/users/",
+        valid = requests.post(f"{current_app.config['PROTOCOL']}://{current_app.config['RESOURCE_SERVER_ORIGIN']}{current_app.config['RESOURCE_SERVER_URL_PREFIX']}/users/",
                             json = g.REQUEST_JSON,
                             headers={"PRIVATE-API-KEY" : key})
         

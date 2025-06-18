@@ -44,12 +44,12 @@ def create_app() -> Flask:
     from resource_server.blueprint_comments import COMMENTS_BLUEPRINT
     from resource_server.blueprint_animes import ANIMES_BLUEPRINT
     from resource_server.blueprint_misc import MISC_BLUEPRINT
-    app.register_blueprint(FORUMS_BLUEPRINT)
-    app.register_blueprint(USERS_BLUEPRINT)
-    app.register_blueprint(POSTS_BLUEPRINT)
-    app.register_blueprint(ANIMES_BLUEPRINT)
-    app.register_blueprint(MISC_BLUEPRINT)
-    app.register_blueprint(COMMENTS_BLUEPRINT)
+    app.register_blueprint(ANIMES_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/animes')
+    app.register_blueprint(COMMENTS_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/comments')
+    app.register_blueprint(FORUMS_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/forums')
+    app.register_blueprint(POSTS_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/posts')
+    app.register_blueprint(USERS_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/users')
+    app.register_blueprint(MISC_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT'])
 
     ### Additional CLI commands ###
    # Instantiate the database

@@ -16,7 +16,7 @@ from types import MappingProxyType
 from datetime import datetime, timedelta
 import binascii
 
-FORUMS_BLUEPRINT: Blueprint = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/forums")
+FORUMS_BLUEPRINT: Blueprint = Blueprint('forums', 'forums')
 
 TIMEFRAMES: MappingProxyType = MappingProxyType({0 : lambda dt : dt - timedelta(hours=1),
                                                  1 : lambda dt : dt - timedelta(days=1),

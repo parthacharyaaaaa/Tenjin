@@ -15,7 +15,7 @@ from typing import Any, Optional, Sequence
 import binascii
 from datetime import datetime
 
-POSTS_BLUEPRINT: Blueprint = Blueprint("post", "post", url_prefix="/posts")
+POSTS_BLUEPRINT: Blueprint = Blueprint("post", "post")
 
 @POSTS_BLUEPRINT.route("/", methods=["POST", ])
 @enforce_json

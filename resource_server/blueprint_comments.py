@@ -13,7 +13,7 @@ from resource_server.redis_config import RedisConfig
 from typing import Any
 from datetime import datetime
 
-COMMENTS_BLUEPRINT: Blueprint = Blueprint('comments', 'comments', url_prefix='/comments')
+COMMENTS_BLUEPRINT: Blueprint = Blueprint('comments', 'comments')
 
 @COMMENTS_BLUEPRINT.route("/", methods=['POST'])
 @enforce_json

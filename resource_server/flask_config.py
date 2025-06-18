@@ -11,6 +11,7 @@ if not bLoaded:
 class FlaskConfig:
     try:
         ### Flask Configurations ###
+        APPLICATION_ROOT: str = os.environ['APPLICATION_ROOT']
         APP_PORT: int = int(os.environ["FLASK_PORT"])
         APP_HOST: str = os.environ["FLASK_HOST"]
         APP_DEBUG: bool = bool(int(os.environ.get("FLASK_DEBUG", 0)))

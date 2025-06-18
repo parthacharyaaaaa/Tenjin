@@ -9,7 +9,7 @@ from resource_server.external_extensions import RedisInterface
 import re
 from datetime import datetime
 
-MISC_BLUEPRINT: Blueprint = Blueprint('Misc', 'misc', url_prefix="/")
+MISC_BLUEPRINT: Blueprint = Blueprint('Misc', 'misc')
 
 @MISC_BLUEPRINT.route('/genres', methods=['GET'])
 def get_genres() -> tuple[Response, int]:

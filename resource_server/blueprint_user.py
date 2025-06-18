@@ -20,7 +20,7 @@ from hashlib import sha256
 from typing import Sequence, Any
 import binascii
 
-USERS_BLUEPRINT: Blueprint = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/users")
+USERS_BLUEPRINT: Blueprint = Blueprint('users', 'users')
 
 @USERS_BLUEPRINT.route("/", methods=["POST"])
 # @private
