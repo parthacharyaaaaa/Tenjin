@@ -267,7 +267,7 @@ def resource_existence_cache_precheck(client: Redis, identifier: int|str, resour
     
     return resource_mapping
 
-def resource_cache_precheck(client: Redis, identifier: int|str, cache_key: str, deletion_intent_flag: str, action_flag: str, lock_name: str, resource_name: Optional[str] = None, conflicting_intent: Optional[str] = None) -> tuple[Optional[dict], Optional[str]]:
+def resource_cache_precheck(client: Redis, identifier: int|str, cache_key: str, deletion_intent_flag: str, action_flag: str, lock_name: str, resource_name: Optional[str] = None, conflicting_intent: Optional[str] = None, allow_deletion: bool = False) -> tuple[Optional[dict], Optional[str], bool]:
     '''
     Consult cache and perform a check on a given resource to try to validate the request through cache and minimize DB lookups. Although this cannot guarantee resource validity, if it is found to be invalid through cache, an appropriate HTTP exception is raised. If all checks pass, then the resource_mapping (if found) and the latest intent (if found) are returned
     Args:
@@ -292,7 +292,7 @@ def resource_cache_precheck(client: Redis, identifier: int|str, cache_key: str, 
 
         resource_mapping, deletion_intent, latest_intent, lock = pipe.execute()
 
-    if deletion_intent:    # Deletion written in cache
+    if deletion_intent and not allow_deletion:    # Deletion written in cache
         raise Gone('This resource has been permanently deleted, and will soon be unavailable')
     if resource_mapping and RedisConfig.NF_SENTINEL_KEY in resource_mapping:    # Non-existence written in cache
         hset_with_ttl(client, cache_key, resource_mapping, RedisConfig.TTL_EPHEMERAL)  # Reannounce non-existence
@@ -302,7 +302,7 @@ def resource_cache_precheck(client: Redis, identifier: int|str, cache_key: str, 
     if (latest_intent and not conflicting_intent) or (conflicting_intent and latest_intent == conflicting_intent):  # Stop duplicate requests
         raise Conflict(f'This action for resource {identifier} has already been requested')
     
-    return resource_mapping, latest_intent  # post_mapping and latest intent may be required by the endpoint later
+    return resource_mapping, latest_intent, bool(deletion_intent)  # post_mapping, latest intent, and deletion intent may be required by the endpoint later
 
 def admin_cache_precheck(client: Redis, user_id: int|str, user_cache_key: str, forum_id: int|str, forum_cache_key: str, admin_flag: str, lock_name: Optional[str] = None, user_status_flag: Optional[str] = None, forum_deletion_flag: Optional[str] = None, conflicting_intents: Optional[Sequence[str]] = None, message: Optional[str] = None) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]], Optional[str]]:
     if not user_status_flag:
