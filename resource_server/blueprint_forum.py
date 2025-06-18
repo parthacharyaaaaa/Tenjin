@@ -2,7 +2,7 @@ from flask import Blueprint, g, jsonify, request, url_for
 from werkzeug import Response
 from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict, Unauthorized, InternalServerError, Gone
 from auxillary.decorators import enforce_json
-from auxillary.utils import rediserialize, genericDBFetchException, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
+from auxillary.utils import rediserialize, genericDBFetchException, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource, to_base64url, from_base64url
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from resource_server.resource_decorators import token_required, pass_user_details
 from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, hset_with_ttl, admin_cache_precheck, resource_cache_precheck, resource_existence_cache_precheck
@@ -14,7 +14,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from typing import Any, Sequence
 from types import MappingProxyType
 from datetime import datetime, timedelta
-import base64
 import binascii
 
 FORUMS_BLUEPRINT: Blueprint = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/forums")
@@ -88,30 +87,30 @@ def get_forum(forum_id: int) -> tuple[Response, int]:
 @FORUMS_BLUEPRINT.route("/<int:forum_id>/posts")
 def get_forum_posts(forum_id: int) -> tuple[Response, int]:
     try:
-        rawCursor = request.args.get('cursor', '0').strip()
-        if rawCursor == '0':
+        raw_cursor = request.args.get('cursor', '0').strip()
+        if raw_cursor == '0':
             cursor = 0
             init: bool = True
         else:
             init: bool = False
-            cursor = int(base64.b64decode(rawCursor).decode())
+            cursor: int = from_base64url(raw_cursor)
 
         sortOption: str = request.args.get('sort', '0').strip()
         if not sortOption.isnumeric() or sortOption not in ('0', '1'):
             sortOption = '0'
         
-        timeFrame: str = request.args.get('timeframe', '5').strip()
-        if not timeFrame.isnumeric() or not (0 <= int(timeFrame) <= 5):
-            timeFrame = 5
+        timeframe: str = request.args.get('timeframe', '5').strip()
+        if not timeframe.isnumeric() or not (0 <= int(timeframe) <= 5):
+            timeframe = 5
         else:
-            timeFrame = int(timeFrame)
+            timeframe = int(timeframe)
         
     except (ValueError, TypeError, binascii.Error):
             raise BadRequest("Failed to load more posts. Please try again later")
     
     # Confirm forum existence
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
-    pagination_cache_key: str = f'{cache_key}:{Post.__tablename__}:{cursor}:{timeFrame}'
+    pagination_cache_key: str = f'{cache_key}:{Post.__tablename__}:{cursor}:{timeframe}'
     forum_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=forum_id, resource_name=Forum, cache_key=cache_key)
 
     # Even if forum is deleted, until it is persisted to DB, allow posts to be fetched
@@ -126,7 +125,7 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
         promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
         return jsonify({'posts' : posts, 'cursor' : next_cursor, 'end' : end}), 200
         
-    whereClause = (Post.forum_id == forum_id) & (Post.time_posted >= TIMEFRAMES[timeFrame](datetime.now()))
+    whereClause = (Post.forum_id == forum_id) & (Post.time_posted >= TIMEFRAMES[timeframe](datetime.now()))
     if not init:
         whereClause &= (Post.id < cursor)
     
@@ -150,7 +149,9 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
     
     jsonified_posts: list[dict[str, Any]] = [post.__json_like__() | {'username' : username} for post, username in next_posts]
     end: bool = len(next_posts) < 6
-    next_cursor: str = base64.b64encode(str(next_posts[-1][0].id).encode('utf-8')).decode()
+    if not end:
+        next_posts.pop(-1)
+    next_cursor: str = to_base64url(next_posts[-1].id, length=16)
 
     cache_grouped_resource(RedisInterface, group_key=pagination_cache_key,
                            resource_type=Post.__tablename__, resources={jsonified_post['id'] : rediserialize(jsonified_post) for jsonified_post in jsonified_posts},

@@ -6,12 +6,11 @@ from resource_server.external_extensions import RedisInterface
 from resource_server.redis_config import RedisConfig
 from resource_server.resource_decorators import token_required
 from resource_server.models import db, Anime, AnimeGenre, Genre, StreamLink, Forum, AnimeSubscription
-from auxillary.utils import genericDBFetchException, rediserialize, consult_cache, promote_group_ttl, fetch_group_resources, cache_grouped_resource
+from auxillary.utils import genericDBFetchException, rediserialize, consult_cache, promote_group_ttl, fetch_group_resources, cache_grouped_resource, from_base64url, to_base64url
 from sqlalchemy import select, and_, func, Row
 from sqlalchemy.sql.expression import BinaryExpression
 from sqlalchemy.exc import SQLAlchemyError
 from flask_sqlalchemy import SQLAlchemy
-import base64
 import binascii
 import ujson
 from collections import defaultdict
@@ -142,14 +141,14 @@ def unsub_anime(anime_id: int) -> tuple[Response, int]:
 @ANIMES_BLUEPRINT.route("/")
 def get_animes() -> tuple[Response, int]:
     try:
-        rawCursor = request.args.get('cursor', '0').strip()
-        if rawCursor == '0':
-            cursor = 0
-        elif not rawCursor:
+        raw_cursor = request.args.get('cursor', '0').strip()
+        if raw_cursor == '0':
+            cursor: int = 0
+        elif not raw_cursor:
             raise BadRequest("Failed to load more posts. Please refresh this page")
         else:
-            cursor = int(base64.b64decode(rawCursor).decode())
-
+            cursor: int = from_base64url(raw_cursor)
+        
         searchParam: str = request.args.get('search', '').strip()
         genreID: str = request.args.get('genre', None)
         if genreID:
@@ -157,7 +156,6 @@ def get_animes() -> tuple[Response, int]:
                 genreID = None
             else:
                 genreID = int(genreID)
-
 
     except (ValueError, TypeError, binascii.Error):
             raise BadRequest("Failed to load more posts. Please refresh this page")
@@ -193,10 +191,14 @@ def get_animes() -> tuple[Response, int]:
         for anime_id, genre_name in rows:
             genres[anime_id].append(genre_name)
     except SQLAlchemyError: genericDBFetchException()
+    end: bool = len(animeIDs) < 6
+    if not end:
+        genres.pop(next(reversed(genres)))
+        animes.pop(-1)
+    next_cursor: str = to_base64url(animes[-1].id, length=16)
 
-    cursor = base64.b64encode(str(animes[-1].id).encode('utf-8')).decode()
     result = [anime.__json_like__() | {'genres': genres.get(anime.id, [])} for anime in animes]
-    return jsonify({'animes' : result, 'cursor' : cursor}), 200
+    return jsonify({'animes' : result, 'cursor' : next_cursor, 'end' : end}), 200
 
 @ANIMES_BLUEPRINT.route("<int:anime_id>/links")
 def get_anime_links(anime_id: int) -> tuple[Response, int]:
@@ -213,7 +215,7 @@ def get_anime_forums(anime_id: int) -> tuple[Response, int]:
         if raw_cursor == '0':
             cursor: int = 0
         else:
-            cursor = int(base64.b64decode(raw_cursor).decode())
+            cursor: int = from_base64url(raw_cursor)
     except (ValueError, TypeError, binascii.Error):
             raise BadRequest("Failed to load more forums. Please try again")
 
@@ -260,7 +262,7 @@ def get_anime_forums(anime_id: int) -> tuple[Response, int]:
     end: bool = len(forum_res) < 6
     if not end:
         forum_res.pop(-1)
-    next_cursor: str = base64.b64encode(str(forum_res[-1].id).encode('utf-8')).decode()
+    next_cursor: str = to_base64url(forum_res[-1].id, length=16)
     jsonified_forums: list[dict[str, Any]] = [res.__json_like__() for res in forum_res]
 
     # Cache grouped resources with updated counters

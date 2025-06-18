@@ -10,9 +10,8 @@ from resource_server.external_extensions import RedisInterface
 from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, posts_cache_precheck, resource_existence_cache_precheck, hset_with_ttl
 from resource_server.redis_config import RedisConfig
 from auxillary.decorators import enforce_json
-from auxillary.utils import rediserialize, genericDBFetchException, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
+from auxillary.utils import rediserialize, genericDBFetchException, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource, to_base64url, from_base64url
 from typing import Any, Optional, Sequence
-import base64
 import binascii
 from datetime import datetime
 
@@ -664,14 +663,13 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
         if raw_cursor == '0':
             cursor: int = 0
         else:
-            cursor = int(base64.b64decode(raw_cursor).decode())
+            cursor: int = from_base64url(raw_cursor)
     except (ValueError, TypeError, binascii.Error):
-            raise BadRequest("Failed to load more comments. Please try again later")
+        raise BadRequest("Failed to load more comments. Please try again later")
 
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     pagination_cache_key: str = f'{cache_key}:{Comment.__tablename__}:{cursor}'
     post_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=post_id, resource_name=User.__tablename__, cache_key=cache_key)
-
     if not post_mapping:
         # Ensure post exists before trying to fetch its comments
         try:
@@ -716,7 +714,7 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
     end: bool = len(next_comments) < 6
     if not end:
         next_comments.pop(-1)
-    next_cursor: str = base64.b64encode(str(next_comments[-1][0].id).encode('utf-8')).decode()
+    next_cursor: str = to_base64url(next_comments[-1][0].id, length=16)
 
     jsonified_comments: list[dict[str, Any]] = [comment_data[0].__json_like__() | {'username' : comment_data[1]} for comment_data in next_comments]
     # Cache grouped resources with updated counters

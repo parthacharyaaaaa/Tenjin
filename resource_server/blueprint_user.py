@@ -3,7 +3,7 @@ from flask import Blueprint, g, request, jsonify, current_app, url_for
 from werkzeug import Response
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized, Forbidden, Gone
 from auxillary.decorators import enforce_json
-from auxillary.utils import hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource
+from auxillary.utils import hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource, to_base64url, from_base64url
 from resource_server.resource_auxillary import processUserInfo, fetch_global_counters, hset_with_ttl, resource_existence_cache_precheck
 from resource_server.external_extensions import RedisInterface
 from resource_server.resource_decorators import token_required
@@ -16,9 +16,9 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from datetime import datetime
 from redis.exceptions import RedisError
 from uuid import uuid4
-import base64
 from hashlib import sha256
 from typing import Sequence, Any
+import binascii
 
 USERS_BLUEPRINT: Blueprint = Blueprint(__file__.split(".")[0], __file__.split(".")[0], url_prefix="/users")
 
@@ -342,9 +342,9 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
         if raw_cursor == '0':
             cursor: int = 0
         else:
-            cursor = int(base64.b64decode(raw_cursor).decode())
-    except (ValueError, TypeError):
-            raise BadRequest("Failed to load more posts. Please try again later")
+            cursor: int = from_base64url(raw_cursor)
+    except (ValueError, TypeError, binascii.Error):
+        raise BadRequest("Failed to load more posts. Please try again later")
 
     cache_key: str = f'{User.__tablename__}:{user_id}'
     pagination_cache_key: str = f'{cache_key}:{Post.__tablename__}:{cursor}'
@@ -388,7 +388,7 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
     end: bool = len(next_posts) < 6
     if not end:
         next_posts.pop(-1)
-    next_cursor: str = base64.b64encode(str(next_posts[-1].id).encode('utf-8')).decode()
+    next_cursor: str = to_base64url(next_posts[-1].id, length=16)
 
     jsonified_posts: list[dict[str, Any]] = [post.__json_like__() | {'username' : user_mapping['username']} for post in next_posts]
     # Cache grouped resources with updated counters
@@ -406,7 +406,7 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
         if raw_cursor == '0':
             cursor: int = 0
         else:
-            cursor = int(base64.b64decode(raw_cursor).decode())
+            cursor: int = from_base64url(raw_cursor)
     except (ValueError, TypeError):
             raise BadRequest("Failed to load more forums. Please try again")
 
@@ -453,7 +453,7 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
     end: bool = len(joined_forum_res) < 6
     if not end:
         joined_forum_res.pop(-1)
-    next_cursor: str = base64.b64encode(str(joined_forum_res[-1][0].id).encode('utf-8')).decode()
+    next_cursor: str = to_base64url(joined_forum_res[-1][0].id, length=16)
     jsonified_forums: list[dict[str, Any]] = [res[0].__json_like__() | {'time_subscribed' : res[1]} for res in joined_forum_res]
 
     # Cache grouped resources with updated counters
@@ -471,7 +471,7 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
         if raw_cursor == '0':
             cursor: int = 0
         else:
-            cursor = int(base64.b64decode(raw_cursor).decode())
+            cursor: int = from_base64url(raw_cursor)
     except (ValueError, TypeError):
             raise BadRequest("Failed to load more posts. Please try again later")
 
@@ -518,7 +518,8 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
     end: bool = len(next_anime_res) < 6
     if not end:
         next_anime_res.pop(-1)
-    next_cursor: str = base64.b64encode(str(next_anime_res[-1][0].id).encode('utf-8')).decode()
+    
+    next_cursor: str = to_base64url(next_anime_res[-1][0].id, length=16)
     jsonified_animes: list[dict[str, Any]] = [row[0].__json_like__() | {'time_subscribed' :row[1].isoformat()} for row in next_anime_res]
     # Cache grouped resources with updated counters
     cache_grouped_resource(RedisInterface, group_key=pagination_cache_key,
