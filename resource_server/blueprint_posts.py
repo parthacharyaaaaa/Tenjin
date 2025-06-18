@@ -66,49 +66,21 @@ def get_post(post_id : int) -> tuple[Response, int]:
     fetch_relation: bool = 'fetch_relation' in request.args and g.REQUESTING_USER
     post_mapping: Optional[dict[str, Any]] = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION,RedisConfig.TTL_EPHEMERAL)
     
-    # Fetch global counters if in memory
-    global_score, global_comments, global_saves = fetch_global_counters(RedisInterface, f'post:{post_id}:score', f'post:{post_id}:total_comments', f'post:{post_id}:saves')
-
-    if post_mapping:
-        if RedisConfig.NF_SENTINEL_KEY in post_mapping:
-            raise NotFound('No post with this ID could be found')
+    try:
+        resultSet: Row = db.session.execute(select(Post, User.deleted)
+                                            .join(Post, Post.author_id == User.id)
+                                            .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
+                                            ).first()
+        if not resultSet:
+            hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+            raise NotFound(f"Post with id {post_id} could not be found :(")
         
-        # Update fetched mapping with global counters
-        if global_score is not None:
-            post_mapping['score'] = global_score
-        if global_saves is not None:
-            post_mapping['saves'] = global_saves
-        if global_comments is not None:
-            post_mapping['comments'] = global_comments
+        fetchedPost, anonymize = resultSet
+        post_mapping = rediserialize(fetchedPost.__json_like__())
+        if anonymize:
+            post_mapping['author_id'] = None
 
-    else:
-        # Cache miss
-        try:
-            resultSet: Row = db.session.execute(select(Post, User.deleted)
-                                                .join(Post, Post.author_id == User.id)
-                                                .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
-                                                ).first()
-            if not resultSet:
-                hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
-                raise NotFound(f"Post with id {post_id} could not be found :(")
-            
-            fetchedPost, anonymize = resultSet
-            post_mapping = rediserialize(fetchedPost.__json_like__())
-            if anonymize:
-                post_mapping['author_id'] = None
-            
-            # Update fetched mapping with global counters
-            if global_score is not None:
-                post_mapping['score'] = global_score
-            if global_saves is not None:
-                post_mapping['saves'] = global_saves
-            if global_comments is not None:
-                post_mapping['comments'] = global_comments
-
-            # Cache with updated counters
-            hset_with_ttl(RedisInterface, cacheKey, post_mapping, RedisConfig.TTL_STRONG)
-
-        except SQLAlchemyError: genericDBFetchException()
+    except SQLAlchemyError: genericDBFetchException()
 
     # post_mapping has been fetched, either from cache or DB. Start constructing final JSON response
     res: dict[str, dict] = {'post' : post_mapping}
