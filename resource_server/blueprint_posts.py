@@ -425,8 +425,9 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
 def save_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     flag_key: str = f'{PostSave.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
-    lock_key: str = f'lock:{RedisConfig.RESOURCE_CREATION_PENDING_FLAG}:{flag_key}'    
-    post_mapping, latest_intent = posts_cache_precheck(client=RedisInterface, post_id=post_id, post_cache_key=cache_key, post_deletion_intent_flag=f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key, conflicting_intent=RedisConfig.RESOURCE_CREATION_PENDING_FLAG)
+    lock_key: str = f'lock:{RedisConfig.RESOURCE_CREATION_PENDING_FLAG}:{flag_key}'
+
+    post_mapping, latest_intent, deletion_intent = resource_cache_precheck(RedisInterface, post_id, cache_key, f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key)
     # Cache precheck passed, set lock
     lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_STRONG, nx=True)
     if not lock_set:
@@ -489,7 +490,7 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     flag_key: str = f'{PostSave.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
     lock_key: str = f'lock:{RedisConfig.RESOURCE_DELETION_PENDING_FLAG}:{flag_key}'    
-    post_mapping, latest_intent = posts_cache_precheck(client=RedisInterface, post_id=post_id, post_cache_key=cache_key, post_deletion_intent_flag=f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key, conflicting_intent=RedisConfig.RESOURCE_DELETION_PENDING_FLAG)
+    post_mapping, latest_intent, deletion_intent = resource_cache_precheck(RedisInterface, post_id, cache_key, f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key, allow_deletion=True)
 
     isSaved: bool = False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG else True
     try:
@@ -500,7 +501,7 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
                                                     .where((Post.id == post_id) & (Post.deleted.is_(False) & (Post.rtbf_hidden.isnot(True))))
                                                     ).first()
             if joined_result:
-                post_mapping: dict[str, Any] = joined_result[1].__json_like__()
+                post_mapping: dict[str, Any] = joined_result[0].__json_like__()
                 isSaved = bool(joined_result[1])
         elif not latest_intent:
             # Fetch PostSave record to see if the user has already saved this post
@@ -539,7 +540,10 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
     finally:
         RedisInterface.delete(lock_key)
     
-    return jsonify({"message" : "Removed from saved posts"}), 202
+    response_body: dict[str, str] = {"message" : "Removed from saved posts"}
+    if deletion_intent:
+        response_body['deletion_notice'] = f"Post {post_id} will be deleted soon, and you may not be able to save this post henceforth" 
+    return jsonify(response_body), 202
 
 @POSTS_BLUEPRINT.route("/<int:post_id>/reports", methods=['POST'])
 @token_required
