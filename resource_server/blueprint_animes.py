@@ -1,13 +1,14 @@
 from flask import Blueprint, g, jsonify, request, redirect, url_for
 from werkzeug import Response
 from werkzeug.exceptions import BadRequest, NotFound, Conflict
-from resource_server.resource_auxillary import update_global_counter, hset_with_ttl
+from resource_server.resource_auxillary import update_global_counter, hset_with_ttl, resource_existence_cache_precheck, fetch_global_counters
 from resource_server.external_extensions import RedisInterface
 from resource_server.redis_config import RedisConfig
 from resource_server.resource_decorators import token_required
 from resource_server.models import db, Anime, AnimeGenre, Genre, StreamLink, Forum, AnimeSubscription
-from auxillary.utils import genericDBFetchException, rediserialize, consult_cache
+from auxillary.utils import genericDBFetchException, rediserialize, consult_cache, promote_group_ttl, fetch_group_resources, cache_grouped_resource
 from sqlalchemy import select, and_, func, Row
+from sqlalchemy.sql.expression import BinaryExpression
 from sqlalchemy.exc import SQLAlchemyError
 from flask_sqlalchemy import SQLAlchemy
 import base64
@@ -15,6 +16,7 @@ import binascii
 import ujson
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Sequence
 
 ANIMES_BLUEPRINT: Blueprint = Blueprint('animes', 'animes', url_prefix="/animes")
 
@@ -207,25 +209,64 @@ def get_anime_links(anime_id: int) -> tuple[Response, int]:
 @ANIMES_BLUEPRINT.route("<int:anime_id>/forums")
 def get_anime_forums(anime_id: int) -> tuple[Response, int]:
     try:
-        rawCursor = request.args.get('cursor', '0').strip()
-        if rawCursor == '0':
-            cursor = 0
-        elif not rawCursor:
-            raise BadRequest("Failed to load more posts. Please refresh this page")
+        raw_cursor = request.args.get('cursor', '0').strip()
+        if raw_cursor == '0':
+            cursor: int = 0
         else:
-            cursor = int(base64.b64decode(rawCursor).decode())
+            cursor = int(base64.b64decode(raw_cursor).decode())
     except (ValueError, TypeError, binascii.Error):
-            raise BadRequest("Failed to load more posts. Please refresh this page")
+            raise BadRequest("Failed to load more forums. Please try again")
+
+    cache_key: str = f'{Anime.__tablename__}:{anime_id}'
+    pagination_cache_key: str = f'{cache_key}:{Forum.__tablename__}:{cursor}'
+    anime_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=anime_id, resource_name=Anime.__tablename__, cache_key=cache_key)
+
+    if not anime_mapping:
+        # Ensure anime exists before trying to fetch its child forums
+        try:
+            anime: Anime = db.session.execute(select(Anime)
+                                              .where(Anime.id == anime_id)
+                                              ).scalar_one_or_none()
+            if not anime:
+                hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+                raise NotFound(f'No anime with ID {anime_id} could be found')
+            anime_mapping: dict[str, str|int] = rediserialize(anime.__json_like__())
+            hset_with_ttl(RedisInterface, cache_key, anime_mapping, RedisConfig.TTL_WEAK)
+        except SQLAlchemyError: genericDBFetchException()
+    
+    forums, end, next_cursor = fetch_group_resources(RedisInterface, group_key=pagination_cache_key)
+    counter_attrs: list[str] = ['subscribers', 'posts', 'admin_count']
+    if forums and all(forums):
+        counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Forum.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[forum['id'] for forum in forums])
+        for idx, (attribute, counters) in enumerate(counters_mapping.items()):
+            forums[idx][attribute] = counters[idx]
+        # Return paginated result with updated counters
+        promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
+        return jsonify({'posts' : forums, 'cursor' : next_cursor, 'end' : end}), 200
+    # Cache miss
     try:
-        forums: list[Forum] = db.session.execute(select(Forum)
-                                                 .where((Forum.id > cursor) & (Forum.anime == anime_id))
-                                                 .limit(10)).scalars().all()
-        if not forums:
-            return jsonify({'forums' : [], 'cursor' : rawCursor})
+        where_clause: BinaryExpression = (Forum.anime == anime_id) & (Forum.deleted.is_(False))
+        if cursor:
+            where_clause &= (Forum.id > cursor)
+        forum_res: list[Forum] = db.session.execute(select(Forum)
+                                                    .where(where_clause)
+                                                    .limit(6)
+                                                    .order_by(Forum.created_at.desc())
+                                                    ).scalars().all()
     except SQLAlchemyError: genericDBFetchException()
+    if not forum_res:
+        return jsonify({'forums' : None, 'end' : True, 'cursor' : cursor})
+    
+    end: bool = len(forum_res) < 6
+    if not end:
+        forum_res.pop(-1)
+    next_cursor: str = base64.b64encode(str(forum_res[-1].id).encode('utf-8')).decode()
+    jsonified_forums: list[dict[str, Any]] = [res.__json_like__() for res in forum_res]
 
-    cursor = base64.b64encode(str(forums[-1].id).encode('utf-8')).decode()
+    # Cache grouped resources with updated counters
+    cache_grouped_resource(RedisInterface, group_key=pagination_cache_key,
+                           resource_type=Forum.__tablename__, resources={jsonified_forum['id'] : rediserialize(jsonified_forum) for jsonified_forum in jsonified_forums},
+                           weak_ttl=RedisConfig.TTL_WEAK, strong_ttl=RedisConfig.TTL_STRONG,
+                           cursor=next_cursor, end=end)
 
-
-    _res: list[dict] = [forum.__json_like__() for forum in forums]
-    return jsonify({'forums' : _res, 'cursor' : cursor}), 200
+    return jsonify({'forums' : jsonified_forums, 'cursor' : next_cursor, 'end' : end})
