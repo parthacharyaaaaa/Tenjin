@@ -1,7 +1,6 @@
 from auth_server.token_manager import tokenManager
 from auxillary.decorators import enforce_json, private
 from flask import Blueprint, request, jsonify, Response, make_response, g, current_app, send_from_directory
-from flask_cors import cross_origin
 from werkzeug.exceptions import BadRequest
 import requests
 import time
@@ -25,8 +24,7 @@ def jwks() -> tuple[Response, int]:
     
 
 @auth.route("/login", methods = ["POST", "OPTIONS"])
-# @CSRF_protect
-@cross_origin(supports_credentials=True)
+
 @enforce_json
 def login():
     if not ("identity" in g.REQUEST_JSON and "password" in g.REQUEST_JSON):
@@ -79,8 +77,8 @@ def login():
     return response, 201
 
 @auth.route("/register", methods = ["POST", "OPTIONS"])
-# @CSRF_protect
-@cross_origin(supports_credentials=True)
+
+
 @enforce_json
 def register():    
     if not ("username" in g.REQUEST_JSON and
@@ -151,8 +149,6 @@ def deleteAccount():
 
 
 @auth.route("/reissue", methods = ["GET", "OPTIONS"])
-# @CSRF_protect
-@cross_origin(supports_credentials=True)
 def reissue():
     refreshToken = request.cookies.get("refresh", request.cookies.get("Refresh"))
 
@@ -193,7 +189,6 @@ def reissue():
     return response, 201
 
 @auth.route("/purge-family", methods = ["GET", "OPTIONS"])
-@cross_origin(supports_credentials=True)
 def purgeFamily():
     '''
     Purges an entire token family in case of a reuse attack or a normal client logout
@@ -214,7 +209,6 @@ def purgeFamily():
 
 
 @auth.route("/get-csrf", methods = ["OPTIONS", "GET"])
-@cross_origin(supports_credentials=True)
 def issueCSRF():
     response = make_response()
     response.headers["X-CSRF-TOKEN"] = secrets.token_urlsafe(32)
