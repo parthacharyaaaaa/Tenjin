@@ -221,8 +221,7 @@ def delete_post(post_id: int) -> Response:
             if not post:
                 hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
                 raise NotFound('Post does not exist')
-            else:
-                post_mapping = post.__json_like__()
+            post_mapping = post.__json_like__()
         except SQLAlchemyError: genericDBFetchException()
     
     # Ensure post author/forum admin is the issuer of this request
@@ -254,14 +253,16 @@ def delete_post(post_id: int) -> Response:
     redirectionForum: str = None
     if redirect := 'redirect' in request.args:
         try:
-            redirectionForum = db.session.execute(select(Forum._name)
+            redirectionForum: int = db.session.execute(select(Forum.id)
                                                   .where(Forum.id == int(post_mapping['forum']))
                                                   ).scalar_one()
         except SQLAlchemyError: ... # Fail silently, ain't no way we have done all that and then do a 500 because we didn't get a redirection link >:(
 
     # Overwrite any existing cached entries for this post with 404 mapping, and then expire ephemerally
     hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
-    return jsonify({'message' : 'post deleted', 'redirect' : None if not redirect else url_for('templates.forum', _external = False, forum_name = redirectionForum)}), 202
+    return jsonify({'message' : 'post deleted',
+                     'redirect' : None if not redirect else url_for('FORUMS_BLUEPRINT.get_forum', _external = False, forum_id = redirectionForum),
+                     'post' : post_mapping}), 202
 
 @POSTS_BLUEPRINT.route("/<int:post_id>/vote", methods=["POST"])
 @token_required
