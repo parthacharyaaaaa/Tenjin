@@ -24,7 +24,7 @@ def create_post() -> tuple[Response, int]:
     if not (g.REQUEST_JSON.get('forum') and 
             g.REQUEST_JSON.get('title') and
             g.REQUEST_JSON.get('body')):
-        raise BadRequest("Invalid details for creating a post")
+        raise BadRequest("Invalid details for creating a post. Please include: forum id, post title, and post body")
 
     try:
         forumID: int = int(g.REQUEST_JSON['forum'])
@@ -32,7 +32,7 @@ def create_post() -> tuple[Response, int]:
         body: str = g.REQUEST_JSON['body'].strip()
 
     except (KeyError, ValueError):
-        raise BadRequest("Malformatted post details")
+        raise BadRequest("Malformed post details. Title and body must be strings, and forum must be an integer/numeric string")
     
     # Ensure author and forum actually exist
     author: User = db.session.execute(select(User)
@@ -44,9 +44,7 @@ def create_post() -> tuple[Response, int]:
                                 "_links" : {"login" : {"href" : url_for("misc.issue_ticket")}}})
     forum: Forum = db.session.execute(select(Forum).where(Forum.id == forumID)).scalar_one_or_none()
     if not forum:
-        raise NotFound("This forum could not be found")
-    
-    additional_kw = {}
+        raise NotFound("This forum could not be found") 
         
     # Push to INSERTION stream. Since the consumers of this stream expect the entire table data to be given, we can use our class definitions
     post: Post = Post(author.id, forum.id, title, body, datetime.now())
@@ -57,7 +55,7 @@ def create_post() -> tuple[Response, int]:
     update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='total_posts', identifier=g.DECODED_TOKEN['sid'])    
     update_global_counter(interface=RedisInterface, delta=1, database=db, table=User.__tablename__, column='aura', identifier=g.DECODED_TOKEN['sid'])
 
-    return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others, keep patience >:3"}), 202
+    return jsonify({"message" : "post created", "info" : "It may take some time for your post to be visibile to others", 'time_posted' : post.time_posted.isoformat()}), 202
 
 @POSTS_BLUEPRINT.route("/<int:post_id>", methods=["GET"])
 @pass_user_details
@@ -127,6 +125,9 @@ def get_post(post_id : int) -> tuple[Response, int]:
 @enforce_json
 @token_required
 def edit_post(post_id : int) -> tuple[Response, int]:
+    if not (g.REQUEST_JSON.get('title') or g.REQUEST_JSON.get('body') or g.REQUEST_JSON.get('closed')):
+        raise BadRequest("No changes sent")
+    
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     post_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=post_id, resource_name=Post.__tablename__, cache_key=cache_key, deletion_flag_key=f'delete:{cache_key}')
     
@@ -134,33 +135,20 @@ def edit_post(post_id : int) -> tuple[Response, int]:
         raise Forbidden('You do not have the permission to edit this post as you are not its owner')
     
     # We'll need to hit DB once to verify that the requesting user actually owns this post. In case of a cache miss on post_id, we can do an outerjoin and limit calls to 1 always
-    try:
-        if not post_mapping:
-            joined_result: Row = db.session.execute(select(Post, User)
-                                                    .join(User, Post.author_id == User.id)
+    if not post_mapping:
+        try:
+            post: Post = db.session.execute(select(Post)
                                                     .where((Post.id == post_id) &
                                                            (Post.deleted.is_(False)) &
-                                                           (Post.rtbf_hidden.isnot(True)) &
-                                                           (User.deleted.is_(False)))
-                                                    ).first()
-            if joined_result:
-                post_mapping: dict[str, Any] = joined_result[0].__json_like__()
-                owner: User = joined_result[1]
-        else:
-            owner: User = db.session.execute(select(User)
-                                             .where((User.id == post_mapping['author_id']) & (User.deleted.is_(False)))
-                                             ).scalar_one_or_none()
-    except SQLAlchemyError:
-        genericDBFetchException()
-    if not post_mapping:
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
-        raise NotFound(f'No post with id {post_id} exists')
-    if not owner:
-        raise Forbidden('You do not have the rights to edit this post')
-    
-    if not (g.REQUEST_JSON.get('title') or g.REQUEST_JSON.get('body') or g.REQUEST_JSON.get('closed')):
-        raise BadRequest("No changes sent")
-    
+                                                           (Post.rtbf_hidden.isnot(True)))
+                                                    ).scalar_one_or_none()
+            if not post:
+                hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
+                raise NotFound(f'No post with id {post_id} exists')
+            if post.author_id != g.DECODED_TOKEN['sid']:
+                raise Forbidden('You do not have the rights to edit this post as you are not its author')
+        except SQLAlchemyError: genericDBFetchException()
+
     update_kw: dict[str, str] = {}
     additional_kw: dict[str, str] = {}
     if title := g.REQUEST_JSON.pop('title', None):
@@ -200,9 +188,8 @@ def edit_post(post_id : int) -> tuple[Response, int]:
     # Enforce write-through
     hset_with_ttl(RedisInterface, cache_key, rediserialize(post_mapping), RedisConfig.TTL_WEAK)
 
-    return jsonify({"message" : "Post edited. It may take a few seconds for the changes to be reflected",
-                    "post" : post_mapping,
-                    **update_kw, **additional_kw}), 202
+    return jsonify({"message" : "Post edited.",
+                    "post" : post_mapping}), 200
 
 @POSTS_BLUEPRINT.route("/<int:post_id>", methods=["DELETE"])
 @token_required
