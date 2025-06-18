@@ -7,7 +7,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from resource_server.models import db, Post, User, Forum, ForumAdmin, PostSave, PostReport, PostVote, Comment, ReportTags
 from resource_server.resource_decorators import pass_user_details, token_required
 from resource_server.external_extensions import RedisInterface
-from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, posts_cache_precheck, resource_existence_cache_precheck, hset_with_ttl
+from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, posts_cache_precheck, resource_existence_cache_precheck, hset_with_ttl, resource_cache_precheck
 from resource_server.redis_config import RedisConfig
 from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, genericDBFetchException, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource, to_base64url, from_base64url
@@ -264,7 +264,7 @@ def delete_post(post_id: int) -> Response:
                      'redirect' : None if not redirect else url_for('FORUMS_BLUEPRINT.get_forum', _external = False, forum_id = redirectionForum),
                      'post' : post_mapping}), 202
 
-@POSTS_BLUEPRINT.route("/<int:post_id>/vote", methods=["POST"])
+@POSTS_BLUEPRINT.route("/<int:post_id>/votes", methods=["POST"])
 @token_required
 def vote_post(post_id: int) -> tuple[Response, int]:
     try:
@@ -279,7 +279,8 @@ def vote_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     flag_key: str = f'{PostVote.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
     lock_key: str = f'lock:{RedisConfig.RESOURCE_CREATION_PENDING_FLAG}:{flag_key}'
-    post_mapping, latest_intent = posts_cache_precheck(client=RedisInterface, post_id=post_id, post_cache_key=cache_key, post_deletion_intent_flag=f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key, conflicting_intent=incoming_intent)
+
+    post_mapping, latest_intent, queued_deletion = resource_cache_precheck(RedisInterface, post_id, cache_key, f'delete:{cache_key}', flag_key, lock_key)
     
     previous_vote: bool = True if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG else False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG else None
     lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_EPHEMERAL, nx=True)
@@ -350,13 +351,15 @@ def vote_post(post_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Vote casted!"}), 202
 
-@POSTS_BLUEPRINT.route("/<int:post_id>/unvote", methods=["DELETE"])
+@POSTS_BLUEPRINT.route("/<int:post_id>/votes", methods=["DELETE"])
 @token_required
 def unvote_post(post_id: int) -> tuple[Response, int]:
+    # NOTE: A post pending deletion should still allow users to unvote
     cache_key: str = f'{Post.__tablename__}:{post_id}'
     flag_key: str = f'{PostVote.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
     lock_key: str = f'lock:{RedisConfig.RESOURCE_CREATION_PENDING_FLAG}:{flag_key}'
-    post_mapping, latest_intent = posts_cache_precheck(client=RedisInterface, post_id=post_id, post_cache_key=cache_key, post_deletion_intent_flag=f'delete:{post_id}', action_flag=flag_key, lock_name=lock_key, conflicting_intent=RedisConfig.RESOURCE_DELETION_PENDING_FLAG)
+
+    post_mapping, latest_intent, queued_deletion = resource_cache_precheck(client=RedisInterface, identifier=post_id, cache_key=cache_key, deletion_intent_flag=f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key, allow_deletion=True)
 
     # Cache checks passed, set lock
     lock_set = RedisInterface.set(lock_key, value=1, ex=RedisConfig.TTL_STRONG, nx=True)
@@ -379,7 +382,7 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
                                                      .where((PostVote.voter_id == g.DECODED_TOKEN['sid']) & (PostVote.post_id == post_id))
                                                      ).scalar_one_or_none()
             if previous_vote is not None:
-                delta = 1 if previous_vote else -1
+                delta = -1 if previous_vote else 1
         elif not post_mapping:
             post: Post = db.session.execute(select(Post)
                                             .where((Post.id == post_id) & (Post.deleted.is_(False)) & (Post.rtbf_hidden.isnot(True)))
@@ -412,9 +415,12 @@ def unvote_post(post_id: int) -> tuple[Response, int]:
     finally:
         RedisInterface.delete(lock_key)
     
-    return jsonify({"message" : "Removed vote!", 'delta' : delta}), 202
+    response_body: dict = {"message" : "Removed vote!", 'previous_vote' : 'upvote' if delta == -1 else 'downvote'}
+    if queued_deletion:
+        response_body['deletion_notice'] = f"Post {post_id} will be deleted soon, and you may not be able to cast votes on this post henceforth" 
+    return jsonify(response_body), 202
 
-@POSTS_BLUEPRINT.route("/<int:post_id>/save", methods=["POST"])
+@POSTS_BLUEPRINT.route("/<int:post_id>/saves", methods=["POST"])
 @token_required
 def save_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
@@ -477,7 +483,7 @@ def save_post(post_id: int) -> tuple[Response, int]:
         RedisInterface.delete(lock_key)
     return jsonify({"message" : "Post saved!"}), 202
 
-@POSTS_BLUEPRINT.route("/<int:post_id>/unsave", methods=["DELETE"])
+@POSTS_BLUEPRINT.route("/<int:post_id>/saves", methods=["DELETE"])
 @token_required
 def unsave_post(post_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Post.__tablename__}:{post_id}'
@@ -535,7 +541,7 @@ def unsave_post(post_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Removed from saved posts"}), 202
 
-@POSTS_BLUEPRINT.route("/<int:post_id>/report", methods=['POST'])
+@POSTS_BLUEPRINT.route("/<int:post_id>/reports", methods=['POST'])
 @token_required
 @enforce_json
 def report_post(post_id: int) -> tuple[Response, int]:
