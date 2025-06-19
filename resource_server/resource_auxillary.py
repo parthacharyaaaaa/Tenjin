@@ -294,7 +294,7 @@ def resource_cache_precheck(client: Redis, identifier: int|str, cache_key: str, 
 
     if deletion_intent and not allow_deletion:    # Deletion written in cache
         raise Gone('This resource has been permanently deleted, and will soon be unavailable')
-    if resource_mapping and RedisConfig.NF_SENTINEL_KEY in resource_mapping:    # Non-existence written in cache
+    if (resource_mapping and RedisConfig.NF_SENTINEL_KEY in resource_mapping) and not deletion_intent:    # Non-existence written in cache
         hset_with_ttl(client, cache_key, resource_mapping, RedisConfig.TTL_EPHEMERAL)  # Reannounce non-existence
         raise NotFound(f'No {resource_name} with ID {identifier} could be found (Never existed, or deleted)')
     if lock:    # Stop race condition early
