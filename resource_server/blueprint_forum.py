@@ -160,11 +160,11 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
 def create_forum() -> tuple[Response, int]:
     try:
         userID: int = g.DECODED_TOKEN['sid']
-        forum_name: str = str(g.REQUEST_JSON.pop('forum_name')).strip()
-        if not forum_name:
+        forum_name: str = str(g.REQUEST_JSON.pop('name')).strip()
+        if not forum_name: 
             raise BadRequest('Forum creation requires a title')
         parent_anime_id: int = int(g.REQUEST_JSON.pop('anime_id'))
-        description: str | None = None if 'desc' not in g.REQUEST_JSON else str(g.REQUEST_JSON.pop('desc')).strip()
+        description: str = None if 'desc' not in g.REQUEST_JSON else str(g.REQUEST_JSON.pop('desc')).strip()
     except KeyError:
         raise BadRequest("Mandatory details for forum creation missing")
     except (TypeError, ValueError):
@@ -174,8 +174,7 @@ def create_forum() -> tuple[Response, int]:
     anime_cache_key: str = f'{Anime.__tablename__}:{parent_anime_id}'
     anime_mapping = RedisInterface.hgetall(anime_cache_key)
 
-    if anime_mapping and RedisConfig.NF_SENTINEL_KEY in anime_mapping:
-        raise NotFound(f'No anime with ID {parent_anime_id} exists')
+    anime_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=parent_anime_id, resource_name=Anime.__tablename__)
     
     # 2: Consult DB in case of cache misses (and also to check for unique forum name)
     conflicting_forum: Forum = None
@@ -206,27 +205,27 @@ def create_forum() -> tuple[Response, int]:
     
     # No duplicate forums, and parent anime actually exists
     try:
-        newForum: Forum = db.session.execute(insert(Forum)
+        forum: Forum = db.session.execute(insert(Forum)
                                  .values(_name = forum_name, anime=parent_anime_id, description=description, created_at=datetime.now())
                                  .returning(Forum)).scalar_one_or_none()
         db.session.execute(insert(ForumAdmin)
-                           .values(forum_id=newForum.id, user_id=userID, role='owner'))
+                           .values(forum_id=forum.id, user_id=userID, role='owner'))
         db.session.commit()
     except SQLAlchemyError as sqlErr:
         db.session.rollback()
         sqlErr.__setattr__("description", "An error occured while trying to create the forum. This is most likely an issue with our servers")
         raise sqlErr
 
-    forum_cache_key: str = f'{Forum.__tablename__}:{newForum.id}'
+    forum_cache_key: str = f'{Forum.__tablename__}:{forum.id}'
     with RedisInterface.pipeline() as pipe:
         # Cache both newly made forum and its parent anime
-        pipe.hset(forum_cache_key, mapping=rediserialize(newForum.__json_like__()))
+        pipe.hset(forum_cache_key, mapping=rediserialize(forum.__json_like__()))
         pipe.expire(forum_cache_key, RedisConfig.TTL_STRONG)
         pipe.hset(anime_cache_key, mapping=anime_mapping)
         pipe.expire(anime_cache_key, RedisConfig.TTL_STRONG)
         pipe.execute()
 
-    return jsonify({"message" : "Forum created succesfully"}), 201
+    return jsonify({"message" : "Forum created succesfully", "title" : forum_name, "id" : forum.id, 'time_created' : forum.created_at.isoformat()}), 201
 
 @FORUMS_BLUEPRINT.route("/<int:forum_id>", methods = ["DELETE"])
 @token_required
