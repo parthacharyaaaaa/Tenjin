@@ -6,7 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from resource_server.models import db, Comment, CommentReport, ForumAdmin, CommentVote, CommentReport, Post, User, ReportTags
 from auxillary.utils import genericDBFetchException, rediserialize
 from auxillary.decorators import enforce_json
-from resource_server.resource_auxillary import resource_existence_cache_precheck, update_global_counter, hset_with_ttl
+from resource_server.resource_auxillary import resource_existence_cache_precheck, resource_cache_precheck, update_global_counter, hset_with_ttl
 from resource_server.resource_decorators import token_required
 from resource_server.external_extensions import RedisInterface
 from resource_server.redis_config import RedisConfig
@@ -118,7 +118,7 @@ def delete_comment(comment_id: int) -> tuple[Response, int]:
         RedisInterface.delete(lock_key)
     return jsonify({'message' : 'Comment deleted', 'comment' : comment_mapping}), 202
 
-@COMMENTS_BLUEPRINT.route("/<int:comment_id>/vote", methods=["POST"])
+@COMMENTS_BLUEPRINT.route("/<int:comment_id>/votes", methods=["POST"])
 @token_required
 def vote_comment(comment_id: int) -> tuple[Response, int]:
     try:
@@ -131,12 +131,12 @@ def vote_comment(comment_id: int) -> tuple[Response, int]:
     incoming_intent: str = RedisConfig.RESOURCE_CREATION_PENDING_FLAG if vote == 1 else RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG  # Alt flag is special value for downvotes. We need this here because a downvote is still resource creation, but different than an upvote obviously
     delta: int = -1 if not vote else 1
     cache_key: str = f'{Comment.__tablename__}:{comment_id}'
-
-    # Verify comment's existence first
-    comment_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=comment_id, resource_name=Comment.__tablename__, cache_key=cache_key, deletion_flag_key=f'delete:{cache_key}')
-    # Verify that this vote is not duplicate
     flag_key: str = f'{CommentVote}:{g.DECODED_TOKEN["sid"]}:{comment_id}'
     lock_key: str = f'lock:{flag_key}'
+
+    # Verify comment's existence first
+    comment_mapping, latest_intent, deletion_intent = resource_cache_precheck(RedisInterface, comment_id, cache_key, f'delete:{cache_key}', flag_key, lock_key, Comment.__tablename__, conflicting_intent=incoming_intent)
+    # Verify that this vote is not duplicate
     with RedisInterface.pipeline(transaction=False) as pipe:
         pipe.get(flag_key)
         pipe.get(lock_key)
@@ -207,23 +207,16 @@ def vote_comment(comment_id: int) -> tuple[Response, int]:
     
     return jsonify({"message" : "Vote casted!"}), 202
 
-@COMMENTS_BLUEPRINT.route("/<int:comment_id>/unvote", methods=["DELETE"])
+@COMMENTS_BLUEPRINT.route("/<int:comment_id>/votes", methods=["DELETE"])
 @token_required
-def unvote_comment(comment_id: int) -> tuple[Response, int]:    
+def unvote_comment(comment_id: int) -> tuple[Response, int]:
+    # NOTE: Vote removal is permitted for comments that are pending deletion
     cache_key: str = f'{Comment.__tablename__}:{comment_id}'
-    # Verify comment's existence first
-    comment_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=comment_id, resource_name=Comment.__tablename__, cache_key=cache_key, deletion_flag_key=f'delete:{cache_key}')
-    
-    # Verify that this unvote request is not duplicate
     flag_key: str = f'{CommentVote}:{g.DECODED_TOKEN["sid"]}:{comment_id}'
     lock_key: str = f'lock:{flag_key}'
-    with RedisInterface.pipeline(transaction=False) as pipe:
-        pipe.get(flag_key)
-        pipe.get(lock_key)
-        latest_intent, lock = pipe.execute()
-    
-    if lock or latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG: # Race condition, or latest intent is same as the intent carried by this request. Reject
-        raise Conflict(f'A request for this action is currently enqueued')
+
+    comment_mapping, latest_intent, pending_deletion = resource_cache_precheck(RedisInterface, comment_id, cache_key, f'delete:{cache_key}', flag_key, lock_key, Comment.__tablename__,
+                                                                              conflicting_intent=RedisConfig.RESOURCE_DELETION_PENDING_FLAG, allow_deletion=True)
     
     # Consult DB in case of partial/no information being read from cache
     previous_vote: bool = True if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG else False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG else None
@@ -276,8 +269,11 @@ def unvote_comment(comment_id: int) -> tuple[Response, int]:
             pipe.execute()
     finally:
         RedisInterface.delete(lock_key)
-    
-    return jsonify({"message" : "Vote removed!"}), 202
+    response_body: dict[str, str] = {"message" : "Vote removed!", "previous_vote" : "downvote" if delta == 1 else "upvote"}
+    if pending_deletion:
+        response_body['deletion_notice'] = f"Comment {comment_id} will be deleted soon, and you may not be able to cast votes on this comment henceforth" 
+
+    return jsonify(response_body), 202
 
 @COMMENTS_BLUEPRINT.route("/<int:comment_id>/report", methods=['POST'])
 @token_required
