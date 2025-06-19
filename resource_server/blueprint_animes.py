@@ -84,7 +84,7 @@ def get_random_anime():
             
     
     except SQLAlchemyError: genericDBFetchException()
-    return redirect(url_for('templates.view_anime', _external=False, anime_id = anime.id, random_prefetch=anime))
+    return redirect(url_for('.get_anime', _external=False, anime_id = anime.id))
 
 @ANIMES_BLUEPRINT.route("/<int:anime_id>/subscribe", methods=["PATCH"])
 @token_required
