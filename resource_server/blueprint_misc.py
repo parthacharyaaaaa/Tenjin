@@ -15,7 +15,7 @@ MISC_BLUEPRINT: Blueprint = Blueprint('Misc', 'misc')
 def get_genres() -> tuple[Response, int]:
     return jsonify(dict(current_app.config['GENRES'])), 200
 
-@MISC_BLUEPRINT.route('/ticket', methods=['POST'])
+@MISC_BLUEPRINT.route('/tickets', methods=['POST'])
 @enforce_json
 @pass_user_details
 def issue_ticket() -> tuple[Response, int]:
@@ -27,9 +27,10 @@ def issue_ticket() -> tuple[Response, int]:
     if len(description) < 8:
         raise BadRequest('Description of the issue must be atleast 8 characters long')
     
+    time_raised_iso: str = datetime.now().isoformat()
     RedisInterface.xadd('INSERTIONS', fields={'user_id' : '' if not g.REQUESTING_USER else g.REQUESTING_USER.get('sid', ''),
                                               'email' : email,
-                                              'time_raised': datetime.now().isoformat(),
+                                              'time_raised': time_raised_iso,
                                               'description' : description,
                                               'table' : UserTicket.__tablename__})
-    return jsonify({'Your report has been recorded'}), 202
+    return jsonify({'message' :'Your report has been recorded', 'email' : email, 'description' : description, 'time' : time_raised_iso}), 202
