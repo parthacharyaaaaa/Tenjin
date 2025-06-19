@@ -31,58 +31,48 @@ def get_forum(forum_id: int) -> tuple[Response, int]:
     cache_key: str = f'forum:{forum_id}'
     deletion_flag_key: str = f'delete:{cache_key}'
     fetch_relation: bool = 'fetch_relation' in request.args and g.REQUESTING_USER
-    deletion_intent: bool = bool(RedisInterface.get(deletion_flag_key))
-    forumMapping: dict = consult_cache(RedisInterface, cache_key, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION, RedisConfig.TTL_EPHEMERAL)
-    global_subcount, global_postcount = fetch_global_counters(RedisInterface, f'{cache_key}:subscribers', f'{cache_key}:posts')
+    forum_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=forum_id, resource_name=Forum.__tablename__)
 
-    if deletion_intent:
-        raise Gone('This forum has just been deleted')
-    
-    if forumMapping:
-        if RedisConfig.NF_SENTINEL_KEY in forumMapping:
-            raise NotFound('No forum with this ID exists')
-        
-        # Update fetch mapping with global mappings
-        if global_postcount is not None:
-            forumMapping['posts'] = global_postcount
-        if global_subcount is not None:
-            forumMapping['subscribers'] = global_subcount
-    
-    # Fallback to DB
-    else:
+    # Fallback to DB on cache miss
+    if not forum_mapping:
         try:
-            fetchedForum: Forum = db.session.execute(select(Forum)
-                                                    .where((Forum.id == forum_id) & (Forum.deleted.is_(False) & (Forum.rtbf_hidden.is_(False))))
+            forum: Forum = db.session.execute(select(Forum)
+                                                    .where((Forum.id == forum_id) &
+                                                           (Forum.deleted.is_(False) &
+                                                            (Forum.rtbf_hidden.isnot(True))))
                                                     ).scalar_one_or_none()
-            if not fetchedForum:
+            if not forum:
                 hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
                 raise NotFound('No forum with this ID could be found')
             
-            forumMapping: dict = rediserialize(fetchedForum.__json_like__())
-
-            # Update fetch mapping with global mappings
-            if global_postcount is not None:
-                forumMapping['posts'] = global_postcount
-            if global_subcount is not None:
-                forumMapping['subscribers'] = global_subcount
-            # Cache mapping with updated counters
-            hset_with_ttl(RedisInterface, cache_key, forumMapping, RedisConfig.TTL_STRONG)
+            forum_mapping: dict[str, str|int] = forum.__json_like__()
         except SQLAlchemyError: genericDBFetchException()
 
-    try:
-        if fetch_relation:
+    if fetch_relation:
+        try:
             # Select forum admin/subscribed
-            adminRole: str = db.session.execute(select(ForumAdmin.role)
-                                                .where((ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == g.REQUESTING_USER['sid']))
+            admin_role: str = db.session.execute(select(ForumAdmin.role)
+                                                .where((ForumAdmin.forum_id == forum_id) &
+                                                       (ForumAdmin.user_id == g.REQUESTING_USER['sid']))
                                                 ).scalar_one_or_none()
-            isSubbed = db.session.execute(select(ForumSubscription)
-                                            .where((ForumSubscription.forum_id == forum_id) & (ForumSubscription.user_id == g.REQUESTING_USER['sid']))
-                                            ).scalar_one_or_none()
-            forumMapping.update({'admin_role' : adminRole, 'subscribed' : bool(isSubbed)})
-    except SQLAlchemyError:
-        forumMapping.update({'error' : 'failed to fetch user subscriptions and admin roles in this forum'})
+            is_subscribed: bool = bool(db.session.execute(select(ForumSubscription)
+                                                          .where((ForumSubscription.forum_id == forum_id) &
+                                                                 (ForumSubscription.user_id == g.REQUESTING_USER['sid']))
+                                                          ).scalar_one_or_none())
+            
+            forum_mapping.update({'admin_role' : admin_role, 'subscribed' : is_subscribed})
+        except SQLAlchemyError:
+            forum_mapping.update({'error' : 'failed to fetch user subscriptions and admin roles in this forum'})
 
-    return jsonify(forumMapping), 200
+    counter_attributes: list[str] = ['subscribers', 'posts']
+    counter_data: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, 
+                                                                        hashmaps=[f'{Forum.__tablename__}:{attr}' for attr in counter_attributes], 
+                                                                        identifiers=[forum_id])
+    for idx, counter in enumerate(counter_data.values()):
+        forum_mapping[counter_attributes[idx]] = counter[0] or forum_mapping[counter_attributes[idx]]
+    
+    hset_with_ttl(RedisInterface, cache_key, rediserialize(forum_mapping), RedisConfig.TTL_STRONG)
+    return jsonify(forum_mapping), 200
 
 @FORUMS_BLUEPRINT.route("/<int:forum_id>/posts")
 def get_forum_posts(forum_id: int) -> tuple[Response, int]:
