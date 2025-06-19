@@ -231,29 +231,15 @@ def create_forum() -> tuple[Response, int]:
 @token_required
 @enforce_json
 def delete_forum(forum_id: int) -> Response:
+    confirmation_text: str = g.REQUEST_JSON.get('confirmation')
+    if not confirmation_text:
+        raise BadRequest('Forum deletion requires the forum name to be typed out as is to confirm intention and prevent accidental deletions')
+    
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
     deletion_flag_key: str = f'delete:{cache_key}'
     lock_key: str = f'lock:{deletion_flag_key}'
 
-    with RedisInterface.pipeline() as pipe:
-        pipe.hgetall(cache_key)
-        pipe.get(deletion_flag_key)
-        pipe.get(lock_key)
-        forum_mapping, deletion_intent, lock = pipe.execute()
-    
-    if forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping:
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
-        raise NotFound(f'No forum with ID {forum_id} exists')
-    
-    if deletion_intent:
-        raise Gone(f'This forum has just been deleted')
-    
-    if lock:   # Some other worker is trying to delete this forum
-        raise Conflict(f'A request for this action is currently enqueued')
-    
-    confirmationText: str = g.REQUEST_JSON.get('confirmation')
-    if not confirmationText:
-        raise BadRequest('Please enter the name of the forum to follow through with deletion')
+    forum_mapping: dict[str, Any] = resource_existence_cache_precheck(client=RedisInterface, identifier=forum_id, resource_name=Forum.__tablename__, cache_key=cache_key, deletion_flag_key=deletion_flag_key)
     
     # Validating request
     try:
@@ -279,7 +265,7 @@ def delete_forum(forum_id: int) -> Response:
         raise NotFound(f'No forum with id {forum_id} found')
     if not owner:
         raise Forbidden("You do not have the necessary permissions to delete this forum")
-    if(forum_mapping['name'] != confirmationText):
+    if(forum_mapping['name'] != confirmation_text):
         raise BadRequest('Please enter the forum title correctly, as it is')
 
     # Permission valid, and all other checks passed. Attempt to set lock for this action
@@ -298,10 +284,10 @@ def delete_forum(forum_id: int) -> Response:
     finally:
         RedisInterface.delete(lock_key) # Free lock no matter what happens
     
-    res: dict = {'message' : 'forum deleted'}
+    res: dict = {'message' : 'forum deleted', 'forum' : forum_mapping}
     if 'redirect' in request.args:
-        res['redirect'] = url_for('templates.view_anime', anime_id = forum_mapping['anime'])
-    return jsonify(res), 200
+        res['redirect'] = url_for('ANIMES_BLUEPRINT.get_anime', anime_id = forum_mapping['anime'])
+    return jsonify(res), 202
 
 @FORUMS_BLUEPRINT.route("/<int:forum_id>/admins", methods=['POST'])
 @enforce_json
