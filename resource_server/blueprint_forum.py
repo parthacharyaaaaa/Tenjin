@@ -133,7 +133,7 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
              .order_by(desc(Post.score if sortOption == '1' else Post.time_posted))
              .limit(6))
     
-    next_posts: list[Post] = db.session.execute(query).all()
+    next_posts: list[tuple[Post, str]] = db.session.execute(query).all()
     if not next_posts:
         return jsonify({'posts' : None, 'cursor' : None}), 200
     
@@ -141,7 +141,7 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
     end: bool = len(next_posts) < 6
     if not end:
         next_posts.pop(-1)
-    next_cursor: str = to_base64url(next_posts[-1].id, length=16)
+    next_cursor: str = to_base64url(next_posts[-1][0].id, length=16)
 
     cache_grouped_resource(RedisInterface, group_key=pagination_cache_key,
                            resource_type=Post.__tablename__, resources={jsonified_post['id'] : rediserialize(jsonified_post) for jsonified_post in jsonified_posts},
@@ -532,7 +532,7 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     flag_key: str = f'{ForumSubscription.__tablename__}:{g.DECODED_TOKEN["sid"]}:{forum_id}'
     lock_key: str = f'lock:{flag_key}'
 
-    forum_mapping, latest_intent = resource_cache_precheck(client=RedisInterface, identifier=forum_id, cache_key=cache_key, deletion_intent_flag=f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key, resource_name=Forum.__tablename__, conflicting_intent=RedisConfig.RESOURCE_CREATION_PENDING_FLAG)
+    forum_mapping, latest_intent, deletion_intent = resource_cache_precheck(client=RedisInterface, identifier=forum_id, cache_key=cache_key, deletion_intent_flag=f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key, resource_name=Forum.__tablename__, conflicting_intent=RedisConfig.RESOURCE_CREATION_PENDING_FLAG)
     
     # In cases of partia/complete cache misses, consult DB
     prior_sub: bool = latest_intent != RedisConfig.RESOURCE_DELETION_PENDING_FLAG
@@ -593,19 +593,7 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
     lock_key: str = f'lock:{flag_key}'
 
     # Even if a forum is deleted, a user should be still allowed to unsubscribe from it
-    with RedisInterface.pipeline() as pipe:
-        pipe.get(f'delete:{cache_key}')
-        pipe.hgetall(cache_key)
-        pipe.get(flag_key)
-        pipe.get(lock_key)
-        deletion_intent, forum_mapping, latest_intent, lock = pipe.execute()
-    
-    if (forum_mapping and RedisConfig.NF_SENTINEL_KEY in forum_mapping) and not deletion_intent:  # Forum not found
-        hset_with_ttl(RedisInterface, cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)  # Reset ephemeral announcement
-        raise NotFound(f'No forum with ID {forum_id} exists')
-    
-    if lock or latest_intent == RedisConfig.RESOURCE_DELETION_PENDING_FLAG: # Lock set for same request, or repeated request
-        raise Conflict('A request for this action is already underway')
+    forum_mapping, latest_intent, deletion_intent = resource_cache_precheck(client=RedisInterface, identifier=forum_id, cache_key=cache_key, deletion_intent_flag=f'delete:{cache_key}', action_flag=flag_key, lock_name=lock_key, resource_name=Forum.__tablename__, conflicting_intent=RedisConfig.RESOURCE_CREATION_PENDING_FLAG, allow_deletion=True)
         
     prior_sub: bool = latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG
     try:
@@ -654,8 +642,10 @@ def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:
             pipe.execute()
     finally:
         RedisInterface.delete(lock_key)
-    
-    return jsonify({'message' : 'Forum unsubscribed!'}), 202
+    response_body: dict[str, str] = {'message' : 'Forum unsubscribed!'}
+    if deletion_intent:
+        response_body['deletion_notice'] = f'Forum {forum_id} will be permanently deleted soon and you may not be able to resubscribe to it henceforth'
+    return jsonify(response_body), 202
 
 @FORUMS_BLUEPRINT.route("/<int:forum_id>", methods=["PATCH"])
 @enforce_json
