@@ -614,17 +614,18 @@ def report_post(post_id: int) -> tuple[Response, int]:
         raise Conflict('You have already reported this post for this reason')
     
     # All validations passed, write state for this action
+    report_time_iso: str = datetime.now().isoformat()
     try:
         # Incremenet global counter for reports on this post and insert record into post_reports
         update_global_counter(interface=RedisInterface, delta=1, database=db, table=Post.__tablename__, column='reports', identifier=post_id)
         with RedisInterface.pipeline() as pipe:
             pipe.set(flag_key, RedisConfig.RESOURCE_CREATION_PENDING_FLAG, ex=RedisConfig.TTL_STRONGEST)    # Flag value is irrelevant here since existence alone is used in cache prechecks, included only for consistency
-            pipe.xadd('WEAK_INSERTIONS', {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_tag' : report_tag, 'report_time' : datetime.now().isoformat(), 'report_description' : report_desc, 'table' : PostReport.__tablename__})
+            pipe.xadd('WEAK_INSERTIONS', {"user_id" : g.DECODED_TOKEN['sid'], "post_id" : post_id, 'report_tag' : report_tag, 'report_time' : report_time_iso, 'report_description' : report_desc, 'table' : PostReport.__tablename__})
             pipe.execute()
     finally:
         RedisInterface.delete(lock_key)
     
-    return jsonify({"message" : "Post reported!", 'reason' : report_tag, 'description' : report_desc}), 202
+    return jsonify({"message" : "Post reported!", 'reason' : report_tag, 'description' : report_desc, 'report_time' : report_time_iso}), 202
 
 @POSTS_BLUEPRINT.route('/<int:post_id>/comments')
 def get_post_comments(post_id: int) -> tuple[Response, int]:
