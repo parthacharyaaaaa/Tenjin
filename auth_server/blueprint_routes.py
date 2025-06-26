@@ -20,7 +20,6 @@ def enforceMinCSP(response):
 @auth.route('/jwks.json')
 def jwks() -> tuple[Response, int]:
     return send_from_directory(current_app.instance_path, current_app.config['JWKS_FILENAME'], mimetype='application/json')
-    
 
 @auth.route("/login", methods = ["POST", "OPTIONS"])
 @enforce_json
@@ -51,7 +50,7 @@ def login():
         "issuer" : "tenjin-auth-service",
         "_additional" : {**rsResponse}
     })
-    tokenManager.attach_tokens_to_response(response, access_token=aToken, refresh_token=rToken, paths=[url_for('.reissue')])
+    tokenManager.attach_tokens_to_response(response, access_token=aToken, refresh_token=rToken, paths=[url_for('.reissue'), url_for('.purgeFamily')])
     return response, 201
 
 @auth.route("/register", methods = ["POST", "OPTIONS"])
@@ -89,8 +88,8 @@ def register():
                                   "issuer" : "tenjin-auth-service",
                                   "_additional" : {**rsResponse}
                                   })
-
-    tokenManager.attach_tokens_to_response(response, access_token=aToken, refresh_token=rToken, paths=[url_for('.reissue')])
+    
+    tokenManager.attach_tokens_to_response(response, access_token=aToken, refresh_token=rToken, paths=[url_for('.reissue'), url_for('.purgeFamily')])
     return response, 201
 
 @auth.route("/reissue", methods = ["GET", "OPTIONS"])
@@ -112,7 +111,7 @@ def reissue():
         "issuer" : "babel-auth-service"
     })
 
-    tokenManager.attach_tokens_to_response(response, access_token=nAccessToken, refresh_token=nRefreshToken, paths=[url_for('.reissue')])
+    tokenManager.attach_tokens_to_response(response, access_token=nAccessToken, refresh_token=nRefreshToken, paths=[url_for('.reissue'), url_for('.purgeFamily')])
     return response, 201
 
 @auth.route("/tokens", methods = ["DELETE", "OPTIONS"])
