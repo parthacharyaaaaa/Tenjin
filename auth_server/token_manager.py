@@ -171,7 +171,6 @@ class TokenManager:
         elif self._TokenStore.lrange(f"FID:{familyID}", 0, -1):
             # A new authorization attempt, but the family already exists. For this project, we only allow single logins per user, so just pull an Itachi and ask to login again
             self.invalidateFamily(familyID)
-            raise ValueError(f"Token family {familyID} already exists, cannot issue a new token with the same family")
 
         # All checks passed
         payload: dict = {"iat" : time.time(),
@@ -188,7 +187,8 @@ class TokenManager:
         with self._TokenStore.pipeline(transaction=False) as pipe:
             pipe.lpush(f"FID:{familyID}", f"{payload['jti']}:{payload['exp']}")
             pipe.expireat(f"FID:{familyID}", int(payload["exp"]))
-
+            pipe.execute()
+        
         return jwt.encode(payload=payload,
                           key=self.key_mapping[self.active_key].PRIVATE_PEM,
                           algorithm=self.key_mapping[self.active_key].ALGORITHM,
