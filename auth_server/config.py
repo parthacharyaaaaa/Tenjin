@@ -12,6 +12,7 @@ if not bLoaded:
 class FlaskConfig:
     try:
         # Security metadata
+        APPLICATION_ROOT: str = os.environ['APPLICAITON_ROOT']
         SECRET_KEY: str = os.environ["SECRET_KEY"]
         PRIVATE_PEM_ENCRYPTION_KEY: bytes = bytes(os.environ["PEM_ENCRYPTION_KEY"], encoding='utf-8')
         SIGNING_KEY: str = os.environ["SIGNING_KEY"]
@@ -19,13 +20,8 @@ class FlaskConfig:
         JWKS_CAP: int = int(os.environ['JWKS_CAP'])
         JWKS_KV_MAPPING: dict = None
         SESSION_COOKIE_SECURE: bool = bool(os.environ["SESSION_COOKIE_SECURE"])
-        PRIVATE_COMM_KEYS: list = os.environ["PRIVATE_COMM_KEYS"].split(",")
         CSP: str = f"default-src 'self'; connect-src 'self' {os.environ['RS_DOMAIN']}"
         
-        # IP metadata
-        VALID_PROXIES : list = os.environ["VALID_PROXIES"].split(",")
-        PRIVATE_IP_ADDRS : list = os.environ["PRIVATE_COMM_IP"].split(",")
-
         ### Database Configurations ###
         SQLALCHEMY_DATABASE_URI : str = "postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}".format(username=os.environ["AUTH_WORKER_POSTGRES_USERNAME"],
                                                                                                                       password=os.environ["AUTH_WORKER_POSTGRES_PASSWORD"],

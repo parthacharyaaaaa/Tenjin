@@ -211,7 +211,7 @@ def create_app() -> Flask:
     # Blueprints
     from auth_server.blueprint_routes import auth
     from auth_server.blueprint_cmd import cmd
-    auth_app.register_blueprint(cmd)
-    auth_app.register_blueprint(auth)
+    auth_app.register_blueprint(cmd, url_prefix=f"{auth_app.config['APPLICATION_ROOT']}/cmd")
+    auth_app.register_blueprint(auth, url_prefix=f"{auth_app.config['APPLICATION_ROOT']}/auth")
 
     return auth_app
