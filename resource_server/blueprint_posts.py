@@ -663,7 +663,7 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
         counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Comment.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[comment['id'] for comment in comments])
         for idx, counters in enumerate(counters_mapping.values()):
             for comment_idx, counter in enumerate(counters):
-                if counter:
+                if counter is not None:
                     comments[comment_idx][counter_attrs[idx]] = counter
         
         # Return paginated result with updated counters
@@ -699,6 +699,6 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
     counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Comment.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[comment['id'] for comment in jsonified_comments])
     for idx, counters in enumerate(counters_mapping.values()):
         for comment_idx, counter in enumerate(counters):
-            if counter:
+            if counter is not None:
                 jsonified_comments[comment_idx][counter_attrs[idx]] = counter
     return jsonify({'comments' : jsonified_comments, 'cursor' : next_cursor, 'end' : end}), 200
