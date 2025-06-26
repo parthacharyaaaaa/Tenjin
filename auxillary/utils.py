@@ -4,12 +4,11 @@ import hashlib
 from flask import jsonify
 import os
 import traceback
-from typing import Mapping, Callable, Literal, Any, Iterable
+from typing import Mapping, Callable, Literal, Any, Iterable, Optional
 from types import NoneType
 import base64
 import ujson
 from redis import Redis
-from redis.client import Pipeline
 from redis.exceptions import RedisError
 
 def generic_error_handler(e : Exception):
@@ -22,6 +21,7 @@ def generic_error_handler(e : Exception):
 
     All of these attributes are dictionaries and are **optional**, since in their absense a generic HTTP 500 code is thrown
     '''
+    print(traceback.format_exc())
     response = jsonify({"message" : getattr(e, "description", "An error occured"),
                         **getattr(e, "kwargs", {})})
     if getattr(e, "header_kwargs", None):
@@ -59,9 +59,27 @@ def verify_password(password: str, password_hash : bytes, salt: bytes) -> bool:
 def rediserialize(mapping: dict, 
                   typeMapping: Mapping[type, Callable] = {NoneType : lambda _ : '',
                                                           bool: lambda b : int(b), 
-                                                          datetime.datetime: lambda dt : dt.isoformat()}) -> dict:
+                                                          datetime.datetime: lambda dt : dt.isoformat(),
+                                                          list: lambda l : ':'.join(l)}) -> dict:
     '''Serialize a Python dictionary to a Redis hashmap'''
     return {k : typeMapping.get(type(v), lambda x : x)(v) for k,v in mapping.items()}
+
+def pyserialize(mapping: dict[str, str], deserialize_mapping: dict[str, type[Any]], strict: bool = False) -> dict[str, Any]:
+    '''Deserialize a Redis hashmap back to its original Python model's __json_like__() dictionary
+    Args:
+        mapping: Redis hashmap to deserialize
+        deserialize_mapping: Mapping of key values and their intended types. These types can also be lambda functions to allow for casts more complex than constructor calls
+        strict: If True, mapping and deserialize mapping must have the same keys
+        
+    Raises:
+        ValueError: If strict is True and mappings don't match
+        ValueError: Intended function cannot cast the string to the intended Python type
+    Returns:
+        Deserialized Python dictionary
+    '''
+    if strict and set(mapping.keys()) != set(deserialize_mapping.keys()):
+        raise ValueError('Mappings do not match')
+    return {key : deserialize_mapping[key](value) if key in deserialize_mapping else value for key, value in mapping.items()}
 
 def genericDBFetchException():
     '''Generic fetch exception handler'''
