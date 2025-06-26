@@ -1,4 +1,4 @@
-from flask import Blueprint, current_app, jsonify, g
+from flask import Blueprint, current_app, jsonify, g, url_for
 from auth_server.redis_manager import SyncedStore
 from auxillary.decorators import enforce_json
 from auxillary.utils import genericDBFetchException, verify_password, hash_password, to_base64url
@@ -171,6 +171,68 @@ def admin_refresh() -> tuple[Response, int]:
 def admin_logout() -> tuple[Response, int]:
     SyncedStore.delete(f'admin:{g.SESSION_TOKEN["admin_id"]}')
     return jsonify({'message' : 'Logout successful'}), 200
+
+@cmd.route('/admins/locks', methods=['POST'])
+@enforce_json
+@admin_only(required_role='super')
+def admin_lock() -> tuple[Response, int]:
+    '''Lock a staff admin's account'''
+    try:
+        target_id: int = int(g.REQUEST_JSON.get('id'))
+    except ValueError:
+        raise BadRequest('Invalid admin ID provided')
+
+    try:
+        admin: Admin = db.session.execute(select(Admin)
+                                          .where(Admin.id == target_id)
+                                          .with_for_update()
+                                          ).scalar_one_or_none()
+        if not admin:
+            raise NotFound(f'No admin with id {target_id} could be found')
+        if admin.locked:
+            conflict: Conflict = Conflict('Admin account is already locked')
+            conflict.kwargs = {'links' : {'unlock admin account' : {'_href' : url_for('.admin_unlock', _external=True)}}}
+            raise conflict
+        db.session.execute(update(Admin)
+                           .where(Admin.id == target_id)
+                           .values(locked=True))
+        db.session.commit()
+    except SQLAlchemyError: genericDBFetchException()
+
+    # Log out the target admin
+    SyncedStore.delete(f'admin:{target_id}')
+
+    return jsonify({'message' : 'Admin locked succesfully'}), 200
+
+
+@cmd.route('/admins/locks', methods=['DELETE'])
+@enforce_json
+@admin_only(required_role='super')
+def admin_unlock() -> tuple[Response, int]:
+    '''Lock a staff admin's account'''
+    try:
+        target_id: int = int(g.REQUEST_JSON.get('id'))
+    except ValueError:
+        raise BadRequest('Invalid admin ID provided')
+
+    try:
+        admin: Admin = db.session.execute(select(Admin)
+                                          .where(Admin.id == target_id)
+                                          .with_for_update()
+                                          ).scalar_one_or_none()
+        if not admin:
+            raise NotFound(f'No admin with id {target_id} could be found')
+        if not admin.locked:
+            conflict: Conflict = Conflict('Admin account is already unlocked')
+            conflict.kwargs = {'links' : {'lock admin account' : {'_href' : url_for('.admin_lock', _external=True)}}}
+            raise conflict
+        db.session.execute(update(Admin)
+                           .where(Admin.id == target_id)
+                           .values(locked=False))
+        db.session.commit()
+    except SQLAlchemyError: genericDBFetchException()
+
+    return jsonify({'message' : 'Admin unlocked succesfully'}), 200
 
 @cmd.route('/admins', methods=['POST'])
 @enforce_json
