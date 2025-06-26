@@ -280,7 +280,7 @@ def vote_post(post_id: int) -> tuple[Response, int]:
     flag_key: str = f'{PostVote.__tablename__}:{g.DECODED_TOKEN["sid"]}:{post_id}'
     lock_key: str = f'lock:{RedisConfig.RESOURCE_CREATION_PENDING_FLAG}:{flag_key}'
 
-    post_mapping, latest_intent, queued_deletion = resource_cache_precheck(RedisInterface, post_id, cache_key, f'delete:{cache_key}', flag_key, lock_key)
+    post_mapping, latest_intent, queued_deletion = resource_cache_precheck(RedisInterface, post_id, cache_key, f'delete:{cache_key}', flag_key, lock_key, conflicting_intent=incoming_intent)
     
     previous_vote: bool = True if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_FLAG else False if latest_intent == RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG else None
     lock_set = RedisInterface.set(lock_key, 1, ex=RedisConfig.TTL_EPHEMERAL, nx=True)
