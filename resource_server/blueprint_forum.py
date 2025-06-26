@@ -514,7 +514,7 @@ def check_admin_permissions(forum_id: int) -> tuple[Response, int]:
 
     return jsonify(AdminRoles.getAdminAccessLevel(role)), 200
 
-@FORUMS_BLUEPRINT.route("/<int:forum_id>/subscribe", methods=['POST'])
+@FORUMS_BLUEPRINT.route("/<int:forum_id>/subscriptions", methods=['POST'])
 @token_required
 def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'
@@ -574,7 +574,7 @@ def subscribe_forum(forum_id: int) -> tuple[Response, int]:
     
     return jsonify({'message' : 'Forum subscribed!'}), 202
 
-@FORUMS_BLUEPRINT.route("/<int:forum_id>/unsubscribe", methods=['DELETE'])
+@FORUMS_BLUEPRINT.route("/<int:forum_id>/subscriptions", methods=['DELETE'])
 @token_required
 def unsubscribe_forum(forum_id: int) -> tuple[Response, int]:    
     cache_key: str = f'{Forum.__tablename__}:{forum_id}'

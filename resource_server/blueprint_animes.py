@@ -86,7 +86,7 @@ def get_random_anime():
     except SQLAlchemyError: genericDBFetchException()
     return redirect(url_for('.get_anime', _external=False, anime_id = anime.id))
 
-@ANIMES_BLUEPRINT.route("/<int:anime_id>/subscribe", methods=["PATCH"])
+@ANIMES_BLUEPRINT.route("/<int:anime_id>/subscriptions", methods=["POST"])
 @token_required
 def sub_anime(anime_id: int) -> tuple[Response, int]:
     cacheKey: str = f'{Anime.__tablename__}:{anime_id}'
@@ -112,7 +112,7 @@ def sub_anime(anime_id: int) -> tuple[Response, int]:
     
     return jsonify({'message' : 'subscribed!'}), 202
 
-@ANIMES_BLUEPRINT.route("/<int:anime_id>/unsubscribe", methods=["PATCH"])
+@ANIMES_BLUEPRINT.route("/<int:anime_id>/subscriptions", methods=["DELETE"])
 @token_required
 def unsub_anime(anime_id: int) -> tuple[Response, int]:
     cacheKey: str = f'{Anime.__tablename__}:{anime_id}'
