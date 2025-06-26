@@ -33,8 +33,7 @@ class FlaskConfig:
         SQLALCHEMY_TRACK_MODIFICATIONS = bool(int(os.environ.get("SQLALCHEMY_TRACK_MODIFICATIONS", 0)))
 
         ### JWT ###
-        AUTH_SERVER_URL: str = f'{os.environ["AUTH_SERVER_PROTOCOL"]}://{os.environ["AUTH_SERVER_HOSTNAME"]}:{os.environ["AUTH_SERVER_PORT"]}'
-
+        AUTH_SERVER_URL: str = f'{os.environ["AUTH_SERVER_PROTOCOL"]}://{os.environ["AUTH_SERVER_HOSTNAME"]}:{os.environ["AUTH_SERVER_PORT"]}{os.environ["AUTH_SERVER_URL_PREFIX"]}'
         ### Application-specific configurations ###
         ACCOUNT_RECOVERY_PERIOD: timedelta = timedelta(days=int(os.environ["ACCOUNT_RECOVERY_PERIOD"]))
         PASSWORD_TOKEN_MAX_AGE: timedelta = timedelta(minutes=int(os.environ['PASSWORD_TOKEN_MAX_AGE']))
