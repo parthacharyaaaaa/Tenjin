@@ -131,7 +131,7 @@ def vote_comment(comment_id: int) -> tuple[Response, int]:
     incoming_intent: str = RedisConfig.RESOURCE_CREATION_PENDING_FLAG if vote == 1 else RedisConfig.RESOURCE_CREATION_PENDING_ALT_FLAG  # Alt flag is special value for downvotes. We need this here because a downvote is still resource creation, but different than an upvote obviously
     delta: int = -1 if not vote else 1
     cache_key: str = f'{Comment.__tablename__}:{comment_id}'
-    flag_key: str = f'{CommentVote}:{g.DECODED_TOKEN["sid"]}:{comment_id}'
+    flag_key: str = f'{CommentVote.__tablename__}:{g.DECODED_TOKEN["sid"]}:{comment_id}'
     lock_key: str = f'lock:{flag_key}'
 
     # Verify comment's existence first
@@ -212,7 +212,7 @@ def vote_comment(comment_id: int) -> tuple[Response, int]:
 def unvote_comment(comment_id: int) -> tuple[Response, int]:
     # NOTE: Vote removal is permitted for comments that are pending deletion
     cache_key: str = f'{Comment.__tablename__}:{comment_id}'
-    flag_key: str = f'{CommentVote}:{g.DECODED_TOKEN["sid"]}:{comment_id}'
+    flag_key: str = f'{CommentVote.__tablename__}:{g.DECODED_TOKEN["sid"]}:{comment_id}'
     lock_key: str = f'lock:{flag_key}'
 
     comment_mapping, latest_intent, pending_deletion = resource_cache_precheck(RedisInterface, comment_id, cache_key, f'delete:{cache_key}', flag_key, lock_key, Comment.__tablename__,
