@@ -1,5 +1,5 @@
 import jwt
-from typing import Optional, Literal
+from typing import Optional, Literal, Sequence
 from redis import Redis
 from werkzeug.exceptions import InternalServerError
 import uuid
@@ -8,6 +8,7 @@ from typing import TypeAlias
 import jwt.exceptions as JWTexc
 from auth_server.key_container import KeyMetadata
 from flask_sqlalchemy import SQLAlchemy
+from flask import Response
 from sqlalchemy import select
 from auth_server.models import KeyData
 import threading
@@ -304,6 +305,14 @@ class TokenManager:
     @staticmethod
     def generate_unique_identifier():
         return uuid.uuid4().hex
+    
+    def attach_tokens_to_response(self, response: Response, access_token: str, refresh_token: str, paths: Sequence[str]) -> None:
+        response.set_cookie(key="access", value=access_token,
+                            max_age=self.accessLifetime + self.leeway, httponly=True)
+        for path in paths:
+            response.set_cookie(key="refresh", value=refresh_token,
+                                max_age=self.refreshLifetime + tokenManager.leeway, httponly=True,
+                                path=path)
     
 tokenManager: TokenManager = None
 def init_token_manager(vk_mapping: dict[str, KeyMetadata], active_key_id: str, active_keydata: KeyMetadata, redisinterface: Redis, syncedstore: Redis, database: SQLAlchemy, **kwargs) -> None:
