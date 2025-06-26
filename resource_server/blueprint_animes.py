@@ -6,7 +6,7 @@ from resource_server.external_extensions import RedisInterface
 from resource_server.redis_config import RedisConfig
 from resource_server.resource_decorators import token_required
 from resource_server.models import db, Anime, AnimeGenre, Genre, StreamLink, Forum, AnimeSubscription
-from auxillary.utils import genericDBFetchException, rediserialize, consult_cache, promote_group_ttl, fetch_group_resources, cache_grouped_resource, from_base64url, to_base64url
+from auxillary.utils import genericDBFetchException, rediserialize, pyserialize, consult_cache, promote_group_ttl, fetch_group_resources, cache_grouped_resource, from_base64url, to_base64url
 from sqlalchemy import select, and_, func, Row
 from sqlalchemy.sql.expression import BinaryExpression
 from sqlalchemy.exc import SQLAlchemyError
@@ -171,7 +171,8 @@ def get_animes() -> tuple[Response, int]:
                 if counter is not None:
                     animes[anime_idx][counter_attrs[idx]] = counter
         
-        # Return paginated result with updated counters
+        # Serialize back to JSON compatible types
+        animes: list[str, Any] = [pyserialize(anime, deserialize_mapping=Anime.deserialization_mapping()) for anime in animes]
         promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
         return jsonify({'animes' : animes, 'cursor' : next_cursor, 'end' : end}), 200
     try:
@@ -273,7 +274,9 @@ def get_anime_forums(anime_id: int) -> tuple[Response, int]:
                     forums[forum_idx][counter_attrs[idx]] = counter
         # Return paginated result with updated counters
         promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
-        return jsonify({'posts' : forums, 'cursor' : next_cursor, 'end' : end}), 200
+
+        forums: list[dict[str, Any]] = [pyserialize(forum, deserialize_mapping=Forum.deserialization_mapping()) for forum in forums]
+        return jsonify({'forums' : forums, 'cursor' : next_cursor, 'end' : end}), 200
     # Cache miss
     try:
         where_clause: BinaryExpression = (Forum.anime == anime_id) & (Forum.deleted.is_(False))

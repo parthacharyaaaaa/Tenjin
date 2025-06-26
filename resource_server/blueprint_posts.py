@@ -10,7 +10,7 @@ from resource_server.external_extensions import RedisInterface
 from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, posts_cache_precheck, resource_existence_cache_precheck, hset_with_ttl, resource_cache_precheck
 from resource_server.redis_config import RedisConfig
 from auxillary.decorators import enforce_json
-from auxillary.utils import rediserialize, genericDBFetchException, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource, to_base64url, from_base64url
+from auxillary.utils import rediserialize, pyserialize, genericDBFetchException, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource, to_base64url, from_base64url
 from typing import Any, Optional, Sequence
 import binascii
 from datetime import datetime
@@ -665,7 +665,8 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
             for comment_idx, counter in enumerate(counters):
                 if counter is not None:
                     comments[comment_idx][counter_attrs[idx]] = counter
-        
+        # Deserialize redis hashmaps back to JSON serializable Python types
+        comments: list[dict[str, Any]] = [pyserialize(comment, Comment.deserialize_mapping()) for comment in comments]
         # Return paginated result with updated counters
         promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
         return jsonify({'comments' : comments, 'cursor' : next_cursor, 'end' : end}), 200

@@ -3,7 +3,7 @@ from flask import Blueprint, g, request, jsonify, current_app, url_for
 from werkzeug import Response
 from werkzeug.exceptions import BadRequest, Conflict, InternalServerError, NotFound, Unauthorized, Forbidden, Gone
 from auxillary.decorators import enforce_json
-from auxillary.utils import hash_password, verify_password, genericDBFetchException, rediserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource, to_base64url, from_base64url
+from auxillary.utils import hash_password, verify_password, genericDBFetchException, rediserialize, pyserialize, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource, to_base64url, from_base64url
 from resource_server.resource_auxillary import processUserInfo, fetch_global_counters, hset_with_ttl, resource_existence_cache_precheck
 from resource_server.external_extensions import RedisInterface
 from resource_server.resource_decorators import token_required
@@ -303,39 +303,43 @@ def update_password(temp_url: str) -> Response:
 @USERS_BLUEPRINT.route("/<int:user_id>", methods=["GET"])
 def get_user(user_id: int) -> tuple[Response, int]:
     cacheKey: str = f'user:{user_id}'
-    userMapping: dict[str, str|int] = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION,RedisConfig.TTL_EPHEMERAL)
-    global_posts_count, global_comments_count = fetch_global_counters(RedisInterface, f'{cacheKey}:total_posts', f'{cacheKey}:total_comments')
+    user_mapping: dict[str, str|int] = consult_cache(RedisInterface, cacheKey, RedisConfig.TTL_CAP, RedisConfig.TTL_PROMOTION,RedisConfig.TTL_EPHEMERAL)
+    counter_attrs: list[str] = ['aura', 'total_posts', 'total_comments']
 
-    if userMapping:
-        if RedisConfig.NF_SENTINEL_KEY in userMapping:
+    if user_mapping:
+        if RedisConfig.NF_SENTINEL_KEY in user_mapping:
             raise NotFound('No user with this ID exists')
-        
-        # Update with global counters
-        if global_comments_count is not None:
-            userMapping['comments'] = global_comments_count
-        if global_posts_count is not None:
-            userMapping['posts'] = global_posts_count
-        return jsonify({'user' : userMapping})        
+        # Deserialize Redis hashmap back to JSON serializable Python types
+        user_mapping: dict[str, Any] = pyserialize(user_mapping, deserialize_mapping=User.deserialize_mapping())
 
+        # Update with global counters
+        counter_mapping: dict[str, Sequence[int]] = fetch_global_counters(RedisInterface, [f'{User.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[user_id])
+        for idx, counter in enumerate(counter_mapping.values()):
+            if counter[0] is not None:
+                user_mapping[counter_attrs[idx]] = counter[0]
+        
+        return jsonify({'user' : user_mapping}), 200
+    
     # Fallback to DB
     try:
         user: User = db.session.execute(select(User)
-                                        .where((User.id == user_id) & (User.deleted.isnot(False)))
+                                        .where((User.id == user_id) & (User.deleted.is_(False)))
                                         ).scalar_one_or_none()
         if not user:
             hset_with_ttl(RedisInterface, cacheKey, {RedisConfig.NF_SENTINEL_KEY : RedisConfig.NF_SENTINEL_VALUE}, RedisConfig.TTL_EPHEMERAL)
             raise NotFound('No user with this ID exists')
         
-        userMapping = rediserialize(user.__json_like__())
+        user_mapping = rediserialize(user.__json_like__())
     except SQLAlchemyError: genericDBFetchException()
 
     # Update with global counters
-    if global_comments_count is not None:
-        userMapping['comments'] = global_comments_count
-    if global_posts_count is not None:
-        userMapping['posts'] = global_posts_count
-    hset_with_ttl(RedisInterface, cacheKey, userMapping, RedisConfig.TTL_STRONG)
-    return jsonify({'user' : userMapping}), 200
+    counter_mapping: dict[str, Sequence[int]] = fetch_global_counters(RedisInterface, [f'{User.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[user_id])
+    for idx, counter in enumerate(counter_mapping.values()):
+        if counter[0] is not None:
+            user_mapping[counter_attrs[idx]] = counter[0]
+    
+    hset_with_ttl(RedisInterface, cacheKey, user_mapping, RedisConfig.TTL_STRONG)
+    return jsonify({'user' : user_mapping}), 200
 
 @USERS_BLUEPRINT.route('/<int:user_id>/posts')
 def get_user_posts(user_id: int) -> tuple[Response, int]:

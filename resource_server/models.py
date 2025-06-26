@@ -10,6 +10,7 @@ from enum import Enum
 from datetime import datetime
 from typing import Any
 from dataclasses import dataclass
+from types import FunctionType
 
 CONFIG: dict = {}
 with open(os.path.join(os.path.dirname(__file__), "instance", "config.json"), 'rb') as configFile:
@@ -17,6 +18,10 @@ with open(os.path.join(os.path.dirname(__file__), "instance", "config.json"), 'r
     METADATA = MetaData(naming_convention=CONFIG["database"]["naming_convention"])
 
 db = SQLAlchemy()
+
+### Deserialization functions commonly used in all models
+deserialize_bool: FunctionType = lambda serial : bool(int(serial))
+deserialize_optional: FunctionType = lambda serial : None if not serial else serial
 
 ### Assosciation Tables ###
 class ForumSubscription(db.Model):
@@ -148,6 +153,10 @@ class User(db.Model):
 
     deleted: bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
     time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
+
+    @classmethod
+    def deserialize_mapping(cls) -> dict[str, Any]:
+        return {'id' : int, 'rtbf' : deserialize_bool, 'aura' : int, 'total_posts' : int, 'total_comments' : int, 'deleted' : deserialize_bool}
     
     __table_args__ = (
         PrimaryKeyConstraint("id"),
@@ -163,8 +172,8 @@ class User(db.Model):
         return {"id": self.id,
                 "username": self.username,
                 "aura": self.aura,
-                "posts": self.total_posts,
-                "comments": self.total_comments,
+                "total_posts": self.total_posts,
+                "total_comments": self.total_comments,
                 "epoch": self.time_joined.isoformat(),
                 "last_login": self.last_login.isoformat()}
 
@@ -209,6 +218,9 @@ class Anime(db.Model):
     # Genres is multi-valued, made into separate table
     # Stream links are multi-valued, made into separate table
 
+    @classmethod
+    def deserialization_mapping(cls):
+        return {'id' : int, 'rating' : float, 'mal_ranking' : int, 'members' : int, 'genres' : lambda x : x.split(':')}
 
     def __json_like__(self) -> dict[str, int]:
         return {"id": self.id,
@@ -262,6 +274,13 @@ class Forum(db.Model):
     time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
     rtbf_hidden: bool = db.Column(BOOLEAN, nullable=True)
 
+    @classmethod
+    def deserialization_mapping(cls) -> dict[str, Any]:
+        hp_func = lambda hp : None if not hp else int(hp)
+        return {'id' : int, 'anime' : int, 'subscribers' : int, 'posts' : int, 'admin_count' : int, 
+                'highlight_post_1' : hp_func, 'highlight_post_2' : hp_func, 'highlight_post_3' : hp_func,
+                'deleted' : lambda deleted : bool(int(deleted)), 'rtbf_hidden' : lambda rtbf : bool(int(rtbf))}
+
     __table_args__ = (
         PrimaryKeyConstraint("id"),
         CheckConstraint("posts >= 0", name="check_posts_value"),
@@ -291,10 +310,10 @@ class Forum(db.Model):
                 "subscribers" : self.subscribers,
                 "description": self.description,
                 "posts": self.posts,
-                "highlight_1": self.highlight_post_1,
-                "highlight_2": self.highlight_post_2,
-                "highlight_3": self.highlight_post_3,
-                "epoch": self.created_at.isoformat(), 
+                "highlight_post_1": self.highlight_post_1,
+                "highlight_post_2": self.highlight_post_2,
+                "highlight_post_3": self.highlight_post_3,
+                "created_at": self.created_at.isoformat(), 
                 "admin_count": self.admin_count}
 
 class ForumRules(db.Model):
@@ -362,6 +381,10 @@ class Post(db.Model):
     time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
     rtbf_hidden: bool = db.Column(BOOLEAN, nullable=True)
 
+    @classmethod
+    def deserialization_mapping(cls) -> dict[str, Any]:
+        return {'id' : int, 'author_id' : int, 'forum_id' : int, 'score' : int, 'total_comments' : int, 'closed' : deserialize_bool, 'saves' : int, 'reports' : int, 'deleted' : deserialize_bool, 'rtbf_hidden' : deserialize_bool}
+
     def __init__(self, author_id: int, forum_id: int, title: str, body_text: str, epoch: datetime, flair: str = None, score: int = 0, total_comments: int = 0, closed: bool = False):
         self.author_id = author_id
         self.forum_id = forum_id
@@ -389,12 +412,11 @@ class Post(db.Model):
     def __json_like__(self) -> dict[str, str|int]:
         return {"id": self.id,
                 "author_id": self.author_id,
-                "forum": self.forum_id,
+                "forum_id": self.forum_id,
                 "score": self.score,
-                "comments": self.total_comments,
+                "total_comments": self.total_comments,
                 "title": self.title,
                 "body_text": self.body_text,
-                "flair": self.flair,
                 "closed": self.closed,
                 "epoch": self.time_posted.strftime("%d/%m/%y, %H:%M:%S"),
                 "saves": self.saves}
@@ -416,9 +438,13 @@ class Comment(db.Model):
     reports: int= db.Column(INTEGER, default = 0, server_default=text('0'), nullable=False)
 
     # Deletion metadata
-    deleted : bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
+    deleted : bool = db.Column(BOOLEAN, nullable=False, server_default=text("false"))
     time_deleted : datetime = db.Column(TIMESTAMP, nullable=True)
     rtbf_hidden: bool = db.Column(BOOLEAN, nullable=True)
+
+    @classmethod
+    def deserialize_mapping(cls) -> dict[str, Any]:
+        return {'id' : int, 'author_id' : int, 'parent_forum' : int, 'parent_post' : int, 'score' : int, 'reports' : int, 'deleted' : deserialize_bool, 'rtbf_hidden' : deserialize_bool}
 
     __table_args__ = (
         PrimaryKeyConstraint("id", name="pk_comments"),

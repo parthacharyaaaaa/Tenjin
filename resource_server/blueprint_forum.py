@@ -2,7 +2,7 @@ from flask import Blueprint, g, jsonify, request, url_for
 from werkzeug import Response
 from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict, Unauthorized, InternalServerError, Gone
 from auxillary.decorators import enforce_json
-from auxillary.utils import rediserialize, genericDBFetchException, consult_cache, fetch_group_resources, promote_group_ttl, cache_grouped_resource, to_base64url, from_base64url
+from auxillary.utils import rediserialize, pyserialize, genericDBFetchException, fetch_group_resources, promote_group_ttl, cache_grouped_resource, to_base64url, from_base64url
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles
 from resource_server.resource_decorators import token_required, pass_user_details
 from resource_server.resource_auxillary import update_global_counter, fetch_global_counters, hset_with_ttl, admin_cache_precheck, resource_cache_precheck, resource_existence_cache_precheck
@@ -113,6 +113,8 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
                 if counter is not None:
                     posts[post_idx][counter_attrs[idx]] = counter
         
+        # Cast redis serialized types back to JSON compatible Python types
+        posts: list[dict[str, Any]] = [pyserialize(post, Post.deserialization_mapping()) for post in posts]
         # Return paginated result with updated counters
         promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
         return jsonify({'posts' : posts, 'cursor' : next_cursor, 'end' : end}), 200
