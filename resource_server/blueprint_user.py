@@ -19,6 +19,7 @@ from uuid import uuid4
 from hashlib import sha256
 from typing import Sequence, Any
 import binascii
+import requests
 
 USERS_BLUEPRINT: Blueprint = Blueprint('users', 'users')
 
@@ -86,9 +87,9 @@ def register() -> tuple[Response, int]:
                     "email" : USER_DETAILS["email"], 
                     **response_kwargs}), 201
  
-@USERS_BLUEPRINT.route("/", methods=["DELETE"])
+@USERS_BLUEPRINT.route("/<int:user_id>", methods=["DELETE"])
 @enforce_json
-def delete_user() -> tuple[Response, int]:
+def delete_user(user_id: int) -> tuple[Response, int]:
     if not (g.REQUEST_JSON.get("username") and
             g.REQUEST_JSON.get("password")):
         raise BadRequest("Requires username and password to be provided")
@@ -96,18 +97,19 @@ def delete_user() -> tuple[Response, int]:
     OP, USER_DETAILS = processUserInfo(username=g.REQUEST_JSON['username'], password=g.REQUEST_JSON['password'])
     if not OP:
         raise BadRequest(USER_DETAILS.get("error"))
-    targetUser: User = db.session.execute(select(User)
+    target_user: User = db.session.execute(select(User)
                                           .where((User.username == USER_DETAILS['username']) & (User.deleted.is_(False)))
                                           ).scalar_one_or_none()
-    if not targetUser:
+    if not target_user:
         raise NotFound("Requested user could not be found")
     
-    if not verify_password(g.REQUEST_JSON['password'], targetUser.pw_hash, targetUser.pw_salt):
+    if not verify_password(g.REQUEST_JSON['password'], target_user.pw_hash, target_user.pw_salt):
         raise Unauthorized('Invalid credentials')
     
-    cache_key: str = f'{User.__tablename__}:{targetUser.id}'
+    cache_key: str = f'{User.__tablename__}:{target_user.id}'
     flag_key: str = f'alive_status:{cache_key}'
     lock_key: str = f'lock:{flag_key}'
+
     with RedisInterface.pipeline() as pipe:
         pipe.hgetall(cache_key)
         pipe.get(flag_key)
@@ -126,20 +128,20 @@ def delete_user() -> tuple[Response, int]:
         raise Conflict('Failed to perform this action, another request for the same action is being processed')
     
     try:
-        # Write intent as account recovery (represented by the usual creation flag), add user ID to account recovery stream, and write user mapping to cache
+        # Write intent as account deletion (represented by the usual deletion flag), add user ID to account deletion stream, and write user mapping to cache
         with RedisInterface.pipeline(transaction=False) as pipe:
             pipe.set(flag_key, RedisConfig.RESOURCE_DELETION_PENDING_FLAG, ex=RedisConfig.TTL_EPHEMERAL)
-            pipe.xadd('USER_ACTIVITY_DELETIONS', {'user_id' : targetUser.id, 'rtbf' : int(targetUser.rtbf), 'table' : User.__tablename__})
+            pipe.xadd('USER_ACTIVITY_DELETIONS', {'user_id' : target_user.id, 'rtbf' : int(target_user.rtbf), 'table' : User.__tablename__})
             pipe.hset(cache_key, {RedisConfig.NF_SENTINEL_KEY:RedisConfig.NF_SENTINEL_VALUE})
             pipe.expire(cache_key, RedisConfig.TTL_WEAK)
             pipe.execute()
-        enqueueEmail(RedisInterface, email=targetUser.email, subject='deletion', username=targetUser.username)
+        enqueueEmail(RedisInterface, email=target_user.email, subject='deletion', username=target_user.username)
     except RedisError: 
         raise InternalServerError("Failed to perform account deletion, please try again. If the issue persists, please raise a ticket")
     finally:
         RedisInterface.delete(lock_key)
-    
-    return jsonify({"message" : "account deleted succesfully", "username" : targetUser.username, "time_deleted" : targetUser.time_deleted}), 203
+    requests.delete(url=f"{current_app.config['AUTH_SERVER_URL']}/auth/tokens", json={'sub' : target_user.username, 'sid' : target_user.id})
+    return jsonify({"message" : "account deleted successfully", "username" : target_user.username, "time_deleted" : target_user.time_deleted}), 200
 
 @USERS_BLUEPRINT.route("/recover", methods=["PATCH"])
 @enforce_json
