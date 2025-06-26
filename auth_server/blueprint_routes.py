@@ -1,7 +1,7 @@
 from auth_server.token_manager import tokenManager
 from auxillary.decorators import enforce_json
 from flask import Blueprint, request, jsonify, Response, g, current_app, send_from_directory, url_for
-from werkzeug.exceptions import BadRequest
+from werkzeug.exceptions import BadRequest, Unauthorized
 import requests
 import time
 from typing import Any
@@ -35,20 +35,21 @@ def login():
                         "response_message" : valid.json().get("message", "None")}), valid.status_code
         
     
-    rsResponse: dict = valid.json()
+    rsResponse: dict[str, str|int] = valid.json()
     sub, sid = rsResponse.pop('sub'), rsResponse.pop('sid')
     familyID: str = sha256(f'{sub}:{sid}'.encode()).hexdigest()
-    aToken = tokenManager.issueAccessToken(sub, sid, familyID)
-    rToken = tokenManager.issueRefreshToken(sub, sid, familyID=familyID, reissuance=False)
+    aToken: str = tokenManager.issueAccessToken(sub, sid, familyID)
+    rToken: str = tokenManager.issueRefreshToken(sub, sid, familyID=familyID, reissuance=False)
 
-    epoch = time.time()
-    response = jsonify({
+    epoch: float = time.time()
+    response: Response = jsonify({
         "message" : rsResponse.pop("message", "Login complete."),
         "username" : sub,
         "time_of_issuance" : epoch,
         "access_exp" : epoch + tokenManager.accessLifetime,
         "leeway" : tokenManager.leeway,
-        "issuer" : "babel-auth-service"
+        "issuer" : "tenjin-auth-service",
+        "_additional" : {**rsResponse}
     })
     tokenManager.attach_tokens_to_response(response, access_token=aToken, refresh_token=rToken, paths=[url_for('.reissue')])
     return response, 201
@@ -73,28 +74,28 @@ def register():
         return jsonify({"message" : "Failed to create account",
                         "response_message" : valid.json().get("message", "Sowwy >:3")}), valid.status_code
     
-    rsResponse: dict[str, Any] = valid.json()
+    rsResponse: dict[str, str|int] = valid.json()
     sub, sid = rsResponse.pop('sub'), rsResponse.pop('sid')
     familyID: str = sha256(f'{sub}:{sid}'.encode()).hexdigest()
-    aToken = tokenManager.issueAccessToken(sub, sid, familyID)
-    rToken = tokenManager.issueRefreshToken(sub, sid, familyID=familyID, reissuance=False)
-    epoch = time.time()
-    response = jsonify({"message" : rsResponse.pop("message", "Registration complete."),
-        "username" : sub,
-        "email" : rsResponse.pop('email', None),
-        "time_of_issuance" : epoch,
-        "access_exp" : epoch + tokenManager.accessLifetime,
-        "leeway" : tokenManager.leeway,
-        "issuer" : "babel-auth-service",
-        "_additional" : {**rsResponse}
-    })
+    aToken: str = tokenManager.issueAccessToken(sub, sid, familyID)
+    rToken: str = tokenManager.issueRefreshToken(sub, sid, familyID=familyID, reissuance=False)
+    epoch: float = time.time()
+    response: Response = jsonify({"message" : rsResponse.pop("message", "Registration complete."),
+                                  "username" : sub,
+                                  "email" : rsResponse.pop('email', None),
+                                  "time_of_issuance" : epoch,
+                                  "access_exp" : epoch + tokenManager.accessLifetime,
+                                  "leeway" : tokenManager.leeway,
+                                  "issuer" : "tenjin-auth-service",
+                                  "_additional" : {**rsResponse}
+                                  })
 
     tokenManager.attach_tokens_to_response(response, access_token=aToken, refresh_token=rToken, paths=[url_for('.reissue')])
     return response, 201
 
 @auth.route("/reissue", methods = ["GET", "OPTIONS"])
 def reissue():
-    refreshToken = request.cookies.get("refresh", request.cookies.get("Refresh"))
+    refreshToken: str = request.cookies.get("refresh", request.cookies.get("Refresh"))
 
     if not refreshToken:
         e = KeyError()
@@ -102,8 +103,8 @@ def reissue():
         raise e
     
     nRefreshToken, nAccessToken = tokenManager.reissueTokenPair(refreshToken)
-    epoch = time.time()
-    response = jsonify({
+    epoch: float = time.time()
+    response: Response = jsonify({
         "message" : "Reissuance successful",
         "time_of_issuance" : epoch,
         "access_exp" : epoch + tokenManager.accessLifetime,
@@ -111,41 +112,24 @@ def reissue():
         "issuer" : "babel-auth-service"
     })
 
-    response.set_cookie(key="access",
-                        value=nAccessToken,
-                        max_age=tokenManager.accessLifetime + tokenManager.leeway,
-                        httponly=True)
-    response.set_cookie(key="refresh",
-                        value=nRefreshToken,
-                        max_age=tokenManager.refreshLifetime + tokenManager.leeway,
-                        httponly=True,
-                        path="/auth/reissue")
-    response.set_cookie(key="refresh",
-                    value=nRefreshToken,
-                    max_age=tokenManager.refreshLifetime + tokenManager.leeway,
-                    httponly=True,
-                    path="/auth/delete-account")
-    response.set_cookie(key="refresh",
-                    value=nRefreshToken,
-                    max_age=tokenManager.refreshLifetime + tokenManager.leeway,
-                    httponly=True,
-                    path="/auth/purge-family")
+    tokenManager.attach_tokens_to_response(response, access_token=nAccessToken, refresh_token=nRefreshToken, paths=[url_for('.reissue')])
     return response, 201
 
-@auth.route("/purge-family", methods = ["GET", "OPTIONS"])
+@auth.route("/tokens", methods = ["DELETE", "OPTIONS"])
 def purgeFamily():
     '''
     Purges an entire token family in case of a reuse attack or a normal client logout
     '''
-    tkn = request.cookies.get("Refresh", request.cookies.get("refresh"))
-    if not tkn:
+    encodedRefreshToken: str = request.cookies.get("Refresh", request.cookies.get("refresh"))
+    if not encodedRefreshToken:
         raise BadRequest(f"Logout requires a refresh token to be provided")
     
-    tkn = tokenManager.decodeToken(tkn,
-                                   tType="refresh",
-                                   options={"verify_nbf" : False})
-    if not tkn:
-        raise BadRequest(f"Invalid Refresh Token provided to [{request.method}] {request.url_rule}")
+    try:
+        refreshToken: dict[str, Any] = tokenManager.decodeToken(refreshToken,
+                                                                tType="refresh",
+                                                                options={"verify_nbf" : False})
+    except:
+        raise Unauthorized('Failed to validate this refresh token')
     
-    tokenManager.invalidateFamily(tkn['fid'])
+    tokenManager.invalidateFamily(refreshToken['fid'])
     return jsonify({"message" : "Token Revoked"}), 200
