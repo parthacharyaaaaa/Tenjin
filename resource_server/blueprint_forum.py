@@ -109,7 +109,9 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
     if posts and all(posts):
         counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Post.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[post['id'] for post in posts])
         for idx, (attribute, counters) in enumerate(counters_mapping.items()):
-            posts[idx][attribute] = counters[idx]
+            for post_idx, counter in enumerate(counters):
+                if counter is not None:
+                    posts[post_idx][counter_attrs[idx]] = counter
         
         # Return paginated result with updated counters
         promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
@@ -149,8 +151,10 @@ def get_forum_posts(forum_id: int) -> tuple[Response, int]:
                            cursor=next_cursor, end=end)
     # Update newly fetched
     counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Post.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[post['id'] for post in jsonified_posts])
-    for idx, (attribute, counters) in enumerate(counters_mapping.items()):
-        jsonified_posts[idx][attribute] = counters[idx]
+    for idx, counters in enumerate(counters_mapping.values()):
+        for post_idx, counter in enumerate(counters):
+            if counter is not None:
+                jsonified_posts[post_idx][counter_attrs[idx]] = counter
 
     return jsonify({'posts' : jsonified_posts, 'cursor' : next_cursor, 'end' : end}), 200
 

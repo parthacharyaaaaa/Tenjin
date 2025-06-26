@@ -661,8 +661,10 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
     counter_attrs: list[str] = ['score']
     if comments and all(comments):
         counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Comment.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[comment['id'] for comment in comments])
-        for idx, (attribute, counters) in enumerate(counters_mapping.items()):
-            comments[idx][attribute] = counters[idx]
+        for idx, counters in enumerate(counters_mapping.values()):
+            for comment_idx, counter in enumerate(counters):
+                if counter:
+                    comments[comment_idx][counter_attrs[idx]] = counter
         
         # Return paginated result with updated counters
         promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
@@ -693,5 +695,10 @@ def get_post_comments(post_id: int) -> tuple[Response, int]:
                            resource_type=Comment.__tablename__, resources={jsonified_comment['id'] : rediserialize(jsonified_comment) for jsonified_comment in jsonified_comments},
                            weak_ttl=RedisConfig.TTL_WEAK, strong_ttl=RedisConfig.TTL_STRONG,
                            cursor=next_cursor, end=end)
-
+    
+    counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Comment.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[comment['id'] for comment in jsonified_comments])
+    for idx, counters in enumerate(counters_mapping.values()):
+        for comment_idx, counter in enumerate(counters):
+            if counter:
+                jsonified_comments[comment_idx][counter_attrs[idx]] = counter
     return jsonify({'comments' : jsonified_comments, 'cursor' : next_cursor, 'end' : end}), 200

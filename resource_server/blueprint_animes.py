@@ -240,8 +240,11 @@ def get_anime_forums(anime_id: int) -> tuple[Response, int]:
     counter_attrs: list[str] = ['subscribers', 'posts', 'admin_count']
     if forums and all(forums):
         counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Forum.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[forum['id'] for forum in forums])
-        for idx, (attribute, counters) in enumerate(counters_mapping.items()):
-            forums[idx][attribute] = counters[idx]
+
+        for idx, counters in enumerate(counters_mapping.values()):
+            for forum_idx, counter in enumerate(counters):
+                if counter is not None:
+                    forums[forum_idx][counter_attrs[idx]] = counter
         # Return paginated result with updated counters
         promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
         return jsonify({'posts' : forums, 'cursor' : next_cursor, 'end' : end}), 200
@@ -265,10 +268,15 @@ def get_anime_forums(anime_id: int) -> tuple[Response, int]:
     next_cursor: str = to_base64url(forum_res[-1].id, length=16)
     jsonified_forums: list[dict[str, Any]] = [res.__json_like__() for res in forum_res]
 
-    # Cache grouped resources with updated counters
+    # Cache grouped resources
     cache_grouped_resource(RedisInterface, group_key=pagination_cache_key,
                            resource_type=Forum.__tablename__, resources={jsonified_forum['id'] : rediserialize(jsonified_forum) for jsonified_forum in jsonified_forums},
                            weak_ttl=RedisConfig.TTL_WEAK, strong_ttl=RedisConfig.TTL_STRONG,
                            cursor=next_cursor, end=end)
+    counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Forum.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[forum['id'] for forum in jsonified_forums])
 
+    for idx, counters in enumerate(counters_mapping.values()):
+        for forum_idx, counter in enumerate(counters):
+            if counter is not None:
+                jsonified_forums[forum_idx][counter_attrs[idx]] = counter
     return jsonify({'forums' : jsonified_forums, 'cursor' : next_cursor, 'end' : end})

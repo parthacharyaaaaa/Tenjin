@@ -368,8 +368,10 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
     counter_attrs: list[str] = ['score', 'total_comments', 'saves']
     if posts and all(posts):
         counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Post.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[post['id'] for post in posts])
-        for idx, (attribute, counters) in enumerate(counters_mapping.items()):
-            posts[idx][attribute] = counters[idx]
+        for idx, counters in enumerate(counters_mapping.values()):
+            for post_idx, counter in enumerate(counters):
+                if counter is not None:
+                    posts[post_idx][counter_attrs[idx]] = counter
         # Return paginated result with updated counters
         promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
         return jsonify({'posts' : posts, 'cursor' : next_cursor, 'end' : end}), 200
@@ -393,12 +395,17 @@ def get_user_posts(user_id: int) -> tuple[Response, int]:
     next_cursor: str = to_base64url(next_posts[-1].id, length=16)
 
     jsonified_posts: list[dict[str, Any]] = [post.__json_like__() | {'username' : user_mapping['username']} for post in next_posts]
-    # Cache grouped resources with updated counters
+    # Cache grouped resources
     cache_grouped_resource(RedisInterface, group_key=pagination_cache_key,
                            resource_type=Post.__tablename__, resources={jsonified_post['id'] : rediserialize(jsonified_post) for jsonified_post in jsonified_posts},
                            weak_ttl=RedisConfig.TTL_WEAK, strong_ttl=RedisConfig.TTL_STRONG,
                            cursor=next_cursor, end=end)
 
+    counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Post.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[post['id'] for post in jsonified_posts])
+    for idx, counters in enumerate(counters_mapping.values()):
+        for post_idx, counter in enumerate(counters):
+            if counter is not None:
+                jsonified_posts[post_idx][counter_attrs[idx]] = counter
     return jsonify({'posts' : jsonified_posts, 'cursor' : next_cursor, 'end' : end})
 
 @USERS_BLUEPRINT.route('/<int:user_id>/forums')
@@ -431,9 +438,12 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
     forums, end, next_cursor = fetch_group_resources(RedisInterface, group_key=pagination_cache_key)
     counter_attrs: list[str] = ['subscribers', 'posts', 'admin_count']
     if forums and all(forums):
-        counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Post.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[forum['id'] for forum in forums])
-        for idx, (attribute, counters) in enumerate(counters_mapping.items()):
-            forums[idx][attribute] = counters[idx]
+        counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Forum.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[forum['id'] for forum in forums])
+        print(counters_mapping)
+        for idx, counters in enumerate(counters_mapping.values()):
+            for forum_idx, counter in enumerate(counters):
+                if counter is not None:
+                    forums[forum_idx][counter_attrs[idx]] = counter
         # Return paginated result with updated counters
         promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
         return jsonify({'posts' : forums, 'cursor' : next_cursor, 'end' : end}), 200
@@ -458,11 +468,17 @@ def get_user_forums(user_id: int) -> tuple[Response, int]:
     next_cursor: str = to_base64url(joined_forum_res[-1][0].id, length=16)
     jsonified_forums: list[dict[str, Any]] = [res[0].__json_like__() | {'time_subscribed' : res[1]} for res in joined_forum_res]
 
-    # Cache grouped resources with updated counters
+    # Cache grouped resources
     cache_grouped_resource(RedisInterface, group_key=pagination_cache_key,
                            resource_type=Post.__tablename__, resources={jsonified_forum['id'] : rediserialize(jsonified_forum) for jsonified_forum in jsonified_forums},
                            weak_ttl=RedisConfig.TTL_WEAK, strong_ttl=RedisConfig.TTL_STRONG,
                            cursor=next_cursor, end=end)
+    
+    counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Forum.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[forum['id'] for forum in jsonified_forums])
+    for idx, counters in enumerate(counters_mapping.values()):
+        for forum_idx, counter in enumerate(counters):
+            if counter is not None:
+                jsonified_forums[forum_idx][counter_attrs[idx]] = counter
 
     return jsonify({'forums' : jsonified_forums, 'cursor' : next_cursor, 'end' : end})
 
@@ -496,9 +512,11 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
     animes, end, next_cursor = fetch_group_resources(RedisInterface, group_key=pagination_cache_key)
     counter_attrs: list[str] = ['members']
     if animes and all(animes):
-        counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Post.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[anime['id'] for anime in animes])
-        for idx, (attribute, counters) in enumerate(counters_mapping.items()):
-            animes[idx][attribute] = counters[idx]
+        counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Anime.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[anime['id'] for anime in animes])
+        for idx, counters in enumerate(counters_mapping.values()):
+            for anime_idx, counter in enumerate(counters):
+                if counter is not None:
+                    animes[anime_idx][counter_attrs[idx]] = counter
         # Return paginated result with updated counters
         promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
         return jsonify({'animes' : animes, 'cursor' : next_cursor, 'end' : end}), 200
@@ -523,12 +541,17 @@ def get_user_animes(user_id: int) -> tuple[Response, int]:
     
     next_cursor: str = to_base64url(next_anime_res[-1][0].id, length=16)
     jsonified_animes: list[dict[str, Any]] = [row[0].__json_like__() | {'time_subscribed' :row[1].isoformat()} for row in next_anime_res]
-    # Cache grouped resources with updated counters
+    # Cache grouped resources
     cache_grouped_resource(RedisInterface, group_key=pagination_cache_key,
                            resource_type=Anime.__tablename__, resources={jsonified_anime['id'] : jsonified_anime for jsonified_anime in jsonified_animes},
                            weak_ttl=RedisConfig.TTL_WEAK, strong_ttl=RedisConfig.TTL_STRONG,
                            cursor=next_cursor, end=end)
-
+    
+    counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Anime.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[anime['id'] for anime in jsonified_animes])
+    for idx, counters in enumerate(counters_mapping.values()):
+        for anime_idx, counter in enumerate(counters):
+            if counter is not None:
+                jsonified_animes[anime_idx][counter_attrs[idx]] = counter
     return jsonify({'animes' : jsonified_animes, 'cursor' : next_cursor, 'end' : end})
 
 @USERS_BLUEPRINT.route("/login", methods=["POST"])
