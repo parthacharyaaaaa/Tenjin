@@ -159,7 +159,21 @@ def get_animes() -> tuple[Response, int]:
 
     except (ValueError, TypeError, binascii.Error):
             raise BadRequest("Failed to load more posts. Please refresh this page")
-    
+    pagination_cache_key: str = f'{Anime.__tablename__}:{cursor}:{genreID or "N/A"}:{searchParam or "N/A"}'
+    counter_attrs: list[str] = ['members']
+
+    animes, end, next_cursor = fetch_group_resources(RedisInterface, group_key=pagination_cache_key)
+    if animes and all(animes):
+        counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Anime.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[anime['id'] for anime in animes])
+
+        for idx, counters in enumerate(counters_mapping.values()):
+            for anime_idx, counter in enumerate(counters):
+                if counter is not None:
+                    animes[anime_idx][counter_attrs[idx]] = counter
+        
+        # Return paginated result with updated counters
+        promote_group_ttl(RedisInterface, group_key=pagination_cache_key, promotion_ttl=RedisConfig.TTL_PROMOTION, max_ttl=RedisConfig.TTL_CAP)
+        return jsonify({'animes' : animes, 'cursor' : next_cursor, 'end' : end}), 200
     try:
         whereClause = [Anime.id > cursor]
         if searchParam:
@@ -197,8 +211,20 @@ def get_animes() -> tuple[Response, int]:
         animes.pop(-1)
     next_cursor: str = to_base64url(animes[-1].id, length=16)
 
-    result = [anime.__json_like__() | {'genres': genres.get(anime.id, [])} for anime in animes]
-    return jsonify({'animes' : result, 'cursor' : next_cursor, 'end' : end}), 200
+    jsonified_result = [anime.__json_like__()  for anime in animes]
+    # Cache results
+    cache_grouped_resource(RedisInterface, pagination_cache_key, Anime.__tablename__, {result['id']: rediserialize(result) for result in jsonified_result},
+                           RedisConfig.TTL_WEAK, RedisConfig.TTL_STRONG,
+                           next_cursor, end)
+    
+    # Fetch global counters
+    counters_mapping: dict[str, Sequence[int|None]] = fetch_global_counters(client=RedisInterface, hashmaps=[f'{Anime.__tablename__}:{attr}' for attr in counter_attrs], identifiers=[anime['id'] for anime in jsonified_result])
+
+    for idx, counters in enumerate(counters_mapping.values()):
+        for anime_idx, counter in enumerate(counters):
+            if counter is not None:
+                jsonified_result[anime_idx][counter_attrs[idx]] = counter
+    return jsonify({'animes' : jsonified_result, 'cursor' : next_cursor, 'end' : end}), 200
 
 @ANIMES_BLUEPRINT.route("<int:anime_id>/links")
 def get_anime_links(anime_id: int) -> tuple[Response, int]:
