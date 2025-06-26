@@ -445,4 +445,5 @@ class Comment(db.Model):
                 "parent_forum": self.parent_forum,
                 "time_created": self.time_created.isoformat(),
                 "body": self.body,
-                "parent_post": self.parent_post}
+                "parent_post": self.parent_post,
+                "score" : self.score}
