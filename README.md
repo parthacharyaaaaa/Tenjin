@@ -29,8 +29,7 @@ The same applies for Postgres. Although there is a super user provision for oper
 ## Running the application
 Now that all dependencies have been resolved and ACL has been set up, we can actually run the servers. For test deployments, the flow is as follows:
 
-### 1) Ensure Postgres is running properly as a service
-### 2) Spin up Redis servers
+### 1) Spin up Redis servers
 The entire application would require 3 Redis instances (1 for RS, 2 for Auth). The ports are specified under the `config` directory in both server packages. To actually ensure that the servers run with the proper ACL settings, make sure to update the redis.conf config file (Typically under `/etc/redis` to include the ACL filepath (This would require superuser access since this directory is priviliged).
 The actual command would then look like:
 ```bash
@@ -45,6 +44,10 @@ $ sudo redis-server /etc/redis/authfile.conf --port 6100
 $ sudo redis-server /etc/redis/authfile.conf --port 6200
 ```
 This would start both the token store as well as the synced store used by the auth server.
+
+### 2) Creating and populating the database
+Since this is still a forum website for animes, we need to create and populate the database to actually allow functionality. This can be done through the [genesis](/resource_server/scripts/genesis.py) script. This script meant to be run as a Python module from root, and allows different arguments to be passed as a CLI. Simply executing this module is without any arguments is also a viable option, although I suggest passing the `-mi`/`--max-iterations` and the `-ac`/`--anime-count` flags for better control over how many animes are fetched. This script uses the [Jikan v4 API](https://jikan.moe/) as its source.
+
 ### 3) Starting background scripts
 Under `resource_server/scripts` exist a few Python scripts that act as background workers that consume events as batches and flush their effects into the database with a single network call. You can see the resource server's README for more details about this architecture.
 These scripts are meant to be run as Python modules using the `-m` flag, since they make use of absolute imports.
