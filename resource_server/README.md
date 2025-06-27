@@ -1,15 +1,26 @@
 # Index
 1) [System Behaviour](#system-behaviour)
+   ---
    i) [Event Streams](#1-event-streams)
+   
    ii) [Intents](#2-intents)
+   
    iii) [Pagination](#3-pagination)
+   
    iv) [RTBF](#4-rtbf---right-to-be-forgotten)
+   
 2) [API Reference](#api-reference)
+   ---
    i) [Blueprint: users](#blueprint-users-url-prefix-users)
+   
    ii) [Blueprint: posts](#blueprint-posts-url-prefix-posts)
+   
    iii) [Blueprint: comments](#blueprint-comments-url-prefix-comments)
+   
    iv) [Blueprint: animes](#blueprint-animes-url-prefix-animes)
+   
    v) [Blueprint: forums](#blueprint-forums-url-prefix-forums)
+   
    vi) [Blueprint: misc](#blueprint-misc)
 
 
@@ -36,6 +47,8 @@ Many of these workers also help in cleaning up intent flags (which I'll explain 
 Again, looking at many large-scale applications, we notice an intuitive pattern of having shared counters which are only periodically flushed into disk storage. With Redis, this becomes extremely easy. The way I have implemented this is by simply maintaining a hashmap for every resource-attribute pair, such as `posts:score` and `forum:posts`. Under these hashmaps, all we need to do now is maintain an updated resource's ID as the key and its current counter as the value. Redis has an `hincrby` to allow in-place updates of a hashmap key (Much to my surprise, if only I had read the docs completely I wouldn't have wasted my time implementing a pointer mechanic like a clown).
 
 This is the only event-driven mechanic which does not use a Redis stream, but rather has these resource-attribute pairs written into the config file, based on which the worker atomically reads and deletes hashmaps, and persists the counters to Postgres. Atomicity here prevents even a single update from being deleted between reads and deletes.
+
+![Event Flow](./event_flow.png)
 
 ### 2) Intents
 **2.1) Reason:** An event-driven, eventually-consistent system sounds very nice, but eventual consistency can very easily lead to more eventual inconsistency. I believe it is best that I illustrate this with an example.
