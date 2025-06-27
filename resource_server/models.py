@@ -138,20 +138,18 @@ class User(db.Model):
     email: str = db.Column(VARCHAR(320), nullable = False, unique=True, index=True)
     rtbf: bool = db.Column(BOOLEAN, server_default=text('false'), nullable = False)
 
-    pfp: str = db.Column(VARCHAR(256))
-
     # Passwords and salts
     pw_hash: bytes = db.Column(BYTEA(256), nullable = False)
     pw_salt: bytes = db.Column(BYTEA(64), nullable = False)
 
     # Activity
-    aura: int = db.Column(BIGINT, default = 0)
-    total_posts: int = db.Column(INTEGER, default = 0)
-    total_comments: int = db.Column(INTEGER, default = 0)
+    aura: int = db.Column(BIGINT, default = 0, server_default=text('0'))
+    total_posts: int = db.Column(INTEGER, default = 0, server_default=text('0'))
+    total_comments: int = db.Column(INTEGER, default = 0, server_default=text('0'))
     time_joined: datetime = db.Column(TIMESTAMP, nullable = False, server_default=text("CURRENT_TIMESTAMP"))
     last_login: datetime = db.Column(TIMESTAMP)
 
-    deleted: bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
+    deleted: bool = db.Column(BOOLEAN, nullable=False, server_default=text("false"))
     time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
 
     @classmethod
@@ -161,7 +159,6 @@ class User(db.Model):
     __table_args__ = (
         PrimaryKeyConstraint("id"),
         CheckConstraint("LENGTH(username) > 5", name="ck_users_username_length"),
-        CheckConstraint("_alias IS NULL OR LENGTH(_alias) > 5", name="ck_users_alias_length"),
         CheckConstraint(r"email ~*'^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'", name="ck_users_email_regex"),
     )
 
@@ -285,7 +282,6 @@ class Forum(db.Model):
         PrimaryKeyConstraint("id"),
         CheckConstraint("posts >= 0", name="check_posts_value"),
         CheckConstraint("subscribers >= 0", name="check_subs_values"),
-        CheckConstraint("color_theme > 0 AND color_theme < 20", name="limit_color_themes"),
         CheckConstraint("admin_count > 0", name="check_atleast_1_admin"),
         UniqueConstraint("_name", "anime", name="uq_name_anime"),
     )
