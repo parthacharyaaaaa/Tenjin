@@ -2,28 +2,30 @@
 This documentation covers the working of the auth server, including its Flask endpoints as well as its `TokenManager` class and the app factory.
 
 ## Table of Contents
-
+---
 1. [App Factory](#app-factory)
    1.1 [Application Initialization](#11-application-initialization)
    1.2 [Path Configuration](#12-path-configuration)
    1.3 [Core Error Handling](#13-core-error-handling)
-   2.1 [Database and Migration Setup](#21-database-and-migration-setup)
-   2.2 [Redis Configuration and Initialization](#22-redis-configuration-and-initialization)
-   3.1 [Token Manager Setup (Master vs. Slave Workers)](#31-token-manager-setup-master-vs-slave-workers)
-   3.1.1 [Slave Worker Behavior](#311-slave-worker-behavior)
-   3.1.2 [Master Worker Behavior](#312-master-worker-behavior)
-   4.1 [Blueprint Registration](#41-blueprint-registration)
+   1.4 [Database and Migration Setup](#14-database-and-migration-setup)
+   1.5 [Redis Configuration and Initialization](#15-redis-configuration-and-initialization)
+   1.6 [Token Manager Setup (Master vs. Slave Workers)](#16-token-manager-setup-master-vs-slave-workers)
+   1.7.1 [Slave Worker Behavior](#171-slave-worker-behavior)
+   1.7.2 [Master Worker Behavior](#172-master-worker-behavior)
+   1.8 [Blueprint Registration](#18-blueprint-registration)
+
+---
 
 2. [Token Manager](#token-manager)
-   1.1 [Initialization and Setup](#11-initialization-and-setup)
-   1.2 [Token Structure and Universal Parameters](#12-token-structure-and-universal-parameters)
-   1.3 [Secure Replay Mitigation Strategy](#13-secure-replay-mitigation-strategy)
-   1.4 [Issuance and Reissuance](#14-issuance-and-reissuance)
-   1.5 [Blacklisting and Family Invalidation](#15-blacklisting-and-family-invalidation)
-   1.6 [Polling and Cluster Key Sync](#16-polling-and-cluster-key-sync)
-   1.7 [Defensive Failures and Observability](#17-defensive-failures-and-observability)
-   1.8 [Key Rotation Support](#18-key-rotation-support)
-
+   2.1 [Initialization and Setup](#21-initialization-and-setup)
+   2.2 [Token Structure and Universal Parameters](#22-token-structure-and-universal-parameters)
+   2.3 [Secure Replay Mitigation Strategy](#23-secure-replay-mitigation-strategy)
+   2.4 [Issuance and Reissuance](#24-issuance-and-reissuance)
+   2.5 [Blacklisting and Family Invalidation](#25-blacklisting-and-family-invalidation)
+   2.6 [Polling and Cluster Key Sync](#26-polling-and-cluster-key-sync)
+   2.7 [Defensive Failures and Observability](#27-defensive-failures-and-observability)
+   2.8 [Key Rotation Support](#28-key-rotation-support)
+---
 3. [API Documentation](#api-documentation)
    • [Blueprint: auth (`/auth`)](#blueprint-auth-url-prefix-auth)
    • [Blueprint: cmd (`/cmd`)](#blueprint-cmd-url-prefix-cmd)
@@ -32,10 +34,10 @@ This documentation covers the working of the auth server, including its Flask en
 ## App Factory
 This section documents the application factory function `create_app()` for the authentication server. The app factory plays the central role in initializing the server, performing secure key material bootstrapping, extension setup, and conditional logic for primary vs. secondary workers.
 
-**1.1 Application Initialization**
+### 1.1 Application Initialization
 The `Flask` application is instantiated with a named context `auth_app`, specifying `instance_path` and `static_folder`. These directories are used later to locate runtime-specific resources (like encrypted PEMs, JWKS, and logs). The app configuration is immediately loaded from a centralized `flaskconfig` object, and the app's process ID is cached to aid in master-worker orchestration logic later on.
 
-**1.2 Path Configuration**
+### 1.2 Path Configuration
 Custom config variables are added to Flask’s configuration object to set paths for:
 
 * The JWKS file (`JWKS_FPATH`) used in public key distribution
@@ -44,17 +46,17 @@ Custom config variables are added to Flask’s configuration object to set paths
 
 Notably, a cautionary comment questions whether storing encrypted private PEMs in the `instance` folder is appropriate, indicating awareness of separation of secrets and code—something Kubernetes/KMS can later address via mountable secrets.
 
-**1.3 Core Error Handling**
+### 1.3 Core Error Handling
 
 A catch-all error handler is registered for all exceptions. This allows for custom structured responses even during fatal or unexpected failures.
 
 ---
 
-**2.1 Database and Migration Setup**
+### 1.4 Database and Migration Setup
 
 SQLAlchemy is initialized with the app context, and Flask-Migrate is used to handle migrations. Models (notably `KeyData`) are imported and later used extensively in the boot process to read/write key state.
 
-**2.2 Redis Configuration and Initialization**
+### 1.5 Redis Configuration and Initialization
 
 The app loads a TOML config for Redis setup from a path determined by environment variables. Redis is used via two separate configurations:
 
@@ -68,15 +70,15 @@ After injecting secrets into the Redis configs, two interfaces are initialized:
 
 ---
 
-### 3.1 Token Manager Setup (Master vs. Slave Workers)
+### 1.6 Token Manager Setup (Master vs. Slave Workers)
 
 The app determines whether the current worker process is the *master bootup* worker by using a Redis lock (`AUTH_BOOTUP_MASTER`). This ensures that only one worker touches JWKS and performs file operations, while others defer.
 
-#### 3.1.1 Slave Worker Behavior
+#### 1.7.1 Slave Worker Behavior
 
 Slave workers wait until the master bootup is complete. Then, they load valid keys from the database, distinguish the active key from rotated keys, and initialize the `token_manager` using only in-memory mappings. All file I/O is skipped.
 
-#### 3.1.2 Master Worker Behavior
+#### 1.7.2 Master Worker Behavior
 
 If the current worker wins the Redis lock, it assumes responsibility for synchronizing all cryptographic material:
 
@@ -92,40 +94,40 @@ If this process fails, a Redis `ABORT` flag is set to prevent further boot, and 
 
 ---
 
-### 4.1 Blueprint Registration
+### 1.8 Blueprint Registration
 
 After the bootup process, the `auth` and `cmd` blueprints are registered with a versioned URL prefix (e.g., `/api/v1/cmd`), completing the application setup.
 
 ## Token Manager
-### 1.1 Initialization and Setup
+### 2.1 Initialization and Setup
 
 The `TokenManager` class is the security-critical core responsible for issuing, verifying, and rotating JWT-based access and refresh tokens. It is initialized with a Redis interface for per-session state tracking, a Redis-synced store for cluster-wide coordination, and an SQLAlchemy-managed database to persist key material. During initialization, a live mapping of all currently valid public/private key pairs is built, combining the active signing key and any past verification keys. It also boots up a background polling thread to ensure the local key state remains in sync with the shared key state across processes.
 
-### 1.2 Token Structure and Universal Parameters
+### 2.2 Token Structure and Universal Parameters
 
 Both access and refresh tokens are signed using ECDSA with customizable headers and claims. Universal claims (`uClaims`) and headers (`uHeaders`) are automatically merged into every issued token, ensuring consistency. Token type (`typ`), signing algorithm (`alg`), and leeway (used during verification) are all configurable at initialization. The `max_tokens_per_fid` parameter limits how many refresh tokens a session (family ID) may have simultaneously, preventing token overpopulation.
 
-### 1.3 Secure Replay Mitigation Strategy
+### 2.3 Secure Replay Mitigation Strategy
 
 Unlike traditional RESTful token issuance, this design uses a non-idempotent, stateful approach to guard against refresh token replay attacks. When a refresh token is re-used, the token family is checked against Redis. If the JTI and exp metadata don’t match expectations, the entire token family is invalidated, effectively locking out the attacker. This mechanism ensures zero replay tolerance—if even a single refresh token is replayed (e.g., stolen and used), every other sibling token is instantly revoked. This sacrifices RESTful statelessness for airtight session control and high security.
 
-### 1.4 Issuance and Reissuance
+### 2.4 Issuance and Reissuance
 
 Access tokens are short-lived and contain all necessary claims for authorization. Refresh tokens are longer-lived and act as renewable session handles. When a refresh token is re-used (`reissueTokenPair()`), the system ensures the original token’s authenticity by validating its metadata from Redis before allowing a new token to be generated. Every issuance is tied to a session-scoped "family ID" (FID), and the `shiftTokenWindow()` logic enforces a rolling window limit on how many refresh tokens can exist per FID at once.
 
-### 1.5 Blacklisting and Family Invalidation
+### 2.5 Blacklisting and Family Invalidation
 
 Families are stored as Redis lists (`FID:<id>`), enabling atomic expiration and trimming. When a refresh token is deemed compromised or improperly re-used, `invalidateFamily()` is called, deleting the entire Redis key representing that session. This centralizes revocation and avoids having to blacklist individual token JTIs. Because these lists are transient and keyed to the expiration timestamp of the tokens they represent, this design eliminates memory bloat over time.
 
-### 1.6 Polling and Cluster Key Sync
+### 2.6 Polling and Cluster Key Sync
 
 The `poll_store()` function runs in a background daemon thread, polling the shared Redis-synced store every 10 seconds for changes to the valid keys list. If new keys are introduced (e.g., due to rotation by the master process), they are fetched from the database and merged into the local key map. Likewise, keys that have been removed globally are purged from local memory. This ensures each worker maintains a secure, minimal keyset that reflects the current state of trust.
 
-### 1.7 Defensive Failures and Observability
+### 2.7 Defensive Failures and Observability
 
 Decoding tokens fails fast on malformed or expired headers. If a token fails due to time-related or key-related issues, an optional invalidation is triggered to prevent future reuse of compromised sessions. All major Redis and DB interactions are wrapped in try-except blocks, and the background poller provides detailed logs of key syncing behavior and any failures in a resilient loop.
 
-### 1.8 Key Rotation Support
+### 2.8 Key Rotation Support
 
 The `update_keydata()` method allows for runtime key rotation. Upon rotating a signing key, it’s automatically added to the verification pool for backward compatibility. Old keys are retained up to `max_valid_keys` and expired keys are asynchronously purged. The manager ensures that the active key used for signing is never invalidated during runtime to maintain uninterrupted token generation.
 
