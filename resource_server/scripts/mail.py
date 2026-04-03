@@ -1,4 +1,5 @@
-'''SMTP Worker logic'''
+"""SMTP Worker logic"""
+
 import os, sys
 from time import sleep, time
 from dotenv import load_dotenv
@@ -20,45 +21,57 @@ import toml
 if not load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")):
     raise FileNotFoundError()
 
-def enqueueEmail(redisinterface: Redis, email: str, subject = Literal["deletion", "recovery", "password"], **kwargs):
-    '''Enqueue an email to a global Redis queue for delivery, equivalent to pushing an element to `mail_queue` from the left. Expects all email metadata to be provided as keyword arguments.
+
+def enqueueEmail(
+    redisinterface: Redis,
+    email: str,
+    subject=Literal["deletion", "recovery", "password"],
+    **kwargs,
+):
+    """Enqueue an email to a global Redis queue for delivery, equivalent to pushing an element to `mail_queue` from the left. Expects all email metadata to be provided as keyword arguments.
     The subject arg is used by SMTP workers to select the appropriate email template and load kwargs. See email_templates to know which templates expects which kwargs
     \n
-    '''
+    """
     try:
         uid = uuid4().hex
-        added = redisinterface.hset(uid, mapping={"type" : subject, "email" : email, **kwargs})
+        added = redisinterface.hset(
+            uid, mapping={"type": subject, "email": email, **kwargs}
+        )
 
         if added == 0:
             return False
-        
+
         redisinterface.lpush("mail_queue", uid)
         return True
     except:
         return False
-        
-def dispatchFromQueue(redisinterface: Redis, cooldown_key: str = 'SSL_COOLDOWN_KEY') -> dict | None:
-    '''
-    Try to remove the oldest entry from `mail_queue` through `rpop`. `SSL verification countdown` is decremented by 1 upon successful retrival of mail data. Retrieval will also delete the hash containing all the data from Redis. Failures, and existence of a lock will cause None to be returned. 
+
+
+def dispatchFromQueue(
+    redisinterface: Redis, cooldown_key: str = "SSL_COOLDOWN_KEY"
+) -> dict | None:
+    """
+    Try to remove the oldest entry from `mail_queue` through `rpop`. `SSL verification countdown` is decremented by 1 upon successful retrival of mail data. Retrieval will also delete the hash containing all the data from Redis. Failures, and existence of a lock will cause None to be returned.
 
     This method is safe for contention in case of multiple SMTP workers, and does not require any external logic for managing concurrency.
-    '''
+    """
     try:
         qLen: int = redisinterface.llen("mail_queue")
         if not qLen:
             return
-        oldestEntry: str = redisinterface.lindex("mail_queue", qLen-1)
+        oldestEntry: str = redisinterface.lindex("mail_queue", qLen - 1)
 
         if not redisinterface.set(f"lock:{oldestEntry}", 1, nx=True, ex=10):
             return None
-        
+
         # Lock set, let's do this >:D
-        res: list[str] = redisinterface.rpop('mail_queue', 1)
-        if not res: return None
+        res: list[str] = redisinterface.rpop("mail_queue", 1)
+        if not res:
+            return None
         res: str = res[0]
         metadata: dict = redisinterface.hgetall(res)
 
-        with redisinterface.pipeline() as pipeline:    
+        with redisinterface.pipeline() as pipeline:
             pipeline.multi()
             pipeline.delete(f"lock:{oldestEntry}")
             pipeline.delete(res)
@@ -70,43 +83,61 @@ def dispatchFromQueue(redisinterface: Redis, cooldown_key: str = 'SSL_COOLDOWN_K
         print(format_exc())
         print(f"Failed to dispatch: {e}")
 
-def manageRefresh(redisinterface: Redis, cooldown_key: str = 'SSL_COOLDOWN_KEY', cooldown_upper_bound: int = 20*60) -> None:
-    '''
+
+def manageRefresh(
+    redisinterface: Redis,
+    cooldown_key: str = "SSL_COOLDOWN_KEY",
+    cooldown_upper_bound: int = 20 * 60,
+) -> None:
+    """
     Notify all SMTP workers to initiate their refresh cycle by setting key `refresh_flag` to a unique UUID in case of `SSL verification countdown` reaching 0 or lower.
 
     A unique UUID ensures that an SMTP worker will never perform any redundant/premature refreshes, and always be up to date with the current count of refreshes. Even failure to refresh (in case of another flag being set almost instantly) will eventually be mitigated as each SMTP worker will remember its current refresh ID.
-    '''
+    """
     try:
-            countdown: int = int(redisinterface.get(cooldown_key))
-            if not countdown or countdown > 0:
-                return
-            if not redisinterface.set(f"lock:{cooldown_key}", 1, nx=True, ex=20):
-                return
-            
-            with redisinterface.pipeline() as pipeline:
-                # Lock set, reset that mf
-                flag_id = uuid4().hex
-                pipeline.multi()
-                pipeline.set(cooldown_key, cooldown_upper_bound)
-                pipeline.set("refresh_flag", flag_id, ex=120)
-                pipeline.delete(f"lock:{cooldown_key}")
-                pipeline.execute()
+        countdown: int = int(redisinterface.get(cooldown_key))
+        if not countdown or countdown > 0:
+            return
+        if not redisinterface.set(f"lock:{cooldown_key}", 1, nx=True, ex=20):
+            return
+
+        with redisinterface.pipeline() as pipeline:
+            # Lock set, reset that mf
+            flag_id = uuid4().hex
+            pipeline.multi()
+            pipeline.set(cooldown_key, cooldown_upper_bound)
+            pipeline.set("refresh_flag", flag_id, ex=120)
+            pipeline.delete(f"lock:{cooldown_key}")
+            pipeline.execute()
     except Exception:
         print("Failure in resetting countdown")
         print(format_exc())
 
-def sendMail(interface: smtplib.SMTP_SSL, template: str, sender_address: str, subject = Literal["deletion", "recovery", "password"], **kwargs) -> None:
+
+def sendMail(
+    interface: smtplib.SMTP_SSL,
+    template: str,
+    sender_address: str,
+    subject=Literal["deletion", "recovery", "password"],
+    **kwargs,
+) -> None:
 
     email_message = MIMEMultipart()
-    email_message['From'] = sender_address
-    email_message['To'] = kwargs["email"]
-    email_message['Subject'] = f'{subject}'
+    email_message["From"] = sender_address
+    email_message["To"] = kwargs["email"]
+    email_message["Subject"] = f"{subject}"
 
     body = template.format(**kwargs)
-    email_message.attach(MIMEText(body, 'html'))
+    email_message.attach(MIMEText(body, "html"))
     interface.send_message(email_message)
 
-def refreshConnection(bAlive: bool = True, host : str = os.environ["SMTP_HOST"], port : int = int(os.environ["SMTP_PORT"]), currentConnection : smtplib.SMTP_SSL | None = None):
+
+def refreshConnection(
+    bAlive: bool = True,
+    host: str = os.environ["SMTP_HOST"],
+    port: int = int(os.environ["SMTP_PORT"]),
+    currentConnection: smtplib.SMTP_SSL | None = None,
+):
     if bAlive:
         currentConnection.quit()
         currentConnection.close()
@@ -114,33 +145,44 @@ def refreshConnection(bAlive: bool = True, host : str = os.environ["SMTP_HOST"],
     interface = smtplib.SMTP(host, port)
     interface.ehlo()
     interface.starttls(context=create_default_context())
-    interface.login(user=os.environ['SMTP_SENDER_ADDRESS'],
-                        password=os.environ["SMTP_PASSWORD"])
+    interface.login(
+        user=os.environ["SMTP_SENDER_ADDRESS"], password=os.environ["SMTP_PASSWORD"]
+    )
     return interface
 
-def backoff(default_time = float(os.environ["SMTP_BACKOFF_TIME"])):
+
+def backoff(default_time=float(os.environ["SMTP_BACKOFF_TIME"])):
     sleep(default_time)
 
 
 if __name__ == "__main__":
     ### Redis setup ###
-    redis_config_fpath: os.PathLike = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config', os.environ['redis_config_filename'])
+    redis_config_fpath: os.PathLike = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)),
+        "config",
+        os.environ["redis_config_filename"],
+    )
     if not os.path.isfile(redis_config_fpath):
         raise FileNotFoundError("Redis config toml file not found")
-    
+
     redis_config_kwargs: dict[str, Any] = toml.load(f=redis_config_fpath)
-    redis_config_kwargs.update({'username' : os.environ['BATCH_SERVER_REDIS_USERNAME'], 'password' : os.environ['BATCH_SERVER_REDIS_PASSWORD']})   # Inject login credentials through env
+    redis_config_kwargs.update(
+        {
+            "username": os.environ["BATCH_SERVER_REDIS_USERNAME"],
+            "password": os.environ["BATCH_SERVER_REDIS_PASSWORD"],
+        }
+    )  # Inject login credentials through env
     RedisInterface: Redis = Redis(**redis_config_kwargs)
 
     ### Email templates for all possible scenarios ###
-    #NOTE: It is CRUCIAL for the file names to match with the *args in the Literal type hint in the signature for sendMail, otherwise a keyError would be raised when trying to load an email template
-    TEMPLATES : dict = {}
+    # NOTE: It is CRUCIAL for the file names to match with the *args in the Literal type hint in the signature for sendMail, otherwise a keyError would be raised when trying to load an email template
+    TEMPLATES: dict = {}
     TARGET_DIR = os.path.join(os.path.dirname(__file__), "email_templates")
-    for file in tuple(os.walk(TARGET_DIR))[-1][-1]:         # Awful hack alert
+    for file in tuple(os.walk(TARGET_DIR))[-1][-1]:  # Awful hack alert
         with open(os.path.join(TARGET_DIR, file), "r") as template:
             TEMPLATES[file.split(".")[0]] = template.read()
-    
-    currentFlag: str = '-1'
+
+    currentFlag: str = "-1"
     identity = os.getpid()
     epoch = time()
     isDead = False
@@ -150,7 +192,7 @@ if __name__ == "__main__":
     SMTP_INTERFACE: smtplib.SMTP_SSL = refreshConnection(bAlive=False)
     print(f"[{identity}] Initialized mail worker")
 
-    while(True):
+    while True:
         try:
             if time() - epoch > timeout and not isDead:
                 print(f"[{identity}] Killing worker")
@@ -161,7 +203,7 @@ if __name__ == "__main__":
 
             email_metadata: dict = dispatchFromQueue(RedisInterface)
             if not email_metadata:
-                backoff() 
+                backoff()
                 continue
 
             if isDead:
@@ -175,11 +217,13 @@ if __name__ == "__main__":
 
                 print(f"[{identity}] Revived worker")
 
-            sendMail(interface=SMTP_INTERFACE,
-                     subject=email_metadata["type"], 
-                     template=TEMPLATES[email_metadata['type']],
-                     sender_address=os.environ['SMTP_SENDER_ADDRESS'],
-                     **email_metadata)
+            sendMail(
+                interface=SMTP_INTERFACE,
+                subject=email_metadata["type"],
+                template=TEMPLATES[email_metadata["type"]],
+                sender_address=os.environ["SMTP_SENDER_ADDRESS"],
+                **email_metadata,
+            )
 
             print(f"[{identity}] sent mail to {email_metadata['email']}")
             email_metadata = {}
@@ -194,7 +238,7 @@ if __name__ == "__main__":
             if not flagID or flagID == currentFlag:
                 backoff()
                 continue
-            
+
             print(f"[{identity}] Refreshing connection")
             currentFlag = flagID
             SMTP_INTERFACE = refreshConnection(currentConnection=SMTP_INTERFACE)
@@ -208,8 +252,10 @@ if __name__ == "__main__":
 
             # In case email metadata exists (Not an empty dict), we will need to re-enqueue it to the mail queue for a healthy worker to process
             if email_metadata:
-                enqueueEmail(RedisInterface, email_metadata['type'], **email_metadata)
-                print(f"[{identity}] Re-enqueued email to {email_metadata['email']}, subject: {email_metadata['type']}")
+                enqueueEmail(RedisInterface, email_metadata["type"], **email_metadata)
+                print(
+                    f"[{identity}] Re-enqueued email to {email_metadata['email']}, subject: {email_metadata['type']}"
+                )
             else:
                 print(f"[{identity}] No email to re-enqueue")
             isDead = True
@@ -217,8 +263,10 @@ if __name__ == "__main__":
             print(f"[{identity}] Unexpected Error: ", e)
             print(format_exc())
             if email_metadata:
-                enqueueEmail(RedisInterface, email_metadata['type'], **email_metadata)
-                print(f"[{identity}] Re-enqueued email to {email_metadata['email']}, subject: {email_metadata['type']}")
+                enqueueEmail(RedisInterface, email_metadata["type"], **email_metadata)
+                print(
+                    f"[{identity}] Re-enqueued email to {email_metadata['email']}, subject: {email_metadata['type']}"
+                )
             else:
                 print(f"[{identity}] No email to re-enqueue")
             backoff()
