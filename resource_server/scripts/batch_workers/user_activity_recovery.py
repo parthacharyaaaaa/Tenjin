@@ -7,7 +7,6 @@ Resources restored:
 For RTFB users, this also means marking their contributions visible again
 '''
 import psycopg2 as pg
-from psycopg2.extras import execute_batch
 from redis import Redis
 from redis import Redis, exceptions as redisExceptions
 import os

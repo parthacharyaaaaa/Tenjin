@@ -1,6 +1,5 @@
 from dataclasses import dataclass, field
 import time
-import re
 
 @dataclass(slots=True)
 class KeyMetadata:

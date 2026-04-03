@@ -1,5 +1,4 @@
 from redis import Redis
-from flask import Flask
 
 SyncedStore: Redis = None
 RedisInterface: Redis = None

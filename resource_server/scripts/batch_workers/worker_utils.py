@@ -2,7 +2,7 @@
 import psycopg2 as pg
 from psycopg2 import sql
 from redis import Redis
-from typing import Mapping, Sequence, Any
+from typing import Mapping, Any
 from types import MappingProxyType
 from datetime import datetime
 
