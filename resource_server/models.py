@@ -12,6 +12,28 @@ from typing import Any
 from dataclasses import dataclass
 from types import FunctionType
 
+__all__ = ('ForumSubscription',
+           'AnimeSubscription',
+           'PostVote',
+           'PostSave',
+           'ReportTags',
+           'PostReport',
+           'CommentReport',
+           'CommentVote',
+           'StreamLink',
+           'AnimeGenre',
+           'AdminRoles',
+           'ForumAdmin',
+           'User',
+           'UserTicket',
+           'PasswordRecoveryToken',
+           'Anime',
+           'Genre',
+           'Forum',
+           'ForumRules',
+           'Post',
+           'Comment')
+
 CONFIG: dict = {}
 with open(os.path.join(os.path.dirname(__file__), "instance", "config.json"), 'rb') as configFile:
     CONFIG = orjson.loads(configFile.read())
@@ -126,7 +148,9 @@ class ForumAdmin(db.Model):
 
 
 ### Tables ###
-db.Model.__attrdict__ = lambda x : {k : v for k,v in x.__dict__.items() if k != '_sa_instance_state'}
+setattr(db.Model,
+        "__attrdict__",
+        lambda x : {k : v for k,v in x.__dict__.items() if k != '_sa_instance_state'})
 
 class User(db.Model):
     __tablename__ = "users"
@@ -219,7 +243,7 @@ class Anime(db.Model):
     def deserialization_mapping(cls):
         return {'id' : int, 'rating' : float, 'mal_ranking' : int, 'members' : int, 'genres' : lambda x : x.split(':')}
 
-    def __json_like__(self) -> dict[str, int]:
+    def __json_like__(self) -> dict[str, str|int|float]:
         return {"id": self.id,
                 "title": self.title,
                 "rating": float(self.rating),
@@ -259,17 +283,17 @@ class Forum(db.Model):
     # Activity stats
     subscribers: int = db.Column(BIGINT, nullable = False, default = 0, server_default=text('0'))
     posts: int = db.Column(BIGINT, nullable = False, default = 0, server_default=text('0'))
-    highlight_post_1: int = db.Column(BIGINT, nullable = True)
-    highlight_post_2: int = db.Column(BIGINT, nullable = True)
-    highlight_post_3: int = db.Column(BIGINT, nullable = True)
+    highlight_post_1: int|None = db.Column(BIGINT)
+    highlight_post_2: int|None = db.Column(BIGINT)
+    highlight_post_3: int|None = db.Column(BIGINT)
 
     created_at: datetime = db.Column(TIMESTAMP, nullable = False)
     admin_count: int = db.Column(SMALLINT, default = 1, server_default=text('1'), nullable=False)
 
     # Deletion metadata
     deleted: bool = db.Column(BOOLEAN, nullable=False, server_default=text("false"))
-    time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
-    rtbf_hidden: bool = db.Column(BOOLEAN, nullable=True)
+    time_deleted: datetime|None = db.Column(TIMESTAMP)
+    rtbf_hidden: bool = db.Column(BOOLEAN)
 
     @classmethod
     def deserialization_mapping(cls) -> dict[str, Any]:
@@ -300,7 +324,7 @@ class Forum(db.Model):
     def __repr__(self) -> str:
         return f"<Forum({self.id}, {self._name}, {self.description}, {self.subscribers}, {self.posts}, {self.highlight_post_1}, {self.highlight_post_2}, {self.highlight_post_3}, {self.created_at.isoformat(), {self.admin_count}})>"
     
-    def __json_like__(self) -> dict[str, str|int]:
+    def __json_like__(self) -> dict[str, str|int|None]:
         return {"id": self.id,
                 "name": self._name,
                 "subscribers" : self.subscribers,
@@ -366,22 +390,22 @@ class Post(db.Model):
     # Post details
     title: str = db.Column(VARCHAR(64), nullable = False, index=True)
     body_text: str = db.Column(TEXT, nullable = False)
-    flair: str = db.Column(VARCHAR(16), index=True)
+    flair: str|None = db.Column(VARCHAR(16), index=True)
     closed: bool = db.Column(BOOLEAN, default=False, server_default=text("false"))
     time_posted: datetime = db.Column(TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP"))
     saves: int = db.Column(INTEGER, default=0, server_default=text('0'), nullable=False)
     reports: int = db.Column(INTEGER, default=0, server_default=text('0'), nullable=False)
 
     # Deletion metadata
-    deleted: bool= db.Column(BOOLEAN, nullable=False, server_default=text("false"))
-    time_deleted: datetime = db.Column(TIMESTAMP, nullable=True)
+    deleted: bool = db.Column(BOOLEAN, nullable=False, server_default=text("false"))
+    time_deleted: datetime|None = db.Column(TIMESTAMP)
     rtbf_hidden: bool = db.Column(BOOLEAN, nullable=True)
 
     @classmethod
     def deserialization_mapping(cls) -> dict[str, Any]:
         return {'id' : int, 'author_id' : int, 'forum_id' : int, 'score' : int, 'total_comments' : int, 'closed' : deserialize_bool, 'saves' : int, 'reports' : int, 'deleted' : deserialize_bool, 'rtbf_hidden' : deserialize_bool}
 
-    def __init__(self, author_id: int, forum_id: int, title: str, body_text: str, epoch: datetime, flair: str = None, score: int = 0, total_comments: int = 0, closed: bool = False):
+    def __init__(self, author_id: int, forum_id: int, title: str, body_text: str, epoch: datetime, flair: str|None = None, score: int = 0, total_comments: int = 0, closed: bool = False):
         self.author_id = author_id
         self.forum_id = forum_id
         self.score = score
@@ -435,7 +459,7 @@ class Comment(db.Model):
 
     # Deletion metadata
     deleted : bool = db.Column(BOOLEAN, nullable=False, server_default=text("false"))
-    time_deleted : datetime = db.Column(TIMESTAMP, nullable=True)
+    time_deleted : datetime|None = db.Column(TIMESTAMP)
     rtbf_hidden: bool = db.Column(BOOLEAN, nullable=True)
 
     @classmethod
