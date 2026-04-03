@@ -1,0 +1,9 @@
+*.md
+*.png
+
+*.env*
+*.venv*
+
+
+scripts
+migrations
