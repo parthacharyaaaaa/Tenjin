@@ -6,4 +6,5 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "autoflake>=2.3.3",
+    "black>=26.3.1",
 ]

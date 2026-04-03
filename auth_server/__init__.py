@@ -1,1 +1,1 @@
-'''Auth server package'''
+"""Auth server package"""
