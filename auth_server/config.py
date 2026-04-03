@@ -16,7 +16,7 @@ class FlaskConfig:
         SIGNING_KEY: str = os.environ["SIGNING_KEY"]
         JWKS_FILENAME: str = os.environ["JWKS_FILENAME"]
         JWKS_CAP: int = int(os.environ['JWKS_CAP'])
-        JWKS_KV_MAPPING: dict = None
+        JWKS_KV_MAPPING: dict|None = None
         SESSION_COOKIE_SECURE: bool = bool(os.environ["SESSION_COOKIE_SECURE"])
         CSP: str = f"default-src 'self'; connect-src 'self' {os.environ['RS_DOMAIN']}"
         
