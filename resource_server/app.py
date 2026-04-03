@@ -45,12 +45,9 @@ def create_app() -> Flask:
     init_redis(**redis_config_kwargs)
 
     ### Blueprints registaration ###
-    app.register_blueprint(blueprints.ANIMES_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/animes')
-    app.register_blueprint(blueprints.COMMENTS_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/comments')
-    app.register_blueprint(blueprints.FORUMS_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/forums')
-    app.register_blueprint(blueprints.POSTS_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/posts')
-    app.register_blueprint(blueprints.USERS_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/users')
-    app.register_blueprint(blueprints.MISC_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT'])
+    for blueprint, prefix in blueprints.PREFIX_MAPPING.items():
+        app.register_blueprint(blueprint,
+                               url_prefix="/".join((app.config["APPLICATION_ROOT"], prefix)))
 
     ### Additional CLI commands ###
    # Instantiate the database
