@@ -1,0 +1,9 @@
+[project]
+name = "tenjin"
+version = "1.0.0"
+description = "Tenjin"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "autoflake>=2.3.3",
+]
