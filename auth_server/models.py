@@ -7,8 +7,8 @@ import datetime
 db = SQLAlchemy()
 
 class AdminRoles(Enum):
-    staff: str = 1
-    super: str = 2
+    staff = 1
+    super = 2
 
 ADMIN_ROLES = ENUM('staff', 'super', name='admin_roles', create_type=True)
 

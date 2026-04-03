@@ -18,7 +18,7 @@ def enforce_json(endpoint):
 def require_intraservice_key(endpoint):
     @wraps(endpoint)
     def decorated(*args, **kwargs):
-        key : str = request.headers.get("X-INTERSERVICE-KEY")
+        key: str|None = request.headers.get("X-INTERSERVICE-KEY")
         if not key:
             raise Unauthorized("Access Denied: missing interservice key")
         if key not in current_app.config["VALID_API_KEYS"]:

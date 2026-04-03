@@ -2,9 +2,11 @@ import os
 from dotenv import load_dotenv
 from traceback import format_exc
 from datetime import timedelta
-bLoaded : bool = load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"),
-                             verbose=True, override=True)
-if not bLoaded:
+
+__all__ = ("FlaskConfig", "FLASK_CONFIG_OBJECT")
+
+if not load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"),
+                   verbose=True, override=True):
     print(f"Failed to load .env file for resource server, please ensure .env exists within this directory: {os.path.dirname(__file__)}")
     raise FileNotFoundError
 
@@ -17,8 +19,6 @@ class FlaskConfig:
         APP_DEBUG: bool = bool(int(os.environ.get("FLASK_DEBUG", 0)))
         SECRET_KEY: str = os.environ["FLASK_SECRET_KEY"]
         KEY_VK_MAPPING: dict[str, bytes] = {}
-
-        # TODO: Add JWT signing key, peer server metadata, and Redis data. (Maybe session configs too if we use a hybrid approach instead of pure REST?)
 
         ### Database Configurations ###
         SQLALCHEMY_DATABASE_URI : str = "postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}".format(username=os.environ["RESOURCE_SERVER_POSTGRES_USERNAME"],

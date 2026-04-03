@@ -4,13 +4,24 @@ from flask import Flask
 from flask.cli import with_appcontext
 from flask_migrate import Migrate
 from traceback import format_exc
+
+from sqlalchemy import text
 from resource_server.flask_config import FLASK_CONFIG_OBJECT
 from auxillary.utils import generic_error_handler
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Final
 import toml
+import click
 
-APP_CTX_CWD : os.PathLike = os.path.dirname(__file__)
+from resource_server import blueprints
+from resource_server.models import db, CONFIG
+
+
+__all__ = ("APP_CTX_CWD",
+           "create_app")
+
+APP_CTX_CWD : Final[str] = os.path.dirname(__file__)
+
 def create_app() -> Flask:
     global APP_CTX_CWD
     app = Flask(import_name="RS",
@@ -22,7 +33,6 @@ def create_app() -> Flask:
     app.register_error_handler(Exception, generic_error_handler)
 
     ### Database setup ###
-    from resource_server.models import db, CONFIG
     db.init_app(app)
     migrate = Migrate(app, db)
 
@@ -38,42 +48,28 @@ def create_app() -> Flask:
     init_redis(**redis_config_kwargs)
 
     ### Blueprints registaration ###
-    from resource_server.blueprint_forum import FORUMS_BLUEPRINT
-    from resource_server.blueprint_user import USERS_BLUEPRINT
-    from resource_server.blueprint_posts import POSTS_BLUEPRINT
-    from resource_server.blueprint_comments import COMMENTS_BLUEPRINT
-    from resource_server.blueprint_animes import ANIMES_BLUEPRINT
-    from resource_server.blueprint_misc import MISC_BLUEPRINT
-    app.register_blueprint(ANIMES_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/animes')
-    app.register_blueprint(COMMENTS_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/comments')
-    app.register_blueprint(FORUMS_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/forums')
-    app.register_blueprint(POSTS_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/posts')
-    app.register_blueprint(USERS_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT']+'/users')
-    app.register_blueprint(MISC_BLUEPRINT, url_prefix=app.config['APPLICATION_ROOT'])
+    for blueprint, prefix in blueprints.PREFIX_MAPPING.items():
+        app.register_blueprint(blueprint,
+                               url_prefix="/".join((app.config["APPLICATION_ROOT"], prefix)))
 
     ### Additional CLI commands ###
    # Instantiate the database
     @app.cli.command("make_db")
+    @click.option("--force", is_flag=True, help="Force DB creation even if it exists")
     @with_appcontext
-    def make_db() -> None:
+    def make_db(force: bool) -> None:
         query = text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
         with db.engine.connect() as conn:
-            tables = conn.execute(query).fetchall()
+            res_tables = conn.execute(query).fetchall()
 
-            if tables:
-                genesis_prompt = input(f"[{app.name}]: Database already populated, proceed with db creation (y/n)?\n").lower()
-                if genesis_prompt == "n":
-                    print(f"[{app.name}]: Exiting...")
-                    exit(0)
-                elif genesis_prompt != "y":
-                    print(f"[{app.name}]: Invalid input to prompt, exiting...")
-                    exit(500)
+            if res_tables and not force:
+                exit(0)
 
-            tables : set = set(map(lambda x : x[0], tables))
+            tables : set = set(map(lambda x : x[0], res_tables))
             db.create_all()
             print(f"[{app.name}]: Creating database{' again...' if tables else '...'}")
             try:
-                new_tables : set = set(map(lambda x : x[0], conn.execute(query)))
+                new_tables : set = set(map(lambda x : x[0], conn.execute(query).fetchall()))
                 insertion_difference : set = new_tables - tables
                 print(f"[{app.name}]: Tables Created: {', '.join(list(insertion_difference)) or 'None. You just wasted your time.'}")
             except:
@@ -97,13 +93,13 @@ def create_app() -> Flask:
                 print(f"[{app.name}] Exiting app factory...")
                 exit(500)
 
-            try:   
-                for table in public_tables:
+            for table in public_tables:
+                try:   
                     tables.remove(table)
-            except ValueError:
-                print(f"[{app.name}]: Mismatch in schema definition, table '{table}' specified in database configuration but not found in database")
-                print(f"[{app.name}] Exiting app factory...")
-                exit(500)
+                except ValueError:
+                    print(f"[{app.name}]: Mismatch in schema definition, table '{table}' specified in database configuration but not found in database")
+                    print(f"[{app.name}] Exiting app factory...")
+                    exit(500)
 
 
             if tables:
@@ -118,7 +114,7 @@ def create_app() -> Flask:
     background_poller: threading.Thread = threading.Thread(target=background_poll, daemon=True,
                                                            kwargs={'current_app':app, 'interface':RedisInterface, 'lock_ttl':RedisConfig.ANNOUNCEMENT_DURATION, 'interval':RedisConfig.TTL_STRONG})
     # Initial JWKS load
-    jwks_mapping: dict[str, str] = RedisInterface.hgetall('JWKS_MAPPING')
+    jwks_mapping: dict[str, str|int] = RedisInterface.hgetall('JWKS_MAPPING')
     if not jwks_mapping:
         # updaet_jwks() already handles race conditions among multiple workers trying to update JWKS mapping, so no need to have separate logic here
         jwks_mapping = update_jwks(endpoint=f"{app.config['AUTH_SERVER_URL']}/auth/jwks.json", currentMapping={}, interface=RedisInterface, lock_ttl=RedisConfig.ANNOUNCEMENT_DURATION, jwks_poll_cooldown=RedisConfig.JWKS_POLL_COOLDOWN)
@@ -131,7 +127,7 @@ def create_app() -> Flask:
     # Load genres into config
     with app.app_context():
         with db.engine.connect() as conn:
-            GENRES: tuple[str] = conn.execute(text('SELECT _name, id FROM genres;')).fetchall()
+            GENRES: tuple[tuple[str, str]] = tuple(conn.execute(text('SELECT _name, id FROM genres;')).fetchall()) # type: ignore[reportAssignmentType]
             app.config['GENRES'] = MappingProxyType({genre[0] : genre[1] for genre in GENRES})
 
     return app

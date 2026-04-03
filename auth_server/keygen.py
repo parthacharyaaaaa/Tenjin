@@ -35,7 +35,7 @@ def update_jwks(vk: ecdsa.VerifyingKey, kid: str,
         jwks_json_file.write(ujson.dumps({'keys':jwks_contents}, indent=2))
         jwks_json_file.truncate()
 
-def write_ecdsa_pair(privateDir: os.PathLike, staticDir: os.PathLike,
+def write_ecdsa_pair(privateDir: str, staticDir: str,
                      encryption_key: bytes,
                      private_key: ecdsa.SigningKey, public_key: ecdsa.VerifyingKey, key_id: int,
                      fname_template: str = '{key_type}_{key_id}_key.pem') -> None:
@@ -53,8 +53,8 @@ def write_ecdsa_pair(privateDir: os.PathLike, staticDir: os.PathLike,
     fernet = Fernet(encryption_key)
 
     encryptedPrivateKey: bytes = fernet.encrypt(private_key.to_pem())
-    privateFpath: os.PathLike = os.path.join(privateDir, fname_template.format(key_type='private', key_id=key_id))
-    publicFpath: os.PathLike = os.path.join(staticDir, fname_template.format(key_type='public', key_id=key_id))
+    privateFpath: str = os.path.join(privateDir, fname_template.format(key_type='private', key_id=key_id))
+    publicFpath: str = os.path.join(staticDir, fname_template.format(key_type='public', key_id=key_id))
 
     with open(privateFpath, 'wb+') as privatePemFile:
         privatePemFile.write(encryptedPrivateKey)

@@ -12,13 +12,17 @@ import ujson
 import ecdsa
 import traceback
 import toml
-from typing import Any
+from typing import Any, Final
 
-APP_CTX_CWD: os.PathLike = os.path.dirname(__file__)
+APP_CTX_CWD: Final[str] = os.path.dirname(__file__)
 def create_app() -> Flask:
-    auth_app = Flask('auth_app', instance_path=os.path.join(APP_CTX_CWD, 'instance'), static_folder=os.path.join(APP_CTX_CWD, 'static'))
+    auth_app = Flask('auth_app',
+                     instance_path=os.path.join(APP_CTX_CWD, 'instance'),
+                     static_folder=os.path.join(APP_CTX_CWD, 'static'))
+    assert auth_app.static_folder
+
     auth_app.config.from_object(flaskconfig)
-    auth_app.pid = os.getpid()
+    setattr(auth_app, "pid", os.getgid())
 
     # Additional filepaths depending on instance/static directories
     auth_app.config['JWKS_FPATH'] = os.path.join(auth_app.instance_path, 'jwks.json')
@@ -35,7 +39,7 @@ def create_app() -> Flask:
     migrate = Migrate(auth_app, db)
 
     # Extensions
-    redis_config_filepath: os.PathLike = os.path.join(APP_CTX_CWD, 'config', os.environ['REDIS_CONFIG_FILENAME'])
+    redis_config_filepath: str = os.path.join(APP_CTX_CWD, 'config', os.environ['REDIS_CONFIG_FILENAME'])
     redis_config_kwargs: dict[str, dict[str, Any]] = toml.load(f=redis_config_filepath)
     # Inject Redis username and password from env
     redis_config_kwargs['synced_store'].update({'username' : os.environ['AUTH_WORKER_REDIS_USERNAME'], 'password' : os.environ['AUTH_WORKER_REDIS_PASSWORD']})
@@ -48,10 +52,10 @@ def create_app() -> Flask:
 
     from auth_server.token_manager import init_token_manager
     valid_keys_mapping: dict[str, KeyMetadata] = {}
-    active_kid: str = None
-    active_keydata: KeyMetadata = None
+    active_kid: str|None = None
+    active_keydata: KeyMetadata|None = None
 
-    isMaster: bool = bool(SyncedStore.set('AUTH_BOOTUP_MASTER', auth_app.pid, nx=True))
+    isMaster: bool = bool(SyncedStore.set('AUTH_BOOTUP_MASTER', getattr(auth_app, "pid"), nx=True))
 
     if not isMaster:
         # Wait for master worker to finish managing key synchronization and file I/O, and then proceed on the assumption that the JWKS file has been written into/validated.
@@ -59,55 +63,61 @@ def create_app() -> Flask:
             time.sleep(1)
 
         if SyncedStore.get('ABORT'):
-            print(f'[AUTH {auth_app.pid}] Master failed to setup key configuration, aborting...')
+            print(f'[AUTH {getattr(auth_app, "pid")}] Master failed to setup key configuration, aborting...')
             raise AssertionError('Master failed to set up key configuration')
         
         # Once lock is released, slave worker only needs to consult database and write to its own memory
         with auth_app.app_context():    # Outside of HTTP context, explicitly provide app context
-            keys: list[KeyData] = db.session.execute(select(KeyData)
+            keys: list[KeyData] = list(db.session.execute(select(KeyData)
                                                      .where(KeyData.expired_at.is_(None))
                                                      .order_by(KeyData.epoch.desc())
                                                      .limit(auth_app.config['JWKS_CAP'])
-                                                     ).scalars().all()
+                                                     ).scalars().all())
         for key in keys:
             if key.rotated_out_at:
                 # Verification Key
-                valid_keys_mapping[key.kid] = KeyMetadata(key.public_pem, key.private_pem, key.alg, key.epoch, key.rotated_out_at)
+                valid_keys_mapping[key.kid] = KeyMetadata(key.public_pem,
+                                                          key.private_pem,
+                                                          key.alg,
+                                                          key.epoch.timestamp(),
+                                                          key.rotated_out_at.timestamp())
             else:
                 active_kid = key.kid
-                active_keydata =  KeyMetadata(key.public_pem, key.private_pem, key.alg, key.epoch)\
+                active_keydata =  KeyMetadata(key.public_pem, key.private_pem, key.alg, key.epoch.timestamp())
         
         # Initialize token manager 
+        assert active_kid
+        assert active_keydata
+
         init_token_manager(valid_keys_mapping, active_kid, active_keydata, RedisInterface, SyncedStore, db)
 
     # Current worker process is the master, and is responsible for handling JWKS and key synchronization on bootup
     else:
         try:
-            print(f'[AUTH {auth_app.pid}] Serving as master')
-            initialMap: dict = None
+            print(f'[AUTH {getattr(auth_app, "pid")}] Serving as master')
 
             # Set filepaths
-            JWKS_FPATH: os.PathLike = os.path.join(auth_app.instance_path, auth_app.config['JWKS_FILENAME'])
-            private_fpath: os.PathLike = os.path.join(auth_app.instance_path, 'keys')
-            public_fpath: os.PathLike = os.path.join(auth_app.static_folder, 'keys')
+            JWKS_FPATH: str = os.path.join(auth_app.instance_path, auth_app.config['JWKS_FILENAME'])
+            private_fpath: str = os.path.join(auth_app.instance_path, 'keys')
+            public_fpath: str = os.path.join(auth_app.static_folder, 'keys')
 
             # Consult DB
             writeBuffer: list[dict[str, str|int]] = []
             with auth_app.app_context():
-                res: list[KeyData] = db.session.execute(select(KeyData)
+                res: list[KeyData] = list(db.session.execute(select(KeyData)
                                                             .where(KeyData.expired_at.is_(None))
                                                             .order_by(KeyData.epoch.desc())
-                                                            ).scalars().all()
+                                                            ).scalars().all())
 
                 if not res:
                     # No valid keys in DB, master must create new pair
-                    print(f'[AUTH {auth_app.pid}] Creating new key pair')
+                    print(f'[AUTH {getattr(auth_app, "pid")}] Creating new key pair')
                     kid, sk, vk = generate_ecdsa_pair()
 
                     # Persist to PEM, and DB (JWKS done at end)
                     write_ecdsa_pair(privateDir=private_fpath, staticDir=public_fpath,
                                     encryption_key=auth_app.config['PRIVATE_PEM_ENCRYPTION_KEY'],
-                                    private_key=sk, public_key=vk, key_id=kid)
+                                    private_key=sk, public_key=vk, key_id=int(kid))
                         
                     db.session.execute(insert(KeyData)
                                         .values(kid=kid, alg='ES256', curve=str(ecdsa.SECP256k1), epoch=datetime.now(),
@@ -124,7 +134,7 @@ def create_app() -> Flask:
 
                 else:
                     # Atleast 1 non-expired key exists in DB
-                    print(f'[AUTH {auth_app.pid}] Active key(s) found, loading into memory...')
+                    print(f'[AUTH {getattr(auth_app, "pid")}] Active key(s) found, loading into memory...')
                     if len(res) > auth_app.config['JWKS_CAP']:
                         # Invalidate older keys
                         db.session.execute(update(KeyData)
@@ -137,18 +147,18 @@ def create_app() -> Flask:
                     for keyData in res:
                         public_pem:bytes = keyData.public_pem
                         private_pem:bytes = keyData.private_pem
-                        privatePemFile: os.PathLike = os.path.join(private_fpath, f'private_{keyData.kid}_key.pem')
-                        publicPemFile: os.PathLike = os.path.join(public_fpath, f'public_{keyData.kid}_key.pem')
+                        privatePemFile: str = os.path.join(private_fpath, f'private_{keyData.kid}_key.pem')
+                        publicPemFile: str = os.path.join(public_fpath, f'public_{keyData.kid}_key.pem')
 
                         if keyData.rotated_out_at:
                             # Verification Key
-                            valid_keys_mapping[keyData.kid] = KeyMetadata(public_pem, private_pem, keyData.alg, keyData.epoch, keyData.rotated_out_at)
+                            valid_keys_mapping[keyData.kid] = KeyMetadata(public_pem, private_pem, keyData.alg, keyData.epoch.timestamp(), keyData.rotated_out_at.timestamp())
                             # Ensure that only public pem file exists for this key
                             if os.path.isfile(privatePemFile):
                                 # Private PEM file found, purge
-                                print(f'[AUTH {auth_app.pid}] Private PEM file {privatePemFile} present for verification key, deleting...')
+                                print(f'[AUTH {getattr(auth_app, "pid")}] Private PEM file {privatePemFile} present for verification key, deleting...')
                                 os.remove(privatePemFile)
-                            print(f'[AUTH {auth_app.pid}] Private PEM file {privatePemFile} deleted!')
+                            print(f'[AUTH {getattr(auth_app, "pid")}] Private PEM file {privatePemFile} deleted!')
                         else:
                             # Signing key
                             active_kid = keyData.kid
@@ -156,17 +166,17 @@ def create_app() -> Flask:
                             
                             # Ensure private PEM file exists
                             if not os.path.isfile(privatePemFile):
-                                print(f'[AUTH {auth_app.pid}] Private PEM file {publicPemFile} for signing key missing in file system, recreating...')
+                                print(f'[AUTH {getattr(auth_app, "pid")}] Private PEM file {publicPemFile} for signing key missing in file system, recreating...')
                                 with open(privatePemFile, 'wb') as new_private_pem:
                                     new_private_pem.write(fernet.encrypt(private_pem))
-                                print(f'[AUTH {auth_app.pid}] Private PEM file {publicPemFile} for signing key recreated!')
+                                print(f'[AUTH {getattr(auth_app, "pid")}] Private PEM file {publicPemFile} for signing key recreated!')
                         
                         # Public PEM files should exist for all keys
                         if not os.path.isfile(publicPemFile):
-                            print(f'[AUTH {auth_app.pid}] Public PEM file {publicPemFile} active in DB but missing in file system, recreating...')
+                            print(f'[AUTH {getattr(auth_app, "pid")}] Public PEM file {publicPemFile} active in DB but missing in file system, recreating...')
                             with open(publicPemFile, 'wb+') as newPEM:
                                 newPEM.write(public_pem)
-                            print(f'[AUTH {auth_app.pid}] Public PEM file {publicPemFile} recreated!')
+                            print(f'[AUTH {getattr(auth_app, "pid")}] Public PEM file {publicPemFile} recreated!')
 
                         # Append data to writeBuffer
                         point = ecdsa.VerifyingKey.from_pem(public_pem).pubkey.point
@@ -175,32 +185,35 @@ def create_app() -> Flask:
                                             "y": to_base64url(int(point.y()))})
 
                 # Lastly, purge any PEM files for expired keys that are somehow still in file system
-                expiredKeys: list[str] = db.session.execute(select(KeyData.kid)
-                                                            .where(KeyData.expired_at.isnot(None))
-                                                            ).scalars().all()
+                expiredKeys: list[str] = list(db.session.execute(select(KeyData.kid)
+                                                                 .where(KeyData.expired_at.isnot(None))
+                                                                 ).scalars().all())
                 for expiredKey in expiredKeys:
-                    public_pem_fpath: os.PathLike = os.path.join(public_fpath, f'public_{expiredKey}_key.pem')
-                    private_pem_fpath: os.PathLike = os.path.join(private_fpath, f'private_{expiredKey}_key.pem')
+                    public_pem_fpath: str = os.path.join(public_fpath, f'public_{expiredKey}_key.pem')
+                    private_pem_fpath: str = os.path.join(private_fpath, f'private_{expiredKey}_key.pem')
                     if os.path.isfile(public_pem_fpath):
                         os.remove(public_pem_fpath)
                     if os.path.isfile(private_pem_fpath):
                         os.remove(private_pem_fpath)
                 
             # Rewrite JWKS with writeBuffer
-            print(f'[AUTH {auth_app.pid}] Rewriting JWKS...')
+            print(f'[AUTH {getattr(auth_app, "pid")}] Rewriting JWKS...')
             with open(JWKS_FPATH, 'w') as jwks_file:
                 jwks_file.write(ujson.dumps({'keys' : writeBuffer}, indent=2))
 
             # Initialize token manager
+            assert active_kid
+            assert active_keydata
             init_token_manager(valid_keys_mapping, active_kid, active_keydata, RedisInterface, SyncedStore, db)
-            print(f'[AUTH {auth_app.pid}] Master process bootup complete!')
+            print(f'[AUTH {getattr(auth_app, "pid")}] Master process bootup complete!')
         except Exception as e:
-            print(f'[AUTH {auth_app.pid}] Master worker has encountered an irrecovarable error, details: ')
+            print(f'[AUTH {getattr(auth_app, "pid")}] Master worker has encountered an irrecovarable error, details: ')
             print(traceback.format_exc())
             SyncedStore.set('ABORT', 1, ex=120)
             raise RuntimeError('Master bootup failed') from e
         finally:
             # Finally, initialize valid_keys list and remove the flag from Redis to allow slave workers to continue bootup
+            assert active_kid
             with SyncedStore.pipeline() as pipe:
                 pipe.delete('VALID_KEYS')
                 valid_keys: list[str] = list(valid_keys_mapping.keys()) + [active_kid]

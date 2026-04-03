@@ -1,7 +1,9 @@
 from redis import Redis
 
-SyncedStore: Redis = None
-RedisInterface: Redis = None
+__all__ = ("SyncedStore", "RedisInterface", "init_redis", "init_syncedstore",)
+
+SyncedStore: Redis|None = None
+RedisInterface: Redis|None = None
 
 def init_redis(**constructor_kwargs) -> None:
     global RedisInterface

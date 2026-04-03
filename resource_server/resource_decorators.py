@@ -8,6 +8,10 @@ from datetime import timedelta
 from resource_server.resource_auxillary import poll_global_key_mapping
 from resource_server.external_extensions import RedisInterface
 
+assert RedisInterface
+
+__all__ = ("token_required", "pass_user_details",)
+
 def token_required(endpoint):
     '''
     Protect an endpoint by validating an access token. Requires the header "Authorization: Bearer <credentials>". 
@@ -31,12 +35,12 @@ def token_required(endpoint):
         if alg != 'ES256':
             raise Unauthorized("Invalid token, unsupported algorithm claim")
         try: 
-            decodedToken: dict = None
+            decodedToken: dict[str, str|int]|None = None
             if tokenKID in current_app.config['KEY_VK_MAPPING']:
-                decodedToken: dict[str, str|int] = decode(jwt=encodedAccessToken,
-                                                          key=current_app.config['KEY_VK_MAPPING'][tokenKID],
-                                                          algorithms=["ES256"],
-                                                          leeway=timedelta(minutes=3))
+                decodedToken = decode(jwt=encodedAccessToken,
+                                      key=current_app.config['KEY_VK_MAPPING'][tokenKID],
+                                      algorithms=["ES256"],
+                                      leeway=timedelta(minutes=3))
                 
             # Possibly new KID, ping auth server
             else:
@@ -46,10 +50,10 @@ def token_required(endpoint):
                 if tokenKID not in current_app.config['KEY_VK_MAPPING']:
                     raise Unauthorized('Invalid Key ID, no such key was found. Please login again')
                 
-                decodedToken: dict[str, str|int] = decode(jwt=encodedAccessToken,
-                                                          key=current_app.config['KEY_VK_MAPPING'][tokenKID],
-                                                          algorithms=['ES256'],
-                                                          leeway=timedelta(minutes=3))
+                decodedToken = decode(jwt=encodedAccessToken,
+                                      key=current_app.config['KEY_VK_MAPPING'][tokenKID],
+                                      algorithms=['ES256'],
+                                      leeway=timedelta(minutes=3))
 
             g.DECODED_TOKEN = decodedToken
         except ExpiredSignatureError:
@@ -98,10 +102,10 @@ def pass_user_details(endpoint):
                 if tokenKID not in current_app.config['KEY_VK_MAPPING']:
                     return endpoint(*args, **kwargs)
                 
-                decodedToken: dict[str: str|int] = decode(jwt=encodedAccessToken,
-                                                          key=current_app.config['KEY_VK_MAPPING'][tokenKID],
-                                                          algorithms=['ES256'],
-                                                          leeway=timedelta(minutes=3))
+                decodedToken = decode(jwt=encodedAccessToken,
+                                      key=current_app.config['KEY_VK_MAPPING'][tokenKID],
+                                      algorithms=['ES256'],
+                                      leeway=timedelta(minutes=3))
            
             g.REQUESTING_USER = decodedToken
 
