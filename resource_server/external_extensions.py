@@ -1,6 +1,8 @@
 from redis import Redis
 
-RedisInterface: Redis = None
+__all__ = ("RedisInterface", "init_redis",)
+
+RedisInterface: Redis|None = None
 
 def init_redis(**constructor_kwargs):
     global RedisInterface
