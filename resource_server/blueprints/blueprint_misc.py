@@ -9,6 +9,8 @@ from resource_server.external_extensions import RedisInterface
 import re
 from datetime import datetime
 
+assert RedisInterface
+
 MISC_BLUEPRINT: Blueprint = Blueprint('Misc', 'misc')
 
 @MISC_BLUEPRINT.route('/genres', methods=['GET'])
