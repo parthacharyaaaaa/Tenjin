@@ -24,8 +24,8 @@ def generic_error_handler(e : Exception):
     print(traceback.format_exc())
     response = jsonify({"message" : getattr(e, "description", "An error occured"),
                         **getattr(e, "kwargs", {})})
-    if getattr(e, "header_kwargs", None):
-        response.headers.update(e.header_kwargs)
+    if header_kwargs:=getattr(e, "header_kwargs", None):
+        response.headers.update(header_kwargs)
 
     return response, getattr(e, "code", 500)
 
@@ -40,7 +40,7 @@ def from_base64url(b64url: str) -> int:
     return int.from_bytes(byte_data, byteorder='big')
 
 
-def hash_password(password: str, salt: bytes = None) -> tuple[bytes, bytes]:
+def hash_password(password: str, salt: bytes|None = None) -> tuple[bytes, bytes]:
     '''
     Produce a password salt and hash from a given string
     
@@ -105,7 +105,7 @@ def consult_cache(interface: Redis, cache_key: str,
     Returns
         {"__NF__" : True} if nf_repr found, None on cache miss/suppressed failure, and cached mapping on cache hits
     '''
-    res: list[dict|str, int] = [None]
+    res: list[Any] = [None]
     try:
         with interface.pipeline(transaction=False) as pipe:
             if dtype == 'mapping':
@@ -142,7 +142,7 @@ def consult_cache(interface: Redis, cache_key: str,
         else:
             raise RuntimeError('Unsuppressed cache failure') from e
         
-def fetch_group_resources(interface: Redis, group_key: str, element_dtype: Literal['mapping', 'string'] = 'mapping') -> tuple[tuple[Any], bool, str]:
+def fetch_group_resources(interface: Redis, group_key: str, element_dtype: Literal['mapping', 'string'] = 'mapping') -> tuple[tuple[Any]|None, bool, str|None]:
     """
     Fetches all values for keys stored in a Redis iterable (list, set, or sorted set) for cursor based pagination. If any key is missing from the cache, the function returns `None` to indicate a cache miss. It is upto the caller to reconcile cache misses
     Args:
@@ -153,14 +153,13 @@ def fetch_group_resources(interface: Redis, group_key: str, element_dtype: Liter
     Returns:
         tuple: A tuple of values corresponding to each key in the group, boolean indicating end of pagination, value of next cursor
     """
-    keys: Iterable[str] = None
     keys: list[str] = interface.lrange(group_key, 0, -1)
 
     if not keys: return None, True, None
 
     if '__NF__' in keys: return None, True, None
 
-    cursor: str = None
+    cursor: str|None = None
     end: bool = False
     removed_entries: list[int] = []
     for idx, entry in enumerate(keys):
@@ -189,8 +188,6 @@ def fetch_group_resources(interface: Redis, group_key: str, element_dtype: Liter
     return tuple(map(lambda resource : None if resource == '__NF__' else ujson.loads(resource), resources)), end, cursor
 
 def promote_group_ttl(interface: Redis, group_key: str, promotion_ttl: int = 15, max_ttl: int = 20*60) -> None:
-    keys: Iterable[str] = None
-    end: bool = False
     keys: list[str] = interface.lrange(group_key, 0, -1)
 
     if not keys:
