@@ -4,11 +4,14 @@ from flask import Flask
 from flask.cli import with_appcontext
 from flask_migrate import Migrate
 from traceback import format_exc
+
+from sqlalchemy import text
 from resource_server.flask_config import FLASK_CONFIG_OBJECT
 from auxillary.utils import generic_error_handler
 from types import MappingProxyType
 from typing import Any, Final
 import toml
+import click
 
 from resource_server import blueprints
 from resource_server.models import db, CONFIG
@@ -52,26 +55,21 @@ def create_app() -> Flask:
     ### Additional CLI commands ###
    # Instantiate the database
     @app.cli.command("make_db")
+    @click.option("--force", is_flag=True, help="Force DB creation even if it exists")
     @with_appcontext
-    def make_db() -> None:
+    def make_db(force: bool) -> None:
         query = text("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
         with db.engine.connect() as conn:
             res_tables = conn.execute(query).fetchall()
 
-            if res_tables:
-                genesis_prompt = input(f"[{app.name}]: Database already populated, proceed with db creation (y/n)?\n").lower()
-                if genesis_prompt == "n":
-                    print(f"[{app.name}]: Exiting...")
-                    exit(0)
-                elif genesis_prompt != "y":
-                    print(f"[{app.name}]: Invalid input to prompt, exiting...")
-                    exit(500)
+            if res_tables and not force:
+                exit(0)
 
             tables : set = set(map(lambda x : x[0], res_tables))
             db.create_all()
             print(f"[{app.name}]: Creating database{' again...' if tables else '...'}")
             try:
-                new_tables : set = set(map(lambda x : x[0], conn.execute(query)))
+                new_tables : set = set(map(lambda x : x[0], conn.execute(query).fetchall()))
                 insertion_difference : set = new_tables - tables
                 print(f"[{app.name}]: Tables Created: {', '.join(list(insertion_difference)) or 'None. You just wasted your time.'}")
             except:
