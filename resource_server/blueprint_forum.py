@@ -1,6 +1,6 @@
 from flask import Blueprint, g, jsonify, request, url_for
 from werkzeug import Response
-from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict, Unauthorized, InternalServerError, Gone
+from werkzeug.exceptions import BadRequest, NotFound, Forbidden, Conflict, Unauthorized, InternalServerError
 from auxillary.decorators import enforce_json
 from auxillary.utils import rediserialize, pyserialize, genericDBFetchException, fetch_group_resources, promote_group_ttl, cache_grouped_resource, to_base64url, from_base64url
 from resource_server.models import db, Forum, User, ForumAdmin, Post, Anime, ForumSubscription, AdminRoles

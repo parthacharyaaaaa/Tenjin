@@ -1,7 +1,7 @@
 '''UPDATION consumer, but only for counters (votes, saves, reports, followers, etc.)
 '''
 import psycopg2 as pg
-from psycopg2.extras import execute_values, execute_batch
+from psycopg2.extras import execute_batch
 from redis import Redis
 import os
 from dotenv import load_dotenv

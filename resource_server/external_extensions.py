@@ -1,6 +1,4 @@
 from redis import Redis
-from flask import Flask
-from typing import Iterable
 
 RedisInterface: Redis = None
 

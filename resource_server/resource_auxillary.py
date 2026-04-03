@@ -4,7 +4,6 @@ import re
 from auxillary.utils import from_base64url
 import ecdsa
 from redis import Redis
-from redis.client import Pipeline
 from flask import Flask
 from werkzeug.exceptions import Gone, Conflict, NotFound
 from resource_server.redis_config import RedisConfig
@@ -12,8 +11,7 @@ import time
 from traceback import format_exc
 from sqlalchemy import text
 from flask_sqlalchemy import SQLAlchemy
-from typing import Any, Mapping, Optional, Sequence
-from types import FunctionType
+from typing import Any, Optional, Sequence
 
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"     # RFC approved babyyyyy
 
