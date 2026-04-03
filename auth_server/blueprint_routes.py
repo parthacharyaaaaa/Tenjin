@@ -19,7 +19,7 @@ def enforceMinCSP(response):
 ### Endpoints ###
 @auth.route('/jwks.json')
 def jwks() -> tuple[Response, int]:
-    return send_from_directory(current_app.instance_path, current_app.config['JWKS_FILENAME'], mimetype='application/json')
+    return send_from_directory(current_app.instance_path, current_app.config['JWKS_FILENAME'], mimetype='application/json'), 200
 
 @auth.route("/login", methods = ["POST", "OPTIONS"])
 @enforce_json
@@ -35,7 +35,7 @@ def login():
         
     
     rsResponse: dict[str, str|int] = valid.json()
-    sub, sid = rsResponse.pop('sub'), rsResponse.pop('sid')
+    sub, sid = str(rsResponse.pop('sub')), int(rsResponse.pop('sid'))
     familyID: str = sha256(f'{sub}:{sid}'.encode()).hexdigest()
     aToken: str = tokenManager.issueAccessToken(sub, sid, familyID)
     rToken: str = tokenManager.issueRefreshToken(sub, sid, familyID=familyID, reissuance=False)
@@ -74,7 +74,7 @@ def register():
                         "response_message" : valid.json().get("message", "Sowwy >:3")}), valid.status_code
     
     rsResponse: dict[str, str|int] = valid.json()
-    sub, sid = rsResponse.pop('sub'), rsResponse.pop('sid')
+    sub, sid = str(rsResponse.pop('sub')), int(rsResponse.pop('sid'))
     familyID: str = sha256(f'{sub}:{sid}'.encode()).hexdigest()
     aToken: str = tokenManager.issueAccessToken(sub, sid, familyID)
     rToken: str = tokenManager.issueRefreshToken(sub, sid, familyID=familyID, reissuance=False)
@@ -94,7 +94,7 @@ def register():
 
 @auth.route("/reissue", methods = ["GET", "OPTIONS"])
 def reissue():
-    refreshToken: str = request.cookies.get("refresh", request.cookies.get("Refresh"))
+    refreshToken: str|None = request.cookies.get("refresh", request.cookies.get("Refresh"))
 
     if not refreshToken:
         e = KeyError()
@@ -119,16 +119,16 @@ def purgeFamily():
     '''
     Purges an entire token family in case of a reuse attack or a normal client logout
     '''
-    encodedRefreshToken: str = request.cookies.get("Refresh", request.cookies.get("refresh"))
+    encodedRefreshToken: str|None = request.cookies.get("Refresh", request.cookies.get("refresh"))
     if not encodedRefreshToken:
         raise BadRequest(f"Logout requires a refresh token to be provided")
     
     try:
-        refreshToken: dict[str, Any] = tokenManager.decodeToken(refreshToken,
+        refreshToken: dict[str, Any] = tokenManager.decodeToken(encodedRefreshToken,
                                                                 tType="refresh",
                                                                 options={"verify_nbf" : False})
+        tokenManager.invalidateFamily(refreshToken['fid'])
     except:
         raise Unauthorized('Failed to validate this refresh token')
     
-    tokenManager.invalidateFamily(refreshToken['fid'])
     return jsonify({"message" : "Token Revoked"}), 200
