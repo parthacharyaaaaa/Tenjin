@@ -89,7 +89,7 @@ services:
 
   auth_server_synced_store:
     image: 'redis:latest'
-    command: redis-server redis-server /usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - redis_network
     
@@ -99,7 +99,7 @@ services:
 
   auth_server_key_store:
     image: 'redis:latest'
-    command: redis-server redis-server /usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - redis_network
 
