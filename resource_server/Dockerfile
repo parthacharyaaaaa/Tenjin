@@ -2,13 +2,14 @@ FROM python:3.10.20-slim
 
 WORKDIR /src
 
-COPY . /src/resource_server
-COPY ../auxillary /src/auxillary
-
-RUN pip install uv
+COPY resource_server/pyproject.toml resource_server/uv.lock /src/resource_server/
+RUN pip install uv --no-cache-dir
 RUN uv sync --frozen --no-dev --system
 
-ENV FLASK_PORT=8080
-EXPOSE 8080
+COPY resource_server /src/resource_server
+COPY auxillary /src/auxillary
 
-CMD [ "gunicorn"  "-c" "/src/resource_server/gunicorn.conf.py" "app:create_app()"]
+ENV FLASK_PORT=80
+EXPOSE 80
+
+CMD [ "gunicorn", "-c", "/src/resource_server/gunicorn.conf.py", "app:create_app()"]
