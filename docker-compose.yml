@@ -114,6 +114,7 @@ services:
       - postgres_network
     volumes:
       - resource_server_data:/var/lib/postgresql/data
+      - ./resource_server/authz/init.sql:/docker-entrypoint-initdb.d/init.sql
     environment:
       - POSTGRES_USER=${RS_POSTGRES_USER}
       - POSTGRES_PASSWORD=${RS_POSTGRES_PASSWORD}
@@ -126,6 +127,7 @@ services:
       - postgres_network
     volumes:
       - auth_server_data:/var/lib/postgresql/data
+      - ./auth_server/authz/init.sql:/docker-entrypoint-initdb.d/init.sql
     environment:
       - POSTGRES_USER=${AS_POSTGRES_USER}
       - POSTGRES_PASSWORD=${AS_POSTGRES_PASSWORD}
