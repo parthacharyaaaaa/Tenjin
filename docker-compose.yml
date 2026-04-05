@@ -26,6 +26,7 @@ services:
       - resource_server
       - resource_server_redis
       - resource_server_database
+    restart: unless-stopped
 
   mail:
     <<: *resource-base
@@ -78,7 +79,7 @@ services:
   # Redis
 
   resource_server_redis:
-    image: 'redis:latest'
+    image: 'redis:8'
     command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - redis_network
@@ -88,7 +89,7 @@ services:
     - ./resource_server/instance/users.acl:/usr/local/etc/redis/users.acl:ro
 
   auth_server_synced_store:
-    image: 'redis:latest'
+    image: 'redis:8'
     command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - redis_network
@@ -98,7 +99,7 @@ services:
       - ./auth_server/instance/users.acl:/usr/local/etc/redis/users.acl:ro
 
   auth_server_key_store:
-    image: 'redis:latest'
+    image: 'redis:8'
     command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - redis_network
