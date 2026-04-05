@@ -1,0 +1,141 @@
+name: tenjin
+services:
+  # Edge APIs
+  resource_server:
+    build:
+      context: .
+      dockerfile: resource_server/Dockerfile
+
+    depends_on:
+    - resource_server_database
+    - resource_server_redis
+
+    networks:
+      - postgres_network
+      - redis_network
+
+    ports:
+      - '80:80'
+
+  x-resource-base: &resource-base
+    build: ./resource_server
+    networks:
+      - redis_network
+      - postgres_network
+    depends_on:
+      - resource_server
+      - resource_server_redis
+      - resource_server_database
+
+  mail:
+    <<: *resource-base
+    command: python3 scripts/mail.py
+
+  database_counter_worker:
+    <<: *resource-base
+    command: python3 scripts/batch_workers/counter.py
+
+  database_insert_worker:
+    <<: *resource-base
+    command: python3 scripts/batch_workers/insert.py
+
+  database_soft_delete_worker:
+    <<: *resource-base
+    command: python3 scripts/batch_workers/soft_delete.py
+
+  database_user_activity_delete:
+    <<: *resource-base
+    command: python3 scripts/batch_workers/user_activity_delete.py
+
+  database_user_activity_recovery_worker:
+    <<: *resource-base
+    command: python3 scripts/batch_workers/user_activity_recovery.py
+
+  database_weak_delete_worker:
+    <<: *resource-base
+    command: python3 scripts/batch_workers/weak_delete.py
+
+  database_weak_inserts_worker:
+    <<: *resource-base
+    command: python3 scripts/batch_workers/weak_insert.py
+
+  auth_server:
+    build:
+      context: .
+      dockerfile: auth_server/Dockerfile
+    
+    depends_on:
+      - auth_server_synced_store
+      - auth_server_key_store
+      - auth_server_database
+
+    networks:
+      - postgres_network
+      - redis_network
+    ports:
+      - '8080:8080'
+
+  # Redis
+
+  resource_server_redis:
+    image: 'redis:latest'
+    command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - redis_network
+
+    volumes:
+    - ./resource_server/instance/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    - ./resource_server/instance/users.acl:/usr/local/etc/redis/users.acl:ro
+
+  auth_server_synced_store:
+    image: 'redis:latest'
+    command: redis-server redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - redis_network
+    
+    volumes:
+      - ./auth_server/instance/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./auth_server/instance/users.acl:/usr/local/etc/redis/users.acl:ro
+
+  auth_server_key_store:
+    image: 'redis:latest'
+    command: redis-server redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - redis_network
+
+    volumes:
+      - ./auth_server/instance/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - ./auth_server/instance/users.acl:/usr/local/etc/redis/users.acl:ro
+
+  # Databases
+  resource_server_database:
+    image: 'postgres:17.9'
+    networks:
+      - postgres_network
+    volumes:
+      - resource_server_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=${RS_POSTGRES_USER}
+      - POSTGRES_PASSWORD=${RS_POSTGRES_PASSWORD}
+      - POSTGRES_DB=${RS_POSTGRES_DB}
+    restart: always
+      
+  auth_server_database:
+    image: 'postgres:17.9'
+    networks:
+      - postgres_network
+    volumes:
+      - auth_server_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=${AS_POSTGRES_USER}
+      - POSTGRES_PASSWORD=${AS_POSTGRES_PASSWORD}
+      - POSTGRES_DB=${AS_POSTGRES_DB}
+    restart: always
+
+networks:
+  postgres_network:
+  redis_network:
+
+volumes:
+  auth_server_data:
+  resource_server_data:
