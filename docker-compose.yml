@@ -19,6 +19,9 @@ services:
 
   x-resource-base: &resource-base
     build: ./resource_server
+    environment:
+      - WORKER_POSTGRES_USERNAME=${WORKER_POSTGRES_USERNAME}
+       -WORKER_POSTGRES_PASSWORD=${WORKER_POSTGRES_PASSWORD}
     networks:
       - redis_network
       - postgres_network
@@ -117,10 +120,20 @@ services:
       - resource_server_data:/var/lib/postgresql/data
       - ./resource_server/authz/init.sql:/docker-entrypoint-initdb.d/init.sql
     environment:
-      - POSTGRES_USER=${RS_POSTGRES_USER}
-      - POSTGRES_PASSWORD=${RS_POSTGRES_PASSWORD}
-      - POSTGRES_DB=${RS_POSTGRES_DB}
-    restart: always
+      - POSTGRES_USER=${MASTER_RESOURCE_SERVER_POSTGRES_USERNAME}
+      - POSTGRES_PASSWORD=${MASTER_RESOURCE_SERVER_POSTGRES_PASSWORD}
+      - POSTGRES_DB=${RESOURCE_DB_NAME}
+      - RESOURCE_SERVER_POSTGRES_USERNAME=${RESOURCE_SERVER_POSTGRES_USERNAME}
+      - RESOURCE_SERVER_POSTGRES_PASSWORD=${RESOURCE_SERVER_POSTGRES_PASSWORD}
+      - WORKER_POSTGRES_USERNAME=${WORKER_POSTGRES_USERNAME}
+      - WORKER_POSTGRES_PASSWORD=${WORKER_POSTGRES_PASSWORD}
+    restart: on-failure[3]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MASTER_RESOURCE_SERVER_POSTGRES_USERNAME}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
       
   auth_server_database:
     image: 'postgres:17.9'
@@ -130,10 +143,18 @@ services:
       - auth_server_data:/var/lib/postgresql/data
       - ./auth_server/authz/init.sql:/docker-entrypoint-initdb.d/init.sql
     environment:
-      - POSTGRES_USER=${AS_POSTGRES_USER}
-      - POSTGRES_PASSWORD=${AS_POSTGRES_PASSWORD}
-      - POSTGRES_DB=${AS_POSTGRES_DB}
-    restart: always
+      - POSTGRES_USER=${MASTER_AUTH_SERVER_POSTGRES_USERNAME}
+      - POSTGRES_PASSWORD=${MASTER_AUTH_SERVER_POSTGRES_PASSWORD}
+      - POSTGRES_DB=${AUTH_DB_NAME}
+      - AUTH_SERVER_POSTGRES_USERNAME=${AUTH_SERVER_POSTGRES_USERNAME}
+      - AUTH_SERVER_POSTGRES_PASSWORD=${AUTH_SERVER_POSTGRES_PASSWORD}
+    restart: on-failure[3]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MASTER_AUTH_SERVER_POSTGRES_USERNAME}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 networks:
   postgres_network:
