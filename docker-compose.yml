@@ -18,7 +18,9 @@ services:
       - '80:80'
 
   x-resource-base: &resource-base
-    build: ./resource_server
+    build:
+      context: .
+      dockerfile: resource_server/Dockerfile
     environment:
       - WORKER_POSTGRES_USERNAME=${WORKER_POSTGRES_USERNAME}
        -WORKER_POSTGRES_PASSWORD=${WORKER_POSTGRES_PASSWORD}
@@ -80,6 +82,7 @@ services:
       - '8080:8080'
 
   # Redis
+  # Note: Redis images use a config file with logfile as an empty string (stdout)
 
   resource_server_redis:
     image: 'redis:8'
@@ -90,6 +93,7 @@ services:
     volumes:
     - ./resource_server/instance/redis.conf:/usr/local/etc/redis/redis.conf:ro
     - ./resource_server/instance/users.acl:/usr/local/etc/redis/users.acl:ro
+    - resource_redis_volume:/var/lib/redis:rw
 
   auth_server_synced_store:
     image: 'redis:8'
@@ -100,6 +104,7 @@ services:
     volumes:
       - ./auth_server/instance/redis.conf:/usr/local/etc/redis/redis.conf:ro
       - ./auth_server/instance/users.acl:/usr/local/etc/redis/users.acl:ro
+      - auth_syncedstore_volume:/var/lib/redis:rw
 
   auth_server_key_store:
     image: 'redis:8'
@@ -110,6 +115,7 @@ services:
     volumes:
       - ./auth_server/instance/redis.conf:/usr/local/etc/redis/redis.conf:ro
       - ./auth_server/instance/users.acl:/usr/local/etc/redis/users.acl:ro
+      - auth_keystore_volume:/var/lib/redis:rw
 
   # Databases
   resource_server_database:
@@ -127,7 +133,7 @@ services:
       - RESOURCE_SERVER_POSTGRES_PASSWORD=${RESOURCE_SERVER_POSTGRES_PASSWORD}
       - WORKER_POSTGRES_USERNAME=${WORKER_POSTGRES_USERNAME}
       - WORKER_POSTGRES_PASSWORD=${WORKER_POSTGRES_PASSWORD}
-    restart: on-failure[3]
+    restart: 'on-failure:3'
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${MASTER_RESOURCE_SERVER_POSTGRES_USERNAME}"]
       interval: 30s
@@ -148,7 +154,7 @@ services:
       - POSTGRES_DB=${AUTH_DB_NAME}
       - AUTH_SERVER_POSTGRES_USERNAME=${AUTH_SERVER_POSTGRES_USERNAME}
       - AUTH_SERVER_POSTGRES_PASSWORD=${AUTH_SERVER_POSTGRES_PASSWORD}
-    restart: on-failure[3]
+    restart: 'on-failure:3'
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${MASTER_AUTH_SERVER_POSTGRES_USERNAME}"]
       interval: 30s
@@ -163,3 +169,6 @@ networks:
 volumes:
   auth_server_data:
   resource_server_data:
+  auth_keystore_volume:
+  auth_syncedstore_volume:
+  resource_redis_volume:
