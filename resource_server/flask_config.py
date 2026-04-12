@@ -21,7 +21,6 @@ class FlaskConfig:
         ### Flask Configurations ###
         APPLICATION_ROOT: str = os.environ["APPLICATION_ROOT"]
         APP_PORT: int = int(os.environ["FLASK_PORT"])
-        APP_HOST: str = os.environ["FLASK_HOST"]
         APP_DEBUG: bool = bool(int(os.environ.get("FLASK_DEBUG", 0)))
         SECRET_KEY: str = os.environ["FLASK_SECRET_KEY"]
         KEY_VK_MAPPING: dict[str, bytes] = {}
