@@ -160,7 +160,7 @@ if __name__ == "__main__":
     redis_config_fpath: os.PathLike = os.path.join(
         os.path.dirname(os.path.dirname(__file__)),
         "config",
-        os.environ["redis_config_filename"],
+        os.environ["REDIS_CONFIG_FILENAME"],
     )
     if not os.path.isfile(redis_config_fpath):
         raise FileNotFoundError("Redis config toml file not found")
