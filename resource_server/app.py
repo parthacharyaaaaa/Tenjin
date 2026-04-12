@@ -45,6 +45,9 @@ def create_app() -> Flask:
     redis_config_kwargs: dict[str, Any] = toml.load(f=redis_config_fpath)
     redis_config_kwargs.update(
         {
+            "host": os.environ["RESOURCE_SERVER_REDIS_HOST"],
+            "port": os.environ["RESOURCE_SERVER_REDIS_PORT"],
+            "db": os.environ["RESOURCE_SERVER_REDIS_DB"],
             "username": os.environ["RESOURCE_SERVER_REDIS_USERNAME"],
             "password": os.environ["RESOURCE_SERVER_REDIS_PASSWORD"],
         }

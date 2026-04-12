@@ -7,8 +7,6 @@ from traceback import format_exc
 from types import MappingProxyType
 from typing import Callable, Mapping, Any
 
-from dotenv import load_dotenv
-
 import psycopg2 as pg
 from psycopg2 import sql
 from psycopg2.extensions import connection
@@ -42,14 +40,6 @@ MAPPED_DTYPES: MappingProxyType[str, Callable] = MappingProxyType(
 
 
 def initialize_environment(worker_id: int) -> tuple[connection, Redis]:
-    # loaded = load_dotenv(
-    #     os.path.join(
-    #         os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"
-    #     )
-    # )
-    # if not loaded:
-    #     raise FileNotFoundError()
-
     redis_config_fpath: str = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
         "config",
@@ -62,6 +52,9 @@ def initialize_environment(worker_id: int) -> tuple[connection, Redis]:
     redis_config_kwargs: dict[str, Any] = toml.load(f=redis_config_fpath)
     redis_config_kwargs.update(
         {
+            "host": os.environ["BATCH_SERVER_REDIS_HOST"],
+            "port": os.environ["BATCH_SERVER_REDIS_PORT"],
+            "db": os.environ["BATCH_SERVER_REDIS_DB"],
             "username": os.environ["BATCH_SERVER_REDIS_USERNAME"],
             "password": os.environ["BATCH_SERVER_REDIS_PASSWORD"],
         }
