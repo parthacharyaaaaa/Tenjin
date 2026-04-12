@@ -10,7 +10,6 @@ from types import MappingProxyType
 from typing import Any, Final
 import toml
 
-from resource_server import blueprints
 from resource_server.models import db
 from resource_server.resource_auxillary import distributed_create_db
 
@@ -37,7 +36,7 @@ def create_app() -> Flask:
 
     ### Redis ###
     redis_config_fpath: str = os.path.join(
-        APP_CTX_CWD, "config", os.environ["redis_config_filename"]
+        APP_CTX_CWD, "config", os.environ["REDIS_CONFIG_FILENAME"]
     )
     if not os.path.isfile(redis_config_fpath):
         raise FileNotFoundError("Redis config toml file not found")
@@ -56,12 +55,6 @@ def create_app() -> Flask:
     from resource_server.external_extensions import init_redis
 
     init_redis(**redis_config_kwargs)
-
-    ### Blueprints registaration ###
-    for blueprint, prefix in blueprints.PREFIX_MAPPING.items():
-        app.register_blueprint(
-            blueprint, url_prefix="/".join((app.config["APPLICATION_ROOT"], prefix))
-        )
 
     from resource_server.redis_config import RedisConfig
     from resource_server.external_extensions import RedisInterface
@@ -94,6 +87,13 @@ def create_app() -> Flask:
     app.config["KEY_VK_MAPPING"] = jwks_mapping
 
     background_poller.start()
+
+    ### Blueprints registaration ###
+    from resource_server import blueprints
+    for blueprint, prefix in blueprints.PREFIX_MAPPING.items():
+        app.register_blueprint(
+            blueprint, url_prefix="/".join((app.config["APPLICATION_ROOT"], prefix))
+        )
 
     # Load genres into config
     with app.app_context():
