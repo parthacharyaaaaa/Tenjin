@@ -9,7 +9,8 @@ WORKDIR /src
 COPY resource_server/pyproject.toml resource_server/uv.lock resource_server/.python-version /src/resource_server/
 COPY auxillary /src/auxillary
 
-RUN uv sync --frozen --no-dev --project /src/resource_server
+RUN uv export --frozen --no-dev --project /src/resource_server -o requirements.txt
+RUN uv pip install --no-cache-dir -r requirements.txt --system
 
 ENV PATH="/src/resource_server/.venv/bin:$PATH"
 ENV PYTHONPATH="/src:/src/resource_server"

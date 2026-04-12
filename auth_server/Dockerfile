@@ -10,7 +10,8 @@ COPY auth_server/pyproject.toml auth_server/uv.lock auth_server/.python-version 
 
 COPY auxillary /src/auxillary
 
-RUN uv sync --frozen --no-dev --project /src/auth_server
+RUN uv export --frozen --no-dev --project /src/auth_server -o requirements.txt
+RUN uv pip install --no-cache-dir -r requirements.txt --system
 
 ENV PATH="/src/auth_server/.venv/bin:$PATH"
 ENV PYTHONPATH="/src:/src/auth_server"
@@ -21,4 +22,4 @@ WORKDIR /src/auth_server
 ENV FLASK_PORT=8081
 EXPOSE 8081
 
-CMD [ "uv", "run", "gunicorn", "-c", "/src/auth_server/gunicorn.conf.py", "auth_app:create_app()"]
+CMD [ "gunicorn", "-c", "/src/auth_server/gunicorn.conf.py", "auth_app:create_app()"]

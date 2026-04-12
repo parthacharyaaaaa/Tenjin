@@ -38,35 +38,35 @@ services:
 
   mail:
     <<: *resource-base
-    command: uv run python scripts/mail.py
+    command: python scripts/mail.py
 
   database_counter_worker:
     <<: *resource-base
-    command: uv run python scripts/batch_workers/counter.py
+    command: python scripts/batch_workers/counter.py
 
   database_insert_worker:
     <<: *resource-base
-    command: uv run python scripts/batch_workers/insert.py
+    command: python scripts/batch_workers/insert.py
 
   database_soft_delete_worker:
     <<: *resource-base
-    command: uv run python scripts/batch_workers/soft_delete.py
+    command: python scripts/batch_workers/soft_delete.py
 
   database_user_activity_delete:
     <<: *resource-base
-    command: uv run python scripts/batch_workers/user_activity_delete.py
+    command: python scripts/batch_workers/user_activity_delete.py
 
   database_user_activity_recovery_worker:
     <<: *resource-base
-    command: uv run python scripts/batch_workers/user_activity_recovery.py
+    command: python scripts/batch_workers/user_activity_recovery.py
 
   database_weak_delete_worker:
     <<: *resource-base
-    command: uv run python scripts/batch_workers/weak_delete.py
+    command: python scripts/batch_workers/weak_delete.py
 
   database_weak_inserts_worker:
     <<: *resource-base
-    command: uv run python scripts/batch_workers/weak_inserts.py
+    command: python scripts/batch_workers/weak_inserts.py
 
   auth_server:
     build:
@@ -88,7 +88,7 @@ services:
   # Note: Redis images use a config file with logfile as an empty string (stdout)
 
   resource_server_redis:
-    image: 'redis:8'
+    image: 'redis:7'
     command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - redis_network
@@ -99,7 +99,7 @@ services:
     - resource_redis_volume:/var/lib/redis:rw
 
   auth_server_synced_store:
-    image: 'redis:8'
+    image: 'redis:7'
     command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - redis_network
@@ -157,6 +157,7 @@ services:
       - POSTGRES_DB=${AUTH_DB_NAME}
       - AUTH_SERVER_POSTGRES_USERNAME=${AUTH_SERVER_POSTGRES_USERNAME}
       - AUTH_SERVER_POSTGRES_PASSWORD=${AUTH_SERVER_POSTGRES_PASSWORD}
+      - AUTH_DB_NAME=${AUTH_DB_NAME}
     restart: 'on-failure:3'
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${MASTER_AUTH_SERVER_POSTGRES_USERNAME}"]
