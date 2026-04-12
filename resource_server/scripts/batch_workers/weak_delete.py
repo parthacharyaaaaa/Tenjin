@@ -1,63 +1,24 @@
 """#### Script for perfoming deleion on weak entities pusehd to a Redis stream"""
 
-from redis import Redis
-from redis import Redis, exceptions as redisExceptions
-import psycopg2 as pg
-from psycopg2.extras import execute_batch
-from resource_server.scripts.batch_workers.worker_utils import getDtypes
 import os
-from dotenv import load_dotenv
-from typing import Any
+import json
 from time import sleep
 from traceback import format_exc
-from typing import Any
-import json
-import toml
+from typing import Final
 
-if __name__ == "__main__":
-    loaded = load_dotenv(
-        os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"
-        )
-    )
-    if not loaded:
-        raise FileNotFoundError()
+from redis import exceptions as redisExceptions
 
-    ID: int = os.getpid()
+import psycopg2 as pg
+from psycopg2.extras import execute_batch
 
-    redis_config_fpath: os.PathLike = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-        "config",
-        os.environ["redis_config_filename"],
-    )
-    if not os.path.isfile(redis_config_fpath):
-        raise FileNotFoundError("Redis config toml file not found")
+from resource_server.scripts.batch_workers.worker_utils import (
+    getDtypes,
+    initialize_environment    
+)
 
-    redis_config_kwargs: dict[str, Any] = toml.load(f=redis_config_fpath)
-    redis_config_kwargs.update(
-        {
-            "username": os.environ["BATCH_SERVER_REDIS_USERNAME"],
-            "password": os.environ["BATCH_SERVER_REDIS_PASSWORD"],
-        }
-    )  # Inject login credentials through env
-    interface: Redis = Redis(**redis_config_kwargs)
-
-    CONNECTION_KWARGS: dict[str, int | str] = {
-        "user": os.environ["WORKER_POSTGRES_USERNAME"],
-        "password": os.environ["WORKER_POSTGRES_PASSWORD"],
-        "host": os.environ["RESOURCE_SERVER_POSTGRES_HOST"],
-        "port": int(os.environ["RESOURCE_SERVER_POSTGRES_PORT"]),
-        "database": os.environ["RESOURCE_SERVER_POSTGRES_DATABASE"],
-    }
-
-    try:
-        CONNECTION: pg.extensions.connection = pg.connect(**CONNECTION_KWARGS)
-    except Exception as e:
-        print(
-            f"{ID}: Failed to connect to Postgres instance.\n\tError: {e.__class__.__name__}\n\tError Logs: ",
-            format_exc(),
-        )
-        exit(500)
+def main() -> None:
+    ID: Final[int] = os.getpid()
+    CONNECTION, interface = initialize_environment(worker_id=ID)
 
     # Initialize empty cache for data types of dicriminator columns of weak entities
     dtypes_cache: dict = {}
@@ -177,3 +138,7 @@ if __name__ == "__main__":
             query_groups.clear()
             # Good night >:3
             sleep(wait)
+
+
+if __name__ == "__main__":
+    main()
