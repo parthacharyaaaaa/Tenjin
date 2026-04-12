@@ -1,4 +1,24 @@
 name: tenjin
+
+x-worker-base: &worker-base
+  build:
+    context: .
+    dockerfile: worker.Dockerfile
+  environment:
+    - WORKER_POSTGRES_USERNAME=${WORKER_POSTGRES_USERNAME}
+    - WORKER_POSTGRES_PASSWORD=${WORKER_POSTGRES_PASSWORD}
+  env_file:
+    - path: resource_server/.env
+      required: true
+  networks:
+    - redis_network
+    - postgres_network
+  depends_on:
+    - resource_server
+    - resource_server_redis
+    - resource_server_database
+  restart: 'on-failure:5'
+
 services:
   # Edge APIs
   resource_server:
@@ -9,6 +29,7 @@ services:
     depends_on:
     - resource_server_database
     - resource_server_redis
+    - auth_server
 
     networks:
       - postgres_network
@@ -17,55 +38,36 @@ services:
     ports:
       - '8081:8081'
 
-  x-resource-base: &resource-base
-    build:
-      context: .
-      dockerfile: resource_server/Dockerfile
-    environment:
-      - WORKER_POSTGRES_USERNAME=${WORKER_POSTGRES_USERNAME}
-      - WORKER_POSTGRES_PASSWORD=${WORKER_POSTGRES_PASSWORD}
-    env_file:
-      - path: resource_server/.env
-        required: true
-    networks:
-      - redis_network
-      - postgres_network
-    depends_on:
-      - resource_server
-      - resource_server_redis
-      - resource_server_database
-    restart: unless-stopped
-
   mail:
-    <<: *resource-base
+    <<: *worker-base
     command: python scripts/mail.py
 
   database_counter_worker:
-    <<: *resource-base
+    <<: *worker-base
     command: python scripts/batch_workers/counter.py
 
   database_insert_worker:
-    <<: *resource-base
+    <<: *worker-base
     command: python scripts/batch_workers/insert.py
 
   database_soft_delete_worker:
-    <<: *resource-base
+    <<: *worker-base
     command: python scripts/batch_workers/soft_delete.py
 
   database_user_activity_delete:
-    <<: *resource-base
+    <<: *worker-base
     command: python scripts/batch_workers/user_activity_delete.py
 
   database_user_activity_recovery_worker:
-    <<: *resource-base
+    <<: *worker-base
     command: python scripts/batch_workers/user_activity_recovery.py
 
   database_weak_delete_worker:
-    <<: *resource-base
+    <<: *worker-base
     command: python scripts/batch_workers/weak_delete.py
 
   database_weak_inserts_worker:
-    <<: *resource-base
+    <<: *worker-base
     command: python scripts/batch_workers/weak_inserts.py
 
   auth_server:
