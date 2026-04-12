@@ -15,7 +15,7 @@ services:
       - redis_network
 
     ports:
-      - '80:80'
+      - '8081:8081'
 
   x-resource-base: &resource-base
     build:
@@ -23,7 +23,10 @@ services:
       dockerfile: resource_server/Dockerfile
     environment:
       - WORKER_POSTGRES_USERNAME=${WORKER_POSTGRES_USERNAME}
-       -WORKER_POSTGRES_PASSWORD=${WORKER_POSTGRES_PASSWORD}
+      - WORKER_POSTGRES_PASSWORD=${WORKER_POSTGRES_PASSWORD}
+    env_file:
+      - path: resource_server/.env
+        required: true
     networks:
       - redis_network
       - postgres_network
@@ -35,35 +38,35 @@ services:
 
   mail:
     <<: *resource-base
-    command: python3 scripts/mail.py
+    command: uv run python scripts/mail.py
 
   database_counter_worker:
     <<: *resource-base
-    command: python3 scripts/batch_workers/counter.py
+    command: uv run python scripts/batch_workers/counter.py
 
   database_insert_worker:
     <<: *resource-base
-    command: python3 scripts/batch_workers/insert.py
+    command: uv run python scripts/batch_workers/insert.py
 
   database_soft_delete_worker:
     <<: *resource-base
-    command: python3 scripts/batch_workers/soft_delete.py
+    command: uv run python scripts/batch_workers/soft_delete.py
 
   database_user_activity_delete:
     <<: *resource-base
-    command: python3 scripts/batch_workers/user_activity_delete.py
+    command: uv run python scripts/batch_workers/user_activity_delete.py
 
   database_user_activity_recovery_worker:
     <<: *resource-base
-    command: python3 scripts/batch_workers/user_activity_recovery.py
+    command: uv run python scripts/batch_workers/user_activity_recovery.py
 
   database_weak_delete_worker:
     <<: *resource-base
-    command: python3 scripts/batch_workers/weak_delete.py
+    command: uv run python scripts/batch_workers/weak_delete.py
 
   database_weak_inserts_worker:
     <<: *resource-base
-    command: python3 scripts/batch_workers/weak_insert.py
+    command: uv run python scripts/batch_workers/weak_inserts.py
 
   auth_server:
     build:
