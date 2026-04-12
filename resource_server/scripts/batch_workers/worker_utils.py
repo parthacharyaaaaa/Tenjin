@@ -1,14 +1,22 @@
 """Auxillary functions for batch workers"""
 
+import os
+import toml
+from datetime import datetime
+from traceback import format_exc
+from types import MappingProxyType
+from typing import Callable, Mapping, Any
+
+from dotenv import load_dotenv
+
 import psycopg2 as pg
 from psycopg2 import sql
+from psycopg2.extensions import connection
+
 from redis import Redis
-from typing import Mapping, Any
-from types import MappingProxyType
-from datetime import datetime
 
 # We got reinvented SQLAlchemy before GTA VI
-MAPPED_DTYPES: MappingProxyType[str, type] = MappingProxyType(
+MAPPED_DTYPES: MappingProxyType[str, Callable] = MappingProxyType(
     {
         "integer": int,
         "smallint": int,
@@ -32,6 +40,52 @@ MAPPED_DTYPES: MappingProxyType[str, type] = MappingProxyType(
     }
 )
 
+
+def initialize_environment(worker_id: int) -> tuple[connection, Redis]:
+    # loaded = load_dotenv(
+    #     os.path.join(
+    #         os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"
+    #     )
+    # )
+    # if not loaded:
+    #     raise FileNotFoundError()
+
+    redis_config_fpath: str = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        "config",
+        os.environ["REDIS_CONFIG_FILENAME"],
+    )
+
+    if not os.path.isfile(redis_config_fpath):
+        raise FileNotFoundError("Redis config toml file not found")
+
+    redis_config_kwargs: dict[str, Any] = toml.load(f=redis_config_fpath)
+    redis_config_kwargs.update(
+        {
+            "username": os.environ["BATCH_SERVER_REDIS_USERNAME"],
+            "password": os.environ["BATCH_SERVER_REDIS_PASSWORD"],
+        }
+    )  # Inject login credentials through env
+    redis: Redis = Redis(**redis_config_kwargs)
+
+    CONNECTION_KWARGS: dict[str, int | str] = {
+        "user": os.environ["WORKER_POSTGRES_USERNAME"],
+        "password": os.environ["WORKER_POSTGRES_PASSWORD"],
+        "host": os.environ["RESOURCE_SERVER_POSTGRES_HOST"],
+        "port": int(os.environ["RESOURCE_SERVER_POSTGRES_PORT"]),
+        "database": os.environ["RESOURCE_SERVER_POSTGRES_DATABASE"],
+    }
+
+    try:
+        conn: connection = pg.connect(**CONNECTION_KWARGS)
+    except Exception as e:
+        print(
+            f"{worker_id}: Failed to connect to Postgres instance.\n\tError: {e.__class__.__name__}\n\tError Logs: ",
+            format_exc(),
+        )
+        raise SystemExit(1)
+
+    return conn, redis
 
 def fetchPKColNames(cursor: pg.extensions.cursor, tableName: str) -> list[str]:
     cursor.execute(
