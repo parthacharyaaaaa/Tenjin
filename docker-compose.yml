@@ -110,7 +110,7 @@ services:
       - auth_syncedstore_volume:/var/lib/redis:rw
 
   auth_server_key_store:
-    image: 'redis:8'
+    image: 'redis:7'
     command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - redis_network
