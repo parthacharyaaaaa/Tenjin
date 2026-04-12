@@ -31,3 +31,5 @@ class RedisConfig:
 
     NF_SENTINEL_KEY: str = "__NF__"
     NF_SENTINEL_VALUE: str = "-1"
+
+    DISTRIBUTED_LOCK: str = "__LOCK__"

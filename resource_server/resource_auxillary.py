@@ -490,3 +490,20 @@ def admin_cache_precheck(
         raise Conflict("A request for this action is already enqueued")
 
     return forum_mapping, user_mapping, latest_intent
+
+def distributed_create_db(
+    client: Redis,
+    sqlalchemy: SQLAlchemy
+) -> None:
+    lock: str = f"{RedisConfig.DISTRIBUTED_LOCK}:DB_INIT"
+    lock_set = client.set(lock,
+                          1,
+                          ex=RedisConfig.TTL_STRONG,
+                          nx=True)
+    if not lock_set:
+        return
+    
+    try:
+        sqlalchemy.create_all()
+    finally:
+        client.delete(lock)

@@ -1,9 +1,7 @@
 import os
 import threading
 from flask import Flask
-from flask.cli import with_appcontext
 from flask_migrate import Migrate
-from traceback import format_exc
 
 from sqlalchemy import text
 from resource_server.flask_config import FLASK_CONFIG_OBJECT
@@ -11,10 +9,10 @@ from auxillary.utils import generic_error_handler
 from types import MappingProxyType
 from typing import Any, Final
 import toml
-import click
 
 from resource_server import blueprints
-from resource_server.models import db, CONFIG
+from resource_server.models import db
+from resource_server.resource_auxillary import distributed_create_db
 
 __all__ = ("APP_CTX_CWD", "create_app")
 
@@ -66,6 +64,7 @@ def create_app() -> Flask:
     from resource_server.external_extensions import RedisInterface
     from resource_server.resource_auxillary import update_jwks, background_poll
 
+    assert RedisInterface
     background_poller: threading.Thread = threading.Thread(
         target=background_poll,
         daemon=True,
@@ -95,6 +94,8 @@ def create_app() -> Flask:
 
     # Load genres into config
     with app.app_context():
+        distributed_create_db(client=RedisInterface,
+                              sqlalchemy=db)
         with db.engine.connect() as conn:
             GENRES: tuple[tuple[str, str]] = tuple(conn.execute(text("SELECT _name, id FROM genres;")).fetchall())  # type: ignore[reportAssignmentType]
             app.config["GENRES"] = MappingProxyType(
