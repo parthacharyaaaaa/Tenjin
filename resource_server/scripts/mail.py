@@ -168,6 +168,9 @@ if __name__ == "__main__":
     redis_config_kwargs: dict[str, Any] = toml.load(f=redis_config_fpath)
     redis_config_kwargs.update(
         {
+            "host": os.environ["BATCH_SERVER_REDIS_HOST"],
+            "port": os.environ["BATCH_SERVER_REDIS_PORT"],
+            "db": os.environ["BATCH_SERVER_REDIS_DB"],
             "username": os.environ["BATCH_SERVER_REDIS_USERNAME"],
             "password": os.environ["BATCH_SERVER_REDIS_PASSWORD"],
         }
