@@ -62,6 +62,7 @@ def update_jwks(
     jwks_poll_cooldown: int = 300,
     timeout: int = 3,
     max_global_mapping_polls: int = 10,
+    max_tries: int = 10
 ) -> dict[str, str | int]:
     """Fetch JWKS from auth server and load any new key mappings into currentMapping"""
     res: int = interface.set("JWKS_POLL_LOCK", 1, ex=lock_ttl, nx=True)
@@ -72,7 +73,15 @@ def update_jwks(
             time.sleep(timeout * 2)
             max_global_mapping_polls -= 1  # Ideally, the lock would always be released no matter what, but a fallback to stop the thread from waiting forever wouldn't hurt
 
-        global_mapping: dict[str, str] = poll_global_key_mapping(interface=interface)
+        for t in range(max_tries):
+            try:
+                global_mapping: dict[str, str] = poll_global_key_mapping(interface=interface)
+                break
+            except (ConnectionError, RuntimeError):
+                time.sleep(timeout)
+                pass
+        else:
+            raise RuntimeError("Failed to concile JWKS")
 
         return {kid: pub_pem.encode() for kid, pub_pem in global_mapping.items()}
 
