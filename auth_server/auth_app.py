@@ -33,9 +33,16 @@ def create_app() -> Flask:
     auth_app.config["PUBLIC_PEM_DIRECTORY"] = os.path.join(
         auth_app.static_folder, "keys"
     )
+    if not os.path.isdir(auth_app.config["PUBLIC_PEM_DIRECTORY"]):
+        os.mkdir(auth_app.config["PUBLIC_PEM_DIRECTORY"])
+
+
     auth_app.config["PRIVATE_PEM_DIRECTORY"] = os.path.join(
         auth_app.instance_path, "keys"
-    )  # NOTE: Is this really safe?
+    )
+
+    if not os.path.isdir(auth_app.config["PRIVATE_PEM_DIRECTORY"]):
+        os.mkdir(auth_app.config["PRIVATE_PEM_DIRECTORY"])
 
     # Error handler
     auth_app.register_error_handler(Exception, generic_error_handler)
