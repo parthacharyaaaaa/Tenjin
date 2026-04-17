@@ -49,6 +49,7 @@ def create_app() -> Flask:
             "db": os.environ["RESOURCE_SERVER_REDIS_DB"],
             "username": os.environ["RESOURCE_SERVER_REDIS_USERNAME"],
             "password": os.environ["RESOURCE_SERVER_REDIS_PASSWORD"],
+            "decode_responses": True
         }
     )  # Inject login credentials through env
 

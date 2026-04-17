@@ -75,7 +75,7 @@ def update_jwks(
 
         for t in range(max_tries):
             try:
-                global_mapping: dict[str, str] = poll_global_key_mapping(interface=interface)
+                global_mapping: dict[str, bytes] = poll_global_key_mapping(interface=interface)
                 break
             except (ConnectionError, RuntimeError):
                 time.sleep(timeout)
@@ -83,7 +83,7 @@ def update_jwks(
         else:
             raise RuntimeError("Failed to concile JWKS")
 
-        return {kid: pub_pem.encode() for kid, pub_pem in global_mapping.items()}
+        return {kid: pub_pem.decode() for kid, pub_pem in global_mapping.items()}
 
     try:
         print("[JWKS POLLER] Attempting to update JWKS...")
