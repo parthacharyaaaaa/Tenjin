@@ -40,7 +40,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Sequence
 
-ANIMES_BLUEPRINT: Blueprint = Blueprint("animes", "animes", url_prefix="/animes")
+ANIMES_BLUEPRINT: Blueprint = Blueprint("animes", "animes")
 
 RANDOMIZER_SQL = (
     select(Anime)
