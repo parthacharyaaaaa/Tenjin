@@ -1,8 +1,8 @@
 FROM redis:7-alpine
 
-RUN mkdir -p /data /var/log/redis /usr/local/etc/redis
+RUN mkdir -p /data /var/log/redis /usr/local/etc/redis /var/lib/redis
 
-RUN chown -R redis:redis /data /var/log/redis /usr/local/etc/redis
+RUN chown -R redis:redis /data /var/log/redis /usr/local/etc/redis /var/lib/redis
 
 WORKDIR /data
 
