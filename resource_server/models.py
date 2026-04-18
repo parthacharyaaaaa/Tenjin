@@ -36,13 +36,6 @@ __all__ = (
     "Comment",
 )
 
-CONFIG: dict = {}
-with open(
-    os.path.join(os.path.dirname(__file__), "instance", "config.json"), "rb"
-) as configFile:
-    CONFIG = orjson.loads(configFile.read())
-    METADATA = MetaData(naming_convention=CONFIG["database"]["naming_convention"])
-
 db = SQLAlchemy()
 
 ### Deserialization functions commonly used in all models

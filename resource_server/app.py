@@ -1,9 +1,7 @@
 import os
 import threading
 from flask import Flask
-from flask.cli import with_appcontext
 from flask_migrate import Migrate
-from traceback import format_exc
 
 from sqlalchemy import text
 from resource_server.flask_config import FLASK_CONFIG_OBJECT
@@ -11,10 +9,9 @@ from auxillary.utils import generic_error_handler
 from types import MappingProxyType
 from typing import Any, Final
 import toml
-import click
 
-from resource_server import blueprints
-from resource_server.models import db, CONFIG
+from resource_server.models import db
+from resource_server.resource_auxillary import distributed_create_db
 
 __all__ = ("APP_CTX_CWD", "create_app")
 
@@ -39,7 +36,7 @@ def create_app() -> Flask:
 
     ### Redis ###
     redis_config_fpath: str = os.path.join(
-        APP_CTX_CWD, "config", os.environ["redis_config_filename"]
+        APP_CTX_CWD, "config", os.environ["REDIS_CONFIG_FILENAME"]
     )
     if not os.path.isfile(redis_config_fpath):
         raise FileNotFoundError("Redis config toml file not found")
@@ -47,8 +44,12 @@ def create_app() -> Flask:
     redis_config_kwargs: dict[str, Any] = toml.load(f=redis_config_fpath)
     redis_config_kwargs.update(
         {
+            "host": os.environ["RESOURCE_SERVER_REDIS_HOST"],
+            "port": os.environ["RESOURCE_SERVER_REDIS_PORT"],
+            "db": os.environ["RESOURCE_SERVER_REDIS_DB"],
             "username": os.environ["RESOURCE_SERVER_REDIS_USERNAME"],
             "password": os.environ["RESOURCE_SERVER_REDIS_PASSWORD"],
+            "decode_responses": True
         }
     )  # Inject login credentials through env
 
@@ -56,90 +57,11 @@ def create_app() -> Flask:
 
     init_redis(**redis_config_kwargs)
 
-    ### Blueprints registaration ###
-    for blueprint, prefix in blueprints.PREFIX_MAPPING.items():
-        app.register_blueprint(
-            blueprint, url_prefix="/".join((app.config["APPLICATION_ROOT"], prefix))
-        )
-
-    ### Additional CLI commands ###
-    # Instantiate the database
-    @app.cli.command("make_db")
-    @click.option("--force", is_flag=True, help="Force DB creation even if it exists")
-    @with_appcontext
-    def make_db(force: bool) -> None:
-        query = text(
-            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
-        )
-        with db.engine.connect() as conn:
-            res_tables = conn.execute(query).fetchall()
-
-            if res_tables and not force:
-                exit(0)
-
-            tables: set = set(map(lambda x: x[0], res_tables))
-            db.create_all()
-            print(f"[{app.name}]: Creating database{' again...' if tables else '...'}")
-            try:
-                new_tables: set = set(
-                    map(lambda x: x[0], conn.execute(query).fetchall())
-                )
-                insertion_difference: set = new_tables - tables
-                print(
-                    f"[{app.name}]: Tables Created: {', '.join(list(insertion_difference)) or 'None. You just wasted your time.'}"
-                )
-            except:
-                print(format_exc())
-                print(f"[{app.name}]: Failed database operation")
-                exit(500)
-
-    # Test whether all entities specified in config.json under 'database' are present in the actual database instance
-    @app.cli.command("validate_db")
-    @with_appcontext
-    def validate_db():
-        public_tables = [
-            item
-            for entities in CONFIG["database"]["entities"].values()
-            for item in entities
-        ]
-        with app.app_context():
-            try:
-                with db.engine.connect() as connection:
-                    tables = connection.execute(
-                        text(
-                            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
-                        )
-                    ).fetchall()
-                    tables = list(map(lambda x: x[0], tables))
-            except Exception as e:
-                print(f"[{app.name}]: Error in processing database schema")
-                print(
-                    f"[{app.name}]: Error Context\n===========================================\n{format_exc()}\n==========================================="
-                )
-                print(f"[{app.name}] Exiting app factory...")
-                exit(500)
-
-            for table in public_tables:
-                try:
-                    tables.remove(table)
-                except ValueError:
-                    print(
-                        f"[{app.name}]: Mismatch in schema definition, table '{table}' specified in database configuration but not found in database"
-                    )
-                    print(f"[{app.name}] Exiting app factory...")
-                    exit(500)
-
-            if tables:
-                print(
-                    f"[{app.name}]: Mismatch in schema definition, tables {','.join(table for table in tables)} not specified in database configuration but found in database"
-                )
-                print(f"[{app.name}] Exiting app factory...")
-                exit(500)
-
     from resource_server.redis_config import RedisConfig
     from resource_server.external_extensions import RedisInterface
     from resource_server.resource_auxillary import update_jwks, background_poll
 
+    assert RedisInterface
     background_poller: threading.Thread = threading.Thread(
         target=background_poll,
         daemon=True,
@@ -167,8 +89,17 @@ def create_app() -> Flask:
 
     background_poller.start()
 
+    ### Blueprints registaration ###
+    from resource_server import blueprints
+    for blueprint, prefix in blueprints.PREFIX_MAPPING.items():
+        app.register_blueprint(
+            blueprint, url_prefix="/".join((app.config["APPLICATION_ROOT"], prefix))
+        )
+
     # Load genres into config
     with app.app_context():
+        distributed_create_db(client=RedisInterface,
+                              sqlalchemy=db)
         with db.engine.connect() as conn:
             GENRES: tuple[tuple[str, str]] = tuple(conn.execute(text("SELECT _name, id FROM genres;")).fetchall())  # type: ignore[reportAssignmentType]
             app.config["GENRES"] = MappingProxyType(

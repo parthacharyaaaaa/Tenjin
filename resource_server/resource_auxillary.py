@@ -62,6 +62,7 @@ def update_jwks(
     jwks_poll_cooldown: int = 300,
     timeout: int = 3,
     max_global_mapping_polls: int = 10,
+    max_tries: int = 10
 ) -> dict[str, str | int]:
     """Fetch JWKS from auth server and load any new key mappings into currentMapping"""
     res: int = interface.set("JWKS_POLL_LOCK", 1, ex=lock_ttl, nx=True)
@@ -72,9 +73,17 @@ def update_jwks(
             time.sleep(timeout * 2)
             max_global_mapping_polls -= 1  # Ideally, the lock would always be released no matter what, but a fallback to stop the thread from waiting forever wouldn't hurt
 
-        global_mapping: dict[str, str] = poll_global_key_mapping(interface=interface)
+        for t in range(max_tries):
+            try:
+                global_mapping: dict[str, bytes] = poll_global_key_mapping(interface=interface)
+                break
+            except (ConnectionError, RuntimeError):
+                time.sleep(timeout)
+                pass
+        else:
+            raise RuntimeError("Failed to concile JWKS")
 
-        return {kid: pub_pem.encode() for kid, pub_pem in global_mapping.items()}
+        return {kid: pub_pem.decode() for kid, pub_pem in global_mapping.items()}
 
     try:
         print("[JWKS POLLER] Attempting to update JWKS...")
@@ -490,3 +499,20 @@ def admin_cache_precheck(
         raise Conflict("A request for this action is already enqueued")
 
     return forum_mapping, user_mapping, latest_intent
+
+def distributed_create_db(
+    client: Redis,
+    sqlalchemy: SQLAlchemy
+) -> None:
+    lock: str = f"{RedisConfig.DISTRIBUTED_LOCK}:DB_INIT"
+    lock_set = client.set(lock,
+                          1,
+                          ex=RedisConfig.TTL_STRONG,
+                          nx=True)
+    if not lock_set:
+        return
+    
+    try:
+        sqlalchemy.create_all()
+    finally:
+        client.delete(lock)

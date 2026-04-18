@@ -43,7 +43,6 @@ class FlaskConfig:
 
         # Addressing metadata
         PORT: int = int(os.environ["PORT"])
-        HOST: str = os.environ["HOST"]
 
         # Resource server metadata
         RESOURCE_SERVER_ORIGIN = os.environ["RS_DOMAIN"].lower()

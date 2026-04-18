@@ -17,8 +17,3 @@ ENV PYTHONPATH="/src:/src/resource_server"
 
 COPY resource_server /src/resource_server
 WORKDIR /src/resource_server
-
-ENV FLASK_PORT=8081
-EXPOSE 8081
-
-CMD [ "gunicorn", "-c", "/src/resource_server/gunicorn.conf.py", "app:create_app()"]

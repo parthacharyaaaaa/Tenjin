@@ -31,6 +31,6 @@ PREFIX_MAPPING: Final[MappingProxyType[Blueprint, URLPrefixes]] = MappingProxyTy
         FORUMS_BLUEPRINT: URLPrefixes.FORUNS,
         MISC_BLUEPRINT: URLPrefixes.MISC,
         POSTS_BLUEPRINT: URLPrefixes.POSTS,
-        USERS_BLUEPRINT: URLPrefixes.USERS,
+        ANIMES_BLUEPRINT: URLPrefixes.ANIMES,
     }
 )

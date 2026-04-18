@@ -1,4 +1,33 @@
 name: tenjin
+
+x-worker-base: &worker-base
+  build:
+    context: .
+    dockerfile: worker.Dockerfile
+  environment:
+    - WORKER_POSTGRES_USERNAME=${WORKER_POSTGRES_USERNAME}
+    - WORKER_POSTGRES_PASSWORD=${WORKER_POSTGRES_PASSWORD}
+  env_file:
+    - path: resource_server/.env
+      required: true
+  networks:
+    - redis_network
+    - postgres_network
+  depends_on:
+    - resource_server
+    - resource_server_redis
+    - resource_server_database
+  restart: 'on-failure:5'
+
+x-redis-base: &redis-base
+  build:
+    context: .
+    dockerfile: redis.Dockerfile
+  networks:
+    - redis_network
+  restart: unless-stopped
+  command: redis-server /usr/local/etc/redis/redis.conf
+
 services:
   # Edge APIs
   resource_server:
@@ -9,6 +38,7 @@ services:
     depends_on:
     - resource_server_database
     - resource_server_redis
+    - auth_server
 
     networks:
       - postgres_network
@@ -17,56 +47,37 @@ services:
     ports:
       - '8081:8081'
 
-  x-resource-base: &resource-base
-    build:
-      context: .
-      dockerfile: resource_server/Dockerfile
-    environment:
-      - WORKER_POSTGRES_USERNAME=${WORKER_POSTGRES_USERNAME}
-      - WORKER_POSTGRES_PASSWORD=${WORKER_POSTGRES_PASSWORD}
-    env_file:
-      - path: resource_server/.env
-        required: true
-    networks:
-      - redis_network
-      - postgres_network
-    depends_on:
-      - resource_server
-      - resource_server_redis
-      - resource_server_database
-    restart: unless-stopped
-
   mail:
-    <<: *resource-base
-    command: uv run python scripts/mail.py
+    <<: *worker-base
+    command: python scripts/mail.py
 
   database_counter_worker:
-    <<: *resource-base
-    command: uv run python scripts/batch_workers/counter.py
+    <<: *worker-base
+    command: python scripts/batch_workers/counter.py
 
   database_insert_worker:
-    <<: *resource-base
-    command: uv run python scripts/batch_workers/insert.py
+    <<: *worker-base
+    command: python scripts/batch_workers/insert.py
 
   database_soft_delete_worker:
-    <<: *resource-base
-    command: uv run python scripts/batch_workers/soft_delete.py
+    <<: *worker-base
+    command: python scripts/batch_workers/soft_delete.py
 
   database_user_activity_delete:
-    <<: *resource-base
-    command: uv run python scripts/batch_workers/user_activity_delete.py
+    <<: *worker-base
+    command: python scripts/batch_workers/user_activity_delete.py
 
   database_user_activity_recovery_worker:
-    <<: *resource-base
-    command: uv run python scripts/batch_workers/user_activity_recovery.py
+    <<: *worker-base
+    command: python scripts/batch_workers/user_activity_recovery.py
 
   database_weak_delete_worker:
-    <<: *resource-base
-    command: uv run python scripts/batch_workers/weak_delete.py
+    <<: *worker-base
+    command: python scripts/batch_workers/weak_delete.py
 
   database_weak_inserts_worker:
-    <<: *resource-base
-    command: uv run python scripts/batch_workers/weak_inserts.py
+    <<: *worker-base
+    command: python scripts/batch_workers/weak_inserts.py
 
   auth_server:
     build:
@@ -75,7 +86,7 @@ services:
     
     depends_on:
       - auth_server_synced_store
-      - auth_server_key_store
+      - auth_server_token_store
       - auth_server_database
 
     networks:
@@ -88,10 +99,7 @@ services:
   # Note: Redis images use a config file with logfile as an empty string (stdout)
 
   resource_server_redis:
-    image: 'redis:8'
-    command: redis-server /usr/local/etc/redis/redis.conf
-    networks:
-      - redis_network
+    <<: *redis-base
 
     volumes:
     - ./resource_server/instance/redis.conf:/usr/local/etc/redis/redis.conf:ro
@@ -99,21 +107,15 @@ services:
     - resource_redis_volume:/var/lib/redis:rw
 
   auth_server_synced_store:
-    image: 'redis:8'
-    command: redis-server /usr/local/etc/redis/redis.conf
-    networks:
-      - redis_network
+    <<: *redis-base
     
     volumes:
       - ./auth_server/instance/redis.conf:/usr/local/etc/redis/redis.conf:ro
       - ./auth_server/instance/users.acl:/usr/local/etc/redis/users.acl:ro
       - auth_syncedstore_volume:/var/lib/redis:rw
 
-  auth_server_key_store:
-    image: 'redis:8'
-    command: redis-server /usr/local/etc/redis/redis.conf
-    networks:
-      - redis_network
+  auth_server_token_store:
+    <<: *redis-base
 
     volumes:
       - ./auth_server/instance/redis.conf:/usr/local/etc/redis/redis.conf:ro
@@ -127,7 +129,7 @@ services:
       - postgres_network
     volumes:
       - resource_server_data:/var/lib/postgresql/data
-      - ./resource_server/authz/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./resource_server/authz/init.sh:/docker-entrypoint-initdb.d/init.sh
     environment:
       - POSTGRES_USER=${MASTER_RESOURCE_SERVER_POSTGRES_USERNAME}
       - POSTGRES_PASSWORD=${MASTER_RESOURCE_SERVER_POSTGRES_PASSWORD}
@@ -150,13 +152,14 @@ services:
       - postgres_network
     volumes:
       - auth_server_data:/var/lib/postgresql/data
-      - ./auth_server/authz/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./auth_server/authz/init.sh:/docker-entrypoint-initdb.d/init.sh
     environment:
       - POSTGRES_USER=${MASTER_AUTH_SERVER_POSTGRES_USERNAME}
       - POSTGRES_PASSWORD=${MASTER_AUTH_SERVER_POSTGRES_PASSWORD}
       - POSTGRES_DB=${AUTH_DB_NAME}
       - AUTH_SERVER_POSTGRES_USERNAME=${AUTH_SERVER_POSTGRES_USERNAME}
       - AUTH_SERVER_POSTGRES_PASSWORD=${AUTH_SERVER_POSTGRES_PASSWORD}
+      - AUTH_DB_NAME=${AUTH_DB_NAME}
     restart: 'on-failure:3'
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${MASTER_AUTH_SERVER_POSTGRES_USERNAME}"]

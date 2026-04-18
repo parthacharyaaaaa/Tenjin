@@ -3,7 +3,7 @@ import multiprocessing
 from dotenv import load_dotenv
 
 if not load_dotenv(
-    dotenv_path=os.path.join(os.path.dirname(__file__), ".env"),
+    dotenv_path=os.path.join(os.path.dirname(__file__), "auth.env"),
     verbose=True,
     override=True,
 ):

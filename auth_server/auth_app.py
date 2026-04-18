@@ -33,9 +33,16 @@ def create_app() -> Flask:
     auth_app.config["PUBLIC_PEM_DIRECTORY"] = os.path.join(
         auth_app.static_folder, "keys"
     )
+    if not os.path.isdir(auth_app.config["PUBLIC_PEM_DIRECTORY"]):
+        os.mkdir(auth_app.config["PUBLIC_PEM_DIRECTORY"])
+
+
     auth_app.config["PRIVATE_PEM_DIRECTORY"] = os.path.join(
         auth_app.instance_path, "keys"
-    )  # NOTE: Is this really safe?
+    )
+
+    if not os.path.isdir(auth_app.config["PRIVATE_PEM_DIRECTORY"]):
+        os.mkdir(auth_app.config["PRIVATE_PEM_DIRECTORY"])
 
     # Error handler
     auth_app.register_error_handler(Exception, generic_error_handler)
@@ -55,12 +62,18 @@ def create_app() -> Flask:
     # Inject Redis username and password from env
     redis_config_kwargs["synced_store"].update(
         {
+            "host" : os.environ["AUTH_WORKER_SYNC_REDIS_HOST"],
+            "port" : os.environ["AUTH_WORKER_SYNC_REDIS_PORT"],
+            "db" : os.environ["AUTH_WORKER_SYNC_REDIS_DB"],
             "username": os.environ["AUTH_WORKER_REDIS_USERNAME"],
             "password": os.environ["AUTH_WORKER_REDIS_PASSWORD"],
         }
     )
     redis_config_kwargs["token_store"].update(
         {
+            "host" : os.environ["AUTH_WORKER_TOKEN_REDIS_HOST"],
+            "port" : os.environ["AUTH_WORKER_TOKEN_REDIS_PORT"],
+            "db" : os.environ["AUTH_WORKER_TOKEN_REDIS_DB"],
             "username": os.environ["AUTH_WORKER_REDIS_USERNAME"],
             "password": os.environ["AUTH_WORKER_REDIS_PASSWORD"],
         }
