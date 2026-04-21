@@ -1,4 +1,5 @@
 from auth_server.token_manager import tokenManager
+from auth_server.tokens import TokenType, StandardRefreshTokenClaims
 from auxillary.decorators import enforce_json
 from flask import (
     Blueprint,
@@ -13,11 +14,11 @@ from flask import (
 from werkzeug.exceptions import BadRequest, Unauthorized
 import requests
 import time
-from typing import Any
 from hashlib import sha256
 
 auth: Blueprint = Blueprint("auth", "auth", url_prefix="/auth")
 
+assert tokenManager
 
 @auth.after_request
 def enforceMinCSP(response):
@@ -71,7 +72,7 @@ def login():
     familyID: str = sha256(f"{sub}:{sid}".encode()).hexdigest()
     aToken: str = tokenManager.issueAccessToken(sub, sid, familyID)
     rToken: str = tokenManager.issueRefreshToken(
-        sub, sid, familyID=familyID, reissuance=False
+        sub, sid, familyID=familyID
     )
 
     epoch: float = time.time()
@@ -131,7 +132,7 @@ def register():
     familyID: str = sha256(f"{sub}:{sid}".encode()).hexdigest()
     aToken: str = tokenManager.issueAccessToken(sub, sid, familyID)
     rToken: str = tokenManager.issueRefreshToken(
-        sub, sid, familyID=familyID, reissuance=False
+        sub, sid, familyID=familyID
     )
     epoch: float = time.time()
     response: Response = jsonify(
@@ -202,8 +203,10 @@ def purgeFamily():
         raise BadRequest(f"Logout requires a refresh token to be provided")
 
     try:
-        refreshToken: dict[str, Any] = tokenManager.decodeToken(
-            encodedRefreshToken, tType="refresh", options={"verify_nbf": False}
+        refreshToken: StandardRefreshTokenClaims = tokenManager.decodeToken(
+            encodedRefreshToken,
+            TokenType.StandardRefresh,
+            options={"verify_nbf": False}
         )
         tokenManager.invalidateFamily(refreshToken["fid"])
     except:
