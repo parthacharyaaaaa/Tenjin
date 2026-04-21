@@ -8,7 +8,7 @@ from typing import TypeAlias
 import jwt.exceptions as JWTexc
 from auth_server.key_container import KeyMetadata
 from flask_sqlalchemy import SQLAlchemy
-from flask import Response
+from flask import Flask, Response
 from sqlalchemy import select
 from auth_server.models import KeyData
 import threading
@@ -27,6 +27,7 @@ class TokenManager:
         self,
         interface: Redis,
         synced_store: Redis,
+        app: Flask,
         db: SQLAlchemy,
         active_kid: str,
         active_key_metadata: KeyMetadata,
@@ -79,6 +80,7 @@ class TokenManager:
             raise ConnectionError()
 
         self.db = db
+        self.app = app
 
         # Initialize universal headers, common to all tokens issued in any context
         uHeader = {"typ": typ, "alg": alg}
@@ -281,7 +283,7 @@ class TokenManager:
 
         self.key_mapping[kid] = newKeyData
 
-    def fetch_unexpired_key(self, kid: str) -> KeyMetadata:
+    def fetch_unexpired_key(self, kid: str) -> KeyMetadata|None:
         """Fetch a non-expired key from the database
         Args:
             kid: Key ID to query the database for
@@ -294,11 +296,12 @@ class TokenManager:
             return None
 
         # Try to fetch a valid key with this KID
-        key: KeyData = self.db.session.execute(
-            select(KeyData).where(
-                (KeyData.kid == kid) & (KeyData.expired_at.isnot(None))
-            )
-        ).scalar_one_or_none()
+        with self.app.app_context():
+            key: KeyData|None = self.db.session.execute(
+                select(KeyData).where(
+                    (KeyData.kid == kid) & (KeyData.expired_at.isnot(None))
+                )
+            ).scalar_one_or_none()
         if not key:
             # Announce non existence to other workers in case they also receive this invalid key
             self._SyncedStore.set(f"invalid_key:{kid}", 1, self.announcement_duration)
@@ -398,6 +401,7 @@ def init_token_manager(
     redisinterface: Redis,
     syncedstore: Redis,
     database: SQLAlchemy,
+    app: Flask,
     **kwargs,
 ) -> None:
     global tokenManager
@@ -405,6 +409,7 @@ def init_token_manager(
         interface=redisinterface,
         synced_store=syncedstore,
         db=database,
+        app=app,
         verification_keys_mapping=vk_mapping,
         active_kid=active_key_id,
         active_key_metadata=active_keydata,

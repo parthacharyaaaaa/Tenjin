@@ -147,6 +147,7 @@ def create_app() -> Flask:
             RedisInterface,
             SyncedStore,
             db,
+            auth_app
         )
 
     # Current worker process is the master, and is responsible for handling JWKS and key synchronization on bootup
@@ -355,6 +356,7 @@ def create_app() -> Flask:
                 RedisInterface,
                 SyncedStore,
                 db,
+                auth_app
             )
             print(f'[AUTH {getattr(auth_app, "pid")}] Master process bootup complete!')
         except Exception as e:
