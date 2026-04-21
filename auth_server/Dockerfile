@@ -22,4 +22,4 @@ WORKDIR /src/auth_server
 ENV FLASK_PORT=8080
 EXPOSE 8080
 
-CMD [ "gunicorn", "-c", "/src/auth_server/gunicorn.conf.py", "auth_app:create_app()"]
+CMD [ "gunicorn", "-c", "/src/auth_server/gunicorn.conf.py", "--log-level", "debug", "--access-logfile", "-", "--error-logfile", "-", "--capture-output", "auth_app:create_app()"]

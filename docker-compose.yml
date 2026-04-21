@@ -92,6 +92,11 @@ services:
     networks:
       - postgres_network
       - redis_network
+
+    volumes:
+      - 'auth_server_instance_fs_data:/src/auth_server/instance'
+      - 'auth_server_static_fs_data:/src/auth_server/static'
+    
     ports:
       - '8080:8080'
 
@@ -145,6 +150,10 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+    # Debug
+    ports:
+      - '10000:5432'
       
   auth_server_database:
     image: 'postgres:17.9'
@@ -167,6 +176,10 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    
+    # Debug
+    ports:
+      - '10001:5432'      
 
 networks:
   postgres_network:
@@ -174,6 +187,8 @@ networks:
 
 volumes:
   auth_server_data:
+  auth_server_instance_fs_data:
+  auth_server_static_fs_data:
   resource_server_data:
   auth_keystore_volume:
   auth_syncedstore_volume:
