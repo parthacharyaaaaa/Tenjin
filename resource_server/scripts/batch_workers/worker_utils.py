@@ -80,13 +80,14 @@ def initialize_environment(worker_id: int) -> tuple[connection, Redis]:
 
     return conn, redis
 
+
 def fetchPKColNames(cursor: pg.extensions.cursor, tableName: str) -> list[str]:
     cursor.execute(
         """
                     SELECT
                     kcu.column_name AS key_column
                     FROM information_schema.table_constraints tco
-                    JOIN information_schema.key_column_usage kcu 
+                    JOIN information_schema.key_column_usage kcu
                     ON kcu.constraint_name = tco.constraint_name
                     AND kcu.constraint_schema = tco.constraint_schema
                     WHERE tco.constraint_type = 'PRIMARY KEY'
@@ -114,11 +115,11 @@ def getDtypes(
         )
     else:
         cursor.execute(
-            """SELECT c.data_type 
+            """SELECT c.data_type
                        FROM information_schema.columns c
                        WHERE c.table_name = %s
-                       AND c.column_name NOT IN 
-                       (SELECT a.attname FROM pg_index i 
+                       AND c.column_name NOT IN
+                       (SELECT a.attname FROM pg_index i
                        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
                        JOIN pg_class t ON t.oid = i.indrelid
                        WHERE i.indisprimary AND t.relname = %s);""",
@@ -138,11 +139,11 @@ def get_column_types(
         )
     else:
         cursor.execute(
-            """SELECT c.data_type 
+            """SELECT c.data_type
                        FROM information_schema.columns c
                        WHERE c.table_name = %s
-                       AND c.column_name NOT IN 
-                       (SELECT a.attname FROM pg_index i 
+                       AND c.column_name NOT IN
+                       (SELECT a.attname FROM pg_index i
                        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
                        JOIN pg_class t ON t.oid = i.indrelid
                        WHERE i.indisprimary AND t.relname = %s);""",

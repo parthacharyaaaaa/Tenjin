@@ -1,4 +1,5 @@
-'''Helper functions'''
+"""Helper functions"""
+
 import datetime
 import hashlib
 from flask import jsonify
@@ -11,86 +12,122 @@ import ujson
 from redis import Redis
 from redis.exceptions import RedisError
 
-def generic_error_handler(e : Exception):
-    '''Return a JSON formatted error message to the client
-    
+
+def generic_error_handler(e: Exception):
+    """Return a JSON formatted error message to the client
+
     Contents of the error message are determined by the following:
     - e.message: Error message
     - e.kwargs: Additonal information about the error, attached to HTTP body
     - e.header_kwargs: Additional information (e.g. server's state, broader context of the error message), attached in HTTP headers
 
     All of these attributes are dictionaries and are **optional**, since in their absense a generic HTTP 500 code is thrown
-    '''
+    """
     print(traceback.format_exc())
-    response = jsonify({"message" : getattr(e, "description", "An error occured"),
-                        **getattr(e, "kwargs", {})})
-    if header_kwargs:=getattr(e, "header_kwargs", None):
+    response = jsonify(
+        {
+            "message": getattr(e, "description", "An error occured"),
+            **getattr(e, "kwargs", {}),
+        }
+    )
+    if header_kwargs := getattr(e, "header_kwargs", None):
         response.headers.update(header_kwargs)
 
     return response, getattr(e, "code", 500)
 
+
 def to_base64url(n: int, length: int = 32) -> str:
-    return base64.urlsafe_b64encode(n.to_bytes(length, byteorder='big')).rstrip(b'=').decode('utf-8')
+    return (
+        base64.urlsafe_b64encode(n.to_bytes(length, byteorder="big"))
+        .rstrip(b"=")
+        .decode("utf-8")
+    )
+
 
 def from_base64url(b64url: str) -> int:
     # Add back padding if needed
-    padding = '=' * ((4 - len(b64url) % 4) % 4)
+    padding = "=" * ((4 - len(b64url) % 4) % 4)
     padded_b64url = b64url + padding
     byte_data = base64.urlsafe_b64decode(padded_b64url)
-    return int.from_bytes(byte_data, byteorder='big')
+    return int.from_bytes(byte_data, byteorder="big")
 
 
-def hash_password(password: str, salt: bytes|None = None) -> tuple[bytes, bytes]:
-    '''
+def hash_password(password: str, salt: bytes | None = None) -> tuple[bytes, bytes]:
+    """
     Produce a password salt and hash from a given string
-    
-    returns: tuple[password-hash, salt]'''
+
+    returns: tuple[password-hash, salt]"""
     if salt is None:
         salt = os.urandom(16)
-    passwordHash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
+    passwordHash = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000)
     return passwordHash, salt
 
-def verify_password(password: str, password_hash : bytes, salt: bytes) -> bool:
-    '''
-    Match a given password and salt with a hashed password
-    '''
-    return hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000) == password_hash
-  
-def rediserialize(mapping: dict, 
-                  typeMapping: Mapping[type, Callable] = {NoneType : lambda _ : '',
-                                                          bool: lambda b : int(b), 
-                                                          datetime.datetime: lambda dt : dt.isoformat(),
-                                                          list: lambda l : ':'.join(l)}) -> dict:
-    '''Serialize a Python dictionary to a Redis hashmap'''
-    return {k : typeMapping.get(type(v), lambda x : x)(v) for k,v in mapping.items()}
 
-def pyserialize(mapping: dict[str, str], deserialize_mapping: dict[str, type[Any]], strict: bool = False) -> dict[str, Any]:
-    '''Deserialize a Redis hashmap back to its original Python model's __json_like__() dictionary
+def verify_password(password: str, password_hash: bytes, salt: bytes) -> bool:
+    """
+    Match a given password and salt with a hashed password
+    """
+    return (
+        hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000) == password_hash
+    )
+
+
+def rediserialize(
+    mapping: dict,
+    typeMapping: Mapping[type, Callable] = {
+        NoneType: lambda _: "",
+        bool: lambda b: int(b),
+        datetime.datetime: lambda dt: dt.isoformat(),
+        list: lambda l: ":".join(l),
+    },
+) -> dict:
+    """Serialize a Python dictionary to a Redis hashmap"""
+    return {k: typeMapping.get(type(v), lambda x: x)(v) for k, v in mapping.items()}
+
+
+def pyserialize(
+    mapping: dict[str, str],
+    deserialize_mapping: dict[str, type[Any]],
+    strict: bool = False,
+) -> dict[str, Any]:
+    """Deserialize a Redis hashmap back to its original Python model's __json_like__() dictionary
     Args:
         mapping: Redis hashmap to deserialize
         deserialize_mapping: Mapping of key values and their intended types. These types can also be lambda functions to allow for casts more complex than constructor calls
         strict: If True, mapping and deserialize mapping must have the same keys
-        
+
     Raises:
         ValueError: If strict is True and mappings don't match
         ValueError: Intended function cannot cast the string to the intended Python type
     Returns:
         Deserialized Python dictionary
-    '''
+    """
     if strict and set(mapping.keys()) != set(deserialize_mapping.keys()):
-        raise ValueError('Mappings do not match')
-    return {key : deserialize_mapping[key](value) if key in deserialize_mapping else value for key, value in mapping.items()}
+        raise ValueError("Mappings do not match")
+    return {
+        key: deserialize_mapping[key](value) if key in deserialize_mapping else value
+        for key, value in mapping.items()
+    }
+
 
 def genericDBFetchException():
-    '''Generic fetch exception handler'''
+    """Generic fetch exception handler"""
     exc = Exception()
-    exc.__setattr__("description", 'An error occurred when fetching this resource')
+    exc.__setattr__("description", "An error occurred when fetching this resource")
     raise exc
 
-def consult_cache(interface: Redis, cache_key: str,
-                  ttl_cap: int, ttl_promotion: int = 15, ttl_ephemeral: int = 15, 
-                  dtype: Literal['mapping', 'string'] = 'mapping', nf_repr: str = '__NF__', suppress_errors: bool = True) -> dict|None:
-    '''
+
+def consult_cache(
+    interface: Redis,
+    cache_key: str,
+    ttl_cap: int,
+    ttl_promotion: int = 15,
+    ttl_ephemeral: int = 15,
+    dtype: Literal["mapping", "string"] = "mapping",
+    nf_repr: str = "__NF__",
+    suppress_errors: bool = True,
+) -> dict | None:
+    """
     Consult Redis cache and attempt to fetch the given key.
     Args:
         interface: Redis instance connected to cache server
@@ -104,11 +141,11 @@ def consult_cache(interface: Redis, cache_key: str,
 
     Returns
         {"__NF__" : True} if nf_repr found, None on cache miss/suppressed failure, and cached mapping on cache hits
-    '''
+    """
     res: list[Any] = [None]
     try:
         with interface.pipeline(transaction=False) as pipe:
-            if dtype == 'mapping':
+            if dtype == "mapping":
                 pipe.hgetall(cache_key)
             else:
                 pipe.get(cache_key)
@@ -117,32 +154,37 @@ def consult_cache(interface: Redis, cache_key: str,
 
         if not res[0]:  # Cache miss
             return None
-        
+
         if nf_repr in res[0] or res[0] == nf_repr:
             # cache_key is guaranteed to not exist anywhere, reannounce non-existence of key and then return None
-            if dtype == 'mapping':
+            if dtype == "mapping":
                 with interface.pipeline() as pipe:
-                    pipe.hset(cache_key, mapping={nf_repr:-1})
+                    pipe.hset(cache_key, mapping={nf_repr: -1})
                     pipe.expire(cache_key, ttl_ephemeral)
                     pipe.execute()
             else:
                 interface.set(cache_key, nf_repr, ttl_ephemeral)
-            return {'__NF__':True}
-        
+            return {"__NF__": True}
+
         # Cache hit, and resource actually exists
-        cachedResource: dict = res[0] if dtype == 'mapping' else ujson.loads(res[0])
+        cachedResource: dict = res[0] if dtype == "mapping" else ujson.loads(res[0])
         cachedTTL: int = res[1]
 
-        interface.expire(cache_key, min(ttl_cap, ttl_promotion+cachedTTL))
+        interface.expire(cache_key, min(ttl_cap, ttl_promotion + cachedTTL))
         return cachedResource
 
     except RedisError as e:
         if suppress_errors:
             return None
         else:
-            raise RuntimeError('Unsuppressed cache failure') from e
-        
-def fetch_group_resources(interface: Redis, group_key: str, element_dtype: Literal['mapping', 'string'] = 'mapping') -> tuple[tuple[Any]|None, bool, str|None]:
+            raise RuntimeError("Unsuppressed cache failure") from e
+
+
+def fetch_group_resources(
+    interface: Redis,
+    group_key: str,
+    element_dtype: Literal["mapping", "string"] = "mapping",
+) -> tuple[tuple[Any] | None, bool, str | None]:
     """
     Fetches all values for keys stored in a Redis iterable (list, set, or sorted set) for cursor based pagination. If any key is missing from the cache, the function returns `None` to indicate a cache miss. It is upto the caller to reconcile cache misses
     Args:
@@ -155,44 +197,74 @@ def fetch_group_resources(interface: Redis, group_key: str, element_dtype: Liter
     """
     keys: list[str] = interface.lrange(group_key, 0, -1)
 
-    if not keys: return None, True, None
+    if not keys:
+        return None, True, None
 
-    if '__NF__' in keys: return None, True, None
+    if "__NF__" in keys:
+        return None, True, None
 
-    cursor: str|None = None
+    cursor: str | None = None
     end: bool = False
     removed_entries: list[int] = []
     for idx, entry in enumerate(keys):
-        if entry.startswith('cursor:'): 
-            cursor = entry.split(":")[1]    # Fetch next cursor for pagination if available
+        if entry.startswith("cursor:"):
+            cursor = entry.split(":")[
+                1
+            ]  # Fetch next cursor for pagination if available
             removed_entries.append(entry)
-        elif entry.startswith("end:"): 
+        elif entry.startswith("end:"):
             removed_entries.append(entry)
-            end = entry.split(":")[1]        # Fetch flag to indiciate pagination end
-    for entry in removed_entries: keys.remove(entry)   # Remove cursor and end keys from group keys
+            end = entry.split(":")[1]  # Fetch flag to indiciate pagination end
+    for entry in removed_entries:
+        keys.remove(entry)  # Remove cursor and end keys from group keys
 
-    end = False if end.lower() == 'false' else True      # Cast from Redis string to Python bool
-    resources: list[dict[str, Any]|str] = []
+    end = (
+        False if end.lower() == "false" else True
+    )  # Cast from Redis string to Python bool
+    resources: list[dict[str, Any] | str] = []
     with interface.pipeline() as pipe:
         for key in keys:
-            if element_dtype == 'mapping':
+            if element_dtype == "mapping":
                 pipe.hgetall(key)
             else:
                 pipe.get(key)
         resources = pipe.execute()
 
     # Account for sentinel mappings
-    if element_dtype == 'mapping':
-        return tuple(map(lambda resource : None if '__NF__' in resource else resource, resources)), end, cursor
-    
-    return tuple(map(lambda resource : None if resource == '__NF__' else ujson.loads(resource), resources)), end, cursor
+    if element_dtype == "mapping":
+        return (
+            tuple(
+                map(
+                    lambda resource: None if "__NF__" in resource else resource,
+                    resources,
+                )
+            ),
+            end,
+            cursor,
+        )
 
-def promote_group_ttl(interface: Redis, group_key: str, promotion_ttl: int = 15, max_ttl: int = 20*60) -> None:
+    return (
+        tuple(
+            map(
+                lambda resource: (
+                    None if resource == "__NF__" else ujson.loads(resource)
+                ),
+                resources,
+            )
+        ),
+        end,
+        cursor,
+    )
+
+
+def promote_group_ttl(
+    interface: Redis, group_key: str, promotion_ttl: int = 15, max_ttl: int = 20 * 60
+) -> None:
     keys: list[str] = interface.lrange(group_key, 0, -1)
 
     if not keys:
         return
-    
+
     # Fetch TTLs
     with interface.pipeline() as pipe:
         pipe.ttl(group_key)
@@ -200,7 +272,7 @@ def promote_group_ttl(interface: Redis, group_key: str, promotion_ttl: int = 15,
             pipe.ttl(key)
 
         ttl_list: list[int] = pipe.execute()
-    
+
     # Promote TTls
     with interface.pipeline() as pipe:
         pipe.expire(group_key, min(max_ttl, ttl_list[0] + promotion_ttl))
@@ -209,23 +281,35 @@ def promote_group_ttl(interface: Redis, group_key: str, promotion_ttl: int = 15,
             pipe.expire(key, min(max_ttl, ttl_list[idx] + promotion_ttl))
         pipe.execute()
 
-def cache_grouped_resource(interface: Redis, group_key: str, resource_type: str, resources: Mapping[str|int, dict], weak_ttl: int, strong_ttl: int, cursor: str, end: bool, member_dtype: Literal['mapping', 'string'] = 'mapping') -> None:
-    member_key_template: str = resource_type+':{}'
-    if member_dtype not in ('mapping', 'string'): raise ValueError()
+
+def cache_grouped_resource(
+    interface: Redis,
+    group_key: str,
+    resource_type: str,
+    resources: Mapping[str | int, dict],
+    weak_ttl: int,
+    strong_ttl: int,
+    cursor: str,
+    end: bool,
+    member_dtype: Literal["mapping", "string"] = "mapping",
+) -> None:
+    member_key_template: str = resource_type + ":{}"
+    if member_dtype not in ("mapping", "string"):
+        raise ValueError()
 
     with interface.pipeline() as pipe:
         pipe.expire(group_key, weak_ttl)
         for resourceID, resourceMapping in resources.items():
             key_name: str = member_key_template.format(resourceID)
-            pipe.rpush(group_key, key_name)     # Push key name for resource into list
+            pipe.rpush(group_key, key_name)  # Push key name for resource into list
 
             # Cache individual resource separately
-            if member_dtype == 'mapping':
+            if member_dtype == "mapping":
                 pipe.hset(key_name, mapping=resourceMapping)
             else:
                 pipe.set(key_name, ujson.dumps(resourceMapping))
             pipe.expire(key_name, strong_ttl)
-        
-        pipe.rpush(group_key, f'cursor:{cursor}')
-        pipe.rpush(group_key, f'end:{end}')
+
+        pipe.rpush(group_key, f"cursor:{cursor}")
+        pipe.rpush(group_key, f"end:{end}")
         pipe.execute()

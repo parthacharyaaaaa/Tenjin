@@ -49,7 +49,7 @@ def create_app() -> Flask:
             "db": os.environ["RESOURCE_SERVER_REDIS_DB"],
             "username": os.environ["RESOURCE_SERVER_REDIS_USERNAME"],
             "password": os.environ["RESOURCE_SERVER_REDIS_PASSWORD"],
-            "decode_responses": True
+            "decode_responses": True,
         }
     )  # Inject login credentials through env
 
@@ -91,6 +91,7 @@ def create_app() -> Flask:
 
     ### Blueprints registaration ###
     from resource_server import blueprints
+
     for blueprint, prefix in blueprints.PREFIX_MAPPING.items():
         app.register_blueprint(
             blueprint, url_prefix="/".join((app.config["APPLICATION_ROOT"], prefix))
@@ -98,8 +99,7 @@ def create_app() -> Flask:
 
     # Load genres into config
     with app.app_context():
-        distributed_create_db(client=RedisInterface,
-                              sqlalchemy=db)
+        distributed_create_db(client=RedisInterface, sqlalchemy=db)
         with db.engine.connect() as conn:
             GENRES: tuple[tuple[str, str]] = tuple(conn.execute(text("SELECT _name, id FROM genres;")).fetchall())  # type: ignore[reportAssignmentType]
             app.config["GENRES"] = MappingProxyType(

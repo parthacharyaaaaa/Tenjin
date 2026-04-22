@@ -15,15 +15,18 @@ from werkzeug.exceptions import InternalServerError
 
 from auth_server.key_container import KeyMetadata
 from auth_server.models import KeyData
-from auth_server.tokens import (StandardAccessTokenClaims,
-                                StandardRefreshTokenClaims,
-                                TokenType)
+from auth_server.tokens import (
+    StandardAccessTokenClaims,
+    StandardRefreshTokenClaims,
+    TokenType,
+)
 
 from flask_sqlalchemy import SQLAlchemy
 from flask import Flask, Response
 
 # Type aliases
 tokenPair: TypeAlias = tuple[str, str]
+
 
 class TokenManager:
     """### Class for issuing and verifying access and refresh tokens assosciated with authentication and authorization"""
@@ -38,7 +41,7 @@ class TokenManager:
         db: SQLAlchemy,
         active_kid: str,
         active_key_metadata: KeyMetadata,
-        verification_keys_mapping: dict[str, KeyMetadata]|None = None,
+        verification_keys_mapping: dict[str, KeyMetadata] | None = None,
         refreshLifetime: int = 60 * 60 * 3,
         accessLifetime: int = 60 * 30,
         alg: str = "ES256",
@@ -109,25 +112,18 @@ class TokenManager:
         threading.Thread(target=self.poll_store, daemon=True).start()
 
     @overload
-    def decodeToken(self,
-                    token: str,
-                    tType: Literal[TokenType.StandardAccess],
-                    **kwargs
+    def decodeToken(
+        self, token: str, tType: Literal[TokenType.StandardAccess], **kwargs
     ) -> StandardAccessTokenClaims: ...
 
     @overload
-    def decodeToken(self,
-                    token: str,
-                    tType: Literal[TokenType.StandardRefresh],
-                    **kwargs
+    def decodeToken(
+        self, token: str, tType: Literal[TokenType.StandardRefresh], **kwargs
     ) -> StandardRefreshTokenClaims: ...
 
     def decodeToken(
-        self,
-        token: str,
-        tType: TokenType = TokenType.StandardAccess,
-        **kwargs
-    ) -> StandardAccessTokenClaims|StandardRefreshTokenClaims:
+        self, token: str, tType: TokenType = TokenType.StandardAccess, **kwargs
+    ) -> StandardAccessTokenClaims | StandardRefreshTokenClaims:
         """Decodes token, raises error in case of failure
         Args:
         token: The token to decode
@@ -166,8 +162,7 @@ class TokenManager:
         Args:
         rToken: JWT encoded refresh token"""
         decodedRefreshToken: StandardRefreshTokenClaims = self.decodeToken(
-            rToken,
-            tType=TokenType.StandardRefresh
+            rToken, tType=TokenType.StandardRefresh
         )
 
         refreshToken = self.issueRefreshToken(
@@ -183,7 +178,7 @@ class TokenManager:
         accessToken: str = self.issueAccessToken(
             decodedRefreshToken["sub"],
             decodedRefreshToken["sid"],
-            decodedRefreshToken["fid"]
+            decodedRefreshToken["fid"],
         )
 
         return refreshToken, accessToken
@@ -195,7 +190,7 @@ class TokenManager:
         familyID: str,
         additionalClaims: Optional[dict] = None,
         jti: Optional[str] = None,
-        exp: Optional[int|float] = None,
+        exp: Optional[int | float] = None,
     ) -> str:
         """
         #### Issue a new refresh token
@@ -212,11 +207,11 @@ class TokenManager:
         """
         if familyID:
             # Check for replay attack
-            key: bytes|None = self._TokenStore.lindex(f"FID:{familyID}", 0)   # type: ignore[reportAssignmentType]
+            key: bytes | None = self._TokenStore.lindex(f"FID:{familyID}", 0)  # type: ignore[reportAssignmentType]
             if not key:
                 self.invalidateFamily(familyID)
                 raise ValueError(f"Token family {familyID} is invalid or empty")
-            
+
             key_metadata = key.split(b":")
             if str(key_metadata[0]) != jti or float(key_metadata[1]) != exp:
                 self.invalidateFamily(familyID)
@@ -279,7 +274,7 @@ class TokenManager:
     def shiftTokenWindow(self, fID: str) -> None:
         """Revokes the oldest refresh token from a family if capacity is reached, without invalidating the entire family"""
         try:
-            llen: int = self._TokenStore.llen(f"FID:{fID}") # type: ignore[reportAssignmentType]
+            llen: int = self._TokenStore.llen(f"FID:{fID}")  # type: ignore[reportAssignmentType]
 
             if llen == 0:
                 return
@@ -308,7 +303,7 @@ class TokenManager:
 
         self.key_mapping[kid] = newKeyData
 
-    def fetch_unexpired_key(self, kid: str) -> KeyMetadata|None:
+    def fetch_unexpired_key(self, kid: str) -> KeyMetadata | None:
         """Fetch a non-expired key from the database
         Args:
             kid: Key ID to query the database for
@@ -316,15 +311,15 @@ class TokenManager:
         Returns:
             Fetched key casted to KeyMetadata, None if not found"""
         # Check synced store for an invalid key announcement for this key
-        invalidKey: bytes|None = self._SyncedStore.get(f"invalid_key:{kid}")    # type: ignore[reportAssignmentType]
+        invalidKey: bytes | None = self._SyncedStore.get(f"invalid_key:{kid}")  # type: ignore[reportAssignmentType]
         if invalidKey:
             return None
 
         # Try to fetch a valid key with this KID
         with self.app.app_context():
-            key: KeyData|None = self.db.session.execute(
+            key: KeyData | None = self.db.session.execute(
                 select(KeyData).where(
-                    (KeyData.kid == kid) & (KeyData.expired_at.isnot(None)) # type: ignore[reportAttributeAccessIssue]
+                    (KeyData.kid == kid) & (KeyData.expired_at.isnot(None))  # type: ignore[reportAttributeAccessIssue]
                 )
             ).scalar_one_or_none()
         if not key:
@@ -332,7 +327,11 @@ class TokenManager:
             self._SyncedStore.set(f"invalid_key:{kid}", 1, self.announcement_duration)
             return None
         return KeyMetadata(
-            key.public_pem, key.private_pem, key.alg, key.epoch.timestamp(), key.rotated_out_at.timestamp()
+            key.public_pem,
+            key.private_pem,
+            key.alg,
+            key.epoch.timestamp(),
+            key.rotated_out_at.timestamp(),
         )
 
     def invalidate_key(self, kid: str) -> None:
@@ -346,7 +345,7 @@ class TokenManager:
         """Check synced store to keep local keys updated with global keys. Intended to be run as a non-blocking, background task upon instantiation"""
         while True:
             try:
-                valid_keys: list[bytes]|None = self._SyncedStore.lrange("VALID_KEYS", 0, -1)    # type: ignore[reportAssignmentType]
+                valid_keys: list[bytes] | None = self._SyncedStore.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
 
                 if not valid_keys:
                     raise RuntimeError("Valid keys list empty or not found")
@@ -363,7 +362,7 @@ class TokenManager:
                     print(
                         f"[BACKGROUND POLLER]: Adding verification new key {new_key}..."
                     )
-                    result: KeyMetadata|None = self.fetch_unexpired_key(new_key)
+                    result: KeyMetadata | None = self.fetch_unexpired_key(new_key)
                     if result:
                         self.update_keydata(
                             new_key, result, active=not bool(result.ROTATED_AT)
@@ -416,7 +415,7 @@ class TokenManager:
             )
 
 
-tokenManager: TokenManager|None = None
+tokenManager: TokenManager | None = None
 
 
 def init_token_manager(

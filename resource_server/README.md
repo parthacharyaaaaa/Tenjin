@@ -2,25 +2,25 @@
 1) [System Behaviour](#system-behaviour)
    ---
    i) [Event Streams](#1-event-streams)
-   
+
    ii) [Intents](#2-intents)
-   
+
    iii) [Pagination](#3-pagination)
-   
+
    iv) [RTBF](#4-rtbf---right-to-be-forgotten)
-   
+
 2) [API Reference](#api-reference)
    ---
    i) [Blueprint: users](#blueprint-users-url-prefix-users)
-   
+
    ii) [Blueprint: posts](#blueprint-posts-url-prefix-posts)
-   
+
    iii) [Blueprint: comments](#blueprint-comments-url-prefix-comments)
-   
+
    iv) [Blueprint: animes](#blueprint-animes-url-prefix-animes)
-   
+
    v) [Blueprint: forums](#blueprint-forums-url-prefix-forums)
-   
+
    vi) [Blueprint: misc](#blueprint-misc)
 
 
@@ -59,7 +59,7 @@ Suppose we have a POST endpoint that upvotes a given post. Since we have removed
 
 Now let's assume that both of our workers for these 2 actions will perform the next DB flush in 10 seconds. Now, in these 10 seconds, what's stopping the client from sending another request to upvote this same post? If they do, our fancy little endpoint now faces **prosaic doom**.
 This is because there exists no way for us to check if the user has upvoted the same post prior to this request, since the assosciated `post_votes` entry is not on disk yet. What happens now is that the endpoint wrongly allows this request to change application state, and performs the same pair of operations twice.
-Even if the worker responsible for flushing `WEAK_INSERTIONS` stream entries into disk has an `ON CONFLICT DO NOTHING` clause to silently fail this duplicate record, what about our shared counter? The worker here simply flushes a number into a record based on a primary key. 
+Even if the worker responsible for flushing `WEAK_INSERTIONS` stream entries into disk has an `ON CONFLICT DO NOTHING` clause to silently fail this duplicate record, what about our shared counter? The worker here simply flushes a number into a record based on a primary key.
 
 **2.2) Working:** We hence need an ephemeral way to maintain consistency until the database reaches a consistent state. This mechanism needs to be instantly consistent and distributed among all workers (And once again, Redis proves why it is the best human invention since wifi).
 
@@ -71,7 +71,7 @@ Let's go back to our previous example, but this time our endpoint uses Redis as 
    i) Checks Redis for intent -> Miss
    ii) Falls back to a DB read -> No previous vote found
    iii) Incrmeents global counter for this post's score
-   iv) Enqueues a new event into `WEAK_INSERTIONS` 
+   iv) Enqueues a new event into `WEAK_INSERTIONS`
    v) **202 Accepted** <- Server
 3) Client sends identical request again right afterwards
 4) Endpoint processes this request
@@ -85,7 +85,7 @@ Let's go back to our previous example, but this time our endpoint uses Redis as 
    ii) Check this flag's value for a conflicting value (which in this case would be 1)
    iii) Value does not match, hence this request can be allowed
    iv) **202 Accepted** <- Server
-   
+
   This mechanism not only keeps state consistent, but also allows clients to change their latest actions without requiring the database to first process their previous action
 
 ### 3) Pagination
@@ -150,7 +150,7 @@ Create a new user account
 ```
 #### Internal Working:
 **This endpoint is meant to work in coordination with the auth server as part of the authentication flow.**
-All actions are performed completely synchronously, this includes any possible hard deletions of soft deleted user records. This happens when a soft deleted account with the same username, email address, or both exists. There can also be 2 accounts, one with the email address and the other with the username. This violates the unique contraint on the `users` table on usernames and emails (individual, not composite). 
+All actions are performed completely synchronously, this includes any possible hard deletions of soft deleted user records. This happens when a soft deleted account with the same username, email address, or both exists. There can also be 2 accounts, one with the email address and the other with the username. This violates the unique contraint on the `users` table on usernames and emails (individual, not composite).
 
 In these cases, it is acceptable to hard delete these records before their 14 day recovery period to allow a new record with their credentials to be created. The user deletion endpoint explicitly mentions this exception to the recovery policy as well. The provided password is hashed and salted, and the new `users` record is inserted into DB. This all happens synchronously, as I believe actions regarding account creation (and even deletion, password recovery, and so on) are much more time-sensitive and its fine to incur some exceptions to our overall event-driven philosophy.
 
@@ -166,7 +166,7 @@ Status: 201 Created
 ```
 Notice that the `sub` and `sid` keys in the response JSON are public claims in JWTs. This is intended to provide the auth server with the necessary user metadata to issue tokens. Other claims, such as `iat`, `exp`, `jti` are determined by the auth server with no dependencies on the resource server. For token issuance, see the auth server's README or see the `auth_server.token_manager.TokenManager.issueRefreshToken` method.
 
-# 
+#
 ```http
 POST /api/v1/users/login
 ```
@@ -220,7 +220,7 @@ Status: 200 OK
 {
   "message" : "RTBF Enabled"
 }
-OR 
+OR
 {
   "message" : "RTBF Disabled"
 }
@@ -312,7 +312,7 @@ Recover password for an account
 #### Request JSON
 ```json
 {
-  "identity" : "strawhat_1234" 
+  "identity" : "strawhat_1234"
 }
 ```
 #### Internal Working:
@@ -372,7 +372,7 @@ Creates a new post. The request is processed asynchronously via a Redis stream. 
     "body" : "foooooooooo"
 }
 ```
-- Leading and trailing whitespaces are removed from title and body before any validation occurs. 
+- Leading and trailing whitespaces are removed from title and body before any validation occurs.
 
 #### Async effects:
 Upon successful validation, the post is enqueued to the `INSERTIONS` Redis stream.
@@ -394,7 +394,7 @@ Status: 202 Accepted
     "time_posted": "2025-06-18T16:01:26.268528"
 }
 ```
-## 
+##
 
 ```http
 GET /api/v1/posts/<post_id>
@@ -440,7 +440,7 @@ Status: 200 OK
     }
 }
 ```
-# 
+#
 ```http
 PATCH /api/v1/posts/<post_id>
 ```
@@ -452,7 +452,7 @@ Change the body, title, and/or closed status of an existing post. This required 
 #### Internal Working
 Requires atleast one of the mutable attributes of the post to be specified.
 
-Post existence and ownership can very quickly be verified through a single cache query. Only on a cache miss is a DB read performed on `posts` to match the `author_id` column with the JWT's `sid` claim. 
+Post existence and ownership can very quickly be verified through a single cache query. Only on a cache miss is a DB read performed on `posts` to match the `author_id` column with the JWT's `sid` claim.
 
 Upon verification, the changes are persisted to DB through an `UPDATE` query (Although this may be reworked to an asynchronous stream append in the future) and the updated post's public metadata is written in cache.
 
@@ -475,7 +475,7 @@ Status: 200 OK (Subject to possible change to 202 Accepted)
     }
 }
 ```
-# 
+#
 
 ```http
 DELETE /api/v1/posts/<post_id>
@@ -500,7 +500,7 @@ On cache miss, a single DB read needs to be performed to check post status.
 --Note that posts hidden by RTBF can still be deleted.--
 
 After confirming post existence, the second check involves permissions regarding this post (as mentioned above).
-Lastly, a lock is set (with `NX` to avoid races/duplicates) before beginning the actual deletion. 
+Lastly, a lock is set (with `NX` to avoid races/duplicates) before beginning the actual deletion.
 
 Here, the only synchronous action would be the writing of this post's deletion intent into cache
 
@@ -532,7 +532,7 @@ Finally, the lock is released.
 }
 ```
 
-# 
+#
 ```http
 POST /api/v1/posts/<post_id>/votes
 ```
@@ -548,9 +548,9 @@ Cast an upvote or a downvote to a given post
 #### Internal Working
 Cache is initially consulted to verify post existence, as well as to try and check the user's latest intent with the post regarding vote status. This allows quick exits on conflicting intents or post non-existence/deletion.
 
-If cache pre-checks are passed, a lock is set to prevent race conditions and duplicate actions. 
+If cache pre-checks are passed, a lock is set to prevent race conditions and duplicate actions.
 
-In case of partial/full cache misses (post, intent), a single DB read is required. This can either be a simple `SELECT` query for a single resource, or with an additional `OUTER JOIN` clause in case of a complete cache miss. 
+In case of partial/full cache misses (post, intent), a single DB read is required. This can either be a simple `SELECT` query for a single resource, or with an additional `OUTER JOIN` clause in case of a complete cache miss.
 
 Based on previous vote/intent of the user, a delta value is updated to reflect the changes in the post's score when shifting from the user's previous intent to their incoming intent (e.g. A user who has previously downvoted a post may upvote it, in which case the post's score must be updated by 2 and not 1).
 
@@ -569,7 +569,7 @@ Status: 202 Accepted
 }
 ```
 
-# 
+#
 ```http
 DELETE /api/v1/posts/<post_id>/votes
 ```
@@ -583,10 +583,10 @@ Remove a casted vote from a post
 #### Internal Working:
 Cache is initially consulted to try and check the user's latest intent with the post regarding vote status, as well as check post existence.
 
---Note:-- Although a user is not allowed to cast a vote on a non-existing/deleted post, a user is still allowed to remove their vote from a post that is queued for deletion 
+--Note:-- Although a user is not allowed to cast a vote on a non-existing/deleted post, a user is still allowed to remove their vote from a post that is queued for deletion
 
-Similiar to this endpoint's POST counterpart, A lock is set to prevent race conditions and duplicate actions. 
-In case of partial/full cache misses (post, intent), a single DB query is performed similiar to this endpoint's POST method. 
+Similiar to this endpoint's POST counterpart, A lock is set to prevent race conditions and duplicate actions.
+In case of partial/full cache misses (post, intent), a single DB query is performed similiar to this endpoint's POST method.
 
 Based on previous vote/intent of the user, a delta value is updated to reflect the changes in the post's score when shifting from the user's previous intent to their incoming intent (either +1 or -1)
 
@@ -607,7 +607,7 @@ Status: 202 Accepted
 ```
 --delta can be either +1 or -1--
 
-# 
+#
 
 ``` HTTP
 POST /api/v1/posts/<post_id>/saves
@@ -852,7 +852,7 @@ Cache is initially consulted to ensure that this post exists and is not pending 
 }
 ```
 
-# 
+#
 
 ```http
 DELETE /api/v1/comments/<comment_id>
@@ -890,7 +890,7 @@ Status: 202 Accepted
 }
 ```
 
-# 
+#
 
 ```http
 POST /api/v1/comments/<comment_id>/votes
@@ -926,7 +926,7 @@ Status: 202 Accepted
 }
 ```
 
-# 
+#
 
 ```http
 DELETE /api/v1/comments/<comment_id>/votes
@@ -960,7 +960,7 @@ Status: 202 Accepted
 }
 ```
 
-# 
+#
 
 ```http
 POST /api/v1/comments/<comment_id>/report
@@ -1012,7 +1012,7 @@ Status: 202 Accepted
 
 Routes under this blueprint are all concerned with actions regarding the resource `animes`, which is modelled by the `Anime` SQLAlchemy model. Related models include: `AnimeGenre`, `StreamLink`, `AnimeSubscription`.
 
-# 
+#
 
 ### Endpoints
 
@@ -1059,7 +1059,7 @@ Status: 200 OK
     ]
 }
 ```
-# 
+#
 ```http
 GET /api/v1/animes/<anime_id>
 ```
@@ -1104,7 +1104,7 @@ Status: 200 OK
 }
 ```
 
-# 
+#
 
 ```http
 GET /api/v1/animes/random
@@ -1120,7 +1120,7 @@ A global list of random anime IDs is kept in memory. On each request, a random a
 
 #### Response JSON: Same as `GET api/v1/animes/<anime_id>`
 
-# 
+#
 
 ```http
 PATCH /api/v1/animes/<anime_id>/subscribe
@@ -1153,7 +1153,7 @@ Status: 202 Accepted
 }
 ```
 
-# 
+#
 
 ```http
 PATCH /api/v1/animes/<anime_id>/unsubscribe
@@ -1187,7 +1187,7 @@ Status: 202 Accepted
   "message": "unsubscribed!"
 }
 ```
-# 
+#
 
 ```http
 GET /api/v1/animes/<anime_id>/links
@@ -1218,7 +1218,7 @@ Status: 200 OK
 }
 ```
 
-# 
+#
 
 ```http
 GET /api/v1/animes/<anime_id>/forums
@@ -1265,7 +1265,7 @@ Status: 200 OK
   ]
 }
 ```
-# 
+#
 
 ## Blueprint: forums (url prefix: `/forums`)
 Routes under this blueprint are all concerned with actions regarding the resource `forums`, which is modelled by the `Forum` SQLAlchemy model. Related tables: `forum_subscriptions`, `forum_admins`
@@ -1307,7 +1307,7 @@ Status: 200 OK
 }
 ```
 
-# 
+#
 
 ```http
 GET /api/v1/forums/<forum_id>/posts
@@ -1365,7 +1365,7 @@ Status: 200 OK
 }
 ```
 
-# 
+#
 
 ```http
 POST /api/v1/forums
@@ -1402,7 +1402,7 @@ Status: 201 Created
 }
 ```
 
-# 
+#
 
 ```http
 DELETE /api/v1/forums/<forum_id>
@@ -1454,7 +1454,7 @@ Status: 200 OK
 }
 ```
 
-# 
+#
 
 ```http
 PATCH /api/v1/forums/<forum_id>
@@ -1503,7 +1503,7 @@ Status: 200 OK
 }
 ```
 
-# 
+#
 
 ```http
 POST /api/v1/forums/<forum_id>/admins
@@ -1547,7 +1547,7 @@ Status: 201 Created
   "forum": "Chainsaw Manga Fans"
 }
 ```
-# 
+#
 
 ```http
 DELETE /api/v1/forums/<forum_id>/admins
@@ -1591,7 +1591,7 @@ Status: 202 Accepted
   "forum_name": "Chainsaw Manga Fans"
 }
 ```
-# 
+#
 
 ```http
 PATCH /api/v1/forums/<forum_id>/admins
@@ -1631,7 +1631,7 @@ Status: 200 OK
 }
 ```
 
-# 
+#
 
 ```http
 GET /api/v1/forums/<forum_id>/admins
@@ -1694,7 +1694,7 @@ Status: 202 Accepted
 
 Here’s **Batch 3** — the final set of `forums` endpoints.
 
-# 
+#
 
 ```http
 DELETE /api/v1/forums/<forum_id>/unsubscribe
@@ -1724,7 +1724,7 @@ Status: 202 Accepted
 }
 ```
 
-# 
+#
 
 ```http
 PATCH /api/v1/forums/<forum_id>/highlight-post
@@ -1756,7 +1756,7 @@ Status: 200 OK
 }
 ```
 
-# 
+#
 
 ```http
 DELETE /api/v1/forums/<forum_id>/highlight-post

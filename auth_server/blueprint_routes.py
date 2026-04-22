@@ -20,6 +20,7 @@ auth: Blueprint = Blueprint("auth", "auth", url_prefix="/auth")
 
 assert tokenManager
 
+
 @auth.after_request
 def enforceMinCSP(response):
     if response:
@@ -71,9 +72,7 @@ def login():
     sub, sid = str(rsResponse.pop("sub")), int(rsResponse.pop("sid"))
     familyID: str = sha256(f"{sub}:{sid}".encode()).hexdigest()
     aToken: str = tokenManager.issueAccessToken(sub, sid, familyID)
-    rToken: str = tokenManager.issueRefreshToken(
-        sub, sid, familyID=familyID
-    )
+    rToken: str = tokenManager.issueRefreshToken(sub, sid, familyID=familyID)
 
     epoch: float = time.time()
     response: Response = jsonify(
@@ -131,9 +130,7 @@ def register():
     sub, sid = str(rsResponse.pop("sub")), int(rsResponse.pop("sid"))
     familyID: str = sha256(f"{sub}:{sid}".encode()).hexdigest()
     aToken: str = tokenManager.issueAccessToken(sub, sid, familyID)
-    rToken: str = tokenManager.issueRefreshToken(
-        sub, sid, familyID=familyID
-    )
+    rToken: str = tokenManager.issueRefreshToken(sub, sid, familyID=familyID)
     epoch: float = time.time()
     response: Response = jsonify(
         {
@@ -206,7 +203,7 @@ def purgeFamily():
         refreshToken: StandardRefreshTokenClaims = tokenManager.decodeToken(
             encodedRefreshToken,
             TokenType.StandardRefresh,
-            options={"verify_nbf": False}
+            options={"verify_nbf": False},
         )
         tokenManager.invalidateFamily(refreshToken["fid"])
     except:

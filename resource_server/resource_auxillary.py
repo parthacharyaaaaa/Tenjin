@@ -62,7 +62,7 @@ def update_jwks(
     jwks_poll_cooldown: int = 300,
     timeout: int = 3,
     max_global_mapping_polls: int = 10,
-    max_tries: int = 10
+    max_tries: int = 10,
 ) -> dict[str, str | int]:
     """Fetch JWKS from auth server and load any new key mappings into currentMapping"""
     res: int = interface.set("JWKS_POLL_LOCK", 1, ex=lock_ttl, nx=True)
@@ -75,11 +75,12 @@ def update_jwks(
 
         for t in range(max_tries):
             try:
-                global_mapping: dict[str, bytes] = poll_global_key_mapping(interface=interface)
+                global_mapping: dict[str, bytes] = poll_global_key_mapping(
+                    interface=interface
+                )
                 break
             except (ConnectionError, RuntimeError):
                 time.sleep(timeout)
-                pass
         else:
             raise RuntimeError("Failed to concile JWKS")
 
@@ -500,18 +501,13 @@ def admin_cache_precheck(
 
     return forum_mapping, user_mapping, latest_intent
 
-def distributed_create_db(
-    client: Redis,
-    sqlalchemy: SQLAlchemy
-) -> None:
+
+def distributed_create_db(client: Redis, sqlalchemy: SQLAlchemy) -> None:
     lock: str = f"{RedisConfig.DISTRIBUTED_LOCK}:DB_INIT"
-    lock_set = client.set(lock,
-                          1,
-                          ex=RedisConfig.TTL_STRONG,
-                          nx=True)
+    lock_set = client.set(lock, 1, ex=RedisConfig.TTL_STRONG, nx=True)
     if not lock_set:
         return
-    
+
     try:
         sqlalchemy.create_all()
     finally:

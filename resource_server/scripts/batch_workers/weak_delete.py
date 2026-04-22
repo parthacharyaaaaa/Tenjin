@@ -13,8 +13,9 @@ from psycopg2.extras import execute_batch
 
 from resource_server.scripts.batch_workers.worker_utils import (
     getDtypes,
-    initialize_environment    
+    initialize_environment,
 )
+
 
 def main() -> None:
     ID: Final[int] = os.getpid()

@@ -164,7 +164,7 @@ Status: 200 OK
 }
 ```
 
-# 
+#
 ```http
 POST /api/v1/auth/login
 ```
@@ -299,7 +299,7 @@ POST /api/v1/cmd/admins/login
 }
 ```
 #### Working
-It is important to note that this endpoint also calls `report_suspicious_activity` on admin accounts being locked, or on incorrect passwords. However, the `force_logout` arg is set to False in these cases. 
+It is important to note that this endpoint also calls `report_suspicious_activity` on admin accounts being locked, or on incorrect passwords. However, the `force_logout` arg is set to False in these cases.
 Upon proper verification (account exists, is unlocked, and passwords match), a session key is made from this admin's id as `session:id`. Redis is consulted to check whether this admin has an active session or not. If found, the session is terminated and `report_suspicious_activity` is called.
 
 A newly created session is created as a Redis hashmap with the following claims:
