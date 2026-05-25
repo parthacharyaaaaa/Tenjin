@@ -33,7 +33,7 @@ dependencies = [
     "psycopg2-binary==2.9.10",
     "pycparser==2.22",
     "pyjwt==2.9.0",
-    "python-dotenv==1.0.1",
+    "python-dotenv==1.2.2",
     "pyyaml==6.0.2",
     "redis==5.2.1",
     "referencing==0.36.2",
