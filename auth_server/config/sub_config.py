@@ -1,5 +1,5 @@
 from typing import Annotated
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 from pydantic.networks import IPvAnyAddress
 
 from auth_server.config import utils
@@ -42,11 +42,21 @@ class AdminConfigModel(BaseModel):
 
 
 class SAConfigModel(BaseModel):
+    _SQLALCHEMY_DATABASE_URI: str = PrivateAttr(
+        "postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}"
+    )
     SQLALCHEMY_POOL_SIZE: Annotated[int, Field(ge=1)]
     SQLALCHEMY_MAX_OVERFLOW: Annotated[int, Field(ge=0)]
     SQLALCHEMY_POOL_RECYCLE: Annotated[int, Field(ge=0)]
     SQLALCHEMY_POOL_TIMEOUT: Annotated[int, Field(ge=0)]
     SQLALCHEMY_TRACK_MODIFICATIONS: Annotated[bool, Field(default=False)]
+
+    def derive_sqlalchemy_uri(
+        self, username: str, password: str, host: str, port: int, database: str
+    ) -> str:
+        return self._SQLALCHEMY_DATABASE_URI.format(
+            username=username, password=password, host=host, port=port, databse=database
+        )
 
 
 class DatabaseConfigModel(BaseModel):
