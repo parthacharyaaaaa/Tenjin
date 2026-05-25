@@ -18,9 +18,8 @@ from psycopg2.extras import execute_batch
 
 from redis import exceptions as redisExceptions
 
-from resource_server.scripts.batch_workers.worker_utils import (
-    initialize_environment
-)
+from resource_server.scripts.batch_workers.worker_utils import initialize_environment
+
 
 def main() -> None:
     ID: Final[int] = os.getpid()

@@ -111,7 +111,7 @@ if __name__ == "__main__":
                 """
                              SELECT id FROM forums
                              INNER JOIN forum_admins fa ON fa.forum_id = id AND fa.role = 'owner'
-                             INNER JOIN users ON users.id = fa.user_id AND users.time_deleted < %s 
+                             INNER JOIN users ON users.id = fa.user_id AND users.time_deleted < %s
                              """,
                 vars=(USER_AUDIT_THRESHOLD,),
             )

@@ -5,7 +5,7 @@ from sqlalchemy.sql import text
 from sqlalchemy.dialects.postgresql import TIMESTAMP, BYTEA, ENUM
 from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, NUMERIC, TEXT
 
-import orjson, os
+import orjson
 from enum import Enum
 from datetime import datetime
 from typing import Any

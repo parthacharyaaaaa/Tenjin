@@ -13,7 +13,7 @@ from resource_server.scripts.batch_workers.worker_utils import (
     MAPPED_DTYPES,
     batch_cache_write,
     get_column_types,
-    initialize_environment
+    initialize_environment,
 )
 
 from auxillary.utils import rediserialize

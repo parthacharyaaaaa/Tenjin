@@ -18,6 +18,7 @@ from redis import exceptions as redisExceptions
 
 from resource_server.scripts.batch_workers.worker_utils import initialize_environment
 
+
 def main() -> None:
     ID: Final[int] = os.getpid()
     CONNECTION, interface = initialize_environment(worker_id=ID)

@@ -11,8 +11,9 @@ from psycopg2.extras import execute_values
 
 from resource_server.scripts.batch_workers.worker_utils import (
     getDtypes,
-    initialize_environment    
+    initialize_environment,
 )
+
 
 def main() -> None:
     ID: Final[int] = os.getpid()
@@ -173,6 +174,7 @@ def main() -> None:
             query_groups.clear()
             # Good night >:3
             sleep(wait)
+
 
 if __name__ == "__main__":
     main()

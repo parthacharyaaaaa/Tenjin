@@ -1,4 +1,20 @@
+import base64
+import ecdsa
+import os
+import secrets
+import time
+import ujson
+from datetime import datetime
+from typing import Any
+
 from flask import Blueprint, current_app, jsonify, g, url_for
+
+from redis.exceptions import RedisError
+
+from sqlalchemy import select, update, insert, func
+from sqlalchemy.sql import and_
+from sqlalchemy.exc import SQLAlchemyError
+
 from auth_server.redis_manager import SyncedStore
 from auxillary.decorators import enforce_json
 from auxillary.utils import (
@@ -12,6 +28,12 @@ from auth_server.auth_auxillary import (
     admin_only,
     fetch_valid_keys,
 )
+from auth_server.models import db, Admin, KeyData
+from auth_server.keygen import generate_ecdsa_pair, write_ecdsa_pair, update_jwks
+from auth_server.key_container import KeyMetadata
+from auth_server.token_manager import tokenManager
+
+from werkzeug import Response
 from werkzeug.exceptions import (
     BadRequest,
     InternalServerError,
@@ -20,24 +42,9 @@ from werkzeug.exceptions import (
     Conflict,
     Unauthorized,
 )
-from auth_server.models import db, Admin, KeyData
-from auth_server.keygen import generate_ecdsa_pair, write_ecdsa_pair, update_jwks
-from auth_server.key_container import KeyMetadata
-from auth_server.token_manager import tokenManager
-import secrets
-import time
-from werkzeug import Response
-from datetime import datetime
-import base64
-import ujson
-import ecdsa
-import os
-from typing import Any
 
-from sqlalchemy import select, update, insert, func
-from sqlalchemy.exc import SQLAlchemyError
-
-from redis.exceptions import RedisError
+assert SyncedStore
+assert tokenManager
 
 cmd: Blueprint = Blueprint("cmd", "cmd", url_prefix="/cmd")
 
@@ -52,9 +59,9 @@ def admin_login() -> tuple[Response, int]:
         raise BadRequest("Password and identity missing in JSON")
 
     try:
-        admin: Admin = db.session.execute(
+        admin: Admin | None = db.session.execute(
             select(Admin).where(
-                (Admin.username == identity) & (Admin.time_deleted == None)
+                and_(Admin.username == identity, Admin.time_deleted == None)
             )
         ).scalar_one_or_none()
 
@@ -71,6 +78,7 @@ def admin_login() -> tuple[Response, int]:
     except SQLAlchemyError:
         genericDBFetchException()
 
+    assert admin
     if not verify_password(password, admin.password_hash, admin.password_salt):
         report_suspicious_activity(admin.id, "Incorrect password", force_logout=False)
         raise Unauthorized("Incorrect passwword")
@@ -78,7 +86,7 @@ def admin_login() -> tuple[Response, int]:
     # Exists in DB, check SyncedStore to see if session is already active
     sessionKey: str = f"admin:{admin.id}"
     try:
-        adminSession: dict = SyncedStore.hgetall(sessionKey)
+        adminSession: dict[str, str] = SyncedStore.hgetall(sessionKey)  # type: ignore[reportAssignmentType]
 
         # Single sign-in policy, invalidate existing session and add entry in logs
         if adminSession:
@@ -137,7 +145,7 @@ def admin_delete() -> tuple[Response, int]:
         raise BadRequest("ID must be provided for deletion")
 
     try:
-        admin: Admin = db.session.execute(
+        admin: Admin | None = db.session.execute(
             select(Admin).where((Admin.id == purgeID) & (Admin.time_deleted == None))
         ).scalar_one_or_none()
         if not admin:
@@ -182,18 +190,18 @@ def admin_refresh() -> tuple[Response, int]:
             "Maximum session reiterations reached, please reauthenticate to be assigned a fresh session"
         )
 
-    actualDigest: bytes = SyncedStore.hget(adminKey, "revival_digest")
-    if not actualDigest:
+    actualDigestBytes: bytes = SyncedStore.hget(adminKey, "revival_digest")  # type: ignore[reportAssignmentType]
+    if not actualDigestBytes:
         SyncedStore.delete(adminKey)
         raise InternalServerError(
             "An error occured in verifying revival digests. Please reuthenticate"
         )
 
-    if actualDigest == b"__NF__":
+    if actualDigestBytes == b"__NF__":
         SyncedStore.delete(adminKey)
         raise Conflict("Maximum session reiterations reached")
 
-    actualDigest: str = actualDigest.decode()
+    actualDigest: str = actualDigestBytes.decode()
     if actualDigest != revivalDigest:
         report_suspicious_activity(
             g.SESSION_TOKEN["admin_id"], "Invalid session revival digest"
@@ -210,7 +218,7 @@ def admin_refresh() -> tuple[Response, int]:
         if newIteration == current_app.config["MAX_SESSION_ITERATIONS"]
         else "__END__"
     )
-    newSessionMapping: dict = {
+    newSessionMapping: dict[str, str | float] = {
         "admin_id": g.SESSION_TOKEN["admin_id"],
         "session_id": newSessionID,
         "session_iteration": newIteration,
@@ -254,20 +262,24 @@ def admin_lock() -> tuple[Response, int]:
         raise BadRequest("Invalid admin ID provided")
 
     try:
-        admin: Admin = db.session.execute(
+        admin: Admin | None = db.session.execute(
             select(Admin).where(Admin.id == target_id).with_for_update()
         ).scalar_one_or_none()
         if not admin:
             raise NotFound(f"No admin with id {target_id} could be found")
         if admin.locked:
             conflict: Conflict = Conflict("Admin account is already locked")
-            conflict.kwargs = {
-                "links": {
-                    "unlock admin account": {
-                        "_href": url_for(".admin_unlock", _external=True)
+            setattr(
+                conflict,
+                "kwargs",
+                {
+                    "links": {
+                        "unlock admin account": {
+                            "_href": url_for(".admin_unlock", _external=True)
+                        }
                     }
-                }
-            }
+                },
+            )
             raise conflict
         db.session.execute(
             update(Admin).where(Admin.id == target_id).values(locked=True)
@@ -293,21 +305,26 @@ def admin_unlock() -> tuple[Response, int]:
         raise BadRequest("Invalid admin ID provided")
 
     try:
-        admin: Admin = db.session.execute(
+        admin: Admin | None = db.session.execute(
             select(Admin).where(Admin.id == target_id).with_for_update()
         ).scalar_one_or_none()
         if not admin:
             raise NotFound(f"No admin with id {target_id} could be found")
         if not admin.locked:
             conflict: Conflict = Conflict("Admin account is already unlocked")
-            conflict.kwargs = {
-                "links": {
-                    "lock admin account": {
-                        "_href": url_for(".admin_lock", _external=True)
+            setattr(
+                conflict,
+                "kwargs",
+                {
+                    "links": {
+                        "lock admin account": {
+                            "_href": url_for(".admin_lock", _external=True)
+                        }
                     }
-                }
-            }
+                },
+            )
             raise conflict
+
         db.session.execute(
             update(Admin).where(Admin.id == target_id).values(locked=False)
         )
@@ -331,7 +348,7 @@ def create_admin() -> tuple[Response, int]:
         raise BadRequest("Password and username are required to create a new admin")
 
     try:
-        existingAdmin: Admin = db.session.execute(
+        existingAdmin: Admin | None = db.session.execute(
             select(Admin).where(Admin.username == username)
         ).scalar_one_or_none()
         if existingAdmin:
@@ -387,7 +404,7 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
     key_lock: str = f"INVALIDATE_KEY:{kid}"
     if not SyncedStore.set(key_lock, g.SESSION_TOKEN["admin_id"], ex=300, nx=True):
         # Another worker is performing clean operation, reject this request
-        adminID: bytes = SyncedStore.get(key_lock)
+        adminID: bytes = SyncedStore.get(key_lock)  # type: ignore[reportAssignmentType]
         return (
             jsonify(
                 {
@@ -398,7 +415,7 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
             409,
         )
 
-    public_pem_fpath: os.PathLike = os.path.join(
+    public_pem_fpath: str = os.path.join(
         current_app.config["PUBLIC_PEM_FPATH"], f"public_{kid}_key.pem"
     )
     additional_kw: dict[str, str] = {}
@@ -410,9 +427,10 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
         additional_kw["jwks_integrity_warning"] = "This key ID was not found in JWKS"
     try:
         # Select and lock key if exists
-        target_key: KeyData = db.session.execute(
+        target_key: KeyData | None = db.session.execute(
             select(KeyData).where(KeyData.kid == kid).with_for_update(nowait=True)
         ).scalar_one_or_none()
+
         # Key exists
         if not target_key:
             raise NotFound(f"No key with ID {kid} found")
@@ -457,28 +475,30 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
         # Regenerate PEM file
         if not os.path.exists(public_pem_fpath):
             with open(public_pem_fpath, "wb") as public_pem_file:
-                public_pem_file.write(target_key.public_pem)
+                public_pem_file.write(
+                    target_key.public_pem
+                )  # TODO: Fix unbound variable
 
         # State reverted, crash and burn
         error: InternalServerError = InternalServerError(
             f"Failed to invalidate key {kid}"
         )
-        error.additional_kwargs = additional_kw
+        setattr(error, "additional_kwargs", additional_kw)
         raise error from exc
 
     # Key invalidation successful, update local token manager
     tokenManager.invalidate_key(kid)
 
     # Update global
-    valid_keys: list[bytes] = SyncedStore.lrange("VALID_KEYS", 0, -1)
-    if not valid_keys or kid not in valid_keys:
+    raw_valid_keys: list[bytes] = SyncedStore.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
+    if not raw_valid_keys or kid.encode("utf-8") not in raw_valid_keys:
         # Should never happen, but in case it does we fall back and regenerate the entire list
         additional_kw["keylist_integrity_warning"] = (
             "Synced keylist state was inconsistent and hence regenerated through database"
         )
         valid_keys: list[str] = fetch_valid_keys()
     else:
-        valid_keys: list[str] = [key.decode() for key in valid_keys]
+        valid_keys: list[str] = [key.decode() for key in raw_valid_keys]
         valid_keys.remove(kid)
 
     # By this stage, valid_keys will maintain a consistent sequence of valid key IDs (including that of the active key), either from a simple list removal or by consulting the database in case of any inconsistency
@@ -512,7 +532,7 @@ def clean_keystore() -> tuple[Response, int]:
         "CLEAN_KEYSTORE_LOCK", g.SESSION_TOKEN["admin_id"], ex=300, nx=True
     ):
         # Another worker is performing clean operation, reject this request
-        adminID: bytes = SyncedStore.get("CLEAN_KEYSTORE_LOCK")
+        adminID: bytes = SyncedStore.get("CLEAN_KEYSTORE_LOCK")  # type: ignore[reportAssignmentType]
         return (
             jsonify(
                 {
@@ -547,7 +567,7 @@ def clean_keystore() -> tuple[Response, int]:
     # Begin operation
     try:
         # Fetch and lock all keys that have been rotated out, but not expired
-        validInactiveKeys: list[str] = (
+        validInactiveKeys: list[str] = list(
             db.session.execute(
                 select(KeyData.kid)
                 .where(
@@ -574,6 +594,8 @@ def clean_keystore() -> tuple[Response, int]:
         vk: ecdsa.VerifyingKey = ecdsa.VerifyingKey.from_pem(
             activeKey.public_pem.decode()
         )
+
+        assert vk.pubkey
         activeKeyMapping: dict[str, Any] = {
             "kty": "EC",
             "alg": "ECDSA",
@@ -590,7 +612,7 @@ def clean_keystore() -> tuple[Response, int]:
 
         # Purge all public PEM files for invalid keys
         for keyID in validInactiveKeys:
-            fpath: os.PathLike = os.path.join(
+            fpath: str = os.path.join(
                 current_app.config["PUBLIC_PEM_DIRECTORY"], f"public_{keyID}_key.pem"
             )
             if os.path.exists(fpath):
@@ -649,7 +671,7 @@ def rotate_keys() -> tuple[Response, int]:
     )
     if not lock:
         # Another worker is performing this action, reject this request >:(
-        adminID: bytes = SyncedStore.get("KEY_ROTATION_LOCK")
+        adminID: bytes = SyncedStore.get("KEY_ROTATION_LOCK")  # type: ignore[reportAssignmentType]
         return (
             jsonify(
                 {
@@ -661,7 +683,7 @@ def rotate_keys() -> tuple[Response, int]:
         )
 
     # Check for cooldown, must be global for all staff admins
-    cooldown_flag: int = SyncedStore.get("KEY_ROTATION_COOLDOWN")
+    cooldown_flag: str = SyncedStore.get("KEY_ROTATION_COOLDOWN")  # type: ignore[reportAssignmentType]
     if cooldown_flag and g.SESSION_TOKEN["role"] == "staff":
         report_suspicious_activity(
             adminID=g.SESSION_TOKEN["admin_id"],
@@ -676,7 +698,7 @@ def rotate_keys() -> tuple[Response, int]:
 
     # Update DB first, then perform JWKS and PEM writes
     overflow: bool = False
-    purgeID: int = None
+    purgeID: int | None = None
     try:
         # Update currently active key
         prevKID: int = db.session.execute(
@@ -712,7 +734,7 @@ def rotate_keys() -> tuple[Response, int]:
         if valid_key_count > current_app.config["MAX_VALID_KEYS"]:
             overflow = True
             # Select and lock oldest, non-expired valid key
-            purgeID: int = db.session.execute(
+            purgeID = db.session.execute(
                 select(KeyData.kid)
                 .where(
                     (KeyData.rotated_out_at.isnot(None))
@@ -750,7 +772,7 @@ def rotate_keys() -> tuple[Response, int]:
         encryption_key=current_app.config["PRIVATE_PEM_ENCRYPTION_KEY"],
         private_key=signingKey,
         public_key=verificationKey,
-        key_id=kid,
+        key_id=int(kid),
     )
 
     # Remove previous key's private PEM file
@@ -766,7 +788,7 @@ def rotate_keys() -> tuple[Response, int]:
                 current_app.config["PUBLIC_PEM_DIRECTORY"], f"public_{purgeID}_key.pem"
             )
         )
-        privateFpath: os.PathLike = os.path.join(
+        privateFpath: str = os.path.join(
             current_app.config["PRIVATE_PEM_DIRECTORY"], f"private_{purgeID}_key.pem"
         )
 
@@ -782,12 +804,12 @@ def rotate_keys() -> tuple[Response, int]:
     )
     tokenManager.update_keydata(kid, newKeyData)
 
-    valid_keys: list[bytes] = SyncedStore.lrange("VALID_KEYS", 0, -1)
-    if not valid_keys or kid not in valid_keys:
+    raw_valid_keys: list[bytes] = SyncedStore.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
+    if not raw_valid_keys or kid.encode("utf-8") not in raw_valid_keys:
         # Should never happen, but in case it does we fall back and regenerate the entire list
         valid_keys: list[str] = fetch_valid_keys()
     else:
-        valid_keys: list[str] = [key.decode() for key in valid_keys]
+        valid_keys: list[str] = [key.decode() for key in raw_valid_keys]
 
     if overflow and purgeID in valid_keys:
         # Remove invalidated key ID

@@ -36,7 +36,6 @@ def create_app() -> Flask:
     if not os.path.isdir(auth_app.config["PUBLIC_PEM_DIRECTORY"]):
         os.mkdir(auth_app.config["PUBLIC_PEM_DIRECTORY"])
 
-
     auth_app.config["PRIVATE_PEM_DIRECTORY"] = os.path.join(
         auth_app.instance_path, "keys"
     )
@@ -62,18 +61,18 @@ def create_app() -> Flask:
     # Inject Redis username and password from env
     redis_config_kwargs["synced_store"].update(
         {
-            "host" : os.environ["AUTH_WORKER_SYNC_REDIS_HOST"],
-            "port" : os.environ["AUTH_WORKER_SYNC_REDIS_PORT"],
-            "db" : os.environ["AUTH_WORKER_SYNC_REDIS_DB"],
+            "host": os.environ["AUTH_WORKER_SYNC_REDIS_HOST"],
+            "port": os.environ["AUTH_WORKER_SYNC_REDIS_PORT"],
+            "db": os.environ["AUTH_WORKER_SYNC_REDIS_DB"],
             "username": os.environ["AUTH_WORKER_REDIS_USERNAME"],
             "password": os.environ["AUTH_WORKER_REDIS_PASSWORD"],
         }
     )
     redis_config_kwargs["token_store"].update(
         {
-            "host" : os.environ["AUTH_WORKER_TOKEN_REDIS_HOST"],
-            "port" : os.environ["AUTH_WORKER_TOKEN_REDIS_PORT"],
-            "db" : os.environ["AUTH_WORKER_TOKEN_REDIS_DB"],
+            "host": os.environ["AUTH_WORKER_TOKEN_REDIS_HOST"],
+            "port": os.environ["AUTH_WORKER_TOKEN_REDIS_PORT"],
+            "db": os.environ["AUTH_WORKER_TOKEN_REDIS_DB"],
             "username": os.environ["AUTH_WORKER_REDIS_USERNAME"],
             "password": os.environ["AUTH_WORKER_REDIS_PASSWORD"],
         }
@@ -147,6 +146,7 @@ def create_app() -> Flask:
             RedisInterface,
             SyncedStore,
             db,
+            auth_app,
         )
 
     # Current worker process is the master, and is responsible for handling JWKS and key synchronization on bootup
@@ -355,6 +355,7 @@ def create_app() -> Flask:
                 RedisInterface,
                 SyncedStore,
                 db,
+                auth_app,
             )
             print(f'[AUTH {getattr(auth_app, "pid")}] Master process bootup complete!')
         except Exception as e:

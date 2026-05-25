@@ -21,8 +21,9 @@ from redis import exceptions as redisExceptions
 
 from resource_server.scripts.batch_workers.worker_utils import (
     enqueue_cascade_soft_deletes,
-    initialize_environment
+    initialize_environment,
 )
+
 
 def main() -> None:
     ID: Final[int] = os.getpid()

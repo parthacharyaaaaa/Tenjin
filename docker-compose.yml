@@ -83,7 +83,7 @@ services:
     build:
       context: .
       dockerfile: auth_server/Dockerfile
-    
+
     depends_on:
       - auth_server_synced_store
       - auth_server_token_store
@@ -96,7 +96,7 @@ services:
     volumes:
       - 'auth_server_instance_fs_data:/src/auth_server/instance'
       - 'auth_server_static_fs_data:/src/auth_server/static'
-    
+
     ports:
       - '8080:8080'
 
@@ -113,7 +113,7 @@ services:
 
   auth_server_synced_store:
     <<: *redis-base
-    
+
     volumes:
       - ./auth_server/instance/redis.conf:/usr/local/etc/redis/redis.conf:ro
       - ./auth_server/instance/users.acl:/usr/local/etc/redis/users.acl:ro
@@ -154,7 +154,7 @@ services:
     # Debug
     ports:
       - '10000:5432'
-      
+
   auth_server_database:
     image: 'postgres:17.9'
     networks:
@@ -176,10 +176,10 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    
+
     # Debug
     ports:
-      - '10001:5432'      
+      - '10001:5432'
 
 networks:
   postgres_network:
