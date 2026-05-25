@@ -21,7 +21,6 @@ class FlaskConfig:
         JWKS_CAP: int = int(os.environ["JWKS_CAP"])
         JWKS_KV_MAPPING: dict | None = None
         SESSION_COOKIE_SECURE: bool = bool(os.environ["SESSION_COOKIE_SECURE"])
-        CSP: str = f"default-src 'self'; connect-src 'self' {os.environ['RS_DOMAIN']}"
 
         ### Database Configurations ###
         SQLALCHEMY_DATABASE_URI: str = (
@@ -43,11 +42,6 @@ class FlaskConfig:
 
         # Addressing metadata
         PORT: int = int(os.environ["PORT"])
-
-        # Resource server metadata
-        RESOURCE_SERVER_ORIGIN = os.environ["RS_DOMAIN"].lower()
-        RESOURCE_SERVER_URL_PREFIX = os.environ["RS_URL_PREFIX"].lower()
-        PROTOCOL = os.environ.get("RS_COMMUNICATION_PROTOCOL", "http").lower()
 
         # Business logic
         SUSPICIOUS_LOOKBACK_TIME: timedelta = timedelta(

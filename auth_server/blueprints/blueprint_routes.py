@@ -11,7 +11,7 @@ from flask import (
     send_from_directory,
     url_for,
 )
-from werkzeug.exceptions import BadRequest, Unauthorized
+from werkzeug.exceptions import BadRequest, Unauthorized, UnprocessableEntity
 import requests
 import time
 from hashlib import sha256
@@ -19,14 +19,6 @@ from hashlib import sha256
 auth: Blueprint = Blueprint("auth", "auth", url_prefix="/auth")
 
 assert tokenManager
-
-
-@auth.after_request
-def enforceMinCSP(response):
-    if response:
-        response.headers["Content-Security-Policy"] = current_app.config["CSP"]
-
-    return response
 
 
 ### Endpoints ###
@@ -45,12 +37,16 @@ def jwks() -> tuple[Response, int]:
 @auth.route("/login", methods=["POST", "OPTIONS"])
 @enforce_json
 def login():
+    # TODO: Add proper handling of 'request_for' field
+
+    if not ("request_for") in g.REQUEST_JSON:
+        raise UnprocessableEntity("Missing 'request_for' field")
     if not ("identity" in g.REQUEST_JSON and "password" in g.REQUEST_JSON):
         raise BadRequest(
             f"POST /{request.root_path} expects identity and password in HTTP body"
         )
     valid = requests.post(
-        f"{current_app.config['PROTOCOL']}://{current_app.config['RESOURCE_SERVER_ORIGIN']}{current_app.config['RESOURCE_SERVER_URL_PREFIX']}/users/login",
+        g.REQUEST_JSON["request_for"],
         json={
             "identity": g.REQUEST_JSON["identity"],
             "password": g.REQUEST_JSON["password"],
@@ -102,16 +98,13 @@ def register():
         "username" in g.REQUEST_JSON
         and "email" in g.REQUEST_JSON
         and "password" in g.REQUEST_JSON
-        and "cpassword" in g.REQUEST_JSON
+        and "request_for" in g.REQUEST_JSON
     ):
         raise BadRequest("Mandatory field missing")
 
-    if g.REQUEST_JSON["password"] != g.REQUEST_JSON["cpassword"]:
-        raise BadRequest("Passwords do not match")
-
-    g.REQUEST_JSON.update({"authprovider": "babel-auth"})
+    g.REQUEST_JSON.update({"authprovider": "tenjin-auth"})
     valid = requests.post(
-        f"{current_app.config['PROTOCOL']}://{current_app.config['RESOURCE_SERVER_ORIGIN']}{current_app.config['RESOURCE_SERVER_URL_PREFIX']}/users/",
+        g.REQUEST_JSON["request_for"],
         json=g.REQUEST_JSON,
     )
 
