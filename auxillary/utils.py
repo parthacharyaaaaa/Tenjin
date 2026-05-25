@@ -12,6 +12,8 @@ import ujson
 from redis import Redis
 from redis.exceptions import RedisError
 
+from auxillary.typing_utils import SupportsJSON
+
 
 def generic_error_handler(e: Exception):
     """Return a JSON formatted error message to the client
@@ -313,3 +315,7 @@ def cache_grouped_resource(
         pipe.rpush(group_key, f"cursor:{cursor}")
         pipe.rpush(group_key, f"end:{end}")
         pipe.execute()
+
+
+def json_repr(arg: SupportsJSON) -> dict[str, Any]:
+    return arg.__json_like__()

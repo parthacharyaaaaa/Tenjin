@@ -19,6 +19,7 @@ from auth_server.redis_manager import SyncedStore
 from auxillary.decorators import enforce_json
 from auxillary.utils import (
     genericDBFetchException,
+    json_repr,
     verify_password,
     hash_password,
     to_base64url,
@@ -389,7 +390,7 @@ def get_key(kid: str) -> tuple[Response, int]:
     if not key:
         raise NotFound("No key with this ID found")
 
-    keyMapping: dict[str, Any] = key.__json_like__()
+    keyMapping: dict[str, Any] = json_repr(key)
     keyMapping["private_pem"] = (
         key.private_pem.decode()
     )  # Add private PEM since json repr only include public PEM
