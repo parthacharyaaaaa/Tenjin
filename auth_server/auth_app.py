@@ -3,7 +3,6 @@ from auth_server.config import flaskconfig
 from auth_server.keygen import generate_ecdsa_pair, write_ecdsa_pair
 from auth_server.key_container import KeyMetadata
 from auxillary.utils import generic_error_handler, to_base64url
-from cryptography.fernet import Fernet
 from sqlalchemy import select, insert, update
 from datetime import datetime
 import time
@@ -183,7 +182,6 @@ def create_app() -> Flask:
                     write_ecdsa_pair(
                         privateDir=private_fpath,
                         staticDir=public_fpath,
-                        encryption_key=auth_app.config["PRIVATE_PEM_ENCRYPTION_KEY"],
                         private_key=sk,
                         public_key=vk,
                         key_id=int(kid),
@@ -241,9 +239,6 @@ def create_app() -> Flask:
                         db.session.commit()
                         res = res[: auth_app.config["JWKS_CAP"]]
 
-                    fernet: Fernet = Fernet(
-                        auth_app.config["PRIVATE_PEM_ENCRYPTION_KEY"]
-                    )
                     for keyData in res:
                         public_pem: bytes = keyData.public_pem
                         private_pem: bytes = keyData.private_pem

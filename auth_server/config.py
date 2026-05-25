@@ -13,9 +13,6 @@ class FlaskConfig:
         # Security metadata
         APPLICATION_ROOT: str = os.environ["APPLICAITON_ROOT"]
         SECRET_KEY: str = os.environ["SECRET_KEY"]
-        PRIVATE_PEM_ENCRYPTION_KEY: bytes = bytes(
-            os.environ["PEM_ENCRYPTION_KEY"], encoding="utf-8"
-        )
         SIGNING_KEY: str = os.environ["SIGNING_KEY"]
         JWKS_FILENAME: str = os.environ["JWKS_FILENAME"]
         JWKS_CAP: int = int(os.environ["JWKS_CAP"])

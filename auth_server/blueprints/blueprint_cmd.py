@@ -770,7 +770,6 @@ def rotate_keys() -> tuple[Response, int]:
     write_ecdsa_pair(
         privateDir=current_app.config["PRIVATE_PEM_DIRECTORY"],
         staticDir=current_app.config["PUBLIC_PEM_DIRECTORY"],
-        encryption_key=current_app.config["PRIVATE_PEM_ENCRYPTION_KEY"],
         private_key=signingKey,
         public_key=verificationKey,
         key_id=int(kid),

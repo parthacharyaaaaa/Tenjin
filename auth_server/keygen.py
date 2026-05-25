@@ -56,7 +56,6 @@ def update_jwks(
 def write_ecdsa_pair(
     privateDir: str,
     staticDir: str,
-    encryption_key: bytes,
     private_key: ecdsa.SigningKey,
     public_key: ecdsa.VerifyingKey,
     key_id: int,
@@ -67,15 +66,11 @@ def write_ecdsa_pair(
     #### parameters:\n
     privateDir: Directory to store private key's .pem file in\n
     staticDir: Directory to store public key's .pem file in\n
-    encryption_key: Symmetric key to encrypt the private key's .pem file\n
     private_key: Signing key\n
     public_key: Verificiation key\n
     key_id: Unique numeric ID for this key pair\n
     fname_template: File naming template
     """
-    fernet = Fernet(encryption_key)
-
-    encryptedPrivateKey: bytes = fernet.encrypt(private_key.to_pem())
     privateFpath: str = os.path.join(
         privateDir, fname_template.format(key_type="private", key_id=key_id)
     )
@@ -84,7 +79,7 @@ def write_ecdsa_pair(
     )
 
     with open(privateFpath, "wb+") as privatePemFile:
-        privatePemFile.write(encryptedPrivateKey)
+        privatePemFile.write(private_key.to_pem())
 
     with open(publicFpath, "wb+") as publicPemFile:
         publicPemFile.write(public_key.to_pem())
