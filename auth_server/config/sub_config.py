@@ -101,7 +101,7 @@ class SAConfigModel(BaseModel):
 
 class DatabaseConfigModel(BaseModel):
     POSTGRES_HOST: str | IPvAnyAddress
-    PISTGRES_PORT: Annotated[int, Field(ge=1024, le=65_535)]
+    POSTGRES_PORT: Annotated[int, Field(ge=1024, le=65_535)]
     POSTGRES_DATABASE: str
 
     SQLALCHEMY: Annotated[SAConfigModel, Field(alias="sqlalchemy")]
