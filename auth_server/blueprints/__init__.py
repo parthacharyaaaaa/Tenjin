@@ -1,6 +1,6 @@
 """Blueprint routes/views for auth server"""
 
-from enum import Enum
+from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
@@ -12,7 +12,7 @@ from auth_server.blueprints.blueprint_routes import auth
 __all__ = ("URLPrefix", "BLUEPRINT_URL_MAPPING")
 
 
-class URLPrefix(str, Enum):
+class URLPrefix(StrEnum):
     CMD = "cmd"
     AUTH = "auth"
 
