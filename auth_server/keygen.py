@@ -3,7 +3,6 @@ from pathlib import Path
 import ecdsa
 from hashlib import sha512
 import os
-from cryptography.fernet import Fernet
 import secrets
 from auxillary.utils import to_base64url
 import ujson
@@ -11,13 +10,16 @@ import ujson
 
 def generate_ecdsa_pair() -> tuple[str, ecdsa.SigningKey, ecdsa.VerifyingKey]:
     """Generate signing and verification ECDSA key pair"""
-    signingKey: ecdsa.SigningKey = ecdsa.SigningKey.generate(
+    signing_key: ecdsa.SigningKey = ecdsa.SigningKey.generate(
         curve=ecdsa.SECP256k1, hashfunc=sha512
     )
-    verificiationKey: ecdsa.VerifyingKey = signingKey.get_verifying_key()
+
+    # ecdsa.SigningKey.get_verifying_key() is typed to return None,
+    # but actually returns ecdsa.VerifyingKey :/
+    verify_key: ecdsa.VerifyingKey = signing_key.get_verifying_key()  # type: ignore[reportAssignmentType]
     kid: str = str(secrets.randbelow(10_000_000))
 
-    return kid, signingKey, verificiationKey
+    return kid, signing_key, verify_key
 
 
 def update_jwks(
@@ -28,7 +30,9 @@ def update_jwks(
     capacity: int = 3,
 ) -> None:
     """Updates the JWKS JSON file to include the given public key as the latest key"""
-    point = vk.pubkey.point
+    # ecdsa.VerifyingKey.pubkey is hinted as being None thanks to its constructor
+    # but actually does return a valid type
+    point = vk.pubkey.point  # type: ignore[reportAttributeAccessIssue]
     encodedX, encodedY = to_base64url(int(point.x())), to_base64url(int(point.y()))
     keyMapping: dict[str, str | int] = {
         "kty": "EC",
