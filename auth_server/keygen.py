@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import ecdsa
 from hashlib import sha512
 import os
@@ -54,8 +56,8 @@ def update_jwks(
 
 
 def write_ecdsa_pair(
-    privateDir: str,
-    staticDir: str,
+    private_dir: Path,
+    public_dir: Path,
     private_key: ecdsa.SigningKey,
     public_key: ecdsa.VerifyingKey,
     key_id: int,
@@ -64,24 +66,17 @@ def write_ecdsa_pair(
     """### Write the private and public keys in their respective PEM files
 
     #### parameters:\n
-    privateDir: Directory to store private key's .pem file in\n
-    staticDir: Directory to store public key's .pem file in\n
+    private_dir: Directory to store private key's .pem file in\n
+    public_dir: Directory to store public key's .pem file in\n
     private_key: Signing key\n
     public_key: Verificiation key\n
     key_id: Unique numeric ID for this key pair\n
     fname_template: File naming template
     """
-    privateFpath: str = os.path.join(
-        privateDir, fname_template.format(key_type="private", key_id=key_id)
-    )
-    publicFpath: str = os.path.join(
-        staticDir, fname_template.format(key_type="public", key_id=key_id)
-    )
+    private_dir.joinpath(
+        fname_template.format(key_type="private", key_id=key_id)
+    ).write_bytes(private_key.to_pem())
 
-    with open(privateFpath, "wb+") as privatePemFile:
-        privatePemFile.write(private_key.to_pem())
-
-    with open(publicFpath, "wb+") as publicPemFile:
-        publicPemFile.write(public_key.to_pem())
-
-    os.chmod(privateFpath, 0o600)
+    public_dir.joinpath(
+        fname_template.format(key_type="public", key_id=key_id)
+    ).write_bytes(public_key.to_pem())
