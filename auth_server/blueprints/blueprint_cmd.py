@@ -26,11 +26,11 @@ from auxillary.utils import (
     hash_password,
     to_base64url,
 )
-from auth_server.auth_auxillary import (
+from auth_server.utils.auth_auxillary import (
     report_suspicious_activity,
-    admin_only,
     fetch_valid_keys,
 )
+from auth_server.utils.decorators import admin_only
 from auth_server.models import db, Admin, KeyData
 from auth_server.keygen import generate_ecdsa_pair, write_ecdsa_pair, update_jwks
 from auth_server.key_container import KeyMetadata
