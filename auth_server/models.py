@@ -1,11 +1,14 @@
-from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import VARCHAR, INTEGER, TIMESTAMP, BOOLEAN, text
-from sqlalchemy.dialects.postgresql import ENUM, BYTEA
+import datetime
 from enum import Enum
 from typing import Any
-import datetime
 
-db = SQLAlchemy()
+from sqlalchemy import VARCHAR, INTEGER, TIMESTAMP, BOOLEAN, ForeignKey, text
+from sqlalchemy.orm import DeclarativeBase, mapped_column, Mapped
+from sqlalchemy.dialects.postgresql import ENUM, BYTEA
+
+
+class Base(DeclarativeBase):
+    pass
 
 
 class AdminRoles(Enum):
@@ -16,51 +19,66 @@ class AdminRoles(Enum):
 ADMIN_ROLES = ENUM("staff", "super", name="admin_roles", create_type=True)
 
 
-class Admin(db.Model):
+class Admin(Base):
     __tablename__ = "admins"
-    id: int = db.Column(INTEGER, primary_key=True, autoincrement=True)
-    username: str = db.Column(VARCHAR(64), nullable=False, unique=True)
-    password_hash: bytes = db.Column(BYTEA, nullable=False)
-    password_salt: bytes = db.Column(BYTEA, nullable=False)
-    time_deleted: datetime.datetime = db.Column(TIMESTAMP, server_default=text("null"))
-    role: str = db.Column(ADMIN_ROLES, nullable=False)
-    last_login: datetime.datetime = db.Column(
+
+    id_: Mapped[int] = mapped_column(INTEGER, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(VARCHAR(64), nullable=False, unique=True)
+    role: Mapped[str] = mapped_column(ADMIN_ROLES, nullable=False)
+
+    password_hash: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
+    password_salt: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
+
+    time_deleted: Mapped[datetime.datetime | None] = mapped_column(
+        TIMESTAMP, server_default=text("null")
+    )
+    last_login: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
-    locked: bool = db.Column(BOOLEAN, nullable=False, server_default=text("false"))
-    created_by: int = db.Column(INTEGER, db.ForeignKey("admins.id"))
+    locked: Mapped[bool] = mapped_column(
+        BOOLEAN, nullable=False, server_default=text("false")
+    )
+    created_by: Mapped[int] = mapped_column(INTEGER, ForeignKey("admins.id"))
 
 
-class SuspiciousActivity(db.Model):
+class SuspiciousActivity(Base):
     __tablename__ = "suspicious_activities"
-    id: int = db.Column(INTEGER, primary_key=True, autoincrement=True)
-    suspect: int = db.Column(INTEGER, db.ForeignKey("admins.id"), nullable=False)
-    time_logged: datetime.datetime = db.Column(
+
+    id_: Mapped[int] = mapped_column(INTEGER, primary_key=True, autoincrement=True)
+    suspect: Mapped[int] = mapped_column(
+        INTEGER, ForeignKey("admins.id"), nullable=False
+    )
+    time_logged: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
-    description: str = db.Column(VARCHAR(64), nullable=False)
+    description: Mapped[str] = mapped_column(VARCHAR(64), nullable=False)
 
 
-class KeyData(db.Model):
+class KeyData(Base):
     __tablename__ = "keydata"
-    kid: str = db.Column(VARCHAR(16), primary_key=True)
-    alg: str = db.Column(VARCHAR(8), nullable=False, server_default=text("'ES256'"))
-    curve: str = db.Column(VARCHAR(16), nullable=False)
-    epoch: datetime.datetime = db.Column(
+    kid: Mapped[str] = mapped_column(VARCHAR(16), primary_key=True)
+    alg: Mapped[str] = mapped_column(
+        VARCHAR(8), nullable=False, server_default=text("'ES256'")
+    )
+    curve: Mapped[str] = mapped_column(VARCHAR(16), nullable=False)
+    epoch: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP,
-        index=True,
         nullable=False,
         unique=True,
         server_default=text("CURRENT_TIMESTAMP"),
     )
-    rotated_out_at: datetime.datetime = db.Column(
+    rotated_out_at: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP, server_default=text("null")
     )
-    expired_at: datetime.datetime = db.Column(TIMESTAMP, server_default=text("null"))
-    private_pem: bytes = db.Column(BYTEA, nullable=False, unique=True)
-    public_pem: bytes = db.Column(BYTEA, nullable=False, unique=True)
-    manual_rotation: bool = db.Column(BOOLEAN, server_default=text("false"))
-    rotated_by: int = db.Column(INTEGER, db.ForeignKey("admins.id"), index=True)
+    expired_at: Mapped[datetime.datetime] = mapped_column(
+        TIMESTAMP, server_default=text("null")
+    )
+    private_pem: Mapped[bytes] = mapped_column(BYTEA, nullable=False, unique=True)
+    public_pem: Mapped[bytes] = mapped_column(BYTEA, nullable=False, unique=True)
+    manual_rotation: Mapped[bool] = mapped_column(BOOLEAN, server_default=text("false"))
+    rotated_by: Mapped[int] = mapped_column(
+        INTEGER, ForeignKey("admins.id"), index=True
+    )
 
     def __json_like__(self) -> dict[str, Any]:
         """Return JSON serializable dictionary, excluding private PEM"""
