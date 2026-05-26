@@ -35,9 +35,6 @@ class TokenManager:
         self,
         interface: Redis,
         synced_store: Redis,
-        active_kid: str,
-        active_key_metadata: KeyMetadata,
-        verification_keys_mapping: dict[str, KeyMetadata] | None = None,
         refreshLifetime: int = 60 * 60 * 3,
         accessLifetime: int = 60 * 30,
         alg: str = "ES256",
@@ -49,27 +46,6 @@ class TokenManager:
         max_valid_keys: int = 3,
         announcement_duration: int = 60 * 60 * 3,
     ):
-        """
-        Args:
-            kvsMapping (dict): Mapping of key IDs to key metadata (see `KeyMetadata` class). Never expose private keys via endpoints.
-            interface (Redis): Redis interface instance for caching or blacklisting.
-            dbConnString (str): Database URI for persistent storage.
-            refreshLifetime (int): Lifetime of refresh tokens (default: 3 hours).
-            accessLifetime (int): Lifetime of access tokens (default: 30 minutes).
-            alg (str): JWT signing algorithm. Default is "ES256".
-            typ (str): Token type, usually "JWT".
-            uClaims (dict): Universal claims to include in all tokens.
-            uHeaders (dict, optional): Additional JWT headers.
-            leeway (int): Leeway time in seconds for token validation. Default is 180s.
-            max_tokens_per_fid (int): Max tokens allowed per user/session.
-        """
-        if not verification_keys_mapping:
-            verification_keys_mapping = {}
-        self.key_mapping: dict[str, KeyMetadata] = verification_keys_mapping | {
-            active_kid: active_key_metadata
-        }
-        self.active_key = active_kid
-
         try:
             self._TokenStore = interface
             self.max_llen = max_tokens_per_fid
@@ -103,6 +79,19 @@ class TokenManager:
 
         # Start background thread for polling
         threading.Thread(target=self.poll_store, daemon=True).start()
+
+    def set_key_state(
+        self,
+        active_kid: str,
+        active_key_metadata: KeyMetadata,
+        verification_keys_mapping: dict[str, KeyMetadata] | None = None,
+    ) -> None:
+        if not verification_keys_mapping:
+            verification_keys_mapping = {}
+        self.key_mapping: dict[str, KeyMetadata] = verification_keys_mapping | {
+            active_kid: active_key_metadata
+        }
+        self.active_key = active_kid
 
     @overload
     def decodeToken(
@@ -407,20 +396,3 @@ class TokenManager:
 
 
 tokenManager: TokenManager | None = None
-
-
-def init_token_manager(
-    vk_mapping: dict[str, KeyMetadata],
-    active_key_id: str,
-    active_keydata: KeyMetadata,
-    redisinterface: Redis,
-    syncedstore: Redis,
-) -> None:
-    global tokenManager
-    tokenManager = TokenManager(
-        interface=redisinterface,
-        synced_store=syncedstore,
-        verification_keys_mapping=vk_mapping,
-        active_kid=active_key_id,
-        active_key_metadata=active_keydata,
-    )
