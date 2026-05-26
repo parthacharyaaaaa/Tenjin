@@ -21,3 +21,21 @@ class KeydataRepository(metaclass=SingletonMetaclass):
             return session.execute(
                 select(KeyData).where(KeyData.kid == key_id)
             ).scalar_one_or_none()
+
+    def get_relevant_keydata(
+        self, limit: int | None, raise_on_empty: bool = False
+    ) -> list[KeyData]:
+        with self.session_maker() as session:
+            keydata: list[KeyData] | None = list(
+                session.execute(
+                    select(KeyData)
+                    .where(KeyData.expired_at.is_(None))
+                    .order_by(KeyData.epoch.desc())
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
+            if not keydata and raise_on_empty:
+                raise ValueError("Key data empty")
+            return keydata
