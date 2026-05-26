@@ -1,25 +1,32 @@
-from pathlib import Path
-
-from flask import Flask
-from redis import Redis
-from auth_server.keygen import generate_ecdsa_pair, write_ecdsa_pair
-from auth_server.key_container import KeyMetadata
-from auxillary.utils import generic_error_handler, to_base64url
-from sqlalchemy import select, insert, update
-from datetime import datetime
-import time
 import os
-import ujson
-import ecdsa
+import time
 import traceback
+import ujson
+from datetime import datetime
+from pathlib import Path
 from typing import Final
 
+import ecdsa
+
+from flask import Flask
+
+from redis import Redis
+
+from sqlalchemy import select, insert, update
+
+from auxillary.utils import generic_error_handler, to_base64url
+
+from auth_server.blueprints import BLUEPRINT_URL_MAPPING
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import (
     get_app_config,
     get_token_store_client,
     get_synced_store_client,
+    get_database_session,
 )
+from auth_server.keygen import generate_ecdsa_pair, write_ecdsa_pair
+from auth_server.key_container import KeyMetadata
+from auth_server.utils import bootup
 
 APP_CTX_CWD: Final[str] = os.path.dirname(__file__)
 
@@ -44,11 +51,7 @@ def create_app() -> Flask:
     auth_app.register_error_handler(Exception, generic_error_handler)
 
     # SQLAlchemy
-    from auth_server.models import db, KeyData
-    from flask_migrate import Migrate
-
-    db.init_app(auth_app)
-    migrate = Migrate(auth_app, db)
+    from auth_server.models.database import KeyData
 
     token_store_client: Final[Redis] = get_token_store_client()
     synced_store_client: Final[Redis] = get_synced_store_client()
@@ -123,7 +126,7 @@ def create_app() -> Flask:
             writeBuffer: list[dict[str, str | int]] = []
             with auth_app.app_context():
                 res: list[KeyData] = list(
-                    db.session.execute(
+                    session.execute(
                         select(KeyData)
                         .where(KeyData.expired_at.is_(None))
                         .order_by(KeyData.epoch.desc())
@@ -329,14 +332,8 @@ def create_app() -> Flask:
                 pipe.execute()
 
     # Blueprints
-    from auth_server.blueprints.blueprint_routes import auth
-    from auth_server.blueprints.blueprint_cmd import cmd
-
-    auth_app.register_blueprint(
-        cmd, url_prefix=f"{auth_app.config['APPLICATION_ROOT']}/cmd"
-    )
-    auth_app.register_blueprint(
-        auth, url_prefix=f"{auth_app.config['APPLICATION_ROOT']}/auth"
+    bootup.register_blueprints(
+        auth_app, BLUEPRINT_URL_MAPPING, common_prefix=config.CORE.APPLICATION_ROOT
     )
 
     return auth_app

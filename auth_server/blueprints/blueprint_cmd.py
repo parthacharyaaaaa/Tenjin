@@ -46,7 +46,7 @@ from werkzeug.exceptions import (
     Unauthorized,
 )
 
-cmd: Blueprint = Blueprint("cmd", "cmd", url_prefix="/cmd")
+cmd: Blueprint = Blueprint("cmd", "cmd")
 
 config: Final[AppConfig] = get_app_config()
 

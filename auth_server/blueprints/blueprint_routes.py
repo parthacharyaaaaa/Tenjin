@@ -19,7 +19,7 @@ import requests
 import time
 from hashlib import sha256
 
-auth: Blueprint = Blueprint("auth", "auth", url_prefix="/auth")
+auth: Blueprint = Blueprint("auth", "auth")
 
 assert tokenManager
 
