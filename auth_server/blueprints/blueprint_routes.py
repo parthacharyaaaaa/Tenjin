@@ -1,3 +1,7 @@
+from typing import Final
+
+from auth_server.config.app_config import AppConfig
+from auth_server.dependencies import get_app_config
 from auth_server.token_manager import tokenManager
 from auth_server.tokens import TokenType, StandardRefreshTokenClaims
 from auxillary.decorators import enforce_json
@@ -7,7 +11,6 @@ from flask import (
     jsonify,
     Response,
     g,
-    current_app,
     send_from_directory,
     url_for,
 )
@@ -20,14 +23,16 @@ auth: Blueprint = Blueprint("auth", "auth", url_prefix="/auth")
 
 assert tokenManager
 
+config: Final[AppConfig] = get_app_config()
+
 
 ### Endpoints ###
 @auth.route("/jwks.json")
 def jwks() -> tuple[Response, int]:
     return (
         send_from_directory(
-            current_app.instance_path,
-            current_app.config["JWKS_FILENAME"],
+            config.JWKS.JWKS_FILEPATH.parent,
+            config.JWKS.JWKS_FILEPATH.name,
             mimetype="application/json",
         ),
         200,
