@@ -1,22 +1,18 @@
 import datetime
-from enum import Enum
 from typing import Any
 
 from sqlalchemy import VARCHAR, INTEGER, TIMESTAMP, BOOLEAN, ForeignKey, text
 from sqlalchemy.orm import DeclarativeBase, mapped_column, Mapped
 from sqlalchemy.dialects.postgresql import ENUM, BYTEA
 
+from auth_server.models.database_enums import AdminRoles
+
 
 class Base(DeclarativeBase):
     pass
 
 
-class AdminRoles(Enum):
-    staff = 1
-    super = 2
-
-
-ADMIN_ROLES = ENUM("staff", "super", name="admin_roles", create_type=True)
+ADMIN_ROLES = ENUM(*[i.value for i in AdminRoles], name="admin_roles", create_type=True)
 
 
 class Admin(Base):
