@@ -3,7 +3,7 @@ name = "auth-server"
 version = "1.0.0"
 description = "Authentication authority for Tenjin"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.13"
 dependencies = [
     "alembic==1.14.1",
     "async-timeout==5.0.1",
