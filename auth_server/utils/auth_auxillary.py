@@ -1,15 +1,23 @@
 from redis import Redis
 
-from auth_server.models import db, SuspiciousActivity, Admin, KeyData
 from sqlalchemy import func, select, insert, update
-from datetime import datetime
+from sqlalchemy.orm import Session
+from datetime import datetime, timedelta
 from flask import current_app
+
+from auth_server.config.app_config import AppConfig
+from auth_server.models.database import SuspiciousActivity, Admin, KeyData
 
 
 def report_suspicious_activity(
-    synced_store_client: Redis, adminID: int, desc: str, force_logout: bool = True
+    session: Session,
+    config: AppConfig,
+    synced_store_client: Redis,
+    adminID: int,
+    desc: str,
+    force_logout: bool = True,
 ) -> None:
-    db.session.execute(
+    session.execute(
         insert(SuspiciousActivity).values(suspect=adminID, description=desc)
     )
     current_time: datetime = datetime.now()
@@ -21,7 +29,8 @@ def report_suspicious_activity(
             (SuspiciousActivity.suspect == adminID)
             & (
                 SuspiciousActivity.time_logged.between(
-                    current_time - current_app.config["SUSPICIOUS_LOOKBACK_TIME"],
+                    current_time
+                    - timedelta(seconds=config.ADMIN.SUSPICIOUS_LOOKBACK_TIME),
                     current_time,
                 )
             )
@@ -30,19 +39,18 @@ def report_suspicious_activity(
 
     if (
         force_logout
-        and db.session.execute(stmt).scalar()
-        >= current_app.config["MAX_ACTIVITY_LIMIT"]
+        and session.execute(stmt).scalar() >= current_app.config["MAX_ACTIVITY_LIMIT"]
     ):
-        db.session.execute(update(Admin).values(locked=True))
+        session.execute(update(Admin).values(locked=True))
         synced_store_client.delete(f"admin:{adminID}")
 
-    db.session.commit()
+    session.commit()
 
 
-def fetch_valid_keys() -> list[str]:
+def fetch_valid_keys(session: Session) -> list[str]:
     """Fetch all valid key IDs from database"""
     valid_keys: list[str] = list(
-        db.session.execute(select(KeyData.kid).where(KeyData.expired_at.is_(None)))
+        session.execute(select(KeyData.kid).where(KeyData.expired_at.is_(None)))
         .scalars()
         .all()
     )
