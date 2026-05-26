@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy import create_engine, Engine
 
 from auth_server.config import AppConfig
+from auth_server.token_manager import TokenManager
 
 
 @lru_cache(maxsize=1)
@@ -65,3 +66,11 @@ def get_database_session() -> Generator[Session, None, None]:
         yield session
     finally:
         session.close()
+
+
+@lru_cache(maxsize=1)
+def get_token_manager() -> TokenManager:
+    return TokenManager(
+        interface=get_token_store_client(),
+        synced_store=get_synced_store_client(),
+    )
