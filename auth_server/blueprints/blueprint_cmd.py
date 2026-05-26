@@ -3,6 +3,7 @@ from pathlib import Path
 import ecdsa
 import secrets
 import time
+from redis import Redis
 import ujson
 from datetime import datetime
 from typing import Any, Final
@@ -16,8 +17,7 @@ from sqlalchemy.sql import and_
 from sqlalchemy.exc import SQLAlchemyError
 
 from auth_server.config.app_config import AppConfig
-from auth_server.dependencies import get_app_config
-from auth_server.redis_manager import SyncedStore
+from auth_server.dependencies import get_app_config, get_synced_store_client
 from auxillary.decorators import enforce_json
 from auxillary.utils import (
     genericDBFetchException,
@@ -31,7 +31,7 @@ from auth_server.utils.auth_auxillary import (
     fetch_valid_keys,
 )
 from auth_server.utils.decorators import admin_only
-from auth_server.models import db, Admin, KeyData
+from auth_server.models.database import Admin, KeyData, db
 from auth_server.keygen import generate_ecdsa_pair, write_ecdsa_pair, update_jwks
 from auth_server.key_container import KeyMetadata
 from auth_server.token_manager import tokenManager
@@ -45,9 +45,6 @@ from werkzeug.exceptions import (
     Conflict,
     Unauthorized,
 )
-
-assert SyncedStore
-assert tokenManager
 
 cmd: Blueprint = Blueprint("cmd", "cmd", url_prefix="/cmd")
 
@@ -75,7 +72,7 @@ def admin_login() -> tuple[Response, int]:
 
         if admin.locked:
             report_suspicious_activity(
-                admin.id, "Attempt to log into a locked account", force_logout=False
+                admin.id_, "Attempt to log into a locked account", force_logout=False
             )
             raise Forbidden(
                 "This account is currently locked on grounds of suspicious activities"
@@ -85,18 +82,19 @@ def admin_login() -> tuple[Response, int]:
 
     assert admin
     if not verify_password(password, admin.password_hash, admin.password_salt):
-        report_suspicious_activity(admin.id, "Incorrect password", force_logout=False)
+        report_suspicious_activity(admin.id_, "Incorrect password", force_logout=False)
         raise Unauthorized("Incorrect passwword")
 
-    # Exists in DB, check SyncedStore to see if session is already active
-    sessionKey: str = f"admin:{admin.id}"
+    # Exists in DB, check synced_store_client to see if session is already active
+    synced_store_client: Redis = get_synced_store_client()
+    sessionKey: str = f"admin:{admin.id_}"
     try:
-        adminSession: dict[str, str] = SyncedStore.hgetall(sessionKey)  # type: ignore[reportAssignmentType]
+        adminSession: dict[str, str] = synced_store_client.hgetall(sessionKey)  # type: ignore[reportAssignmentType]
 
         # Single sign-in policy, invalidate existing session and add entry in logs
         if adminSession:
-            SyncedStore.delete(sessionKey)
-            report_suspicious_activity(admin.id, "Session already active")
+            synced_store_client.delete(sessionKey)
+            report_suspicious_activity(admin.id_, "Session already active")
             raise Conflict("An admin session with these credentials is already active")
 
     except RedisError:
@@ -115,7 +113,7 @@ def admin_login() -> tuple[Response, int]:
     epoch: float = time.time()
     expiry: float = epoch + config.ADMIN.ADMIN_SESSION_DURATION
     sessionMapping: dict = {
-        "admin_id": admin.id,
+        "admin_id": admin.id_,
         "session_id": sessionID,
         "session_iteration": 1,
         "revival_digest": revivalDigest,
@@ -124,7 +122,7 @@ def admin_login() -> tuple[Response, int]:
         "role": admin.role,
     }
 
-    SyncedStore.hset(
+    synced_store_client.hset(
         sessionKey, mapping=sessionMapping
     )  # Set hashmap with private revival digest
     sessionMapping.pop("revival_digest")
@@ -151,7 +149,7 @@ def admin_delete() -> tuple[Response, int]:
 
     try:
         admin: Admin | None = db.session.execute(
-            select(Admin).where((Admin.id == purgeID) & (Admin.time_deleted == None))
+            select(Admin).where((Admin.id_ == purgeID) & (Admin.time_deleted == None))
         ).scalar_one_or_none()
         if not admin:
             raise NotFound(f"No admin with ID {purgeID} found")
@@ -165,7 +163,7 @@ def admin_delete() -> tuple[Response, int]:
     try:
         db.session.execute(
             update(Admin)
-            .where(Admin.id == admin.id)
+            .where(Admin.id_ == admin.id_)
             .values(time_deleted=datetime.now())
         )
     except:
@@ -187,21 +185,22 @@ def admin_refresh() -> tuple[Response, int]:
 
     config.ADMIN.MAX_SESSION_ITERATIONS
     adminKey: str = f'admin:{g.SESSION_TOKEN["admin_id"]}'
+    synced_store_client: Final[Redis] = get_synced_store_client()
     if g.SESSION_TOKEN["session_iteration"] >= config.ADMIN.MAX_SESSION_ITERATIONS:
-        SyncedStore.delete(adminKey)
+        synced_store_client.delete(adminKey)
         raise Conflict(
             "Maximum session reiterations reached, please reauthenticate to be assigned a fresh session"
         )
 
-    actualDigestBytes: bytes = SyncedStore.hget(adminKey, "revival_digest")  # type: ignore[reportAssignmentType]
+    actualDigestBytes: bytes = synced_store_client.hget(adminKey, "revival_digest")  # type: ignore[reportAssignmentType]
     if not actualDigestBytes:
-        SyncedStore.delete(adminKey)
+        synced_store_client.delete(adminKey)
         raise InternalServerError(
             "An error occured in verifying revival digests. Please reuthenticate"
         )
 
     if actualDigestBytes == b"__NF__":
-        SyncedStore.delete(adminKey)
+        synced_store_client.delete(adminKey)
         raise Conflict("Maximum session reiterations reached")
 
     actualDigest: str = actualDigestBytes.decode()
@@ -232,7 +231,7 @@ def admin_refresh() -> tuple[Response, int]:
         "role": g.SESSION_TOKEN["role"],
     }
 
-    SyncedStore.hset(adminKey, mapping=newSessionMapping)
+    synced_store_client.hset(adminKey, mapping=newSessionMapping)
     newSessionMapping.pop("revival_digest")
 
     newSessionMapping["message"] = "Session extended"
@@ -251,7 +250,8 @@ def admin_refresh() -> tuple[Response, int]:
 @cmd.route("/admins/logout", methods=["PATCH"])
 @admin_only()
 def admin_logout() -> tuple[Response, int]:
-    SyncedStore.delete(f'admin:{g.SESSION_TOKEN["admin_id"]}')
+    synced_store_client: Final[Redis] = get_synced_store_client()
+    synced_store_client.delete(f'admin:{g.SESSION_TOKEN["admin_id"]}')
     return jsonify({"message": "Logout successful"}), 200
 
 
@@ -267,7 +267,7 @@ def admin_lock() -> tuple[Response, int]:
 
     try:
         admin: Admin | None = db.session.execute(
-            select(Admin).where(Admin.id == target_id).with_for_update()
+            select(Admin).where(Admin.id_ == target_id).with_for_update()
         ).scalar_one_or_none()
         if not admin:
             raise NotFound(f"No admin with id {target_id} could be found")
@@ -286,14 +286,15 @@ def admin_lock() -> tuple[Response, int]:
             )
             raise conflict
         db.session.execute(
-            update(Admin).where(Admin.id == target_id).values(locked=True)
+            update(Admin).where(Admin.id_ == target_id).values(locked=True)
         )
         db.session.commit()
     except SQLAlchemyError:
         genericDBFetchException()
 
     # Log out the target admin
-    SyncedStore.delete(f"admin:{target_id}")
+    synced_store_client: Final[Redis] = get_synced_store_client()
+    synced_store_client.delete(f"admin:{target_id}")
 
     return jsonify({"message": "Admin locked succesfully"}), 200
 
@@ -310,7 +311,7 @@ def admin_unlock() -> tuple[Response, int]:
 
     try:
         admin: Admin | None = db.session.execute(
-            select(Admin).where(Admin.id == target_id).with_for_update()
+            select(Admin).where(Admin.id_ == target_id).with_for_update()
         ).scalar_one_or_none()
         if not admin:
             raise NotFound(f"No admin with id {target_id} could be found")
@@ -330,7 +331,7 @@ def admin_unlock() -> tuple[Response, int]:
             raise conflict
 
         db.session.execute(
-            update(Admin).where(Admin.id == target_id).values(locked=False)
+            update(Admin).where(Admin.id_ == target_id).values(locked=False)
         )
         db.session.commit()
     except SQLAlchemyError:
@@ -406,9 +407,12 @@ def get_key(kid: str) -> tuple[Response, int]:
 def invalidate_key(kid: str) -> tuple[Response, int]:
     """Invalidate a given key"""
     key_lock: str = f"INVALIDATE_KEY:{kid}"
-    if not SyncedStore.set(key_lock, g.SESSION_TOKEN["admin_id"], ex=300, nx=True):
+    synced_store_client: Final[Redis] = get_synced_store_client()
+    if not synced_store_client.set(
+        key_lock, g.SESSION_TOKEN["admin_id"], ex=300, nx=True
+    ):
         # Another worker is performing clean operation, reject this request
-        adminID: bytes = SyncedStore.get(key_lock)  # type: ignore[reportAssignmentType]
+        adminID: bytes = synced_store_client.get(key_lock)  # type: ignore[reportAssignmentType]
         return (
             jsonify(
                 {
@@ -490,7 +494,7 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
     tokenManager.invalidate_key(kid)
 
     # Update global
-    raw_valid_keys: list[bytes] = SyncedStore.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
+    raw_valid_keys: list[bytes] = synced_store_client.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
     if not raw_valid_keys or kid.encode("utf-8") not in raw_valid_keys:
         # Should never happen, but in case it does we fall back and regenerate the entire list
         additional_kw["keylist_integrity_warning"] = (
@@ -504,7 +508,7 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
     # By this stage, valid_keys will maintain a consistent sequence of valid key IDs (including that of the active key), either from a simple list removal or by consulting the database in case of any inconsistency
 
     #  Update global state and release lock
-    with SyncedStore.pipeline() as pipe:
+    with synced_store_client.pipeline() as pipe:
         pipe.delete("VALID_KEYS")
         pipe.lpush("VALID_KEYS", *valid_keys)
         pipe.delete(key_lock)
@@ -528,11 +532,12 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
 def clean_keystore() -> tuple[Response, int]:
     """Invalidate all keys except for the currently active key"""
     # Check whether another worker is performing this action
-    if not SyncedStore.set(
+    synced_store_client: Final[Redis] = get_synced_store_client()
+    if not synced_store_client.set(
         "CLEAN_KEYSTORE_LOCK", g.SESSION_TOKEN["admin_id"], ex=300, nx=True
     ):
         # Another worker is performing clean operation, reject this request
-        adminID: bytes = SyncedStore.get("CLEAN_KEYSTORE_LOCK")  # type: ignore[reportAssignmentType]
+        adminID: bytes = synced_store_client.get("CLEAN_KEYSTORE_LOCK")  # type: ignore[reportAssignmentType]
         return (
             jsonify(
                 {
@@ -633,10 +638,10 @@ def clean_keystore() -> tuple[Response, int]:
         # All rollbacks performed, crash and burn
         raise InternalServerError("Failed to perform clean operation") from exc
     finally:
-        SyncedStore.delete("CLEAN_KEYSTORE_LOCK")
+        synced_store_client.delete("CLEAN_KEYSTORE_LOCK")
 
     # Update global state, no need to fetch current list of keys anyways since as of this operation only a single active key would be valid throughout
-    with SyncedStore.pipeline() as pipe:
+    with synced_store_client.pipeline() as pipe:
         pipe.delete("VALID_KEYS")
         pipe.lpush("VALID_KEYS", activeKey.kid)
         pipe.execute()
@@ -658,12 +663,13 @@ def clean_keystore() -> tuple[Response, int]:
 def rotate_keys() -> tuple[Response, int]:
     """Trigger a key rotation sequence"""
     # Check for concurrent worker performing a key rotation
-    lock = SyncedStore.set(
+    synced_store_client: Final[Redis] = get_synced_store_client()
+    lock = synced_store_client.set(
         "KEY_ROTATION_LOCK", g.SESSION_TOKEN["admin_id"], ex=300, nx=True
     )
     if not lock:
         # Another worker is performing this action, reject this request >:(
-        adminID: bytes = SyncedStore.get("KEY_ROTATION_LOCK")  # type: ignore[reportAssignmentType]
+        adminID: bytes = synced_store_client.get("KEY_ROTATION_LOCK")  # type: ignore[reportAssignmentType]
         return (
             jsonify(
                 {
@@ -675,7 +681,7 @@ def rotate_keys() -> tuple[Response, int]:
         )
 
     # Check for cooldown, must be global for all staff admins
-    cooldown_flag: str = SyncedStore.get("KEY_ROTATION_COOLDOWN")  # type: ignore[reportAssignmentType]
+    cooldown_flag: str = synced_store_client.get("KEY_ROTATION_COOLDOWN")  # type: ignore[reportAssignmentType]
     if cooldown_flag and g.SESSION_TOKEN["role"] == "staff":
         report_suspicious_activity(
             adminID=g.SESSION_TOKEN["admin_id"],
@@ -746,7 +752,7 @@ def rotate_keys() -> tuple[Response, int]:
 
     except SQLAlchemyError:
         db.session.rollback()
-        SyncedStore.delete("KEY_ROTATION_LOCK")
+        synced_store_client.delete("KEY_ROTATION_LOCK")
         raise InternalServerError(
             "An error occured in performing key rotation (Database level)"
         )
@@ -783,7 +789,7 @@ def rotate_keys() -> tuple[Response, int]:
     )
     tokenManager.update_keydata(kid, newKeyData)
 
-    raw_valid_keys: list[bytes] = SyncedStore.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
+    raw_valid_keys: list[bytes] = synced_store_client.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
     if not raw_valid_keys or kid.encode("utf-8") not in raw_valid_keys:
         # Should never happen, but in case it does we fall back and regenerate the entire list
         valid_keys: list[str] = fetch_valid_keys()
@@ -796,7 +802,7 @@ def rotate_keys() -> tuple[Response, int]:
 
     # At this state, valid_keys is a consistent list of key IDs
     # Set global cooldown for key rotation, update global state, and release rotation lock
-    with SyncedStore.pipeline() as pipe:
+    with synced_store_client.pipeline() as pipe:
         pipe.set("KEY_ROTATION_COOLDOWN", 1, ex=config.KEYS.KEY_ROTATION_COOLDOWN)
         pipe.delete("VALID_KEYS")
         pipe.lpush("VALID_KEYS", *valid_keys)
