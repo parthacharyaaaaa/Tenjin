@@ -1,5 +1,7 @@
-from typing import Annotated
-from pydantic import BaseModel, Field, PrivateAttr
+from pathlib import Path
+from typing import Annotated, Any
+from functools import cached_property
+from pydantic import BaseModel, BeforeValidator, Field, PrivateAttr, computed_field
 from pydantic.networks import IPvAnyAddress
 
 from auth_server.config import utils
@@ -20,13 +22,51 @@ class CoreConfigModel(BaseModel):
 
     PORT: Annotated[int, Field(ge=1024, le=65_535, frozen=True)]
 
+    WORKING_DIRECTORY: Annotated[Path, Field(default_factory=Path.cwd)]
+
+    @computed_field
+    @cached_property
+    def instance_path(self) -> Path:
+        return self.WORKING_DIRECTORY / "instance"
+
+    @computed_field
+    @cached_property
+    def static_path(self) -> Path:
+        return self.WORKING_DIRECTORY / "static"
+
 
 class JWKSConfigModel(BaseModel):
-    JWKS_FILENAME: Annotated[
-        str, Field(pattern=utils.JWKS_NAME_PATTERN, default="jwks.json")
+    JWKS_FILEPATH: Annotated[
+        Path,
+        BeforeValidator(lambda d: Path(d)),
+        Field(
+            pattern=utils.JWKS_NAME_PATTERN, default="jwks.json", alias="JWKS_FILENAME"
+        ),
     ]
 
+    PUBLIC_PEM_DIRECTORY: Annotated[Path, BeforeValidator(lambda d: Path(d))]
+    PRIVATE_PEM_DIRECTORY: Annotated[Path, BeforeValidator(lambda d: Path(d))]
+
     JWKS_CAP: Annotated[int, Field(ge=1)]
+
+    def _resolve_path_attr(self, attr_name: str, rootpath: Path) -> None:
+        path: Path = rootpath / getattr(self, attr_name)
+
+        if not path.is_absolute():
+            raise ValueError(f"Resolved path {path} is not absolute")
+        if not path.exists():
+            path.mkdir()
+
+        setattr(self, attr_name, path)
+
+    def resolve_public_pem_directory(self, rootpath: Path) -> None:
+        self._resolve_path_attr("PUBLIC_PEM_DIRECTORY", rootpath)
+
+    def resolve_private_pem_directory(self, rootpath: Path) -> None:
+        self._resolve_path_attr("PRIVATE_PEM_DIRECTORY", rootpath)
+
+    def resolve_jwks_directory(self, rootpath: Path) -> None:
+        self._resolve_path_attr("JWKS_FILEPATH", rootpath)
 
 
 class KeyConfigModel(BaseModel):
@@ -72,6 +112,14 @@ class RedisStoreModel(BaseModel):
     PORT: Annotated[int, Field(default=6379, ge=1024, le=65_535)]
     DB: Annotated[int, Field(ge=0)]
     DECODE_RESPONSES: Annotated[bool, Field(default=False)]
+
+    def to_constructor_kwargs(self) -> dict[str, Any]:
+        return {
+            "host": self.HOST,
+            "port": self.PORT,
+            "db": self.DB,
+            "decode_responses": self.DECODE_RESPONSES,
+        }
 
 
 class RedisConfigModel(BaseModel):
