@@ -92,9 +92,9 @@ def update_jwks(
 def write_ecdsa_pair(
     private_dir: Path,
     public_dir: Path,
-    private_key: ecdsa.SigningKey,
-    public_key: ecdsa.VerifyingKey,
-    key_id: int,
+    private_key: ecdsa.SigningKey | bytes | bytearray,
+    public_key: ecdsa.VerifyingKey | bytes | bytearray,
+    key_id: int | str,
     fname_template: str = "{key_type}_{key_id}_key.pem",
 ) -> None:
     """### Write the private and public keys in their respective PEM files
@@ -107,13 +107,23 @@ def write_ecdsa_pair(
     key_id: Unique numeric ID for this key pair\n
     fname_template: File naming template
     """
+    private_buffer: bytes | bytearray = (
+        private_key.to_pem()
+        if isinstance(private_key, ecdsa.SigningKey)
+        else private_key
+    )
+    public_buffer: bytes | bytearray = (
+        public_key.to_pem()
+        if isinstance(public_key, ecdsa.VerifyingKey)
+        else public_key
+    )
     private_dir.joinpath(
         fname_template.format(key_type="private", key_id=key_id)
-    ).write_bytes(private_key.to_pem())
+    ).write_bytes(private_buffer)
 
     public_dir.joinpath(
         fname_template.format(key_type="public", key_id=key_id)
-    ).write_bytes(public_key.to_pem())
+    ).write_bytes(public_buffer)
 
 
 def initialize_active_key(
