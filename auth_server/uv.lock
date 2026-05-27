@@ -51,6 +51,7 @@ dependencies = [
     { name = "alembic" },
     { name = "async-timeout" },
     { name = "attrs" },
+    { name = "auxillary" },
     { name = "blinker" },
     { name = "certifi" },
     { name = "cffi" },
@@ -94,6 +95,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.18.4,<2" },
     { name = "async-timeout", specifier = ">=5.0.1,<6" },
     { name = "attrs", specifier = ">=25.3.0,<26" },
+    { name = "auxillary", directory = "../auxillary" },
     { name = "blinker", specifier = ">=1.9.0,<2" },
     { name = "certifi", specifier = ">=2025.1.31,<2026" },
     { name = "cffi", specifier = ">=1.17.1,<2" },
@@ -131,6 +133,11 @@ requires-dist = [
     { name = "urllib3", specifier = ">=2.7.0,<3" },
     { name = "werkzeug", specifier = ">=3.1.6,<4" },
 ]
+
+[[package]]
+name = "auxillary"
+version = "0.1.0"
+source = { directory = "../auxillary" }
 
 [[package]]
 name = "blinker"

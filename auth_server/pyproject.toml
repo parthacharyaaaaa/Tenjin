@@ -44,4 +44,11 @@ dependencies = [
     "ujson>=5.12.1,<6",
     "urllib3>=2.7.0,<3",
     "werkzeug>=3.1.6,<4",
+    "auxillary",
 ]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv.sources]
+auxillary = { path = "../auxillary"}
