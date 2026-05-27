@@ -14,6 +14,7 @@ from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import (
     get_app_config,
     get_synced_store_client,
+    get_database_session_maker,
 )
 from auth_server.utils import bootup
 
@@ -39,7 +40,9 @@ def create_app() -> Flask:
 
     synced_store_client: Final[Redis] = get_synced_store_client()
 
-    keydata_repository: Final[KeydataRepository] = KeydataRepository()
+    keydata_repository: Final[KeydataRepository] = KeydataRepository(
+        get_database_session_maker()
+    )
 
     is_master: bool = bool(
         synced_store_client.set(SyncedStoreStrings.AUTH_BOOTUP_MASTER, PID, nx=True)

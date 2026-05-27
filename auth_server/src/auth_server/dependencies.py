@@ -2,6 +2,7 @@ import os
 from functools import lru_cache
 from typing import Final, Generator
 
+from auth_server.repositories.keydata import KeydataRepository
 from redis import Redis
 
 from sqlalchemy.orm import sessionmaker, Session
@@ -73,4 +74,5 @@ def get_token_manager() -> TokenManager:
     return TokenManager(
         interface=get_token_store_client(),
         synced_store=get_synced_store_client(),
+        keydata_repository=KeydataRepository(get_database_session_maker()),
     )

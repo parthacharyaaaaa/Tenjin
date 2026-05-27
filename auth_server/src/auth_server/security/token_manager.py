@@ -2,7 +2,7 @@ import threading
 import time
 from traceback import format_exc
 import uuid
-from typing import Final, Optional, Literal, Sequence, TypeAlias, overload
+from typing import Optional, Literal, Sequence, TypeAlias, overload
 
 import jwt
 import jwt.exceptions as JWTexc
@@ -35,6 +35,7 @@ class TokenManager:
         self,
         interface: Redis,
         synced_store: Redis,
+        keydata_repository: KeydataRepository,
         refreshLifetime: int = 60 * 60 * 3,
         accessLifetime: int = 60 * 30,
         alg: str = "ES256",
@@ -60,6 +61,8 @@ class TokenManager:
         self.synced_store_client = synced_store
         if not (self.synced_store_client.ping()):
             raise ConnectionError()
+
+        self.keydata_repository = keydata_repository
 
         # Initialize universal headers, common to all tokens issued in any context
         uHeader = {"typ": typ, "alg": alg}
@@ -298,8 +301,7 @@ class TokenManager:
             return None
 
         # Try to fetch a valid key with this KID
-        keydata_repository: Final[KeydataRepository] = KeydataRepository()
-        key: KeyData | None = keydata_repository.get_keydata(kid)
+        key: KeyData | None = self.keydata_repository.get_keydata(kid)
         if not key:
             # Announce non existence to other workers in case they also receive this invalid key
             self.synced_store_client.set(
