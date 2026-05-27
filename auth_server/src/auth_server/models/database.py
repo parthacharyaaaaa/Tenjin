@@ -34,7 +34,7 @@ class Admin(Base):
     locked: Mapped[bool] = mapped_column(
         BOOLEAN, nullable=False, server_default=text("false")
     )
-    created_by: Mapped[int] = mapped_column(INTEGER, ForeignKey("admins.id"))
+    created_by: Mapped[int] = mapped_column(INTEGER, ForeignKey("admins.id_"))
 
 
 class SuspiciousActivity(Base):
@@ -42,7 +42,7 @@ class SuspiciousActivity(Base):
 
     id_: Mapped[int] = mapped_column(INTEGER, primary_key=True, autoincrement=True)
     suspect: Mapped[int] = mapped_column(
-        INTEGER, ForeignKey("admins.id"), nullable=False
+        INTEGER, ForeignKey("admins.id_"), nullable=False
     )
     time_logged: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
@@ -73,7 +73,7 @@ class KeyData(Base):
     public_pem: Mapped[bytes] = mapped_column(BYTEA, nullable=False, unique=True)
     manual_rotation: Mapped[bool] = mapped_column(BOOLEAN, server_default=text("false"))
     rotated_by: Mapped[int] = mapped_column(
-        INTEGER, ForeignKey("admins.id"), index=True
+        INTEGER, ForeignKey("admins.id_"), index=True
     )
 
     def __json_like__(self) -> dict[str, Any]:
