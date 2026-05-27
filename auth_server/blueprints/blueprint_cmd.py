@@ -1,13 +1,14 @@
 import base64
+from pathlib import Path
 import ecdsa
-import os
 import secrets
 import time
+from redis import Redis
 import ujson
 from datetime import datetime
-from typing import Any
+from typing import Any, Final
 
-from flask import Blueprint, current_app, jsonify, g, url_for
+from flask import Blueprint, jsonify, g, url_for
 
 from redis.exceptions import RedisError
 
@@ -15,23 +16,29 @@ from sqlalchemy import select, update, insert, func
 from sqlalchemy.sql import and_
 from sqlalchemy.exc import SQLAlchemyError
 
-from auth_server.redis_manager import SyncedStore
+from auth_server.config.app_config import AppConfig
+from auth_server.dependencies import get_app_config, get_synced_store_client
 from auxillary.decorators import enforce_json
 from auxillary.utils import (
     genericDBFetchException,
+    json_repr,
     verify_password,
     hash_password,
     to_base64url,
 )
-from auth_server.auth_auxillary import (
+from auth_server.utils.auth_auxillary import (
     report_suspicious_activity,
-    admin_only,
     fetch_valid_keys,
 )
-from auth_server.models import db, Admin, KeyData
-from auth_server.keygen import generate_ecdsa_pair, write_ecdsa_pair, update_jwks
-from auth_server.key_container import KeyMetadata
-from auth_server.token_manager import tokenManager
+from auth_server.utils.decorators import admin_only
+from auth_server.models.database import Admin, KeyData, db
+from auth_server.security.keygen import (
+    generate_ecdsa_pair,
+    write_ecdsa_pair,
+    update_jwks,
+)
+from auth_server.security.key_container import KeyMetadata
+from auth_server.security.token_manager import tokenManager
 
 from werkzeug import Response
 from werkzeug.exceptions import (
@@ -43,10 +50,9 @@ from werkzeug.exceptions import (
     Unauthorized,
 )
 
-assert SyncedStore
-assert tokenManager
+cmd: Blueprint = Blueprint("cmd", "cmd")
 
-cmd: Blueprint = Blueprint("cmd", "cmd", url_prefix="/cmd")
+config: Final[AppConfig] = get_app_config()
 
 
 @cmd.route("/admins/login", methods=["POST"])
@@ -70,7 +76,7 @@ def admin_login() -> tuple[Response, int]:
 
         if admin.locked:
             report_suspicious_activity(
-                admin.id, "Attempt to log into a locked account", force_logout=False
+                admin.id_, "Attempt to log into a locked account", force_logout=False
             )
             raise Forbidden(
                 "This account is currently locked on grounds of suspicious activities"
@@ -80,18 +86,19 @@ def admin_login() -> tuple[Response, int]:
 
     assert admin
     if not verify_password(password, admin.password_hash, admin.password_salt):
-        report_suspicious_activity(admin.id, "Incorrect password", force_logout=False)
+        report_suspicious_activity(admin.id_, "Incorrect password", force_logout=False)
         raise Unauthorized("Incorrect passwword")
 
-    # Exists in DB, check SyncedStore to see if session is already active
-    sessionKey: str = f"admin:{admin.id}"
+    # Exists in DB, check synced_store_client to see if session is already active
+    synced_store_client: Redis = get_synced_store_client()
+    sessionKey: str = f"admin:{admin.id_}"
     try:
-        adminSession: dict[str, str] = SyncedStore.hgetall(sessionKey)  # type: ignore[reportAssignmentType]
+        adminSession: dict[str, str] = synced_store_client.hgetall(sessionKey)  # type: ignore[reportAssignmentType]
 
         # Single sign-in policy, invalidate existing session and add entry in logs
         if adminSession:
-            SyncedStore.delete(sessionKey)
-            report_suspicious_activity(admin.id, "Session already active")
+            synced_store_client.delete(sessionKey)
+            report_suspicious_activity(admin.id_, "Session already active")
             raise Conflict("An admin session with these credentials is already active")
 
     except RedisError:
@@ -108,9 +115,9 @@ def admin_login() -> tuple[Response, int]:
     sessionID: int = secrets.randbelow(10_000_000)
     revivalDigest: str = secrets.token_hex(256)
     epoch: float = time.time()
-    expiry: float = epoch + current_app.config["ADMIN_SESSION_DURATION"]
+    expiry: float = epoch + config.ADMIN.ADMIN_SESSION_DURATION
     sessionMapping: dict = {
-        "admin_id": admin.id,
+        "admin_id": admin.id_,
         "session_id": sessionID,
         "session_iteration": 1,
         "revival_digest": revivalDigest,
@@ -119,7 +126,7 @@ def admin_login() -> tuple[Response, int]:
         "role": admin.role,
     }
 
-    SyncedStore.hset(
+    synced_store_client.hset(
         sessionKey, mapping=sessionMapping
     )  # Set hashmap with private revival digest
     sessionMapping.pop("revival_digest")
@@ -146,7 +153,7 @@ def admin_delete() -> tuple[Response, int]:
 
     try:
         admin: Admin | None = db.session.execute(
-            select(Admin).where((Admin.id == purgeID) & (Admin.time_deleted == None))
+            select(Admin).where((Admin.id_ == purgeID) & (Admin.time_deleted == None))
         ).scalar_one_or_none()
         if not admin:
             raise NotFound(f"No admin with ID {purgeID} found")
@@ -160,7 +167,7 @@ def admin_delete() -> tuple[Response, int]:
     try:
         db.session.execute(
             update(Admin)
-            .where(Admin.id == admin.id)
+            .where(Admin.id_ == admin.id_)
             .values(time_deleted=datetime.now())
         )
     except:
@@ -180,25 +187,24 @@ def admin_refresh() -> tuple[Response, int]:
             "Session reauthentication requires a refresh digest to be provided"
         )
 
+    config.ADMIN.MAX_SESSION_ITERATIONS
     adminKey: str = f'admin:{g.SESSION_TOKEN["admin_id"]}'
-    if (
-        g.SESSION_TOKEN["session_iteration"]
-        >= current_app.config["MAX_SESSION_ITERATIONS"]
-    ):
-        SyncedStore.delete(adminKey)
+    synced_store_client: Final[Redis] = get_synced_store_client()
+    if g.SESSION_TOKEN["session_iteration"] >= config.ADMIN.MAX_SESSION_ITERATIONS:
+        synced_store_client.delete(adminKey)
         raise Conflict(
             "Maximum session reiterations reached, please reauthenticate to be assigned a fresh session"
         )
 
-    actualDigestBytes: bytes = SyncedStore.hget(adminKey, "revival_digest")  # type: ignore[reportAssignmentType]
+    actualDigestBytes: bytes = synced_store_client.hget(adminKey, "revival_digest")  # type: ignore[reportAssignmentType]
     if not actualDigestBytes:
-        SyncedStore.delete(adminKey)
+        synced_store_client.delete(adminKey)
         raise InternalServerError(
             "An error occured in verifying revival digests. Please reuthenticate"
         )
 
     if actualDigestBytes == b"__NF__":
-        SyncedStore.delete(adminKey)
+        synced_store_client.delete(adminKey)
         raise Conflict("Maximum session reiterations reached")
 
     actualDigest: str = actualDigestBytes.decode()
@@ -212,10 +218,11 @@ def admin_refresh() -> tuple[Response, int]:
     newIteration: int = g.SESSION_TOKEN["session_iteration"] + 1
     newSessionID: int = secrets.randbelow(10_000_000)
     epoch: float = time.time()
-    expiry: float = epoch + current_app.config["ADMIN_SESSION_DURATION"]
+
+    expiry: float = epoch + config.ADMIN.ADMIN_SESSION_DURATION
     revival_digest: bytes | str = (
         secrets.token_hex(256)
-        if newIteration == current_app.config["MAX_SESSION_ITERATIONS"]
+        if newIteration == config.ADMIN.MAX_SESSION_ITERATIONS
         else "__END__"
     )
     newSessionMapping: dict[str, str | float] = {
@@ -228,7 +235,7 @@ def admin_refresh() -> tuple[Response, int]:
         "role": g.SESSION_TOKEN["role"],
     }
 
-    SyncedStore.hset(adminKey, mapping=newSessionMapping)
+    synced_store_client.hset(adminKey, mapping=newSessionMapping)
     newSessionMapping.pop("revival_digest")
 
     newSessionMapping["message"] = "Session extended"
@@ -247,7 +254,8 @@ def admin_refresh() -> tuple[Response, int]:
 @cmd.route("/admins/logout", methods=["PATCH"])
 @admin_only()
 def admin_logout() -> tuple[Response, int]:
-    SyncedStore.delete(f'admin:{g.SESSION_TOKEN["admin_id"]}')
+    synced_store_client: Final[Redis] = get_synced_store_client()
+    synced_store_client.delete(f'admin:{g.SESSION_TOKEN["admin_id"]}')
     return jsonify({"message": "Logout successful"}), 200
 
 
@@ -263,7 +271,7 @@ def admin_lock() -> tuple[Response, int]:
 
     try:
         admin: Admin | None = db.session.execute(
-            select(Admin).where(Admin.id == target_id).with_for_update()
+            select(Admin).where(Admin.id_ == target_id).with_for_update()
         ).scalar_one_or_none()
         if not admin:
             raise NotFound(f"No admin with id {target_id} could be found")
@@ -282,14 +290,15 @@ def admin_lock() -> tuple[Response, int]:
             )
             raise conflict
         db.session.execute(
-            update(Admin).where(Admin.id == target_id).values(locked=True)
+            update(Admin).where(Admin.id_ == target_id).values(locked=True)
         )
         db.session.commit()
     except SQLAlchemyError:
         genericDBFetchException()
 
     # Log out the target admin
-    SyncedStore.delete(f"admin:{target_id}")
+    synced_store_client: Final[Redis] = get_synced_store_client()
+    synced_store_client.delete(f"admin:{target_id}")
 
     return jsonify({"message": "Admin locked succesfully"}), 200
 
@@ -306,7 +315,7 @@ def admin_unlock() -> tuple[Response, int]:
 
     try:
         admin: Admin | None = db.session.execute(
-            select(Admin).where(Admin.id == target_id).with_for_update()
+            select(Admin).where(Admin.id_ == target_id).with_for_update()
         ).scalar_one_or_none()
         if not admin:
             raise NotFound(f"No admin with id {target_id} could be found")
@@ -326,7 +335,7 @@ def admin_unlock() -> tuple[Response, int]:
             raise conflict
 
         db.session.execute(
-            update(Admin).where(Admin.id == target_id).values(locked=False)
+            update(Admin).where(Admin.id_ == target_id).values(locked=False)
         )
         db.session.commit()
     except SQLAlchemyError:
@@ -389,7 +398,7 @@ def get_key(kid: str) -> tuple[Response, int]:
     if not key:
         raise NotFound("No key with this ID found")
 
-    keyMapping: dict[str, Any] = key.__json_like__()
+    keyMapping: dict[str, Any] = json_repr(key)
     keyMapping["private_pem"] = (
         key.private_pem.decode()
     )  # Add private PEM since json repr only include public PEM
@@ -402,9 +411,12 @@ def get_key(kid: str) -> tuple[Response, int]:
 def invalidate_key(kid: str) -> tuple[Response, int]:
     """Invalidate a given key"""
     key_lock: str = f"INVALIDATE_KEY:{kid}"
-    if not SyncedStore.set(key_lock, g.SESSION_TOKEN["admin_id"], ex=300, nx=True):
+    synced_store_client: Final[Redis] = get_synced_store_client()
+    if not synced_store_client.set(
+        key_lock, g.SESSION_TOKEN["admin_id"], ex=300, nx=True
+    ):
         # Another worker is performing clean operation, reject this request
-        adminID: bytes = SyncedStore.get(key_lock)  # type: ignore[reportAssignmentType]
+        adminID: bytes = synced_store_client.get(key_lock)  # type: ignore[reportAssignmentType]
         return (
             jsonify(
                 {
@@ -415,12 +427,11 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
             409,
         )
 
-    public_pem_fpath: str = os.path.join(
-        current_app.config["PUBLIC_PEM_FPATH"], f"public_{kid}_key.pem"
-    )
+    public_pem_fpath: Path = config.JWKS.PUBLIC_PEM_DIRECTORY / f"public_{kid}_key.pem"
     additional_kw: dict[str, str] = {}
     original_jwks: list[dict[str, Any]] = []
-    with open(current_app.config["JWKS_FPATH"], "r") as jwks_file:
+
+    with open(config.JWKS.JWKS_FILEPATH, "r") as jwks_file:
         original_jwks = ujson.loads(jwks_file.read())["keys"]
 
     if any(mapping["kid"] == kid for mapping in original_jwks):
@@ -455,12 +466,11 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
 
         # Before persisting to DB, delete public PEM file, and update JWKS
         updated_jwks = [mapping for mapping in original_jwks if mapping["kid"] != kid]
-        with open(current_app.config["JWKS_FPATH"], "w") as jwks_file:
+        with open(config.JWKS.JWKS_FILEPATH, "w") as jwks_file:
             jwks_file.write(ujson.dumps({"keys": updated_jwks}, indent=2))
 
         # Delete public PEM file
-        if os.path.exists(public_pem_fpath):
-            os.remove(public_pem_fpath)
+        public_pem_fpath.unlink(missing_ok=True)
 
         # File I/O done, commit DB
         db.session.commit()
@@ -469,15 +479,13 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
         db.session.rollback()
 
         # Revert JWKS state
-        with open(current_app.config["JWKS_FPATH"], "w") as jwks_file:
+        with open(config.JWKS.JWKS_FILEPATH, "w") as jwks_file:
             jwks_file.write(ujson.dumps({"keys": original_jwks}, indent=2))
 
         # Regenerate PEM file
-        if not os.path.exists(public_pem_fpath):
-            with open(public_pem_fpath, "wb") as public_pem_file:
-                public_pem_file.write(
-                    target_key.public_pem
-                )  # TODO: Fix unbound variable
+        if not public_pem_fpath.exists():
+            public_pem_fpath.write_bytes(target_key.public_pem)
+            # TODO: Fix unbound variable
 
         # State reverted, crash and burn
         error: InternalServerError = InternalServerError(
@@ -490,7 +498,7 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
     tokenManager.invalidate_key(kid)
 
     # Update global
-    raw_valid_keys: list[bytes] = SyncedStore.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
+    raw_valid_keys: list[bytes] = synced_store_client.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
     if not raw_valid_keys or kid.encode("utf-8") not in raw_valid_keys:
         # Should never happen, but in case it does we fall back and regenerate the entire list
         additional_kw["keylist_integrity_warning"] = (
@@ -504,7 +512,7 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
     # By this stage, valid_keys will maintain a consistent sequence of valid key IDs (including that of the active key), either from a simple list removal or by consulting the database in case of any inconsistency
 
     #  Update global state and release lock
-    with SyncedStore.pipeline() as pipe:
+    with synced_store_client.pipeline() as pipe:
         pipe.delete("VALID_KEYS")
         pipe.lpush("VALID_KEYS", *valid_keys)
         pipe.delete(key_lock)
@@ -528,11 +536,12 @@ def invalidate_key(kid: str) -> tuple[Response, int]:
 def clean_keystore() -> tuple[Response, int]:
     """Invalidate all keys except for the currently active key"""
     # Check whether another worker is performing this action
-    if not SyncedStore.set(
+    synced_store_client: Final[Redis] = get_synced_store_client()
+    if not synced_store_client.set(
         "CLEAN_KEYSTORE_LOCK", g.SESSION_TOKEN["admin_id"], ex=300, nx=True
     ):
         # Another worker is performing clean operation, reject this request
-        adminID: bytes = SyncedStore.get("CLEAN_KEYSTORE_LOCK")  # type: ignore[reportAssignmentType]
+        adminID: bytes = synced_store_client.get("CLEAN_KEYSTORE_LOCK")  # type: ignore[reportAssignmentType]
         return (
             jsonify(
                 {
@@ -545,7 +554,7 @@ def clean_keystore() -> tuple[Response, int]:
 
     # Before cleaning keystore, store all old data for rollbacks
     old_jwks: list[dict[str, Any]] = []
-    with open(current_app.config["JWKS_FPATH"]) as jwks_file:
+    with open(config.JWKS.JWKS_FILEPATH) as jwks_file:
         old_jwks = ujson.loads(jwks_file.read())["keys"]
 
     # Edge case if only 1 active key exists
@@ -554,15 +563,9 @@ def clean_keystore() -> tuple[Response, int]:
 
     pem_mappings: dict[str, bytes] = {}
     for keydata in old_jwks:
-        with open(
-            os.path.join(
-                current_app.config["PUBLIC_PEM_DIRECTORY"],
-                f'public_{keydata["kid"]}_key.pem',
-            ),
-            "rb",
-        ) as public_pem_file:
-            pem_mappings[keydata["kid"]] = public_pem_file.read()
-
+        pem_mappings[keydata["kid"]] = config.JWKS.PUBLIC_PEM_DIRECTORY.joinpath(
+            f'public_{keydata["kid"]}_key.pem'
+        ).read_bytes()
     # At this stage, we have all the old data saved for a rollback. JWKS can be restored, and any PEM files deleted in an erroneous transaction can be regenerated safely
     # Begin operation
     try:
@@ -607,16 +610,17 @@ def clean_keystore() -> tuple[Response, int]:
         }
 
         # DB updated, update JWKS
-        with open(current_app.config["JWKS_FPATH"], "w") as jwks_file:
+
+        with open(config.JWKS.JWKS_FILEPATH, "w") as jwks_file:
             jwks_file.write(ujson.dumps({"keys": [activeKeyMapping]}, indent=2))
 
         # Purge all public PEM files for invalid keys
         for keyID in validInactiveKeys:
-            fpath: str = os.path.join(
-                current_app.config["PUBLIC_PEM_DIRECTORY"], f"public_{keyID}_key.pem"
+            (
+                config.JWKS.PUBLIC_PEM_DIRECTORY.joinpath(
+                    f"public_{keyID}_key.pem"
+                ).unlink(missing_ok=True)
             )
-            if os.path.exists(fpath):
-                os.remove(fpath)
 
         db.session.commit()  # Finally persist this transaction at the most important layer i.e. DB
     except Exception as exc:
@@ -625,26 +629,23 @@ def clean_keystore() -> tuple[Response, int]:
         db.session.rollback()
 
         # JWKS
-        with open(current_app.config["JWKS_FPATH"], "w") as jwks_file:
+        with open(config.JWKS.JWKS_FILEPATH, "w") as jwks_file:
             jwks_file.write(ujson.dumps({"keys": old_jwks}, indent=2))
 
         # PEM files
         for kid, public_pem in pem_mappings.items():
-            fpath = os.path.join(
-                current_app.config["PUBLIC_PEM_DIRECTORY"], f"public_{kid}_key.pem"
-            )
-            if not os.path.exists(fpath):
-                # Regenerate public PEM file in case of deletion
-                with open(fpath, "wb") as public_pem_file:
-                    public_pem_file.write(public_pem)
+            fpath: Path = config.JWKS.PUBLIC_PEM_DIRECTORY / f"public_{kid}_key.pem"
+            # Regenerate public PEM file in case of deletion
+            if not fpath.exists():
+                fpath.write_bytes(public_pem)
 
         # All rollbacks performed, crash and burn
         raise InternalServerError("Failed to perform clean operation") from exc
     finally:
-        SyncedStore.delete("CLEAN_KEYSTORE_LOCK")
+        synced_store_client.delete("CLEAN_KEYSTORE_LOCK")
 
     # Update global state, no need to fetch current list of keys anyways since as of this operation only a single active key would be valid throughout
-    with SyncedStore.pipeline() as pipe:
+    with synced_store_client.pipeline() as pipe:
         pipe.delete("VALID_KEYS")
         pipe.lpush("VALID_KEYS", activeKey.kid)
         pipe.execute()
@@ -666,12 +667,13 @@ def clean_keystore() -> tuple[Response, int]:
 def rotate_keys() -> tuple[Response, int]:
     """Trigger a key rotation sequence"""
     # Check for concurrent worker performing a key rotation
-    lock = SyncedStore.set(
+    synced_store_client: Final[Redis] = get_synced_store_client()
+    lock = synced_store_client.set(
         "KEY_ROTATION_LOCK", g.SESSION_TOKEN["admin_id"], ex=300, nx=True
     )
     if not lock:
         # Another worker is performing this action, reject this request >:(
-        adminID: bytes = SyncedStore.get("KEY_ROTATION_LOCK")  # type: ignore[reportAssignmentType]
+        adminID: bytes = synced_store_client.get("KEY_ROTATION_LOCK")  # type: ignore[reportAssignmentType]
         return (
             jsonify(
                 {
@@ -683,7 +685,7 @@ def rotate_keys() -> tuple[Response, int]:
         )
 
     # Check for cooldown, must be global for all staff admins
-    cooldown_flag: str = SyncedStore.get("KEY_ROTATION_COOLDOWN")  # type: ignore[reportAssignmentType]
+    cooldown_flag: str = synced_store_client.get("KEY_ROTATION_COOLDOWN")  # type: ignore[reportAssignmentType]
     if cooldown_flag and g.SESSION_TOKEN["role"] == "staff":
         report_suspicious_activity(
             adminID=g.SESSION_TOKEN["admin_id"],
@@ -731,7 +733,7 @@ def rotate_keys() -> tuple[Response, int]:
         valid_key_count: int = db.session.execute(
             select(func.count()).select_from(KeyData).where(KeyData.expired_at == None)
         ).scalar_one()
-        if valid_key_count > current_app.config["MAX_VALID_KEYS"]:
+        if valid_key_count > config.KEYS.MAX_VALID_KEYS:
             overflow = True
             # Select and lock oldest, non-expired valid key
             purgeID = db.session.execute(
@@ -754,7 +756,7 @@ def rotate_keys() -> tuple[Response, int]:
 
     except SQLAlchemyError:
         db.session.rollback()
-        SyncedStore.delete("KEY_ROTATION_LOCK")
+        synced_store_client.delete("KEY_ROTATION_LOCK")
         raise InternalServerError(
             "An error occured in performing key rotation (Database level)"
         )
@@ -763,38 +765,25 @@ def rotate_keys() -> tuple[Response, int]:
     update_jwks(
         verificationKey,
         kid,
-        current_app.config["JWKS_FPATH"],
-        capacity=current_app.config["MAX_VALID_KEYS"],
+        config.JWKS.JWKS_FILEPATH,
+        capacity=config.KEYS.MAX_VALID_KEYS,
     )  # Implictly trims old JWKS data, very kewl >:3
     write_ecdsa_pair(
-        privateDir=current_app.config["PRIVATE_PEM_DIRECTORY"],
-        staticDir=current_app.config["PUBLIC_PEM_DIRECTORY"],
-        encryption_key=current_app.config["PRIVATE_PEM_ENCRYPTION_KEY"],
+        private_dir=config.JWKS.PRIVATE_PEM_DIRECTORY,
+        public_dir=config.JWKS.PUBLIC_PEM_DIRECTORY,
         private_key=signingKey,
         public_key=verificationKey,
         key_id=int(kid),
     )
 
     # Remove previous key's private PEM file
-    os.remove(
-        os.path.join(
-            current_app.config["PRIVATE_PEM_DIRECTORY"], f"private_{prevKID}_key.pem"
-        )
-    )
+    config.JWKS.JWKS_FILEPATH.joinpath(f"private_{prevKID}_key.pem").unlink()
     if overflow:
         # Delete oldest public PEM file.
-        os.remove(
-            os.path.join(
-                current_app.config["PUBLIC_PEM_DIRECTORY"], f"public_{purgeID}_key.pem"
-            )
+        config.JWKS.JWKS_FILEPATH.joinpath(f"public_{purgeID}_key.pem").unlink()
+        config.JWKS.JWKS_FILEPATH.joinpath(f"private_{purgeID}_key.pem").unlink(
+            missing_ok=True
         )
-        privateFpath: str = os.path.join(
-            current_app.config["PRIVATE_PEM_DIRECTORY"], f"private_{purgeID}_key.pem"
-        )
-
-        # Explicit check because normally the private PEM file for any non-active valid key should already have been deleted.
-        if os.path.exists(privateFpath):
-            os.remove(privateFpath)
 
     # Update token manager's mapping to use this newly created ECDSA pair
     newKeyData: KeyMetadata = KeyMetadata(
@@ -804,7 +793,7 @@ def rotate_keys() -> tuple[Response, int]:
     )
     tokenManager.update_keydata(kid, newKeyData)
 
-    raw_valid_keys: list[bytes] = SyncedStore.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
+    raw_valid_keys: list[bytes] = synced_store_client.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
     if not raw_valid_keys or kid.encode("utf-8") not in raw_valid_keys:
         # Should never happen, but in case it does we fall back and regenerate the entire list
         valid_keys: list[str] = fetch_valid_keys()
@@ -817,10 +806,8 @@ def rotate_keys() -> tuple[Response, int]:
 
     # At this state, valid_keys is a consistent list of key IDs
     # Set global cooldown for key rotation, update global state, and release rotation lock
-    with SyncedStore.pipeline() as pipe:
-        pipe.set(
-            "KEY_ROTATION_COOLDOWN", 1, ex=current_app.config["KEY_ROTATION_COOLDOWN"]
-        )
+    with synced_store_client.pipeline() as pipe:
+        pipe.set("KEY_ROTATION_COOLDOWN", 1, ex=config.KEYS.KEY_ROTATION_COOLDOWN)
         pipe.delete("VALID_KEYS")
         pipe.lpush("VALID_KEYS", *valid_keys)
         pipe.delete("KEY_ROTATION_LOCK")

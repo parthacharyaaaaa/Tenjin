@@ -1,60 +1,19 @@
-from auth_server.models import db, SuspiciousActivity, Admin, KeyData
-from auth_server.redis_manager import SyncedStore
-from sqlalchemy import func, select, insert, update
+from redis import Redis
+
+from auth_server.dependencies import get_synced_store_client
 from werkzeug.exceptions import Unauthorized, Forbidden
-from datetime import datetime
-from flask import current_app, request, g
+from flask import request, g
 from functools import wraps
 import time
 import ujson
 import base64
-from typing import Literal
+from typing import Any, Literal
 
 
-def report_suspicious_activity(
-    adminID: int, desc: str, force_logout: bool = True
-) -> None:
-    db.session.execute(
-        insert(SuspiciousActivity).values(
-            suspect=adminID, description="Incorrect password"
-        )
-    )
-    current_time: datetime = datetime.now()
-
-    stmt = (
-        select(func.count())
-        .select_from(SuspiciousActivity)
-        .where(
-            (SuspiciousActivity.suspect == adminID)
-            & (
-                SuspiciousActivity.time_logged.between(
-                    current_time - current_app.config["SUSPICIOUS_LOOKBACK_TIME"],
-                    current_time,
-                )
-            )
-        )
-    )
-
-    if (
-        force_logout
-        and db.session.execute(stmt).scalar()
-        >= current_app.config["MAX_ACTIVITY_LIMIT"]
-    ):
-        db.session.execute(update(Admin).values(locked=True))
-        SyncedStore.delete(f"admin:{adminID}")
-
-    db.session.commit()
-
-
-def fetch_valid_keys() -> list[str]:
-    """Fetch all valid key IDs from database"""
-    _res = db.session.execute(select(KeyData.kid).where(KeyData.expired_at.is_(None)))
-    if not _res:
-        raise RuntimeError("No valid keys found")
-    return _res.scalars().all()
-
-
-def admin_only(required_role: Literal["staff", "super"] = "staff"):
+def admin_only(
+    required_role: Literal["staff", "super"] = "staff",
+    synced_store_client: Redis = get_synced_store_client(),
+):
     """
     #### Role-based admin session validation decorator.
     - Verifies token presence and semantics
@@ -69,7 +28,9 @@ def admin_only(required_role: Literal["staff", "super"] = "staff"):
     def wrapper(endpoint):
         @wraps(endpoint)
         def decorated(*args, **kwargs):
-            encodedSessionToken: str = request.headers.get("X-SESSION-TOKEN", None)
+            encodedSessionToken: str | None = request.headers.get(
+                "X-SESSION-TOKEN", None
+            )
             if not encodedSessionToken:
                 raise Unauthorized("Missing session token")
 
@@ -93,17 +54,23 @@ def admin_only(required_role: Literal["staff", "super"] = "staff"):
             adminSessionKey = f"admin:{adminID}"
 
             if not (sessionID and expiry):
-                SyncedStore.delete(adminSessionKey)
-                report_suspicious_activity(adminID, "Invalid token submitted")
+                synced_store_client.delete(adminSessionKey)
+                report_suspicious_activity(
+                    synced_store_client, adminID, "Invalid token submitted"
+                )
                 raise Unauthorized("Invalid token")
 
             if time.time() > expiry:
-                SyncedStore.delete(adminSessionKey)
+                synced_store_client.delete(adminSessionKey)
                 raise Forbidden("Session expired, please login again")
 
-            adminSessionMapping = SyncedStore.hgetall(adminSessionKey)
+            adminSessionMapping: dict[bytes, Any] = synced_store_client.hgetall(
+                adminSessionKey
+            )
             if not adminSessionMapping:
-                report_suspicious_activity(adminID, "No active session found")
+                report_suspicious_activity(
+                    synced_store_client, adminID, "No active session found"
+                )
                 raise Unauthorized("No session for this admin exists")
 
             if not (
@@ -112,7 +79,9 @@ def admin_only(required_role: Literal["staff", "super"] = "staff"):
                 and role == adminSessionMapping.get(b"role").decode()
                 and iteration == int(adminSessionMapping.get(b"session_iteration"))
             ):
-                report_suspicious_activity(adminID, "Invalid session token")
+                report_suspicious_activity(
+                    synced_store_client, adminID, "Invalid session token"
+                )
                 raise Unauthorized("Invalid session token")
 
             actual_role = role

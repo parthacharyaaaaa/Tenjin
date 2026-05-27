@@ -2,27 +2,25 @@ import threading
 import time
 from traceback import format_exc
 import uuid
-from typing import Optional, Literal, Sequence, TypeAlias, overload
+from typing import Final, Optional, Literal, Sequence, TypeAlias, overload
 
 import jwt
 import jwt.exceptions as JWTexc
 
 from redis import Redis
 
-from sqlalchemy import select
-
 from werkzeug.exceptions import InternalServerError
 
-from auth_server.key_container import KeyMetadata
-from auth_server.models import KeyData
-from auth_server.tokens import (
+from auth_server.security.key_container import KeyMetadata
+from auth_server.models.database import KeyData
+from auth_server.repositories.keydata import KeydataRepository
+from auth_server.security.tokens import (
     StandardAccessTokenClaims,
     StandardRefreshTokenClaims,
     TokenType,
 )
 
-from flask_sqlalchemy import SQLAlchemy
-from flask import Flask, Response
+from flask import Response
 
 # Type aliases
 tokenPair: TypeAlias = tuple[str, str]
@@ -37,11 +35,6 @@ class TokenManager:
         self,
         interface: Redis,
         synced_store: Redis,
-        app: Flask,
-        db: SQLAlchemy,
-        active_kid: str,
-        active_key_metadata: KeyMetadata,
-        verification_keys_mapping: dict[str, KeyMetadata] | None = None,
         refreshLifetime: int = 60 * 60 * 3,
         accessLifetime: int = 60 * 30,
         alg: str = "ES256",
@@ -53,27 +46,6 @@ class TokenManager:
         max_valid_keys: int = 3,
         announcement_duration: int = 60 * 60 * 3,
     ):
-        """
-        Args:
-            kvsMapping (dict): Mapping of key IDs to key metadata (see `KeyMetadata` class). Never expose private keys via endpoints.
-            interface (Redis): Redis interface instance for caching or blacklisting.
-            dbConnString (str): Database URI for persistent storage.
-            refreshLifetime (int): Lifetime of refresh tokens (default: 3 hours).
-            accessLifetime (int): Lifetime of access tokens (default: 30 minutes).
-            alg (str): JWT signing algorithm. Default is "ES256".
-            typ (str): Token type, usually "JWT".
-            uClaims (dict): Universal claims to include in all tokens.
-            uHeaders (dict, optional): Additional JWT headers.
-            leeway (int): Leeway time in seconds for token validation. Default is 180s.
-            max_tokens_per_fid (int): Max tokens allowed per user/session.
-        """
-        if not verification_keys_mapping:
-            verification_keys_mapping = {}
-        self.key_mapping: dict[str, KeyMetadata] = verification_keys_mapping | {
-            active_kid: active_key_metadata
-        }
-        self.active_key = active_kid
-
         try:
             self._TokenStore = interface
             self.max_llen = max_tokens_per_fid
@@ -85,12 +57,9 @@ class TokenManager:
 
         self.announcement_duration = announcement_duration
 
-        self._SyncedStore = synced_store
-        if not (self._SyncedStore.ping()):
+        self.synced_store_client = synced_store
+        if not (self.synced_store_client.ping()):
             raise ConnectionError()
-
-        self.db = db
-        self.app = app
 
         # Initialize universal headers, common to all tokens issued in any context
         uHeader = {"typ": typ, "alg": alg}
@@ -110,6 +79,19 @@ class TokenManager:
 
         # Start background thread for polling
         threading.Thread(target=self.poll_store, daemon=True).start()
+
+    def set_key_state(
+        self,
+        active_kid: str,
+        active_key_metadata: KeyMetadata,
+        verification_keys_mapping: dict[str, KeyMetadata] | None = None,
+    ) -> None:
+        if not verification_keys_mapping:
+            verification_keys_mapping = {}
+        self.key_mapping: dict[str, KeyMetadata] = verification_keys_mapping | {
+            active_kid: active_key_metadata
+        }
+        self.active_key = active_kid
 
     @overload
     def decodeToken(
@@ -311,20 +293,18 @@ class TokenManager:
         Returns:
             Fetched key casted to KeyMetadata, None if not found"""
         # Check synced store for an invalid key announcement for this key
-        invalidKey: bytes | None = self._SyncedStore.get(f"invalid_key:{kid}")  # type: ignore[reportAssignmentType]
+        invalidKey: bytes | None = self.synced_store_client.get(f"invalid_key:{kid}")  # type: ignore[reportAssignmentType]
         if invalidKey:
             return None
 
         # Try to fetch a valid key with this KID
-        with self.app.app_context():
-            key: KeyData | None = self.db.session.execute(
-                select(KeyData).where(
-                    (KeyData.kid == kid) & (KeyData.expired_at.isnot(None))  # type: ignore[reportAttributeAccessIssue]
-                )
-            ).scalar_one_or_none()
+        keydata_repository: Final[KeydataRepository] = KeydataRepository()
+        key: KeyData | None = keydata_repository.get_keydata(kid)
         if not key:
             # Announce non existence to other workers in case they also receive this invalid key
-            self._SyncedStore.set(f"invalid_key:{kid}", 1, self.announcement_duration)
+            self.synced_store_client.set(
+                f"invalid_key:{kid}", 1, self.announcement_duration
+            )
             return None
         return KeyMetadata(
             key.public_pem,
@@ -345,7 +325,7 @@ class TokenManager:
         """Check synced store to keep local keys updated with global keys. Intended to be run as a non-blocking, background task upon instantiation"""
         while True:
             try:
-                valid_keys: list[bytes] | None = self._SyncedStore.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
+                valid_keys: list[bytes] | None = self.synced_store_client.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
 
                 if not valid_keys:
                     raise RuntimeError("Valid keys list empty or not found")
@@ -416,25 +396,3 @@ class TokenManager:
 
 
 tokenManager: TokenManager | None = None
-
-
-def init_token_manager(
-    vk_mapping: dict[str, KeyMetadata],
-    active_key_id: str,
-    active_keydata: KeyMetadata,
-    redisinterface: Redis,
-    syncedstore: Redis,
-    database: SQLAlchemy,
-    app: Flask,
-    **kwargs,
-) -> None:
-    global tokenManager
-    tokenManager = TokenManager(
-        interface=redisinterface,
-        synced_store=syncedstore,
-        db=database,
-        app=app,
-        verification_keys_mapping=vk_mapping,
-        active_kid=active_key_id,
-        active_key_metadata=active_keydata,
-    )
