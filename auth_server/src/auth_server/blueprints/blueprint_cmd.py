@@ -184,6 +184,7 @@ def admin_delete() -> tuple[Response, int]:
 @admin_only()
 def admin_refresh() -> tuple[Response, int]:
     """Refresh an admin's session and enforce a maximum number of times a session can be refreshed before requiring reauthentication"""
+    # TODO: Move refresh-digest to request headers
     revivalDigest: str = g.REQUEST_JSON.get("refresh-digest")
     if not revivalDigest:
         raise BadRequest(
