@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Sequence
 
 import ecdsa
 from hashlib import sha512
@@ -6,6 +7,8 @@ import os
 import secrets
 from auxillary.utils import to_base64url
 import ujson
+
+from auth_server.models.database import KeyData
 
 
 def generate_ecdsa_pair() -> tuple[str, ecdsa.SigningKey, ecdsa.VerifyingKey]:
@@ -20,6 +23,31 @@ def generate_ecdsa_pair() -> tuple[str, ecdsa.SigningKey, ecdsa.VerifyingKey]:
     kid: str = str(secrets.randbelow(10_000_000))
 
     return kid, signing_key, verify_key
+
+
+def initialize_jwks(jwks_filepath: Path, keys: Sequence[KeyData]) -> None:
+    jwks_contents: list[dict[str, str | int]] = []
+    for key in keys:
+        # ecdsa.VerifyingKey.pubkey is hinted as being None thanks to its constructor
+        # but actually does return a valid type
+        point = ecdsa.VerifyingKey.from_pem(key.public_pem).pubkey.point  # type: ignore[reportAttributeAccessIssue]
+        jwks_contents.append(
+            {
+                "kty": "EC",
+                "alg": key.alg,
+                "crv": key.curve,
+                "use": "sig",
+                "kid": key.kid,
+                "x": to_base64url(int(point.x())),
+                "y": to_base64url(int(point.y())),
+            }
+        )
+
+        jwks_filepath.write_bytes(
+            ujson.dumps({"keys": jwks_contents}, indent=2, ensure_ascii=True).encode(
+                "utf-8"
+            )
+        )
 
 
 def update_jwks(
