@@ -1,8 +1,8 @@
 from typing import Final
 
 from auth_server.config.app_config import AppConfig
-from auth_server.dependencies import get_app_config
-from auth_server.token_manager import tokenManager
+from auth_server.dependencies import get_app_config, get_token_manager
+from auth_server.token_manager import TokenManager
 from auth_server.tokens import TokenType, StandardRefreshTokenClaims
 from auxillary.decorators import enforce_json
 from flask import (
@@ -20,8 +20,6 @@ import time
 from hashlib import sha256
 
 auth: Blueprint = Blueprint("auth", "auth")
-
-assert tokenManager
 
 config: Final[AppConfig] = get_app_config()
 
@@ -42,6 +40,7 @@ def jwks() -> tuple[Response, int]:
 @auth.route("/login", methods=["POST", "OPTIONS"])
 @enforce_json
 def login():
+    token_manager: Final[TokenManager] = get_token_manager()
     # TODO: Add proper handling of 'request_for' field
 
     if not ("request_for") in g.REQUEST_JSON:
@@ -72,8 +71,8 @@ def login():
     rsResponse: dict[str, str | int] = valid.json()
     sub, sid = str(rsResponse.pop("sub")), int(rsResponse.pop("sid"))
     familyID: str = sha256(f"{sub}:{sid}".encode()).hexdigest()
-    aToken: str = tokenManager.issueAccessToken(sub, sid, familyID)
-    rToken: str = tokenManager.issueRefreshToken(sub, sid, familyID=familyID)
+    aToken: str = token_manager.issueAccessToken(sub, sid, familyID)
+    rToken: str = token_manager.issueRefreshToken(sub, sid, familyID=familyID)
 
     epoch: float = time.time()
     response: Response = jsonify(
@@ -81,13 +80,13 @@ def login():
             "message": rsResponse.pop("message", "Login complete."),
             "username": sub,
             "time_of_issuance": epoch,
-            "access_exp": epoch + tokenManager.accessLifetime,
-            "leeway": tokenManager.leeway,
+            "access_exp": epoch + token_manager.accessLifetime,
+            "leeway": token_manager.leeway,
             "issuer": "tenjin-auth-service",
             "_additional": {**rsResponse},
         }
     )
-    tokenManager.attach_tokens_to_response(
+    token_manager.attach_tokens_to_response(
         response,
         access_token=aToken,
         refresh_token=rToken,
@@ -99,6 +98,7 @@ def login():
 @auth.route("/register", methods=["POST", "OPTIONS"])
 @enforce_json
 def register():
+    token_manager: Final[TokenManager] = get_token_manager()
     if not (
         "username" in g.REQUEST_JSON
         and "email" in g.REQUEST_JSON
@@ -127,8 +127,8 @@ def register():
     rsResponse: dict[str, str | int] = valid.json()
     sub, sid = str(rsResponse.pop("sub")), int(rsResponse.pop("sid"))
     familyID: str = sha256(f"{sub}:{sid}".encode()).hexdigest()
-    aToken: str = tokenManager.issueAccessToken(sub, sid, familyID)
-    rToken: str = tokenManager.issueRefreshToken(sub, sid, familyID=familyID)
+    aToken: str = token_manager.issueAccessToken(sub, sid, familyID)
+    rToken: str = token_manager.issueRefreshToken(sub, sid, familyID=familyID)
     epoch: float = time.time()
     response: Response = jsonify(
         {
@@ -136,14 +136,14 @@ def register():
             "username": sub,
             "email": rsResponse.pop("email", None),
             "time_of_issuance": epoch,
-            "access_exp": epoch + tokenManager.accessLifetime,
-            "leeway": tokenManager.leeway,
+            "access_exp": epoch + token_manager.accessLifetime,
+            "leeway": token_manager.leeway,
             "issuer": "tenjin-auth-service",
             "_additional": {**rsResponse},
         }
     )
 
-    tokenManager.attach_tokens_to_response(
+    token_manager.attach_tokens_to_response(
         response,
         access_token=aToken,
         refresh_token=rToken,
@@ -154,6 +154,7 @@ def register():
 
 @auth.route("/reissue", methods=["GET", "OPTIONS"])
 def reissue():
+    token_manager: Final[TokenManager] = get_token_manager()
     refreshToken: str | None = request.cookies.get(
         "refresh", request.cookies.get("Refresh")
     )
@@ -165,19 +166,19 @@ def reissue():
         )
         raise e
 
-    nRefreshToken, nAccessToken = tokenManager.reissueTokenPair(refreshToken)
+    nRefreshToken, nAccessToken = token_manager.reissueTokenPair(refreshToken)
     epoch: float = time.time()
     response: Response = jsonify(
         {
             "message": "Reissuance successful",
             "time_of_issuance": epoch,
-            "access_exp": epoch + tokenManager.accessLifetime,
-            "leeway": tokenManager.leeway,
+            "access_exp": epoch + token_manager.accessLifetime,
+            "leeway": token_manager.leeway,
             "issuer": "babel-auth-service",
         }
     )
 
-    tokenManager.attach_tokens_to_response(
+    token_manager.attach_tokens_to_response(
         response,
         access_token=nAccessToken,
         refresh_token=nRefreshToken,
@@ -191,6 +192,7 @@ def purgeFamily():
     """
     Purges an entire token family in case of a reuse attack or a normal client logout
     """
+    token_manager: Final[TokenManager] = get_token_manager()
     encodedRefreshToken: str | None = request.cookies.get(
         "Refresh", request.cookies.get("refresh")
     )
@@ -198,12 +200,12 @@ def purgeFamily():
         raise BadRequest(f"Logout requires a refresh token to be provided")
 
     try:
-        refreshToken: StandardRefreshTokenClaims = tokenManager.decodeToken(
+        refreshToken: StandardRefreshTokenClaims = token_manager.decodeToken(
             encodedRefreshToken,
             TokenType.StandardRefresh,
             options={"verify_nbf": False},
         )
-        tokenManager.invalidateFamily(refreshToken["fid"])
+        token_manager.invalidateFamily(refreshToken["fid"])
     except:
         raise Unauthorized("Failed to validate this refresh token")
 
