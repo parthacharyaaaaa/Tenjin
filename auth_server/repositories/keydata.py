@@ -140,3 +140,15 @@ class KeydataRepository(metaclass=SingletonMetaclass):
 
             if return_expired:
                 return expired_keys
+
+    def get_expired_keys(self) -> list[KeyData]:
+        with self.session_maker() as session:
+            return list(
+                session.execute(
+                    select(KeyData)
+                    .where(KeyData.expired_at.isnot_(None))
+                    .order_by(KeyData.expired_at)
+                )
+                .scalars()
+                .all()
+            )
