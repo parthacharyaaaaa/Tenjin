@@ -16,8 +16,11 @@ from sqlalchemy import select, update, insert, func
 from sqlalchemy.sql import and_
 from sqlalchemy.exc import SQLAlchemyError
 
-from auth_server.config.app_config import AppConfig
-from auth_server.dependencies import get_app_config, get_synced_store_client
+from auth_server.src.auth_server.config.app_config import AppConfig
+from auth_server.src.auth_server.dependencies import (
+    get_app_config,
+    get_synced_store_client,
+)
 from auxillary.decorators import enforce_json
 from auxillary.utils import (
     genericDBFetchException,
@@ -26,19 +29,19 @@ from auxillary.utils import (
     hash_password,
     to_base64url,
 )
-from auth_server.utils.auth_auxillary import (
+from auth_server.src.auth_server.utils.auth_auxillary import (
     report_suspicious_activity,
     fetch_valid_keys,
 )
-from auth_server.utils.decorators import admin_only
-from auth_server.models.database import Admin, KeyData, db
-from auth_server.security.keygen import (
+from auth_server.src.auth_server.utils.decorators import admin_only
+from auth_server.src.auth_server.models.database import Admin, KeyData, db
+from auth_server.src.auth_server.security.keygen import (
     generate_ecdsa_pair,
     write_ecdsa_pair,
     update_jwks,
 )
-from auth_server.security.key_container import KeyMetadata
-from auth_server.security.token_manager import tokenManager
+from auth_server.src.auth_server.security.key_container import KeyMetadata
+from auth_server.src.auth_server.security.token_manager import tokenManager
 
 from werkzeug import Response
 from werkzeug.exceptions import (

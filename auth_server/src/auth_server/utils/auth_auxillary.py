@@ -5,8 +5,12 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from flask import current_app
 
-from auth_server.config.app_config import AppConfig
-from auth_server.models.database import SuspiciousActivity, Admin, KeyData
+from auth_server.src.auth_server.config.app_config import AppConfig
+from auth_server.src.auth_server.models.database import (
+    SuspiciousActivity,
+    Admin,
+    KeyData,
+)
 
 
 def report_suspicious_activity(

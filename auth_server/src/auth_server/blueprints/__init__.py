@@ -6,8 +6,8 @@ from typing import Final
 
 from flask import Blueprint
 
-from auth_server.blueprints.blueprint_cmd import cmd
-from auth_server.blueprints.blueprint_routes import auth
+from auth_server.src.auth_server.blueprints.blueprint_cmd import cmd
+from auth_server.src.auth_server.blueprints.blueprint_routes import auth
 
 __all__ = ("URLPrefix", "BLUEPRINT_URL_MAPPING")
 

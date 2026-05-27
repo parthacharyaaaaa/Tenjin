@@ -5,7 +5,7 @@ from sqlalchemy import VARCHAR, INTEGER, TIMESTAMP, BOOLEAN, ForeignKey, text
 from sqlalchemy.orm import DeclarativeBase, mapped_column, Mapped
 from sqlalchemy.dialects.postgresql import ENUM, BYTEA
 
-from auth_server.models.database_enums import AdminRoles
+from auth_server.src.auth_server.models.database_enums import AdminRoles
 
 
 class Base(DeclarativeBase):

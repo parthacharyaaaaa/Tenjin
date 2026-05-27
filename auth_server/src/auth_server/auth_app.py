@@ -5,17 +5,17 @@ from flask import Flask
 
 from redis import Redis
 
-from auth_server.repositories.keydata import KeydataRepository
-from auth_server.strings import SyncedStoreStrings
+from auth_server.src.auth_server.repositories.keydata import KeydataRepository
+from auth_server.src.auth_server.strings import SyncedStoreStrings
 from auxillary.utils import generic_error_handler
 
-from auth_server.blueprints import BLUEPRINT_URL_MAPPING
-from auth_server.config.app_config import AppConfig
-from auth_server.dependencies import (
+from auth_server.src.auth_server.blueprints import BLUEPRINT_URL_MAPPING
+from auth_server.src.auth_server.config.app_config import AppConfig
+from auth_server.src.auth_server.dependencies import (
     get_app_config,
     get_synced_store_client,
 )
-from auth_server.utils import bootup
+from auth_server.src.auth_server.utils import bootup
 
 
 def create_app() -> Flask:

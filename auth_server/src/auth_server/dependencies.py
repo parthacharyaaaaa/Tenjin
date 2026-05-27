@@ -7,8 +7,8 @@ from redis import Redis
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy import create_engine, Engine
 
-from auth_server.config import AppConfig
-from auth_server.security.token_manager import TokenManager
+from auth_server.src.auth_server.config import AppConfig
+from auth_server.src.auth_server.security.token_manager import TokenManager
 
 
 @lru_cache(maxsize=1)
