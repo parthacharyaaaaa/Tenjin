@@ -4,7 +4,7 @@ from functools import cached_property
 from pydantic import BaseModel, BeforeValidator, Field, PrivateAttr, computed_field
 from pydantic.networks import IPvAnyAddress
 
-from auth_server.config import utils
+from auth_server.src.auth_server.config import utils
 
 __all__ = (
     "CoreConfigModel",
