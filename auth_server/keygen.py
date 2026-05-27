@@ -5,6 +5,8 @@ import ecdsa
 from hashlib import sha512
 import os
 import secrets
+from auth_server.key_container import KeyMetadata
+from auth_server.repositories.keydata import KeydataRepository
 from auxillary.utils import to_base64url
 import ujson
 
@@ -112,3 +114,25 @@ def write_ecdsa_pair(
     public_dir.joinpath(
         fname_template.format(key_type="public", key_id=key_id)
     ).write_bytes(public_key.to_pem())
+
+
+def initialize_active_key(
+    private_directory: Path,
+    public_directory: Path,
+    keydata_repository: KeydataRepository,
+) -> KeyData:
+    active_kid, sk, vk = generate_ecdsa_pair()
+
+    # Persist to PEM, and DB (JWKS done at end)
+    write_ecdsa_pair(
+        private_dir=private_directory,
+        public_dir=public_directory,
+        private_key=sk,
+        public_key=vk,
+        key_id=int(active_kid),
+    )
+
+    active_key: KeyData = keydata_repository.insert_keydata(
+        active_kid, sk, vk, "ES256", ecdsa.SECP256k1, returning=True
+    )
+    return active_key
