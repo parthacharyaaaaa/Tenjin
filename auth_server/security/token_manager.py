@@ -11,10 +11,10 @@ from redis import Redis
 
 from werkzeug.exceptions import InternalServerError
 
-from auth_server.key_container import KeyMetadata
+from auth_server.security.key_container import KeyMetadata
 from auth_server.models.database import KeyData
 from auth_server.repositories.keydata import KeydataRepository
-from auth_server.tokens import (
+from auth_server.security.tokens import (
     StandardAccessTokenClaims,
     StandardRefreshTokenClaims,
     TokenType,

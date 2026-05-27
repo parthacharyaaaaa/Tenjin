@@ -5,7 +5,7 @@ import ecdsa
 from hashlib import sha512
 import os
 import secrets
-from auth_server.key_container import KeyMetadata
+from auth_server.security.key_container import KeyMetadata
 from auth_server.repositories.keydata import KeydataRepository
 from auxillary.utils import to_base64url
 import ujson

@@ -32,9 +32,13 @@ from auth_server.utils.auth_auxillary import (
 )
 from auth_server.utils.decorators import admin_only
 from auth_server.models.database import Admin, KeyData, db
-from auth_server.keygen import generate_ecdsa_pair, write_ecdsa_pair, update_jwks
-from auth_server.key_container import KeyMetadata
-from auth_server.token_manager import tokenManager
+from auth_server.security.keygen import (
+    generate_ecdsa_pair,
+    write_ecdsa_pair,
+    update_jwks,
+)
+from auth_server.security.key_container import KeyMetadata
+from auth_server.security.token_manager import tokenManager
 
 from werkzeug import Response
 from werkzeug.exceptions import (
