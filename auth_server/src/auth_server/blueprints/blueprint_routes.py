@@ -1,9 +1,9 @@
 from typing import Final
 
-from auth_server.src.auth_server.config.app_config import AppConfig
-from auth_server.src.auth_server.dependencies import get_app_config, get_token_manager
-from auth_server.src.auth_server.security.token_manager import TokenManager
-from auth_server.src.auth_server.security.tokens import (
+from auth_server.config.app_config import AppConfig
+from auth_server.dependencies import get_app_config, get_token_manager
+from auth_server.security.token_manager import TokenManager
+from auth_server.security.tokens import (
     TokenType,
     StandardRefreshTokenClaims,
 )

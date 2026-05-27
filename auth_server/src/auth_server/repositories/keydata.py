@@ -9,9 +9,9 @@ import ecdsa
 from sqlalchemy import insert, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
-from auth_server.src.auth_server.models.database import KeyData
-from auth_server.src.auth_server.dependencies import get_database_session_maker
-from auth_server.src.auth_server.utils.singleton import SingletonMetaclass
+from auth_server.models.database import KeyData
+from auth_server.dependencies import get_database_session_maker
+from auth_server.utils.singleton import SingletonMetaclass
 
 
 @dataclass(frozen=True, slots=True, init=False, weakref_slot=True)

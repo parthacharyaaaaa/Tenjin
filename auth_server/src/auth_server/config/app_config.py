@@ -9,7 +9,7 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
-from auth_server.src.auth_server.config import sub_config
+from auth_server.config import sub_config
 
 __all__ = ("AppConfig",)
 

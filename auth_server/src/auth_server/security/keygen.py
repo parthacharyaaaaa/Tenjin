@@ -5,12 +5,12 @@ import ecdsa
 from hashlib import sha512
 import os
 import secrets
-from auth_server.src.auth_server.security.key_container import KeyMetadata
-from auth_server.src.auth_server.repositories.keydata import KeydataRepository
+from auth_server.security.key_container import KeyMetadata
+from auth_server.repositories.keydata import KeydataRepository
 from auxillary.utils import to_base64url
 import ujson
 
-from auth_server.src.auth_server.models.database import KeyData
+from auth_server.models.database import KeyData
 
 
 def generate_ecdsa_pair() -> tuple[str, ecdsa.SigningKey, ecdsa.VerifyingKey]:

@@ -8,19 +8,19 @@ from redis import Redis
 
 from flask import Flask, Blueprint
 
-from auth_server.src.auth_server.blueprints import URLPrefix
-from auth_server.src.auth_server.config.app_config import AppConfig
-from auth_server.src.auth_server.dependencies import get_token_manager
-from auth_server.src.auth_server.security.key_container import KeyMetadata
-from auth_server.src.auth_server.security.keygen import (
+from auth_server.blueprints import URLPrefix
+from auth_server.config.app_config import AppConfig
+from auth_server.dependencies import get_token_manager
+from auth_server.security.key_container import KeyMetadata
+from auth_server.security.keygen import (
     initialize_active_key,
     write_ecdsa_pair,
     initialize_jwks,
 )
-from auth_server.src.auth_server.models.database import KeyData
-from auth_server.src.auth_server.repositories.keydata import KeydataRepository
-from auth_server.src.auth_server.strings import SyncedStoreStrings
-from auth_server.src.auth_server.security.token_manager import TokenManager
+from auth_server.models.database import KeyData
+from auth_server.repositories.keydata import KeydataRepository
+from auth_server.strings import SyncedStoreStrings
+from auth_server.security.token_manager import TokenManager
 
 
 def register_blueprints(

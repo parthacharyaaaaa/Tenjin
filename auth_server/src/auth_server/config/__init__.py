@@ -1,6 +1,6 @@
 """Auth Server Configurations"""
 
-from auth_server.src.auth_server.config.sub_config import (
+from auth_server.config.sub_config import (
     CoreConfigModel,
     JWKSConfigModel,
     KeyConfigModel,
@@ -9,7 +9,7 @@ from auth_server.src.auth_server.config.sub_config import (
     DatabaseConfigModel,
     RedisConfigModel,
 )
-from auth_server.src.auth_server.config.app_config import AppConfig
+from auth_server.config.app_config import AppConfig
 
 __all__ = (
     "AppConfig",

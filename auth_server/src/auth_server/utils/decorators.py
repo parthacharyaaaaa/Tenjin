@@ -1,6 +1,6 @@
 from redis import Redis
 
-from auth_server.src.auth_server.dependencies import get_synced_store_client
+from auth_server.dependencies import get_synced_store_client
 from werkzeug.exceptions import Unauthorized, Forbidden
 from flask import request, g
 from functools import wraps
