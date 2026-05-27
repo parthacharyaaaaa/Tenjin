@@ -2,7 +2,7 @@ import threading
 import time
 from traceback import format_exc
 import uuid
-from typing import Optional, Literal, Sequence, TypeAlias, overload
+from typing import Optional, Literal, TypeAlias, overload
 
 import jwt
 import jwt.exceptions as JWTexc
@@ -19,8 +19,6 @@ from auth_server.security.tokens import (
     StandardRefreshTokenClaims,
     TokenType,
 )
-
-from flask import Response
 
 # Type aliases
 tokenPair: TypeAlias = tuple[str, str]
@@ -373,28 +371,3 @@ class TokenManager:
     @staticmethod
     def generate_unique_identifier():
         return uuid.uuid4().hex
-
-    def attach_tokens_to_response(
-        self,
-        response: Response,
-        access_token: str,
-        refresh_token: str,
-        paths: Sequence[str],
-    ) -> None:
-        response.set_cookie(
-            key="access",
-            value=access_token,
-            max_age=self.accessLifetime + self.leeway,
-            httponly=True,
-        )
-        for path in paths:
-            response.set_cookie(
-                key="refresh",
-                value=refresh_token,
-                max_age=self.refreshLifetime + self.leeway,
-                httponly=True,
-                path=path,
-            )
-
-
-tokenManager: TokenManager | None = None
