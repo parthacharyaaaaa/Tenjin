@@ -44,8 +44,8 @@ def get_database_session_maker() -> sessionmaker[Session]:
     config: Final[AppConfig] = get_app_config()
 
     URI: Final[str] = config.DATABASE.SQLALCHEMY.derive_sqlalchemy_uri(
-        username=os.environ["POSTGRES_USERNAME"],
-        password=os.environ["POSTGRES_PASSWORD"],
+        username=os.environ["AUTH_WORKER_POSTGRES_USERNAME"],
+        password=os.environ["AUTH_WORKER_POSTGRES_PASSWORD"],
         host=str(config.DATABASE.POSTGRES_HOST),
         port=config.DATABASE.POSTGRES_PORT,
         database=config.DATABASE.POSTGRES_DATABASE,

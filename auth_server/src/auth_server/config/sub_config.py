@@ -1,7 +1,15 @@
 from pathlib import Path
+import re
 from typing import Annotated, Any
 from functools import cached_property
-from pydantic import BaseModel, BeforeValidator, Field, PrivateAttr, computed_field
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    Field,
+    PrivateAttr,
+    computed_field,
+    AfterValidator,
+)
 from pydantic.networks import IPvAnyAddress
 
 from auth_server.config import utils
@@ -15,6 +23,12 @@ __all__ = (
     "DatabaseConfigModel",
     "RedisConfigModel",
 )
+
+
+def _parse_jwks_path(path: str) -> Path:
+    if not re.match(utils.JWKS_NAME_PATTERN, path):
+        raise ValueError(f"Invalid JWKS filename: {path}")
+    return Path(path)
 
 
 class CoreConfigModel(BaseModel):
@@ -38,14 +52,20 @@ class CoreConfigModel(BaseModel):
 class JWKSConfigModel(BaseModel):
     JWKS_FILEPATH: Annotated[
         Path,
-        BeforeValidator(lambda d: Path(d)),
-        Field(
-            pattern=utils.JWKS_NAME_PATTERN, default="jwks.json", alias="JWKS_FILENAME"
-        ),
+        BeforeValidator(_parse_jwks_path),
+        Field(default="jwks.json", alias="JWKS_FILENAME"),
     ]
 
-    PUBLIC_PEM_DIRECTORY: Annotated[Path, BeforeValidator(lambda d: Path(d))]
-    PRIVATE_PEM_DIRECTORY: Annotated[Path, BeforeValidator(lambda d: Path(d))]
+    PUBLIC_PEM_DIRECTORY: Annotated[
+        Path,
+        BeforeValidator(lambda d: Path(d)),
+        Field(alias="PUBLIC_PEM_BASE_DIRECTORY"),
+    ]
+    PRIVATE_PEM_DIRECTORY: Annotated[
+        Path,
+        BeforeValidator(lambda d: Path(d)),
+        Field(alias="PRIVATE_PEM_BASE_DIRECTORY"),
+    ]
 
     JWKS_CAP: Annotated[int, Field(ge=1)]
 
@@ -95,7 +115,11 @@ class SAConfigModel(BaseModel):
         self, username: str, password: str, host: str, port: int, database: str
     ) -> str:
         return self._SQLALCHEMY_DATABASE_URI.format(
-            username=username, password=password, host=host, port=port, databse=database
+            username=username,
+            password=password,
+            host=host,
+            port=port,
+            database=database,
         )
 
 
