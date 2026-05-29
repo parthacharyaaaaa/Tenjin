@@ -9,9 +9,9 @@ class AdminAuthenticationModel(AuthenticationModel):
     identity: username_annotation
 
 
-class AdminDeletionModel(BaseModel):
+class AdminIdentificationModel(BaseModel):
     id_: Annotated[int, Field(ge=1, frozen=True, alias="id")]
 
 
-class AdminRefreshModel(BaseModel):
+class AdminRefreshModel(AdminIdentificationModel):
     refresh_digest: Annotated[str, Field(frozen=True, alias="refresh-digest")]
