@@ -1,6 +1,6 @@
 from pathlib import Path
 import re
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 from functools import cached_property
 from pydantic import (
     BaseModel,
@@ -9,6 +9,7 @@ from pydantic import (
     PrivateAttr,
     computed_field,
     AfterValidator,
+    model_validator,
 )
 from pydantic.networks import IPvAnyAddress
 
@@ -49,6 +50,54 @@ class CoreConfigModel(BaseModel):
         return self.WORKING_DIRECTORY / "static"
 
 
+class TokenManagerConfigModel(BaseModel):
+    REFRESH_LIFETIME: Annotated[int, Field(ge=1)]
+    ACCESS_LIFETIME: Annotated[int, Field(ge=1)]
+    LEEWAY: Annotated[int, Field(ge=0)]
+    ANNOUNCEMENT_DURATION: Annotated[int, Field(ge=1)]
+
+    ALG: Annotated[str, Field(default="ES256")]
+
+    MAX_TOKENS_PER_FAMILY: Annotated[int, Field(ge=1)]
+
+    @model_validator(mode="after")
+    def verify_time_values(self) -> Self:
+        if self.ACCESS_LIFETIME <= self.REFRESH_LIFETIME:
+            raise ValueError(
+                " ".join(
+                    (
+                        f"Access lifetime {self.ACCESS_LIFETIME}",
+                        "must be lower than refresh lifetime",
+                        str(self.REFRESH_LIFETIME),
+                    )
+                )
+            )
+
+        if self.LEEWAY > self.ACCESS_LIFETIME:
+            raise ValueError(
+                " ".join(
+                    (
+                        f"Token leeway {self.LEEWAY}",
+                        "must be lower than access lifetime",
+                        str(self.ACCESS_LIFETIME),
+                    )
+                )
+            )
+
+        return self
+
+    def to_constructor_kwargs(self) -> dict[str, int | str]:
+        return {
+            "refresh_lifetime": self.REFRESH_LIFETIME,
+            "access_lifetime": self.ACCESS_LIFETIME,
+            "alg": self.ALG,
+            "typ": "jwt",
+            "leeway": self.LEEWAY,
+            "max_tokens_per_fid": self.MAX_TOKENS_PER_FAMILY,
+            "announcement_duration": self.ANNOUNCEMENT_DURATION,
+        }
+
+
 class JWKSConfigModel(BaseModel):
     JWKS_FILEPATH: Annotated[
         Path,
@@ -68,6 +117,8 @@ class JWKSConfigModel(BaseModel):
     ]
 
     JWKS_CAP: Annotated[int, Field(ge=1)]
+
+    TOKEN_MANAGER: Annotated[TokenManagerConfigModel, Field(alias="token_manager")]
 
     def _resolve_path_attr(self, attr_name: str, rootpath: Path) -> None:
         path: Path = rootpath / getattr(self, attr_name)

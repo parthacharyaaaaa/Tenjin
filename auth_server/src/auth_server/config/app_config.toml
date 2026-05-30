@@ -8,6 +8,14 @@ PUBLIC_PEM_BASE_DIRECTORY="public_keys"
 PRIVATE_PEM_BASE_DIRECTORY="private_keys"
 JWKS_CAP=3
 
+[jwks.token_manager]
+REFRESH_LIFETIME=10800
+ACCESS_LIFETIME=1800
+LEEWAY=180
+ALG="ES256"
+MAX_TOKENS_PER_FAMILY=3
+ANNOUNCEMENT_DURATION=10800
+
 [redis]
 [redis.synced_store]
 HOST="auth_server_synced_store"
