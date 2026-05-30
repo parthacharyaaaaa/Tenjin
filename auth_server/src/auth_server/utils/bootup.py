@@ -4,11 +4,10 @@ import time
 import traceback
 from typing import Final, Mapping, Sequence
 
+from fastapi import APIRouter, FastAPI
 from redis import Redis
 
-from flask import Flask, Blueprint
-
-from auth_server.blueprints import URLPrefix
+from auth_server.routers import RouterName, URLPrefix
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import get_token_manager
 from auth_server.security.key_container import KeyMetadata
@@ -23,14 +22,14 @@ from auth_server.strings import SyncedStoreStrings
 from auth_server.security.token_manager import TokenManager
 
 
-def register_blueprints(
-    app: Flask,
-    blueprint_mapping: Mapping[Blueprint, URLPrefix],
+def register_routers(
+    app: FastAPI,
+    url_prefix_mapping: Mapping[RouterName, tuple[APIRouter, tuple[URLPrefix, ...]]],
     common_prefix: str = "",
 ) -> None:
-    for blueprint, url_prefix in blueprint_mapping.items():
-        app.register_blueprint(
-            blueprint, url_prefix="/".join((common_prefix, url_prefix.value))
+    for name, (router, url_prefixes) in url_prefix_mapping.items():
+        app.include_router(
+            router, prefix="/".join((common_prefix, *[u.value for u in url_prefixes]))
         )
 
 
