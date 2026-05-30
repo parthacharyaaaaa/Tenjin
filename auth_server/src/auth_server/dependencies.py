@@ -1,12 +1,16 @@
 import os
 from functools import lru_cache
-from typing import Final, Generator
+from typing import AsyncGenerator, Final
 
 from auth_server.repositories.keydata import KeydataRepository
-from redis import Redis
+from redis.asyncio import Redis
 
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy import create_engine, Engine
+from sqlalchemy.ext.asyncio import (
+    create_async_engine,
+    async_sessionmaker,
+    AsyncSession,
+    AsyncEngine,
+)
 
 from auth_server.config import AppConfig
 from auth_server.security.token_manager import TokenManager
@@ -40,7 +44,7 @@ def get_token_store_client() -> Redis:
 
 
 @lru_cache(maxsize=1)
-def get_database_session_maker() -> sessionmaker[Session]:
+def get_database_session_maker() -> async_sessionmaker[AsyncSession]:
     config: Final[AppConfig] = get_app_config()
 
     URI: Final[str] = config.DATABASE.SQLALCHEMY.derive_sqlalchemy_uri(
@@ -51,22 +55,22 @@ def get_database_session_maker() -> sessionmaker[Session]:
         database=config.DATABASE.POSTGRES_DATABASE,
     )
 
-    engine: Final[Engine] = create_engine(URI)
+    engine: Final[AsyncEngine] = create_async_engine(URI)
 
-    session_maker: Final[sessionmaker[Session]] = sessionmaker(
+    session_maker: Final[async_sessionmaker[AsyncSession]] = async_sessionmaker(
         bind=engine, autocommit=False, autoflush=False
     )
 
     return session_maker
 
 
-def get_database_session() -> Generator[Session, None, None]:
-    session_maker: sessionmaker = get_database_session_maker()
-    session: Final[Session] = session_maker()
+async def get_database_session() -> AsyncGenerator[AsyncSession, None]:
+    session_maker: async_sessionmaker = get_database_session_maker()
+    session: Final[AsyncSession] = session_maker()
     try:
         yield session
     finally:
-        session.close()
+        await session.close()
 
 
 @lru_cache(maxsize=1)
