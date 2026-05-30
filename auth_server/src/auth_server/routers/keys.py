@@ -1,16 +1,22 @@
+from datetime import datetime
 from pathlib import Path
+from typing import Annotated, Any, Final
 import ecdsa
 import orjson
-from redis import Redis
-from datetime import datetime
-from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
+from redis.asyncio import Redis
+
 from sqlalchemy import select, update, insert, func
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
+
+from auxillary.utils import (
+    json_repr,
+    to_base64url,
+)
 
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import (
@@ -20,29 +26,31 @@ from auth_server.dependencies import (
     get_database_session,
     get_token_manager,
 )
-from auxillary.utils import (
-    json_repr,
-    to_base64url,
-)
-from auth_server.repositories.keydata import KeydataRepository
-from auth_server.security.token_manager import TokenManager
-from auth_server.utils.auth_auxillary import report_suspicious_activity
-from auth_server.utils.decorators import admin_only
 from auth_server.models.database import KeyData
+from auth_server.models.session import AdminSession
+from auth_server.repositories.keydata import KeydataRepository
+from auth_server.security.admin_roles import AdminRole
+from auth_server.security.key_container import KeyMetadata
 from auth_server.security.keygen import (
     generate_ecdsa_pair,
     write_ecdsa_pair,
     update_jwks,
 )
-from auth_server.security.key_container import KeyMetadata
+from auth_server.security.permissions import Permission
+from auth_server.security.token_manager import TokenManager
+from auth_server.utils.auth_auxillary import report_suspicious_activity
+from auth_server.utils.dependencies import require_permissions
 
 KEY: Final[APIRouter] = APIRouter()
 
 
 @KEY.get("/keys/{kid}")
-@admin_only()
 async def get_key(
-    kid: str, session: Annotated[AsyncSession, Depends(get_database_session)]
+    kid: str,
+    admin_session: Annotated[
+        AdminSession, Depends(require_permissions(Permission.READ_KEY))
+    ],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
 ) -> JSONResponse:
     try:
         key: KeyData | None = (
@@ -62,9 +70,11 @@ async def get_key(
 
 
 @KEY.delete("/keys/{kid}")
-@admin_only(required_role="super")
 async def invalidate_key(
     kid: str,
+    admin_session: Annotated[
+        AdminSession, Depends(require_permissions(Permission.INVALIDATE_KEY))
+    ],
     config: Annotated[AppConfig, Depends(get_app_config)],
     token_manager: Annotated[TokenManager, Depends(get_token_manager)],
     session: Annotated[AsyncSession, Depends(get_database_session)],
@@ -73,9 +83,7 @@ async def invalidate_key(
 ) -> JSONResponse:
     """Invalidate a given key"""
     key_lock: Final[str] = f"INVALIDATE_KEY:{kid}"
-    if not synced_store_client.set(
-        key_lock, g.SESSION_TOKEN["admin_id"], ex=300, nx=True
-    ):
+    if not synced_store_client.set(key_lock, admin_session.admin_id, ex=300, nx=True):
         # Another worker is performing clean operation, reject this request
         adminID: bytes = synced_store_client.get(key_lock)  # type: ignore[reportAssignmentType]
         return JSONResponse(
@@ -116,7 +124,7 @@ async def invalidate_key(
                 session,
                 config,
                 synced_store_client,
-                g.SESSION_TOKEN["admin_id"],
+                admin_session.admin_id,
                 f"Invaldiation attempt on active key {kid}",
             )
             raise HTTPException(
@@ -183,11 +191,11 @@ async def invalidate_key(
     # either from a simple list removal
     # or by consulting the database in case of any inconsistency
 
-    with synced_store_client.pipeline() as pipe:
+    async with synced_store_client.pipeline() as pipe:
         pipe.delete("VALID_KEYS")
         pipe.lpush("VALID_KEYS", *valid_keys)
         pipe.delete(key_lock)
-        pipe.execute()
+        await pipe.execute()
 
     return JSONResponse(
         {
@@ -200,8 +208,10 @@ async def invalidate_key(
 
 
 @KEY.delete("/keys/clean")
-@admin_only(required_role="super")
 async def clean_keystore(
+    admin_session: Annotated[
+        AdminSession, Depends(require_permissions(Permission.CLEAN_KEYSTORE))
+    ],
     config: Annotated[AppConfig, Depends(get_app_config)],
     session: Annotated[AsyncSession, Depends(get_database_session)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
@@ -209,7 +219,7 @@ async def clean_keystore(
     """Invalidate all keys except for the currently active key"""
     # Check whether another worker is performing this action
     if not synced_store_client.set(
-        "CLEAN_KEYSTORE_LOCK", g.SESSION_TOKEN["admin_id"], ex=300, nx=True
+        "CLEAN_KEYSTORE_LOCK", admin_session.admin_id, ex=300, nx=True
     ):
         # Another worker is performing clean operation, reject this request
         adminID: bytes = synced_store_client.get("CLEAN_KEYSTORE_LOCK")  # type: ignore[reportAssignmentType]
@@ -323,10 +333,10 @@ async def clean_keystore(
         synced_store_client.delete("CLEAN_KEYSTORE_LOCK")
 
     # Update global state, no need to fetch current list of keys anyways since as of this operation only a single active key would be valid throughout
-    with synced_store_client.pipeline() as pipe:
+    async with synced_store_client.pipeline() as pipe:
         pipe.delete("VALID_KEYS")
         pipe.lpush("VALID_KEYS", active_key.kid)
-        pipe.execute()
+        await pipe.execute()
 
     return JSONResponse(
         {
@@ -338,8 +348,10 @@ async def clean_keystore(
 
 
 @KEY.post("/keys/rotate")
-@admin_only()
 async def rotate_keys(
+    admin_session: Annotated[
+        AdminSession, Depends(require_permissions(Permission.ROTATE_KEY))
+    ],
     config: Annotated[AppConfig, Depends(get_app_config)],
     session: Annotated[AsyncSession, Depends(get_database_session)],
     keydata_repository: Annotated[KeydataRepository, Depends(get_keydata_repository)],
@@ -349,7 +361,7 @@ async def rotate_keys(
     """Trigger a key rotation sequence"""
     # Check for concurrent worker performing a key rotation
     lock = synced_store_client.set(
-        "KEY_ROTATION_LOCK", g.SESSION_TOKEN["admin_id"], ex=300, nx=True
+        "KEY_ROTATION_LOCK", admin_session.admin_id, ex=300, nx=True
     )
     if not lock:
         # Another worker is performing this action, reject this request >:(
@@ -364,12 +376,12 @@ async def rotate_keys(
 
     # Check for cooldown, must be global for all staff admins
     cooldown_flag: str = synced_store_client.get("KEY_ROTATION_COOLDOWN")  # type: ignore[reportAssignmentType]
-    if cooldown_flag and g.SESSION_TOKEN["role"] == "staff":
+    if cooldown_flag and admin_session.role == AdminRole.STAFF:
         await report_suspicious_activity(
             session,
             config,
             synced_store_client,
-            g.SESSION_TOKEN["admin_id"],
+            admin_session.admin_id,
             "Attempt to perform key rotation during cooldown",
         )
         raise HTTPException(
@@ -406,7 +418,7 @@ async def rotate_keys(
             .values(
                 rotated_out_at=datetime.now(),
                 manual_rotation=True,
-                rotated_by=g.SESSION_TOKEN["admin_id"],
+                rotated_by=admin_session.admin_id,
             )
         )
 
@@ -509,12 +521,12 @@ async def rotate_keys(
 
     # At this state, valid_keys is a consistent list of key IDs
     # Set global cooldown for key rotation, update global state, and release rotation lock
-    with synced_store_client.pipeline() as pipe:
+    async with synced_store_client.pipeline() as pipe:
         pipe.set("KEY_ROTATION_COOLDOWN", 1, ex=config.KEYS.KEY_ROTATION_COOLDOWN)
         pipe.delete("VALID_KEYS")
         pipe.lpush("VALID_KEYS", *valid_keys)
         pipe.delete("KEY_ROTATION_LOCK")
-        pipe.execute()
+        await pipe.execute()
 
     return JSONResponse(
         {
