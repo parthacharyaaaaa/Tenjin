@@ -2,12 +2,15 @@
 
 import datetime
 import hashlib
-from flask import jsonify
 import os
 import traceback
-from typing import Mapping, Callable, Literal, Any
+from typing import Final, Mapping, Callable, Literal, Any
 from types import NoneType
 import base64
+
+from fastapi import Request, Response, HTTPException
+
+from fastapi.responses import JSONResponse
 import ujson
 from redis import Redis
 from redis.exceptions import RedisError
@@ -15,27 +18,19 @@ from redis.exceptions import RedisError
 from auxillary.typing_utils import SupportsJSON
 
 
-def generic_error_handler(e: Exception):
-    """Return a JSON formatted error message to the client
-
-    Contents of the error message are determined by the following:
-    - e.message: Error message
-    - e.kwargs: Additonal information about the error, attached to HTTP body
-    - e.header_kwargs: Additional information (e.g. server's state, broader context of the error message), attached in HTTP headers
-
-    All of these attributes are dictionaries and are **optional**, since in their absense a generic HTTP 500 code is thrown
-    """
+def generic_error_handler(r: Request, e: Exception) -> Response:
     print(traceback.format_exc())
-    response = jsonify(
-        {
-            "message": getattr(e, "description", "An error occured"),
-            **getattr(e, "kwargs", {}),
-        }
-    )
-    if header_kwargs := getattr(e, "header_kwargs", None):
-        response.headers.update(header_kwargs)
 
-    return response, getattr(e, "code", 500)
+    if not isinstance(e, HTTPException):
+        e = HTTPException(500, "An error occured")
+
+    response: Final[JSONResponse] = JSONResponse(
+        status_code=e.status_code,
+        content={"message": e.detail, **getattr(e, "kwargs", {})},
+    )
+    response.headers.update(e.headers or {})
+
+    return response
 
 
 def to_base64url(n: int, length: int = 32) -> str:
