@@ -1,6 +1,6 @@
 from typing import Sequence
 
-from redis import Redis
+from redis.asyncio import Redis
 
 from sqlalchemy import func, select, insert, update
 from sqlalchemy.ext.asyncio.session import AsyncSession
@@ -74,7 +74,7 @@ async def report_suspicious_activity(
         >= config.ADMIN.MAX_ACTIVITY_LIMIT
     ):
         await session.execute(update(Admin).values(locked=True))
-        synced_store_client.delete(f"admin:{adminID}")
+        await synced_store_client.delete(f"admin:{adminID}")
 
     await session.commit()
 
