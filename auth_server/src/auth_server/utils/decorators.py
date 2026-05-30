@@ -1,96 +1,114 @@
-from redis import Redis
-
-from auth_server.dependencies import get_synced_store_client
-from werkzeug.exceptions import Unauthorized, Forbidden
-from flask import request, g
-from functools import wraps
-import time
-import ujson
 import base64
-from typing import Any, Literal
+import time
+from typing import Annotated, Any, Final
+
+from auth_server.config.app_config import AppConfig
+from auth_server.security.admin_roles import ROLE_PERMISSIONS, AdminRole
+from auth_server.security.permissions import Permission
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from auth_server.models.session import AdminSession
+from auth_server.utils.auth_auxillary import report_suspicious_activity
+from fastapi import Depends, HTTPException, Request
+
+import orjson
+
+import pydantic
+from redis.asyncio import Redis
+
+from auth_server.dependencies import (
+    get_app_config,
+    get_database_session,
+    get_synced_store_client,
+)
+from auth_server.strings import AdminStrings
 
 
-def admin_only(
-    required_role: Literal["staff", "super"] = "staff",
-    synced_store_client: Redis = get_synced_store_client(),
-):
-    """
-    #### Role-based admin session validation decorator.
-    - Verifies token presence and semantics
-    - Checks expiry
-    - Validates session from SyncedStore
-    - Compares role and ensures it meets or exceeds the required role
+async def get_admin_session(request: Request) -> AdminSession:
+    session_token: Final[str | None] = request.headers.get(
+        AdminStrings.SESSION_TOKEN_HEADER
+    )
+    if not session_token:
+        raise HTTPException(
+            401, f"Missing session token: {AdminStrings.SESSION_TOKEN_HEADER}"
+        )
 
-    On success, attaches session token to `g.SESSION_TOKEN`
-    """
-    role_hierarchy = {"staff": 1, "super": 2}
+    try:
+        session: Final[AdminSession] = AdminSession.model_validate(
+            orjson.loads(base64.urlsafe_b64decode(session_token))
+        )
+    except (UnicodeEncodeError, TypeError):
+        # urlsafe_b64decode tries to enforce ASCII using encoding,
+        # hence raising UnicodeEncodeError even if the overarching operation
+        # is decoding
+        raise HTTPException(
+            401, "Malformed session token, not valid url-safe base-64 encoded"
+        )
+    except orjson.JSONDecodeError:
+        raise HTTPException(401, "Malformed session token, not valid JSON")
+    except pydantic.ValidationError as e:
+        field_names: list[str | int] = [error["loc"][0] for error in e.errors()]
+        raise HTTPException(401, f"Invalid session fields: {field_names}")
 
-    def wrapper(endpoint):
-        @wraps(endpoint)
-        def decorated(*args, **kwargs):
-            encodedSessionToken: str | None = request.headers.get(
-                "X-SESSION-TOKEN", None
+    return session
+
+
+async def validate_admin_session(
+    config: Annotated[AppConfig, Depends(get_app_config)],
+    session: Annotated[AsyncSession, Depends(get_database_session)],
+    admin_session: Annotated[AdminSession, Depends(get_admin_session)],
+    synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
+) -> AdminSession:
+    if time.time() >= admin_session.expiry_at:
+        await synced_store_client.delete(admin_session.session_key)
+        raise HTTPException(401, "Session expired")
+
+    server_session_mapping: dict[bytes, Any] = await synced_store_client.hgetall(
+        admin_session.session_key
+    )
+
+    if not server_session_mapping:
+        err_msg: str = "Missing server-side session"
+        await report_suspicious_activity(
+            session,
+            config,
+            synced_store_client,
+            admin_session.admin_id,
+            err_msg,
+            force_logout=False,
+        )
+        raise HTTPException(401, err_msg)
+
+    server_session_mapping[b"role"] = AdminRole(
+        server_session_mapping[b"role"].decode()
+    )
+    if not admin_session.validate_with_server_session(
+        int(server_session_mapping[b"session_id"]),
+        float(server_session_mapping[b"expiry_at"]),
+        int(server_session_mapping[b"session_iteration"]),
+        server_session_mapping[b"role"],
+    ):
+        # TODO: Add signature instead of this goofy checking mechanism
+        err_msg: str = "Tampered/invalid session"
+        await report_suspicious_activity(
+            session, config, synced_store_client, admin_session.admin_id, err_msg
+        )
+        raise HTTPException(401, err_msg)
+
+    return admin_session
+
+
+def require_permissions(*required_permissions: Permission):
+    async def closure(
+        admin_session: Annotated[AdminSession, Depends(validate_admin_session)],
+    ) -> AdminSession:
+        missing: set[Permission] = set(required_permissions) - set(
+            ROLE_PERMISSIONS[admin_session.role]
+        )
+        if missing:
+            raise HTTPException(
+                403, f"Missing permissions for: {', '.join(m.value for m in missing)}"
             )
-            if not encodedSessionToken:
-                raise Unauthorized("Missing session token")
+        return admin_session
 
-            try:
-                sessionToken: dict = ujson.loads(
-                    base64.urlsafe_b64decode(encodedSessionToken).decode()
-                )
-            except Exception:
-                raise Unauthorized("Malformed session token")
-
-            sessionID = sessionToken.get("session_id")
-            adminID = sessionToken.get("admin_id")
-            expiry = sessionToken.get("expiry_at")
-            role = sessionToken.get("role")
-            iteration = sessionToken.get("session_iteration")
-
-            if not adminID:
-                raise Unauthorized("Invalid token")
-
-            adminID = int(adminID)
-            adminSessionKey = f"admin:{adminID}"
-
-            if not (sessionID and expiry):
-                synced_store_client.delete(adminSessionKey)
-                report_suspicious_activity(
-                    synced_store_client, adminID, "Invalid token submitted"
-                )
-                raise Unauthorized("Invalid token")
-
-            if time.time() > expiry:
-                synced_store_client.delete(adminSessionKey)
-                raise Forbidden("Session expired, please login again")
-
-            adminSessionMapping: dict[bytes, Any] = synced_store_client.hgetall(
-                adminSessionKey
-            )
-            if not adminSessionMapping:
-                report_suspicious_activity(
-                    synced_store_client, adminID, "No active session found"
-                )
-                raise Unauthorized("No session for this admin exists")
-
-            if not (
-                sessionID == int(adminSessionMapping.get(b"session_id"))
-                and expiry == float(adminSessionMapping.get(b"expiry_at"))
-                and role == adminSessionMapping.get(b"role").decode()
-                and iteration == int(adminSessionMapping.get(b"session_iteration"))
-            ):
-                report_suspicious_activity(
-                    synced_store_client, adminID, "Invalid session token"
-                )
-                raise Unauthorized("Invalid session token")
-
-            actual_role = role
-            if role_hierarchy.get(actual_role, 0) < role_hierarchy[required_role]:
-                raise Forbidden("Insufficient permissions for this action")
-
-            g.SESSION_TOKEN = sessionToken
-            return endpoint(*args, **kwargs)
-
-        return decorated
-
-    return wrapper
+    return closure
