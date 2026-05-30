@@ -11,7 +11,7 @@ import base64
 from fastapi import Request, Response, HTTPException
 
 from fastapi.responses import JSONResponse
-import ujson
+import orjson
 from redis import Redis
 from redis.exceptions import RedisError
 
@@ -164,7 +164,7 @@ def consult_cache(
             return {"__NF__": True}
 
         # Cache hit, and resource actually exists
-        cachedResource: dict = res[0] if dtype == "mapping" else ujson.loads(res[0])
+        cachedResource: dict = res[0] if dtype == "mapping" else orjson.loads(res[0])
         cachedTTL: int = res[1]
 
         interface.expire(cache_key, min(ttl_cap, ttl_promotion + cachedTTL))
@@ -244,7 +244,7 @@ def fetch_group_resources(
         tuple(
             map(
                 lambda resource: (
-                    None if resource == "__NF__" else ujson.loads(resource)
+                    None if resource == "__NF__" else orjson.loads(resource)
                 ),
                 resources,
             )
@@ -304,7 +304,7 @@ def cache_grouped_resource(
             if member_dtype == "mapping":
                 pipe.hset(key_name, mapping=resourceMapping)
             else:
-                pipe.set(key_name, ujson.dumps(resourceMapping))
+                pipe.set(key_name, orjson.dumps(resourceMapping).decode("utf-8"))
             pipe.expire(key_name, strong_ttl)
 
         pipe.rpush(group_key, f"cursor:{cursor}")
