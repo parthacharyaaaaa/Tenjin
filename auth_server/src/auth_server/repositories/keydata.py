@@ -7,37 +7,34 @@ from typing import Literal, overload
 import ecdsa
 
 from sqlalchemy import insert, select, update
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.ext.asyncio.session import AsyncSession, async_sessionmaker
 
 from auth_server.models.database import KeyData
 from auth_server.utils.singleton import SingletonMetaclass
 
 
 @dataclass(frozen=True, slots=True, weakref_slot=True)
-class PP(metaclass=SingletonMetaclass):
-    foo: sessionmaker[Session]
-
-
-@dataclass(frozen=True, slots=True, weakref_slot=True)
 class KeydataRepository(metaclass=SingletonMetaclass):
-    session_maker: sessionmaker[Session]
+    session_maker: async_sessionmaker[AsyncSession]
 
-    def get_keydata(self, key_id: str) -> KeyData | None:
-        with self.session_maker() as session:
-            return session.execute(
-                select(KeyData).where(KeyData.kid == key_id)
+    async def get_keydata(self, key_id: str) -> KeyData | None:
+        async with self.session_maker() as session:
+            return (
+                await session.execute(select(KeyData).where(KeyData.kid == key_id))
             ).scalar_one_or_none()
 
-    def get_relevant_keydata(
+    async def get_relevant_keydata(
         self, limit: int | None, raise_on_empty: bool = False
     ) -> list[KeyData]:
-        with self.session_maker() as session:
+        async with self.session_maker() as session:
             keydata: list[KeyData] | None = list(
-                session.execute(
-                    select(KeyData)
-                    .where(KeyData.expired_at.is_(None))
-                    .order_by(KeyData.epoch.desc())
-                    .limit(limit)
+                (
+                    await session.execute(
+                        select(KeyData)
+                        .where(KeyData.expired_at.is_(None))
+                        .order_by(KeyData.epoch.desc())
+                        .limit(limit)
+                    )
                 )
                 .scalars()
                 .all()
@@ -47,7 +44,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
             return keydata
 
     @overload
-    def insert_keydata(
+    async def insert_keydata(
         self,
         key_id: str,
         private_key: ecdsa.SigningKey,
@@ -60,7 +57,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
     ) -> None: ...
 
     @overload
-    def insert_keydata(
+    async def insert_keydata(
         self,
         key_id: str,
         private_key: ecdsa.SigningKey,
@@ -72,7 +69,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
         returning: Literal[True],
     ) -> KeyData: ...
 
-    def insert_keydata(
+    async def insert_keydata(
         self,
         key_id: str,
         private_key: ecdsa.SigningKey,
@@ -83,27 +80,29 @@ class KeydataRepository(metaclass=SingletonMetaclass):
         *,
         returning: bool = False,
     ) -> KeyData | None:
-        with self.session_maker() as session:
-            keydata: KeyData = session.execute(
-                insert(KeyData)
-                .values(
-                    kid=key_id,
-                    alg=alg,
-                    curve=str(curve),
-                    epoch=epoch or datetime.now(),
-                    private_pem=private_key.to_pem(),
-                    public_pem=public_key.to_pem(),
+        async with self.session_maker() as session:
+            keydata: KeyData = (
+                await session.execute(
+                    insert(KeyData)
+                    .values(
+                        kid=key_id,
+                        alg=alg,
+                        curve=str(curve),
+                        epoch=epoch or datetime.now(),
+                        private_pem=private_key.to_pem(),
+                        public_pem=public_key.to_pem(),
+                    )
+                    .returning(KeyData)
                 )
-                .returning(KeyData)
             ).scalar_one()
 
-            session.commit()
+            await session.commit()
 
             if returning:
                 return keydata
 
     @overload
-    def expire_keydata(
+    async def expire_keydata(
         self,
         threshold: datetime,
         expiry_time: datetime | None = None,
@@ -111,7 +110,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
         return_expired: Literal[False],
     ) -> None: ...
     @overload
-    def expire_keydata(
+    async def expire_keydata(
         self,
         threshold: datetime,
         expiry_time: datetime | None = None,
@@ -119,37 +118,41 @@ class KeydataRepository(metaclass=SingletonMetaclass):
         return_expired: Literal[True],
     ) -> list[KeyData]: ...
 
-    def expire_keydata(
+    async def expire_keydata(
         self,
         threshold: datetime,
         expiry_time: datetime | None = None,
         *,
         return_expired: bool = False,
     ) -> list[KeyData] | None:
-        with self.session_maker() as session:
+        async with self.session_maker() as session:
             expired_keys: list[KeyData] = list(
-                session.execute(
-                    update(KeyData)
-                    .where(KeyData.epoch < threshold)
-                    .values(expired_at=expiry_time or datetime.now())
-                    .returning(KeyData)
+                (
+                    await session.execute(
+                        update(KeyData)
+                        .where(KeyData.epoch < threshold)
+                        .values(expired_at=expiry_time or datetime.now())
+                        .returning(KeyData)
+                    )
                 )
                 .scalars()
                 .all()
             )
 
-            session.commit()
+            await session.commit()
 
             if return_expired:
                 return expired_keys
 
-    def get_expired_keys(self) -> list[KeyData]:
-        with self.session_maker() as session:
+    async def get_expired_keys(self) -> list[KeyData]:
+        async with self.session_maker() as session:
             return list(
-                session.execute(
-                    select(KeyData)
-                    .where(KeyData.expired_at.isnot_(None))
-                    .order_by(KeyData.expired_at)
+                (
+                    await session.execute(
+                        select(KeyData)
+                        .where(KeyData.expired_at.isnot_(None))
+                        .order_by(KeyData.expired_at)
+                    )
                 )
                 .scalars()
                 .all()
