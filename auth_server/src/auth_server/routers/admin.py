@@ -10,6 +10,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from fastapi.requests import Request
+from fastapi.exceptions import HTTPException
 
 from redis.exceptions import RedisError
 
@@ -18,19 +19,20 @@ from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import and_
 
-from auth_server.config.app_config import AppConfig
-from auth_server.dependencies import (
-    get_app_config,
-    get_synced_store_client,
-    get_database_session,
-)
 from auxillary.decorators import enforce_json
 from auxillary.utils import (
     genericDBFetchException,
     verify_password,
     hash_password,
 )
-from auth_server.src.auth_server.config.constants import REVIVAL_DIGEST_LENGTH
+
+from auth_server.config.app_config import AppConfig
+from auth_server.dependencies import (
+    get_app_config,
+    get_synced_store_client,
+    get_database_session,
+)
+from auth_server.config.constants import REVIVAL_DIGEST_LENGTH
 from auth_server.utils.auth_auxillary import report_suspicious_activity
 from auth_server.utils.decorators import admin_only
 from auth_server.models.database import Admin
@@ -38,14 +40,6 @@ from auth_server.models.cmd_requests import (
     AdminAuthenticationModel,
     AdminIdentificationModel,
     AdminRefreshModel,
-)
-
-from werkzeug.exceptions import (
-    InternalServerError,
-    NotFound,
-    Forbidden,
-    Conflict,
-    Unauthorized,
 )
 
 ADMIN: Final[APIRouter] = APIRouter()
@@ -68,7 +62,7 @@ async def admin_login(
         ).scalar_one_or_none()
 
         if not admin:
-            raise NotFound("No admin with these credentials found")
+            raise HTTPException(404, "No admin with these credentials found")
 
         if admin.locked:
             await report_suspicious_activity(
@@ -79,8 +73,9 @@ async def admin_login(
                 "Attempt to log into a locked account",
                 force_logout=False,
             )
-            raise Forbidden(
-                "This account is currently locked on grounds of suspicious activities"
+            raise HTTPException(
+                403,
+                "This account is currently locked on grounds of suspicious activities",
             )
     except SQLAlchemyError:
         raise Exception
@@ -96,7 +91,7 @@ async def admin_login(
             "Incorrect password",
             force_logout=False,
         )
-        raise Unauthorized("Incorrect passwword")
+        raise HTTPException(401, "Incorrect passwword")
 
     # Exists in DB, check synced_store_client to see if session is already active
     session_key: Final[str] = f"admin:{admin.id_}"
@@ -114,17 +109,17 @@ async def admin_login(
                 "Session already active",
                 force_logout=False,
             )
-            raise Conflict("An admin session with these credentials is already active")
+            raise HTTPException(
+                409, "An admin session with these credentials is already active"
+            )
 
     except RedisError:
-        raise InternalServerError("An error occured when validating session integrity")
+        raise HTTPException(500, "An error occured when validating session integrity")
 
     try:
         await session.execute(update(Admin).values(last_login=datetime.now()))
     except SQLAlchemyError:
-        raise InternalServerError(
-            "An error occured when logging you in, this is not an issue with your request but with the database"
-        )
+        raise HTTPException(500, "An error occured when logging you in")
 
     # Admin validated, create new session
     sessionID: int = uuid4().int
@@ -168,10 +163,12 @@ async def admin_delete(
             )
         ).scalar_one_or_none()
         if not admin:
-            raise NotFound(f"No admin with ID {deletion_model.id_} found")
+            raise HTTPException(404, f"No admin with ID {deletion_model.id_} found")
 
         if admin.role == "super":
-            raise Conflict()
+            raise HTTPException(
+                409,
+            )
 
     except SQLAlchemyError:
         genericDBFetchException()
@@ -184,7 +181,7 @@ async def admin_delete(
         )
         await session.commit()
     except:
-        raise InternalServerError("Failed to delete admin account")
+        raise HTTPException(500, "Failed to delete admin account")
 
     return JSONResponse({"message": "Admin deleted"})
 
@@ -202,20 +199,27 @@ async def admin_refresh(
     admin_key: Final[str] = f"admin:{refresh_model.id_}"
     if g.SESSION_TOKEN["session_iteration"] >= config.ADMIN.MAX_SESSION_ITERATIONS:
         synced_store_client.delete(admin_key)
-        raise Conflict(
-            "Maximum session reiterations reached, please reauthenticate to be assigned a fresh session"
+        raise HTTPException(
+            409,
+            " ".join(
+                (
+                    "Maximum session reiterations reached,",
+                    "please reauthenticate to be",
+                    "assigned a fresh session",
+                )
+            ),
         )
 
     actual_digest_bytes: bytes = synced_store_client.hget(admin_key, "revival_digest")
     if not actual_digest_bytes:
         synced_store_client.delete(admin_key)
-        raise InternalServerError(
-            "An error occured in verifying revival digests. Please reuthenticate"
+        raise HTTPException(
+            500, "An error occured in verifying revival digests. Please reuthenticate"
         )
 
     if actual_digest_bytes == b"__NF__":
         synced_store_client.delete(admin_key)
-        raise Conflict("Maximum session reiterations reached")
+        raise HTTPException(409, "Maximum session reiterations reached")
 
     if actual_digest_bytes.decode() != refresh_model.refresh_digest:
         await report_suspicious_activity(
@@ -225,7 +229,7 @@ async def admin_refresh(
             refresh_model.id_,
             "Invalid session revival digest",
         )
-        raise Forbidden("Invalid revival digest provided")
+        raise HTTPException(403, "Invalid revival digest provided")
 
     # Given digest matches revival digest. Refresh session and generate a new revival digest
     newIteration: int = g.SESSION_TOKEN["session_iteration"] + 1
@@ -290,11 +294,13 @@ async def admin_lock(
         ).scalar_one_or_none()
 
         if not admin:
-            raise NotFound(
-                f"No admin with id {identification_model.id_} could be found"
+            raise HTTPException(
+                404, f"No admin with id {identification_model.id_} could be found"
             )
         if admin.locked:
-            conflict: Conflict = Conflict("Admin account is already locked")
+            conflict: HTTPException = HTTPException(
+                409, "Admin account is already locked"
+            )
             setattr(
                 conflict,
                 "kwargs",
@@ -342,11 +348,13 @@ async def admin_unlock(
         ).scalar_one_or_none()
 
         if not admin:
-            raise NotFound(
-                f"No admin with id {identification_model.id_} could be found"
+            raise HTTPException(
+                404, f"No admin with id {identification_model.id_} could be found"
             )
         if not admin.locked:
-            conflict: Conflict = Conflict("Admin account is already unlocked")
+            conflict: HTTPException = HTTPException(
+                409, "Admin account is already unlocked"
+            )
             setattr(
                 conflict,
                 "kwargs",
@@ -384,7 +392,7 @@ async def create_admin(
         ).scalar_one_or_none()
 
         if existing_admin_id:
-            raise Conflict("An admin with this suername already exists")
+            raise HTTPException(409, "An admin with this suername already exists")
     except SQLAlchemyError:
         genericDBFetchException()
 
@@ -401,8 +409,8 @@ async def create_admin(
         )
         await session.commit()
     except SQLAlchemyError:
-        raise InternalServerError(
-            "Failed to create a new admin, this is not from an erroneous input"
+        raise HTTPException(
+            500, "Failed to create a new admin, this is not from an erroneous input"
         )
 
     return JSONResponse({"message": "Admin created"}, 202)
