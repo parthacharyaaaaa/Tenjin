@@ -5,7 +5,7 @@ from redis import Redis
 from datetime import datetime
 from typing import Annotated, Any, Final
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from sqlalchemy import select, update, insert, func
@@ -15,6 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import (
     get_app_config,
+    get_keydata_repository,
     get_synced_store_client,
     get_database_session,
     get_token_manager,
@@ -23,8 +24,8 @@ from auxillary.utils import (
     json_repr,
     to_base64url,
 )
-from auth_server.src.auth_server.repositories.keydata import KeydataRepository
-from auth_server.src.auth_server.security.token_manager import TokenManager
+from auth_server.repositories.keydata import KeydataRepository
+from auth_server.security.token_manager import TokenManager
 from auth_server.utils.auth_auxillary import report_suspicious_activity
 from auth_server.utils.decorators import admin_only
 from auth_server.models.database import KeyData
@@ -34,12 +35,6 @@ from auth_server.security.keygen import (
     update_jwks,
 )
 from auth_server.security.key_container import KeyMetadata
-
-from werkzeug.exceptions import (
-    InternalServerError,
-    NotFound,
-    Conflict,
-)
 
 KEY: Final[APIRouter] = APIRouter()
 
@@ -55,7 +50,7 @@ async def get_key(
         ).scalar_one_or_none()
 
         if not key:
-            raise NotFound("No key with this ID found")
+            raise HTTPException(404, "No key with this ID found")
     except SQLAlchemyError:
         raise Exception
 
@@ -73,7 +68,7 @@ async def invalidate_key(
     config: Annotated[AppConfig, Depends(get_app_config)],
     token_manager: Annotated[TokenManager, Depends(get_token_manager)],
     session: Annotated[AsyncSession, Depends(get_database_session)],
-    keydata_repository: KeydataRepository,
+    keydata_repository: Annotated[KeydataRepository, Depends(get_keydata_repository)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
 ) -> JSONResponse:
     """Invalidate a given key"""
@@ -112,7 +107,7 @@ async def invalidate_key(
 
         # Key exists
         if not target_key:
-            raise NotFound(f"No key with ID {kid} found")
+            raise HTTPException(404, f"No key with ID {kid} found")
 
         # Key is inactive
         if not target_key.rotated_out_at:
@@ -124,13 +119,13 @@ async def invalidate_key(
                 g.SESSION_TOKEN["admin_id"],
                 f"Invaldiation attempt on active key {kid}",
             )
-            raise Conflict(
-                f"Active key {kid} must be rotated out before being invalidated"
+            raise HTTPException(
+                409, f"Active key {kid} must be rotated out before being invalidated"
             )
 
         # Key is still valid for verification
         if target_key.expired_at:
-            raise Conflict(f"Key {kid} has already been expired")
+            raise HTTPException(409, f"Key {kid} has already been expired")
 
         await session.execute(
             update(KeyData).where(KeyData.kid == kid).values(expired_at=datetime.now())
@@ -162,9 +157,7 @@ async def invalidate_key(
             public_pem_fpath.write_bytes(target_key.public_pem)
 
         # State reverted, crash and burn
-        error: InternalServerError = InternalServerError(
-            f"Failed to invalidate key {kid}"
-        )
+        error: HTTPException = HTTPException(500, f"Failed to invalidate key {kid}")
         setattr(error, "additional_kwargs", additional_kw)
         raise error from exc
 
@@ -179,7 +172,7 @@ async def invalidate_key(
             "Synced keylist state was inconsistent and hence regenerated through database"
         )
         valid_keys: list[str] = [
-            k.kid for k in keydata_repository.get_relevant_keydata(None)
+            k.kid for k in await keydata_repository.get_relevant_keydata(None)
         ]
     else:
         valid_keys: list[str] = [key.decode() for key in raw_valid_keys]
@@ -234,7 +227,7 @@ async def clean_keystore(
         old_jwks = orjson.loads(jwks_file.read())["keys"]
 
     if len(old_jwks) == 1:
-        raise Conflict("No inactive keys present to invalidate")
+        raise HTTPException(409, "No inactive keys present to invalidate")
 
     pem_mappings: dict[str, bytes] = {}
     for keydata in old_jwks:
@@ -325,7 +318,7 @@ async def clean_keystore(
                 fpath.write_bytes(public_pem)
 
         # All rollbacks performed, crash and burn
-        raise InternalServerError("Failed to perform clean operation") from exc
+        raise HTTPException(500, "Failed to perform clean operation") from exc
     finally:
         synced_store_client.delete("CLEAN_KEYSTORE_LOCK")
 
@@ -349,7 +342,7 @@ async def clean_keystore(
 async def rotate_keys(
     config: Annotated[AppConfig, Depends(get_app_config)],
     session: Annotated[AsyncSession, Depends(get_database_session)],
-    keydata_repository: KeydataRepository,
+    keydata_repository: Annotated[KeydataRepository, Depends(get_keydata_repository)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
     token_manager: Annotated[TokenManager, Depends(get_token_manager)],
 ) -> JSONResponse:
@@ -379,14 +372,15 @@ async def rotate_keys(
             g.SESSION_TOKEN["admin_id"],
             "Attempt to perform key rotation during cooldown",
         )
-        raise Conflict(
+        raise HTTPException(
+            409,
             " ".join(
                 (
                     "The server is currently undergoing a key rotation cooldown,",
                     "and will not accept rotation requests.",
                     "Repeated attempt will lead to account lock",
                 )
-            )
+            ),
         )
 
     # Server is ready for a key rotation
@@ -463,8 +457,8 @@ async def rotate_keys(
     except SQLAlchemyError:
         await session.rollback()
         synced_store_client.delete("KEY_ROTATION_LOCK")
-        raise InternalServerError(
-            "An error occured in performing key rotation (Database level)"
+        raise HTTPException(
+            500, "An error occured in performing key rotation (Database level)"
         )
 
     # Update files
@@ -504,7 +498,7 @@ async def rotate_keys(
     if not raw_valid_keys or kid.encode("utf-8") not in raw_valid_keys:
         # Should never happen, but in case it does we fall back and regenerate the entire list
         valid_keys: list[str] = [
-            k.kid for k in keydata_repository.get_relevant_keydata(None)
+            k.kid for k in await keydata_repository.get_relevant_keydata(None)
         ]
     else:
         valid_keys: list[str] = [key.decode() for key in raw_valid_keys]
