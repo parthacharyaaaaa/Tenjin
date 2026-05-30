@@ -1,15 +1,13 @@
-import threading
+import asyncio
 import time
 from traceback import format_exc
 import uuid
-from typing import Optional, Literal, TypeAlias, overload
+from typing import Final, Optional, Literal, TypeAlias, overload
 
 import jwt
 import jwt.exceptions as JWTexc
 
-from redis import Redis
-
-from werkzeug.exceptions import InternalServerError
+from redis.asyncio import Redis
 
 from auth_server.security.key_container import KeyMetadata
 from auth_server.models.database import KeyData
@@ -25,61 +23,59 @@ tokenPair: TypeAlias = tuple[str, str]
 
 
 class TokenManager:
-    """### Class for issuing and verifying access and refresh tokens assosciated with authentication and authorization"""
-
-    activeRefreshTokens: int = 0
+    active_refresh_tokens: int = 0
 
     def __init__(
         self,
         interface: Redis,
         synced_store: Redis,
         keydata_repository: KeydataRepository,
-        refreshLifetime: int = 60 * 60 * 3,
-        accessLifetime: int = 60 * 30,
+        refresh_lifetime: int = 60 * 60 * 3,
+        access_lifetime: int = 60 * 30,
         alg: str = "ES256",
         typ: str = "JWT",
-        uClaims: dict = {},
-        uHeaders: dict | None = None,
+        universal_claims: dict = {},
+        universal_headers: dict | None = None,
         leeway: int = 180,
         max_tokens_per_fid: int = 3,
         max_valid_keys: int = 3,
         announcement_duration: int = 60 * 60 * 3,
+        poll_interval: int = 30,
     ):
         try:
-            self._TokenStore = interface
+            self._token_store_client = interface
             self.max_llen = max_tokens_per_fid
         except Exception as e:
-            raise ValueError("Mandatory configurations missing for _TokenStore") from e
-
-        if not (self._TokenStore.ping()):
-            raise ConnectionError()
+            raise ValueError(
+                "Mandatory configurations missing for _token_store_client"
+            ) from e
 
         self.announcement_duration = announcement_duration
 
         self.synced_store_client = synced_store
-        if not (self.synced_store_client.ping()):
-            raise ConnectionError()
 
         self.keydata_repository = keydata_repository
 
         # Initialize universal headers, common to all tokens issued in any context
-        uHeader = {"typ": typ, "alg": alg}
-        if uHeaders:
-            uHeader.update(uHeaders)
-        self.uHeader = uHeader
+        universal_headers = {"typ": typ, "alg": alg}
+        if universal_headers:
+            universal_headers.update(universal_headers)
+        self.universal_headers = universal_headers
         # Initialize universal claims, common to all tokens issued in any context.
         # These should at the very least contain registered claims like "exp"
-        self.uClaims = uClaims
+        self.universal_claims = universal_claims
 
-        self.refreshLifetime = refreshLifetime
-        self.accessLifetime = accessLifetime
+        self.refresh_lifetime = refresh_lifetime
+        self.access_lifetime = access_lifetime
 
         # Set leeway for time-related claims
         self.leeway = leeway
         self.max_valid_keys = max_valid_keys
 
         # Start background thread for polling
-        threading.Thread(target=self.poll_store, daemon=True).start()
+        self.polling_task: Final[asyncio.Task] = asyncio.create_task(
+            self.poll_store(poll_interval), name="polling_task"
+        )
 
     def set_key_state(
         self,
@@ -95,23 +91,18 @@ class TokenManager:
         self.active_key = active_kid
 
     @overload
-    def decodeToken(
-        self, token: str, tType: Literal[TokenType.StandardAccess], **kwargs
+    async def decode_token(
+        self, token: str, token_type: Literal[TokenType.StandardAccess], **kwargs
     ) -> StandardAccessTokenClaims: ...
 
     @overload
-    def decodeToken(
-        self, token: str, tType: Literal[TokenType.StandardRefresh], **kwargs
+    async def decode_token(
+        self, token: str, token_type: Literal[TokenType.StandardRefresh], **kwargs
     ) -> StandardRefreshTokenClaims: ...
 
-    def decodeToken(
-        self, token: str, tType: TokenType = TokenType.StandardAccess, **kwargs
+    async def decode_token(
+        self, token: str, token_type: TokenType = TokenType.StandardAccess, **kwargs
     ) -> StandardAccessTokenClaims | StandardRefreshTokenClaims:
-        """Decodes token, raises error in case of failure
-        Args:
-        token: The token to decode
-        tType: Type of token. This is needed to invalidate token families for compromised refresh tokens
-        """
         try:
             kid: int = jwt.get_unverified_header(token)["kid"]
             if kid not in self.key_mapping:
@@ -131,151 +122,134 @@ class TokenManager:
             JWTexc.InvalidIssuedAtError,
             JWTexc.InvalidIssuerError,
         ) as e:
-            if tType == TokenType.StandardRefresh:
-                self.invalidateFamily(
+            if token_type == TokenType.StandardRefresh:
+                await self.invalidate_family(
                     jwt.decode(token, options={"verify_signature": False})["fid"]
                 )
-            raise ValueError("Invalid Token")
+            raise ValueError("Invalid Token") from e
         except KeyError as e:
-            raise JWTexc.InvalidTokenError("Token headers missing key ID")
+            raise JWTexc.InvalidTokenError("Token headers missing key ID") from e
 
-    def reissueTokenPair(self, rToken: str) -> tokenPair:
-        """
-        Issue a new token pair from a given refresh token, and revoke the provided refresh token
-        Args:
-        rToken: JWT encoded refresh token"""
-        decodedRefreshToken: StandardRefreshTokenClaims = self.decodeToken(
-            rToken, tType=TokenType.StandardRefresh
+    async def reissue_token_pair(self, refresh_token: str) -> tokenPair:
+        decoded_token: StandardRefreshTokenClaims = await self.decode_token(
+            refresh_token, token_type=TokenType.StandardRefresh
         )
 
-        refreshToken = self.issueRefreshToken(
-            decodedRefreshToken["sub"],
-            decodedRefreshToken["sid"],
-            jti=decodedRefreshToken["jti"],
-            familyID=decodedRefreshToken["fid"],
-            exp=decodedRefreshToken["exp"],
+        refreshToken = await self.issue_refresh_token(
+            decoded_token["sub"],
+            decoded_token["sid"],
+            jti=decoded_token["jti"],
+            family_id=decoded_token["fid"],
+            exp=decoded_token["exp"],
         )
 
-        self.shiftTokenWindow(decodedRefreshToken["fid"])
+        await self.shift_token_window(decoded_token["fid"])
 
-        accessToken: str = self.issueAccessToken(
-            decodedRefreshToken["sub"],
-            decodedRefreshToken["sid"],
-            decodedRefreshToken["fid"],
+        accessToken: str = self.issue_access_token(
+            decoded_token["sub"],
+            decoded_token["sid"],
+            decoded_token["fid"],
         )
 
         return refreshToken, accessToken
 
-    def issueRefreshToken(
+    async def issue_refresh_token(
         self,
         sub: str,
         sid: int,
-        familyID: str,
-        additionalClaims: Optional[dict] = None,
+        family_id: str,
+        additional_claims: Optional[dict] = None,
         jti: Optional[str] = None,
         exp: Optional[int | float] = None,
     ) -> str:
-        """
-        #### Issue a new refresh token
-        **Note**: This method will always encrypt the token with the newest available signing key
-
-        Args:
-        sub: subject of the JWT
-        sid: DB ID of subject
-        additionalClaims: Additional claims to attach to the JWT body
-        reissuance: Whether issuance is assosciated with a new authentication flow or not
-        jti: JTI claim of the current refresh token
-        familyID: FID claim of the current refresh token
-
-        """
-        if familyID:
+        if family_id:
             # Check for replay attack
-            key: bytes | None = self._TokenStore.lindex(f"FID:{familyID}", 0)  # type: ignore[reportAssignmentType]
+            key: bytes | None = await self._token_store_client.lindex(f"FID:{family_id}", 0)  # type: ignore[reportAssignmentType]
             if not key:
-                self.invalidateFamily(familyID)
-                raise ValueError(f"Token family {familyID} is invalid or empty")
+                await self.invalidate_family(family_id)
+                raise ValueError(f"Token family {family_id} is invalid or empty")
 
             key_metadata = key.split(b":")
             if str(key_metadata[0]) != jti or float(key_metadata[1]) != exp:
-                self.invalidateFamily(familyID)
+                await self.invalidate_family(family_id)
                 raise ValueError(
-                    f"Replay attack detected or token metadata mismatch for family {familyID}"
+                    f"Replay attack detected or token metadata mismatch for family {family_id}"
                 )
 
         # Fresh token being issued
-        elif self._TokenStore.lrange(f"FID:{familyID}", 0, -1):
-            self.invalidateFamily(familyID)
+        elif await self._token_store_client.lrange(f"FID:{family_id}", 0, -1):  # type: ignore[reportGeneralTypeIssues]
+            await self.invalidate_family(family_id)
 
         # All checks passed
         payload: dict = {
             "iat": time.time(),
-            "exp": time.time() + self.refreshLifetime,
-            "nbf": time.time() + self.accessLifetime - self.leeway,
-            "fid": familyID,
+            "exp": time.time() + self.refresh_lifetime,
+            "nbf": time.time() + self.access_lifetime - self.leeway,
+            "fid": family_id,
             "sub": sub,
             "sid": sid,
             "jti": self.generate_unique_identifier(),
         }
-        payload.update(self.uClaims)
-        if additionalClaims:
-            payload.update(additionalClaims)
+        payload.update(self.universal_claims)
+        if additional_claims:
+            payload.update(additional_claims)
 
-        with self._TokenStore.pipeline(transaction=False) as pipe:
-            pipe.lpush(f"FID:{familyID}", f"{payload['jti']}:{payload['exp']}")
-            pipe.expireat(f"FID:{familyID}", int(payload["exp"]))
-            pipe.execute()
+        async with self._token_store_client.pipeline(transaction=False) as pipe:
+            pipe.lpush(f"FID:{family_id}", f"{payload['jti']}:{payload['exp']}")
+            pipe.expireat(f"FID:{family_id}", int(payload["exp"]))
+            await pipe.execute()
 
         return jwt.encode(
             payload=payload,
             key=self.key_mapping[self.active_key].PRIVATE_PEM,
             algorithm=self.key_mapping[self.active_key].ALGORITHM,
-            headers=self.uHeader | {"kid": self.active_key},
+            headers=self.universal_headers | {"kid": self.active_key},
         )
 
-    def issueAccessToken(
-        self, sub: str, sid: int, familyID: str, additionalClaims: dict | None = None
+    def issue_access_token(
+        self, sub: str, sid: int, family_id: str, additional_claims: dict | None = None
     ) -> str:
         payload: dict = {
             "iat": time.time(),
-            "exp": time.time() + self.accessLifetime,
-            "fid": familyID,
+            "exp": time.time() + self.access_lifetime,
+            "fid": family_id,
             "sub": sub,
             "sid": sid,
             "jti": self.generate_unique_identifier(),
         }
-        payload.update(self.uClaims)
-        if additionalClaims:
-            payload.update(additionalClaims)
+        payload.update(self.universal_claims)
+        if additional_claims:
+            payload.update(additional_claims)
 
         return jwt.encode(
             payload=payload,
             key=self.key_mapping[self.active_key].PRIVATE_PEM,
             algorithm=self.key_mapping[self.active_key].ALGORITHM,
-            headers=self.uHeader | {"kid": self.active_key},
+            headers=self.universal_headers | {"kid": self.active_key},
         )
 
-    def shiftTokenWindow(self, fID: str) -> None:
+    async def shift_token_window(self, fID: str) -> None:
         """Revokes the oldest refresh token from a family if capacity is reached, without invalidating the entire family"""
         try:
-            llen: int = self._TokenStore.llen(f"FID:{fID}")  # type: ignore[reportAssignmentType]
+            llen: int = await self._token_store_client.llen(f"FID:{fID}")  # type: ignore[reportAssignmentType]
 
             if llen == 0:
                 return
 
             if llen >= self.max_llen:
-                self._TokenStore.rpop(f"FID:{fID}", max(1, llen - self.max_llen))
+                await self._token_store_client.rpop(f"FID:{fID}", max(1, llen - self.max_llen))  # type: ignore[reportGeneralTypeIssues]
         except Exception as e:
-            raise InternalServerError("Failed to perform operation on token store")
+            raise RuntimeError("Failed to perform operation on token store") from e
 
-    def invalidateFamily(self, fID: str) -> None:
+    async def invalidate_family(self, fID: str) -> None:
         """Remove entire token family from revocation list and token store"""
         try:
-            if self._TokenStore.lrange(f"FID:{fID}", 0, -1):
-                self._TokenStore.delete(f"FID:{fID}")
+            if await self._token_store_client.lrange(f"FID:{fID}", 0, -1):  # type: ignore[reportGeneralTypeIssues]
+                await self._token_store_client.delete(f"FID:{fID}")
             else:
                 print("No Family Found")
         except Exception as e:
-            raise InternalServerError("Failed to perform operation on token store")
+            raise RuntimeError("Failed to perform operation on token store") from e
 
     def update_keydata(
         self, kid: str, newKeyData: KeyMetadata, active: bool = True
@@ -286,7 +260,7 @@ class TokenManager:
 
         self.key_mapping[kid] = newKeyData
 
-    def fetch_unexpired_key(self, kid: str) -> KeyMetadata | None:
+    async def fetch_unexpired_key(self, kid: str) -> KeyMetadata | None:
         """Fetch a non-expired key from the database
         Args:
             kid: Key ID to query the database for
@@ -294,12 +268,12 @@ class TokenManager:
         Returns:
             Fetched key casted to KeyMetadata, None if not found"""
         # Check synced store for an invalid key announcement for this key
-        invalidKey: bytes | None = self.synced_store_client.get(f"invalid_key:{kid}")  # type: ignore[reportAssignmentType]
+        invalidKey: bytes | None = await self.synced_store_client.get(f"invalid_key:{kid}")  # type: ignore[reportAssignmentType]
         if invalidKey:
             return None
 
         # Try to fetch a valid key with this KID
-        key: KeyData | None = self.keydata_repository.get_keydata(kid)
+        key: KeyData | None = await self.keydata_repository.get_keydata(kid)
         if not key:
             # Announce non existence to other workers in case they also receive this invalid key
             self.synced_store_client.set(
@@ -321,11 +295,11 @@ class TokenManager:
 
         self.key_mapping.pop(kid, None)
 
-    def poll_store(self) -> None:
+    async def poll_store(self, interval: int) -> None:
         """Check synced store to keep local keys updated with global keys. Intended to be run as a non-blocking, background task upon instantiation"""
         while True:
             try:
-                valid_keys: list[bytes] | None = self.synced_store_client.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
+                valid_keys: list[bytes] | None = await self.synced_store_client.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
 
                 if not valid_keys:
                     raise RuntimeError("Valid keys list empty or not found")
@@ -342,7 +316,7 @@ class TokenManager:
                     print(
                         f"[BACKGROUND POLLER]: Adding verification new key {new_key}..."
                     )
-                    result: KeyMetadata | None = self.fetch_unexpired_key(new_key)
+                    result: KeyMetadata | None = await self.fetch_unexpired_key(new_key)
                     if result:
                         self.update_keydata(
                             new_key, result, active=not bool(result.ROTATED_AT)
@@ -366,7 +340,7 @@ class TokenManager:
                 print(f"[BACKGROUND POLLER]: Exception encountered. Traceback:")
                 print(format_exc())
             finally:
-                time.sleep(10)
+                await asyncio.sleep(interval)
 
     @staticmethod
     def generate_unique_identifier():
