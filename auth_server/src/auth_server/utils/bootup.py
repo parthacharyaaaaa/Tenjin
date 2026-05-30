@@ -1,15 +1,22 @@
+from contextlib import asynccontextmanager
 from datetime import datetime
+import os
 from pathlib import Path
 import time
 import traceback
-from typing import Final, Mapping, Sequence
+from typing import AsyncGenerator, Final, Mapping, Sequence
 
 from fastapi import APIRouter, FastAPI
 from redis import Redis
 
-from auth_server.routers import RouterName, URLPrefix
+from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
 from auth_server.config.app_config import AppConfig
-from auth_server.dependencies import get_token_manager
+from auth_server.dependencies import (
+    get_app_config,
+    get_database_session_maker,
+    get_synced_store_client,
+    get_token_manager,
+)
 from auth_server.security.key_container import KeyMetadata
 from auth_server.security.keygen import (
     initialize_active_key,
@@ -257,3 +264,36 @@ def slave_bootup(
 
     token_manager: Final[TokenManager] = get_token_manager()
     token_manager.set_key_state(active_kid, active_keydata, rotated_active_keys_mapping)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    PID: Final[int] = os.getpid()
+
+    config: Final[AppConfig] = get_app_config()
+    synced_store_client: Final[Redis] = get_synced_store_client()
+
+    # Additional filepaths depending on instance/static directories
+    config.JWKS.resolve_jwks_directory(config.CORE.instance_path)
+    config.JWKS.resolve_public_pem_directory(config.CORE.static_path)
+    config.JWKS.resolve_private_pem_directory(config.CORE.instance_path)
+
+    # Error handler
+    app.add_exception_handler(Exception, generic_error_handler)
+
+    keydata_repository: Final[KeydataRepository] = KeydataRepository(
+        get_database_session_maker()
+    )
+
+    is_master: bool = bool(
+        synced_store_client.set(SyncedStoreStrings.AUTH_BOOTUP_MASTER, PID, nx=True)
+    )
+
+    if is_master:
+        master_bootup(config, synced_store_client, keydata_repository, PID)
+    else:
+        slave_bootup(config, synced_store_client, keydata_repository, PID)
+
+    register_routers(app, ROUTER_URL_MAPPING, config.CORE.APPLICATION_ROOT)
+
+    yield
