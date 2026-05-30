@@ -19,20 +19,20 @@ from auth_server.security.token_manager import TokenManager
 from auth_server.security.tokens import TokenType, StandardRefreshTokenClaims
 from auth_server.utils.auth_auxillary import attach_tokens
 
-AUTH_API_ROUTER: Final[APIRouter] = APIRouter()
+AUTH: Final[APIRouter] = APIRouter()
 
 config: Final[AppConfig] = get_app_config()
 
 
 ### Endpoints ###
-@AUTH_API_ROUTER.get("/jwks.json")
+@AUTH.get("/jwks.json")
 async def jwks() -> Response:
     # TODO: Add Cache-Control, and using an in-memory jwks copy
     async with aiofiles.open(config.JWKS.JWKS_FILEPATH, mode="rb") as jwks_file:
         return Response(await jwks_file.read(), media_type="application/json")
 
 
-@AUTH_API_ROUTER.post("/login")
+@AUTH.post("/login")
 @enforce_json
 async def login(
     request: Request,
@@ -85,7 +85,7 @@ async def login(
     return response, 201
 
 
-@AUTH_API_ROUTER.post("/register")
+@AUTH.post("/register")
 @enforce_json
 async def register(
     request: Request,
@@ -121,7 +121,7 @@ async def register(
             "time_of_issuance": epoch,
             "access_exp": epoch + token_manager.accessLifetime,
             "leeway": token_manager.leeway,
-            "issuer": "tenjin-AUTH_API_ROUTER-service",
+            "issuer": "tenjin-AUTH-service",
             "_additional": {**response_contents},
         },
         status_code=201,
@@ -138,7 +138,7 @@ async def register(
     return response, 201
 
 
-@AUTH_API_ROUTER.get("/reissue")
+@AUTH.get("/reissue")
 def reissue(
     request: Request, token_manager: Annotated[TokenManager, Depends(get_token_manager)]
 ):
@@ -161,7 +161,7 @@ def reissue(
             "time_of_issuance": epoch,
             "access_exp": epoch + token_manager.accessLifetime,
             "leeway": token_manager.leeway,
-            "issuer": "babel-AUTH_API_ROUTER-service",
+            "issuer": "babel-AUTH-service",
         }
     )
 
@@ -176,7 +176,7 @@ def reissue(
     return response, 201
 
 
-@AUTH_API_ROUTER.delete("/tokens")
+@AUTH.delete("/tokens")
 def purge_family(
     request: Request, token_manager: Annotated[TokenManager, Depends(get_token_manager)]
 ):
