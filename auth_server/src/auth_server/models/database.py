@@ -5,14 +5,18 @@ from sqlalchemy import VARCHAR, INTEGER, TIMESTAMP, BOOLEAN, ForeignKey, text
 from sqlalchemy.orm import DeclarativeBase, mapped_column, Mapped
 from sqlalchemy.dialects.postgresql import ENUM, BYTEA
 
-from auth_server.models.database_enums import AdminRoles
+from auth_server.security.admin_roles import AdminRole
+from auth_server.security.permissions import Permission
 
 
 class Base(DeclarativeBase):
     pass
 
 
-ADMIN_ROLES = ENUM(*[i.value for i in AdminRoles], name="admin_roles", create_type=True)
+ADMIN_ROLES = ENUM(*[i.value for i in AdminRole], name="admin_roles", create_type=True)
+ADMIN_PERMISSIONS = ENUM(
+    *[i.value for i in Permission], name="admin_permissions", create_type=True
+)
 
 
 class Admin(Base):
