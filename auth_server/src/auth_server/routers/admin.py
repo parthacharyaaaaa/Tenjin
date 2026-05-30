@@ -1,17 +1,18 @@
 import base64
 import secrets
 import time
-import orjson
-from redis import Redis
 from datetime import datetime
 from typing import Annotated, Final
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends
+from fastapi.exceptions import HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.requests import Request
-from fastapi.exceptions import HTTPException
 
+import orjson
+
+from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from sqlalchemy import select, update, insert
@@ -19,7 +20,6 @@ from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import and_
 
-from auxillary.decorators import enforce_json
 from auxillary.utils import (
     genericDBFetchException,
     verify_password,
@@ -27,26 +27,28 @@ from auxillary.utils import (
 )
 
 from auth_server.config.app_config import AppConfig
+from auth_server.config.constants import REVIVAL_DIGEST_LENGTH
 from auth_server.dependencies import (
     get_app_config,
     get_synced_store_client,
     get_database_session,
 )
-from auth_server.config.constants import REVIVAL_DIGEST_LENGTH
-from auth_server.utils.auth_auxillary import report_suspicious_activity
-from auth_server.utils.decorators import admin_only
-from auth_server.models.database import Admin
 from auth_server.models.cmd_requests import (
     AdminAuthenticationModel,
     AdminIdentificationModel,
     AdminRefreshModel,
 )
+from auth_server.models.database import Admin
+from auth_server.models.session import AdminSession
+from auth_server.security.admin_roles import AdminRole
+from auth_server.security.permissions import Permission
+from auth_server.utils.auth_auxillary import report_suspicious_activity
+from auth_server.utils.dependencies import require_permissions, validate_admin_session
 
 ADMIN: Final[APIRouter] = APIRouter()
 
 
 @ADMIN.post("/admins/login")
-@enforce_json
 async def admin_login(
     auth_model: AdminAuthenticationModel,
     config: Annotated[AppConfig, Depends(get_app_config)],
@@ -55,9 +57,14 @@ async def admin_login(
 ) -> JSONResponse:
     admin: Admin | None = None
     try:
-        admin = db.session.execute(
-            select(Admin).where(
-                and_(Admin.username == auth_model.identity, Admin.time_deleted == None)
+        admin = (
+            await session.execute(
+                select(Admin).where(
+                    and_(
+                        Admin.username == auth_model.identity,
+                        Admin.time_deleted == None,
+                    )
+                )
             )
         ).scalar_one_or_none()
 
@@ -149,9 +156,11 @@ async def admin_login(
 
 
 @ADMIN.delete("/admins")
-@admin_only(required_role="super")
 async def admin_delete(
     deletion_model: AdminIdentificationModel,
+    admin_session: Annotated[
+        AdminSession, Depends(require_permissions(Permission.DELETE_ADMIN))
+    ],
     session: Annotated[AsyncSession, Depends(get_database_session)],
 ) -> JSONResponse:
     try:
@@ -164,11 +173,6 @@ async def admin_delete(
         ).scalar_one_or_none()
         if not admin:
             raise HTTPException(404, f"No admin with ID {deletion_model.id_} found")
-
-        if admin.role == "super":
-            raise HTTPException(
-                409,
-            )
 
     except SQLAlchemyError:
         genericDBFetchException()
@@ -187,9 +191,9 @@ async def admin_delete(
 
 
 @ADMIN.post("/admins/refresh")
-@admin_only()
 async def admin_refresh(
     refresh_model: AdminRefreshModel,
+    admin_session: Annotated[AdminSession, Depends(validate_admin_session)],
     config: Annotated[AppConfig, Depends(get_app_config)],
     session: Annotated[AsyncSession, Depends(get_database_session)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
@@ -197,7 +201,7 @@ async def admin_refresh(
     """Refresh an admin's session and enforce a maximum number of times a session can be refreshed before requiring reauthentication"""
     # TODO: Move refresh-digest to request headers
     admin_key: Final[str] = f"admin:{refresh_model.id_}"
-    if g.SESSION_TOKEN["session_iteration"] >= config.ADMIN.MAX_SESSION_ITERATIONS:
+    if admin_session.iteration >= config.ADMIN.MAX_SESSION_ITERATIONS:
         synced_store_client.delete(admin_key)
         raise HTTPException(
             409,
@@ -210,7 +214,7 @@ async def admin_refresh(
             ),
         )
 
-    actual_digest_bytes: bytes = synced_store_client.hget(admin_key, "revival_digest")
+    actual_digest_bytes: bytes = synced_store_client.hget(admin_key, "revival_digest")  # type: ignore[reportAssignmentType]
     if not actual_digest_bytes:
         synced_store_client.delete(admin_key)
         raise HTTPException(
@@ -232,24 +236,24 @@ async def admin_refresh(
         raise HTTPException(403, "Invalid revival digest provided")
 
     # Given digest matches revival digest. Refresh session and generate a new revival digest
-    newIteration: int = g.SESSION_TOKEN["session_iteration"] + 1
-    newSessionID: int = secrets.randbelow(10_000_000)
+    new_iteration: int = admin_session.iteration + 1
+    new_session_id: int = uuid4().int
     epoch: float = time.time()
 
     expiry: float = epoch + config.ADMIN.ADMIN_SESSION_DURATION
     revival_digest: bytes | str = (
         secrets.token_hex(256)
-        if newIteration == config.ADMIN.MAX_SESSION_ITERATIONS
+        if new_iteration == config.ADMIN.MAX_SESSION_ITERATIONS
         else "__END__"
     )
     newSessionMapping: dict[str, str | float] = {
         "admin_id": refresh_model.id_,
-        "session_id": newSessionID,
-        "session_iteration": newIteration,
+        "session_id": new_session_id,
+        "session_iteration": new_iteration,
         "revival_digest": revival_digest,
         "epoch": epoch,
         "expiry_at": expiry,
-        "role": g.SESSION_TOKEN["role"],
+        "role": admin_session.role.value,
     }
 
     synced_store_client.hset(admin_key, mapping=newSessionMapping)
@@ -267,7 +271,6 @@ async def admin_refresh(
 
 
 @ADMIN.patch("/admins/logout")
-@admin_only()
 def admin_logout(
     identification_model: AdminIdentificationModel,
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
@@ -277,7 +280,6 @@ def admin_logout(
 
 
 @ADMIN.post("/admins/locks")
-@admin_only(required_role="super")
 async def admin_lock(
     request: Request,
     identification_model: AdminIdentificationModel,
@@ -331,7 +333,6 @@ async def admin_lock(
 
 
 @ADMIN.delete("/admins/locks")
-@admin_only(required_role="super")
 async def admin_unlock(
     request: Request,
     identification_model: AdminIdentificationModel,
@@ -379,9 +380,11 @@ async def admin_unlock(
 
 
 @ADMIN.post("/admins")
-@admin_only(required_role="super")
 async def create_admin(
     admin_model: AdminAuthenticationModel,
+    admin_session: Annotated[
+        AdminSession, Depends(require_permissions(Permission.CREATE_ADMIN))
+    ],
     session: Annotated[AsyncSession, Depends(get_database_session)],
 ) -> JSONResponse:
     try:
@@ -403,8 +406,8 @@ async def create_admin(
                 username=admin_model.identity,
                 password_hash=pw_hash,
                 password_salt=pw_salt,
-                role="staff",
-                created_by=g.SESSION_TOKEN["admin_id"],
+                role=AdminRole.STAFF.value,
+                created_by=admin_session.admin_id,
             )
         )
         await session.commit()
