@@ -7,7 +7,9 @@ import traceback
 from typing import AsyncGenerator, Final, Mapping, Sequence
 
 from fastapi import APIRouter, FastAPI
-from redis import Redis
+from redis.asyncio import Redis
+
+from auxillary.utils import generic_error_handler
 
 from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
 from auth_server.config.app_config import AppConfig
@@ -40,12 +42,14 @@ def register_routers(
         )
 
 
-def _purge_expired_keys(
+async def _purge_expired_keys(
     public_pem_directory: Path,
     private_pem_directory: Path,
     keydata_repository: KeydataRepository,
 ) -> None:
-    expiredKeys: list[str] = [k.kid for k in keydata_repository.get_expired_keys()]
+    expiredKeys: list[str] = [
+        k.kid for k in await keydata_repository.get_expired_keys()
+    ]
     for expiredKey in expiredKeys:
         (
             public_pem_directory.joinpath(f"public_{expiredKey}_key.pem").unlink(
@@ -86,7 +90,7 @@ def _sync_file_system_key_state(
         private_pem_path.unlink(missing_ok=True)
 
 
-def master_bootup(
+async def master_bootup(
     config: AppConfig,
     synced_store_client: Redis,
     keydata_repository: KeydataRepository,
@@ -100,7 +104,9 @@ def master_bootup(
     failed: bool = False
 
     try:
-        keydata: list[KeyData] = keydata_repository.get_relevant_keydata(limit=None)
+        keydata: list[KeyData] = await keydata_repository.get_relevant_keydata(
+            limit=None
+        )
 
         if not keydata:
             # No valid keys in DB, master must create new pair
@@ -180,7 +186,7 @@ def master_bootup(
         )
 
         # Lastly, purge any PEM files for expired keys that are somehow still in file system
-        _purge_expired_keys(
+        await _purge_expired_keys(
             public_pem_directory=config.JWKS.PUBLIC_PEM_DIRECTORY,
             private_pem_directory=config.JWKS.PRIVATE_PEM_DIRECTORY,
             keydata_repository=keydata_repository,
@@ -208,15 +214,15 @@ def master_bootup(
         if failed:
             return
 
-        with synced_store_client.pipeline() as pipe:
+        async with synced_store_client.pipeline() as pipe:
             pipe.delete(SyncedStoreStrings.VALID_KEYS)
             valid_keys: list[str] = list(rotated_verifying_keys.keys()) + [active_kid]
             pipe.lpush(SyncedStoreStrings.VALID_KEYS, *valid_keys)
             pipe.delete(SyncedStoreStrings.AUTH_BOOTUP_MASTER)
-            pipe.execute()
+            await pipe.execute()
 
 
-def slave_bootup(
+async def slave_bootup(
     config: AppConfig,
     synced_store_client: Redis,
     keydata_repository: KeydataRepository,
@@ -235,7 +241,7 @@ def slave_bootup(
 
     # Once lock is released, slave worker only needs to consult database and write to its own memory
 
-    keys: list[KeyData] = keydata_repository.get_relevant_keydata(
+    keys: list[KeyData] = await keydata_repository.get_relevant_keydata(
         limit=config.JWKS.JWKS_CAP, raise_on_empty=True
     )
 
@@ -290,9 +296,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
 
     if is_master:
-        master_bootup(config, synced_store_client, keydata_repository, PID)
+        await master_bootup(config, synced_store_client, keydata_repository, PID)
     else:
-        slave_bootup(config, synced_store_client, keydata_repository, PID)
+        await slave_bootup(config, synced_store_client, keydata_repository, PID)
 
     register_routers(app, ROUTER_URL_MAPPING, config.CORE.APPLICATION_ROOT)
 
