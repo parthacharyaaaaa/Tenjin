@@ -74,9 +74,14 @@ async def get_database_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @lru_cache(maxsize=1)
+def get_keydata_repository() -> KeydataRepository:
+    return KeydataRepository(get_database_session_maker())
+
+
+@lru_cache(maxsize=1)
 def get_token_manager() -> TokenManager:
     return TokenManager(
         interface=get_token_store_client(),
         synced_store=get_synced_store_client(),
-        keydata_repository=KeydataRepository(get_database_session_maker()),
+        keydata_repository=get_keydata_repository(),
     )
