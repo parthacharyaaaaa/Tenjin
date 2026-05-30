@@ -48,10 +48,10 @@ from werkzeug.exceptions import (
     Unauthorized,
 )
 
-CMD: Final[APIRouter] = APIRouter()
+ADMIN: Final[APIRouter] = APIRouter()
 
 
-@CMD.post("/admins/login")
+@ADMIN.post("/admins/login")
 @enforce_json
 async def admin_login(
     auth_model: AdminAuthenticationModel,
@@ -153,7 +153,7 @@ async def admin_login(
     )
 
 
-@CMD.delete("/admins")
+@ADMIN.delete("/admins")
 @admin_only(required_role="super")
 async def admin_delete(
     deletion_model: AdminIdentificationModel,
@@ -189,7 +189,7 @@ async def admin_delete(
     return JSONResponse({"message": "Admin deleted"})
 
 
-@CMD.post("/admins/refresh")
+@ADMIN.post("/admins/refresh")
 @admin_only()
 async def admin_refresh(
     refresh_model: AdminRefreshModel,
@@ -262,7 +262,7 @@ async def admin_refresh(
     )
 
 
-@CMD.patch("/admins/logout")
+@ADMIN.patch("/admins/logout")
 @admin_only()
 def admin_logout(
     identification_model: AdminIdentificationModel,
@@ -272,7 +272,7 @@ def admin_logout(
     return JSONResponse({"message": "Logout successful"})
 
 
-@CMD.post("/admins/locks")
+@ADMIN.post("/admins/locks")
 @admin_only(required_role="super")
 async def admin_lock(
     request: Request,
@@ -324,7 +324,7 @@ async def admin_lock(
     return JSONResponse({"message": "Admin locked succesfully"})
 
 
-@CMD.delete("/admins/locks")
+@ADMIN.delete("/admins/locks")
 @admin_only(required_role="super")
 async def admin_unlock(
     request: Request,
@@ -370,7 +370,7 @@ async def admin_unlock(
     return JSONResponse({"message": "Admin unlocked succesfully"})
 
 
-@CMD.post("/admins")
+@ADMIN.post("/admins")
 @admin_only(required_role="super")
 async def create_admin(
     admin_model: AdminAuthenticationModel,
