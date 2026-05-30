@@ -4,7 +4,7 @@ from typing import Annotated, Final
 
 import aiofiles
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.requests import Request
 from fastapi.responses import Response, JSONResponse
 
@@ -58,8 +58,10 @@ async def login(
     response_contents: dict[str, str | int] = resource_response.json()
     sub, sid = str(response_contents.pop("sub")), int(response_contents.pop("sid"))
     family_id: str = sha256(f"{sub}:{sid}".encode()).hexdigest()
-    access_token: str = token_manager.issueAccessToken(sub, sid, family_id)
-    refresh_token: str = token_manager.issueRefreshToken(sub, sid, familyID=family_id)
+    access_token: str = token_manager.issue_access_token(sub, sid, family_id)
+    refresh_token: str = await token_manager.issue_refresh_token(
+        sub, sid, family_id=family_id
+    )
 
     epoch: float = time.time()
     response: JSONResponse = JSONResponse(
@@ -67,7 +69,7 @@ async def login(
             "message": response_contents.pop("message", "Login complete."),
             "username": sub,
             "time_of_issuance": epoch,
-            "access_exp": epoch + token_manager.accessLifetime,
+            "access_exp": epoch + token_manager.access_lifetime,
             "leeway": token_manager.leeway,
             "issuer": "tenjin-auth-service",
             "_additional": {**response_contents},
@@ -78,8 +80,8 @@ async def login(
         response,
         access_token,
         refresh_token,
-        token_manager.accessLifetime + token_manager.leeway,
-        token_manager.refreshLifetime + token_manager.leeway,
+        token_manager.access_lifetime + token_manager.leeway,
+        token_manager.refresh_lifetime + token_manager.leeway,
         paths=[request.url_for("reissue"), request.url_for("purge_family")],
     )
     return response, 201
@@ -110,8 +112,10 @@ async def register(
     response_contents: dict[str, str | int] = resource_response.json()
     sub, sid = str(response_contents.pop("sub")), int(response_contents.pop("sid"))
     family_id: str = sha256(f"{sub}:{sid}".encode()).hexdigest()
-    access_token: str = token_manager.issueAccessToken(sub, sid, family_id)
-    refresh_token: str = token_manager.issueRefreshToken(sub, sid, familyID=family_id)
+    access_token: str = token_manager.issue_access_token(sub, sid, family_id)
+    refresh_token: str = await token_manager.issue_refresh_token(
+        sub, sid, family_id=family_id
+    )
     epoch: float = time.time()
     response: JSONResponse = JSONResponse(
         {
@@ -119,7 +123,7 @@ async def register(
             "username": sub,
             "email": response_contents.pop("email", None),
             "time_of_issuance": epoch,
-            "access_exp": epoch + token_manager.accessLifetime,
+            "access_exp": epoch + token_manager.access_lifetime,
             "leeway": token_manager.leeway,
             "issuer": "tenjin-AUTH-service",
             "_additional": {**response_contents},
@@ -131,15 +135,15 @@ async def register(
         response,
         access_token,
         refresh_token,
-        token_manager.accessLifetime + token_manager.leeway,
-        token_manager.refreshLifetime + token_manager.leeway,
+        token_manager.access_lifetime + token_manager.leeway,
+        token_manager.refresh_lifetime + token_manager.leeway,
         paths=[request.url_for("reissue"), request.url_for("purge_family")],
     )
     return response, 201
 
 
 @AUTH.get("/reissue")
-def reissue(
+async def reissue(
     request: Request, token_manager: Annotated[TokenManager, Depends(get_token_manager)]
 ):
     refresh_token: str | None = request.cookies.get(
@@ -153,13 +157,15 @@ def reissue(
         )
         raise e
 
-    new_refresh_token, new_access_token = token_manager.reissueTokenPair(refresh_token)
+    new_refresh_token, new_access_token = await token_manager.reissue_token_pair(
+        refresh_token
+    )
     epoch: float = time.time()
     response: Response = JSONResponse(
         {
             "message": "Reissuance successful",
             "time_of_issuance": epoch,
-            "access_exp": epoch + token_manager.accessLifetime,
+            "access_exp": epoch + token_manager.access_lifetime,
             "leeway": token_manager.leeway,
             "issuer": "babel-AUTH-service",
         }
@@ -169,15 +175,15 @@ def reissue(
         response,
         new_access_token,
         new_refresh_token,
-        token_manager.accessLifetime + token_manager.leeway,
-        token_manager.refreshLifetime + token_manager.leeway,
+        token_manager.access_lifetime + token_manager.leeway,
+        token_manager.refresh_lifetime + token_manager.leeway,
         paths=[request.url_for("reissue"), request.url_for("purge_family")],
     )
     return response, 201
 
 
 @AUTH.delete("/tokens")
-def purge_family(
+async def purge_family(
     request: Request, token_manager: Annotated[TokenManager, Depends(get_token_manager)]
 ):
     """
@@ -187,16 +193,16 @@ def purge_family(
         "Refresh", request.cookies.get("refresh")
     )
     if not encoded_refresh_token:
-        raise BadRequest(f"Logout requires a refresh token to be provided")
+        raise HTTPException(400, "Logout requires a refresh token to be provided")
 
     try:
-        refresh_token: StandardRefreshTokenClaims = token_manager.decodeToken(
+        refresh_token: StandardRefreshTokenClaims = await token_manager.decode_token(
             encoded_refresh_token,
             TokenType.StandardRefresh,
             options={"verify_nbf": False},
         )
-        token_manager.invalidateFamily(refresh_token["fid"])
+        await token_manager.invalidate_family(refresh_token["fid"])
     except:
-        raise Unauthorized("Failed to validate this refresh token")
+        raise HTTPException(401, "Failed to validate this refresh token")
 
     return JSONResponse({"message": "Token Revoked"})
