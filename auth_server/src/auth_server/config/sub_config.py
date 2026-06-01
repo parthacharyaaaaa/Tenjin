@@ -63,7 +63,7 @@ class TokenManagerConfigModel(BaseModel):
 
     @model_validator(mode="after")
     def verify_time_values(self) -> Self:
-        if self.ACCESS_LIFETIME <= self.REFRESH_LIFETIME:
+        if self.ACCESS_LIFETIME > self.REFRESH_LIFETIME:
             raise ValueError(
                 " ".join(
                     (
@@ -156,7 +156,7 @@ class AdminConfigModel(BaseModel):
 
 class SAConfigModel(BaseModel):
     _SQLALCHEMY_DATABASE_URI: str = PrivateAttr(
-        "postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}"
+        "postgresql+psycopg://{username}:{password}@{host}:{port}/{database}"
     )
     SQLALCHEMY_POOL_SIZE: Annotated[int, Field(ge=1)]
     SQLALCHEMY_MAX_OVERFLOW: Annotated[int, Field(ge=0)]
