@@ -40,6 +40,9 @@ class Admin(Base):
     )
     created_by: Mapped[int] = mapped_column(INTEGER, ForeignKey("admins.id_"))
 
+    signing_key: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
+    verification_key: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
+
 
 class SuspiciousActivity(Base):
     __tablename__ = "suspicious_activities"

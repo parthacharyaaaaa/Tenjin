@@ -1,7 +1,9 @@
 import secrets
 import time
-from typing import Sequence
+from typing import Final, Sequence
 from uuid import uuid4
+
+import ecdsa
 
 from redis.asyncio import Redis
 
@@ -18,7 +20,7 @@ from auth_server.models.database import (
     KeyData,
 )
 from auth_server.security.admin_roles import AdminRole
-from auth_server.utils.typing import AdminSessionDict
+from auth_server.utils.typing import AdminSessionDict, HashFunc
 
 
 def attach_tokens(
@@ -115,3 +117,12 @@ def create_admin_session(
         session_iteration=session_iteration,
         role=role.value,
     )
+
+
+def sign_session(
+    session_token: bytes | bytearray, signing_pem: bytes | bytearray, hashfunc: HashFunc
+) -> bytes:
+    signing_key: ecdsa.SigningKey = ecdsa.SigningKey.from_pem(signing_pem)
+    signature: Final[bytes] = signing_key.sign_deterministic(session_token, hashfunc)
+
+    return b".".join((session_token, signature))

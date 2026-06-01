@@ -3,6 +3,8 @@ from enum import StrEnum
 
 class AdminStrings(StrEnum):
     SESSION_TOKEN_HEADER = "X-SESSION-TOKEN"
+    ADMIN_KEY_CACHE = "ADMIN_KEY_CACHE"
+    NO_REFRESH_SENTINEL = "__NONE__"
 
 
 class SyncedStoreStrings(StrEnum):
