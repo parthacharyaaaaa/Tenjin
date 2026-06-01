@@ -1,9 +1,6 @@
 import base64
-import secrets
-import time
 from datetime import datetime
 from typing import Annotated, Final
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
@@ -41,9 +38,16 @@ from auth_server.models.cmd_requests import (
 from auth_server.models.database import Admin
 from auth_server.models.session import AdminSession
 from auth_server.security.admin_roles import AdminRole
+from auth_server.security.keygen import generate_ecdsa_pair
 from auth_server.security.permissions import Permission
-from auth_server.utils.auth_auxillary import report_suspicious_activity
+from auth_server.src.auth_server.strings import AdminStrings
+from auth_server.utils.auth_auxillary import (
+    report_suspicious_activity,
+    create_admin_session,
+    sign_session,
+)
 from auth_server.utils.dependencies import require_permissions, validate_admin_session
+from auth_server.utils.typing import AdminSessionDict
 
 ADMIN: Final[APIRouter] = APIRouter()
 
@@ -129,29 +133,26 @@ async def admin_login(
         raise HTTPException(500, "An error occured when logging you in")
 
     # Admin validated, create new session
-    sessionID: int = uuid4().int
-    revival_digest: str = secrets.token_hex(REVIVAL_DIGEST_LENGTH)
-    epoch: float = time.time()
-    expiry: float = epoch + config.ADMIN.ADMIN_SESSION_DURATION
-    sessionMapping: dict = {
-        "admin_id": admin.id_,
-        "session_id": sessionID,
-        "session_iteration": 1,
-        "revival_digest": revival_digest,
-        "epoch": epoch,
-        "expiry_at": expiry,
-        "role": admin.role,
-    }
+    session_mapping: Final[AdminSessionDict] = create_admin_session(
+        admin.id_,
+        config.ADMIN.ADMIN_SESSION_DURATION,
+        REVIVAL_DIGEST_LENGTH,
+        AdminRole(admin.role),
+    )
 
-    synced_store_client.hset(session_key, mapping=sessionMapping)
-    sessionMapping.pop("revival_digest")
-    sessionMapping["message"] = "Login successful"
+    # type ignore for TypedDict, which behaves as dict at runtime
+    synced_store_client.hset(session_key, mapping=session_mapping)  # type: ignore[reportArgumentType]
+    revival_digest: Final[str] = session_mapping.pop("revival_digest")  # type: ignore[reportAssignmentType]
+    encoded_session_token: bytes = base64.urlsafe_b64encode(
+        orjson.dumps(session_mapping)
+    )
 
-    encoded_session_token: str = base64.urlsafe_b64encode(
-        orjson.dumps(sessionMapping)
-    ).decode()
+    signed_token: Final[bytes] = sign_session(
+        encoded_session_token, admin.signing_key, config.ADMIN.SESSION_HASHFUNC
+    )
+
     return JSONResponse(
-        {"session_token": encoded_session_token, "revival_digest": revival_digest}
+        {"session_token": signed_token, "revival_digest": revival_digest}
     )
 
 
@@ -199,7 +200,6 @@ async def admin_refresh(
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
 ) -> JSONResponse:
     """Refresh an admin's session and enforce a maximum number of times a session can be refreshed before requiring reauthentication"""
-    # TODO: Move refresh-digest to request headers
     admin_key: Final[str] = f"admin:{refresh_model.id_}"
     if admin_session.iteration >= config.ADMIN.MAX_SESSION_ITERATIONS:
         synced_store_client.delete(admin_key)
@@ -221,7 +221,7 @@ async def admin_refresh(
             500, "An error occured in verifying revival digests. Please reuthenticate"
         )
 
-    if actual_digest_bytes == b"__NF__":
+    if actual_digest_bytes == AdminStrings.NO_REFRESH_SENTINEL:
         synced_store_client.delete(admin_key)
         raise HTTPException(409, "Maximum session reiterations reached")
 
@@ -235,38 +235,39 @@ async def admin_refresh(
         )
         raise HTTPException(403, "Invalid revival digest provided")
 
+    try:
+        signing_key: Final[bytes] = (
+            await session.execute(
+                select(Admin.signing_key).where(Admin.id_ == admin_session.admin_id)
+            )
+        ).scalar_one()
+    except SQLAlchemyError as e:
+        raise HTTPException(500) from e
+
     # Given digest matches revival digest. Refresh session and generate a new revival digest
-    new_iteration: int = admin_session.iteration + 1
-    new_session_id: int = uuid4().int
-    epoch: float = time.time()
-
-    expiry: float = epoch + config.ADMIN.ADMIN_SESSION_DURATION
-    revival_digest: bytes | str = (
-        secrets.token_hex(256)
-        if new_iteration == config.ADMIN.MAX_SESSION_ITERATIONS
-        else "__END__"
+    session_mapping: Final[AdminSessionDict] = create_admin_session(
+        admin_session.admin_id,
+        config.ADMIN.ADMIN_SESSION_DURATION,
+        REVIVAL_DIGEST_LENGTH,
+        admin_session.role,
+        admin_session.iteration + 1,
     )
-    newSessionMapping: dict[str, str | float] = {
-        "admin_id": refresh_model.id_,
-        "session_id": new_session_id,
-        "session_iteration": new_iteration,
-        "revival_digest": revival_digest,
-        "epoch": epoch,
-        "expiry_at": expiry,
-        "role": admin_session.role.value,
-    }
 
-    synced_store_client.hset(admin_key, mapping=newSessionMapping)
-    newSessionMapping.pop("revival_digest")
+    # type ignore for TypedDict, which behaves as dict at runtime
+    synced_store_client.hset(session_key, mapping=session_mapping)  # type: ignore[reportArgumentType]
+    revival_digest: str = session_mapping.pop("revival_digest")  # type: ignore[reportAssignmentType]
+    if session_mapping["session_iteration"] == config.ADMIN.MAX_SESSION_ITERATIONS:
+        revival_digest = AdminStrings.NO_REFRESH_SENTINEL
+    encoded_session_token: bytes = base64.urlsafe_b64encode(
+        orjson.dumps(session_mapping)
+    )
 
-    newSessionMapping["message"] = "Session extended"
-
-    encoded_session_token: str = base64.urlsafe_b64encode(
-        orjson.dumps(newSessionMapping)
-    ).decode()
+    signed_token: Final[bytes] = sign_session(
+        encoded_session_token, signing_key, config.ADMIN.SESSION_HASHFUNC
+    )
 
     return JSONResponse(
-        {"session_token": encoded_session_token, "revival_digest": revival_digest}
+        {"session_token": signed_token, "revival_digest": revival_digest}
     )
 
 
@@ -400,6 +401,7 @@ async def create_admin(
         genericDBFetchException()
 
     pw_hash, pw_salt = hash_password(admin_model.password)
+    _, signing_key, verification_key = generate_ecdsa_pair()
     try:
         await session.execute(
             insert(Admin).values(
@@ -408,6 +410,8 @@ async def create_admin(
                 password_salt=pw_salt,
                 role=AdminRole.STAFF.value,
                 created_by=admin_session.admin_id,
+                signing_key=signing_key.to_pem(),
+                verification_key=verification_key.to_pem(),
             )
         )
         await session.commit()

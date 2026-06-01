@@ -1,6 +1,7 @@
+import hashlib
 from pathlib import Path
 import re
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Callable, Self
 from functools import cached_property
 from pydantic import (
     BaseModel,
@@ -62,7 +63,7 @@ class TokenManagerConfigModel(BaseModel):
 
     @model_validator(mode="after")
     def verify_time_values(self) -> Self:
-        if self.ACCESS_LIFETIME <= self.REFRESH_LIFETIME:
+        if self.ACCESS_LIFETIME > self.REFRESH_LIFETIME:
             raise ValueError(
                 " ".join(
                     (
@@ -150,11 +151,12 @@ class AdminConfigModel(BaseModel):
     MAX_ACTIVITY_LIMIT: Annotated[int, Field(ge=0)]
     MAX_SESSION_ITERATIONS: Annotated[int, Field(ge=1)]
     ADMIN_SESSION_DURATION: Annotated[int, Field(ge=0)]
+    SESSION_HASHFUNC: Annotated[Callable, Field(default=hashlib.sha256)]
 
 
 class SAConfigModel(BaseModel):
     _SQLALCHEMY_DATABASE_URI: str = PrivateAttr(
-        "postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}"
+        "postgresql+psycopg://{username}:{password}@{host}:{port}/{database}"
     )
     SQLALCHEMY_POOL_SIZE: Annotated[int, Field(ge=1)]
     SQLALCHEMY_MAX_OVERFLOW: Annotated[int, Field(ge=0)]
