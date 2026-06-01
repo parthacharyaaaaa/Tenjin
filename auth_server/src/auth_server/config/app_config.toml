@@ -18,15 +18,15 @@ ANNOUNCEMENT_DURATION=10800
 
 [redis]
 [redis.synced_store]
-HOST="auth_server_synced_store"
+HOST="auth_server_redis"
 PORT=6379
 DB=0
 DECODE_RESPONSES=false
 
 [redis.token_store]
-HOST="auth_server_token_store"
+HOST="auth_server_redis"
 PORT=6379
-DB=0
+DB=1
 DECODE_RESPONSES=false
 
 [database]
