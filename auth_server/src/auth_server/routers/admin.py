@@ -42,8 +42,12 @@ from auth_server.models.database import Admin
 from auth_server.models.session import AdminSession
 from auth_server.security.admin_roles import AdminRole
 from auth_server.security.permissions import Permission
-from auth_server.utils.auth_auxillary import report_suspicious_activity
+from auth_server.utils.auth_auxillary import (
+    report_suspicious_activity,
+    create_admin_session,
+)
 from auth_server.utils.dependencies import require_permissions, validate_admin_session
+from auth_server.utils.typing import AdminSessionDict
 
 ADMIN: Final[APIRouter] = APIRouter()
 
@@ -129,26 +133,17 @@ async def admin_login(
         raise HTTPException(500, "An error occured when logging you in")
 
     # Admin validated, create new session
-    sessionID: int = uuid4().int
-    revival_digest: str = secrets.token_hex(REVIVAL_DIGEST_LENGTH)
-    epoch: float = time.time()
-    expiry: float = epoch + config.ADMIN.ADMIN_SESSION_DURATION
-    sessionMapping: dict = {
-        "admin_id": admin.id_,
-        "session_id": sessionID,
-        "session_iteration": 1,
-        "revival_digest": revival_digest,
-        "epoch": epoch,
-        "expiry_at": expiry,
-        "role": admin.role,
-    }
+    session_mapping: Final[AdminSessionDict] = create_admin_session(
+        admin.id_,
+        config.ADMIN.ADMIN_SESSION_DURATION,
+        REVIVAL_DIGEST_LENGTH,
+        AdminRole(admin.role),
+    )
 
-    synced_store_client.hset(session_key, mapping=sessionMapping)
-    sessionMapping.pop("revival_digest")
-    sessionMapping["message"] = "Login successful"
-
+    synced_store_client.hset(session_key, mapping=session_mapping)  # type: ignore[reportArgumentType]
+    revival_digest: Final[str] = session_mapping.pop("revival_digest")  # type: ignore[reportAssignmentType]
     encoded_session_token: str = base64.urlsafe_b64encode(
-        orjson.dumps(sessionMapping)
+        orjson.dumps(session_mapping)
     ).decode()
     return JSONResponse(
         {"session_token": encoded_session_token, "revival_digest": revival_digest}
