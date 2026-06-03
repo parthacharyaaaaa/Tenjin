@@ -1,10 +1,17 @@
 import os
 from functools import lru_cache
-from typing import Final
-
-from resource_server.config.app_config import AppConfig
+from typing import AsyncGenerator, Final
 
 from redis.asyncio import Redis
+
+from sqlalchemy.ext.asyncio import (
+    create_async_engine,
+    async_sessionmaker,
+    AsyncSession,
+    AsyncEngine,
+)
+
+from resource_server.config.app_config import AppConfig
 from resource_server.key_manager import KeyManager
 
 
@@ -29,3 +36,33 @@ def get_redis_client() -> Redis:
 @lru_cache(maxsize=1)
 def get_key_manager() -> KeyManager:
     return KeyManager(get_app_config(), get_redis_client())
+
+
+@lru_cache(maxsize=1)
+def get_database_session_maker() -> async_sessionmaker[AsyncSession]:
+    config: Final[AppConfig] = get_app_config()
+
+    URI: Final[str] = config.DATABASE.SQLALCHEMY.derive_sqlalchemy_uri(
+        username=os.environ["RESOURCE_SERVER_POSTGRES_USERNAME"],
+        password=os.environ["RESOURCE_SERVER_POSTGRES_PASSWORD"],
+        host=str(config.DATABASE.POSTGRES_HOST),
+        port=config.DATABASE.POSTGRES_PORT,
+        database=config.DATABASE.POSTGRES_DATABASE,
+    )
+
+    engine: Final[AsyncEngine] = create_async_engine(URI)
+
+    session_maker: Final[async_sessionmaker[AsyncSession]] = async_sessionmaker(
+        bind=engine, autocommit=False, autoflush=False
+    )
+
+    return session_maker
+
+
+async def get_database_session() -> AsyncGenerator[AsyncSession, None]:
+    session_maker: async_sessionmaker = get_database_session_maker()
+    session: Final[AsyncSession] = session_maker()
+    try:
+        yield session
+    finally:
+        await session.close()
