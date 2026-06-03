@@ -4,7 +4,7 @@ from typing import Final
 
 from resource_server.config.app_config import AppConfig
 
-from redis import Redis
+from redis.asyncio import Redis
 
 
 @lru_cache(maxsize=1)
