@@ -347,7 +347,9 @@ class UserTicket(Base):
     __tablename__ = "user_tickets"
 
     id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
-    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("users.id_"), index=True)
+    email: Mapped[str] = mapped_column(
+        VARCHAR(database_constants.UserConstants.EMAIL_MAX_LENGTH), nullable=False
+    )
     time_raised: Mapped[datetime] = mapped_column(
         TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
