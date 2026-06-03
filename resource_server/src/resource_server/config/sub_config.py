@@ -2,6 +2,8 @@ from datetime import timedelta
 from ipaddress import ip_address
 from typing import Annotated, Self
 
+import jwt
+
 from pydantic import (
     BaseModel,
     BeforeValidator,
@@ -142,4 +144,16 @@ class JWKSConfig(BaseModel):
     GLOBAL_MAPPING_POLL_INTERVAL: Annotated[int, Field(ge=0)]
     SLAVE_WAIT_INTERVAL: Annotated[int, Field(ge=0)]
 
-    # TODO: Add validation for times
+    KEY_LEEWAY: Annotated[int, Field(ge=0)]
+    ALLOWED_ALGORITHMS: Annotated[
+        frozenset[str], BeforeValidator(lambda x: frozenset(i.upper() for i in x))
+    ]
+
+    # TODO: Add validation for time values
+    @model_validator(mode="after")
+    def validate_algorithms(self) -> Self:
+        if unsupported_algs := self.ALLOWED_ALGORITHMS - set(
+            jwt.PyJWS().get_algorithms()
+        ):
+            raise ValueError(f"Unsupported algorithms: {', '.join(unsupported_algs)}")
+        return self
