@@ -4,6 +4,7 @@ from typing import AsyncGenerator, Final
 
 from redis.asyncio import Redis
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
     async_sessionmaker,
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import (
 
 from resource_server.config.app_config import AppConfig
 from resource_server.key_manager import KeyManager
+from resource_server.models.database import Genre
 
 
 @lru_cache(maxsize=1)
@@ -66,3 +68,13 @@ async def get_database_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
     finally:
         await session.close()
+
+
+@lru_cache(maxsize=1)
+async def get_genres() -> dict[str, int]:
+    async with get_database_session_maker()() as session:
+        genres: list[Genre] = list(
+            (await session.execute(select(Genre))).scalars().all()
+        )
+
+        return {g.name_: g.id_ for g in genres}
