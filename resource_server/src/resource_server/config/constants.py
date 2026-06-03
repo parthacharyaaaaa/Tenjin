@@ -8,3 +8,9 @@ DOMAIN_REGEX: Final[re.Pattern] = re.compile(
 EMAIL_PATTERN: Final[re.Pattern] = re.compile(
     r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$"
 )
+
+
+class RedisConstants:
+    JWKS_MAPPING = "JWKS_MAPPING"
+    JWKS_POLL_LOCK = "JWKS_POLL_LOCK"
+    JWKS_POLL_COOLDOWN = "JWKS_POLL_COOLDOWN"
