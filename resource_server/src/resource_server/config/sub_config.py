@@ -28,6 +28,8 @@ class CoreConfig(BaseModel):
     APPLICATION_ROOT: Annotated[str, Field(frozen=True)]
     PORT: Annotated[int, Field(frozen=True, ge=1024, le=65_535)]
 
+    AUTH_SERVER_NAME: str
+
 
 class SQLAlchemyConfig(BaseModel):
     _SQLALCHEMY_DATABASE_URI_TEMPLATE: str = PrivateAttr(
@@ -130,6 +132,14 @@ class BusinessConfig(BaseModel):
 
 
 class JWKSConfig(BaseModel):
+    JWKS_ENDPOINT: str
+    JWKS_REQUEST_TIMEOUT: Annotated[int, Field(ge=1)]
+    JWKS_POLL_INTERVAL: Annotated[int, Field(ge=1)]
+    UPDATION_LOCK_LIFESPAN: Annotated[int, Field(ge=1)]
+
     KEY_ANNOUNCEMENT_DURATION: Annotated[int, Field(ge=0)]
-    JWKS_POLL_COOLDOWN: Annotated[int, Field(ge=0)]
     MAX_GLOBAL_MAPPING_POLLS: Annotated[int, Field(ge=1)]
+    GLOBAL_MAPPING_POLL_INTERVAL: Annotated[int, Field(ge=0)]
+    SLAVE_WAIT_INTERVAL: Annotated[int, Field(ge=0)]
+
+    # TODO: Add validation for times
