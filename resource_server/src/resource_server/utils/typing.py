@@ -9,3 +9,12 @@ class JWKSEntry(TypedDict):
     crv: str
     x: str
     y: str
+
+
+class StandardAccessTokenClaims(TypedDict):
+    iat: float
+    exp: float
+    fid: str
+    sub: str
+    sid: int
+    jti: str | None
