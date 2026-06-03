@@ -21,6 +21,7 @@ class AppConfig(BaseSettings):
     REDIS: Annotated[sub_config.RedisConfig, Field(alias="redis")]
     DATABASE: Annotated[sub_config.DatabaseConfig, Field(alias="database")]
     CACHE: Annotated[sub_config.CacheConfig, Field(alias="cache")]
+    JWKS: Annotated[sub_config.JWKSConfig, Field(alias="jwks")]
 
     @model_validator(mode="after")
     def validate_addresses(self) -> Self:

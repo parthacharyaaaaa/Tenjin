@@ -80,9 +80,6 @@ class CacheConfig(BaseModel):
     RESOURCE_DELETION_PENDING_FLAG: str
     RESOURCE_CREATION_PENDING_ALT_FLAG: str
 
-    KEY_ANNOUNCEMENT_DURATION: Annotated[int, Field(ge=0)]
-    JWKS_POLL_COOLDOWN: Annotated[int, Field(ge=0)]
-
     @model_validator(mode="after")
     def validate_ttl_times(self) -> Self:
         time_dict: dict[str, int] = {
@@ -130,3 +127,9 @@ class BusinessConfig(BaseModel):
     ACCOUNT_AUDIT_THRESHOLD: Annotated[
         timedelta, BeforeValidator(lambda x: timedelta(days=x))
     ]
+
+
+class JWKSConfig(BaseModel):
+    KEY_ANNOUNCEMENT_DURATION: Annotated[int, Field(ge=0)]
+    JWKS_POLL_COOLDOWN: Annotated[int, Field(ge=0)]
+    MAX_GLOBAL_MAPPING_POLLS: Annotated[int, Field(ge=1)]
