@@ -9,6 +9,7 @@ import ecdsa
 import httpx
 
 from redis.asyncio import Redis
+from redis.asyncio.client import PubSub
 
 from auxillary.utils import from_base64url
 
@@ -21,9 +22,60 @@ from resource_server.utils.typing import JWKSEntry
 @dataclass(slots=True, weakref_slot=True)
 class KeyManager(metaclass=SingletonMetaclass):
     app_config: Final[AppConfig]
-    redis_client: Final[Redis]
+    app_redis_client: Final[Redis]
+    auth_redis_client: Final[Redis]
     current_mapping: dict[str, bytes] = field(default_factory=dict)
-    _polling_task: asyncio.Task | None = field(init=False, default=None)
+    _pubsub: PubSub | None = field(default=None)
+    _monitoring_task: asyncio.Task | None = field(init=False, default=None)
+
+    @staticmethod
+    def parse_keyset(
+        raw_keyset: str, entry_delimitor: str, pair_delimitor: str
+    ) -> dict[str, bytes]:
+        return {
+            entry.split(pair_delimitor)[0]: entry.split(pair_delimitor)[1].encode(
+                "utf-8"
+            )
+            for entry in raw_keyset.split(entry_delimitor)
+        }
+
+    async def subscribe(self):
+        self._pubsub = self.auth_redis_client.pubsub()
+        await self._pubsub.subscribe(self.app_config.JWKS.KEY_ANNOUNCEMENT_AUTH_CHANNEL)
+
+    async def sync_jwks(self) -> None:
+        await self.subscribe()
+        if not self._pubsub:
+            raise TypeError("PubSub object not instantiated")
+
+        async for message in self._pubsub.listen():
+            keys: dict[str, bytes] = self.parse_keyset(message, ":", "=")
+            expired_keys: tuple[str, ...] = tuple(
+                k for k in keys.keys() if k not in self.current_mapping
+            )
+            for key_id in expired_keys:
+                self.current_mapping.pop(key_id)
+                keys.pop(key_id)
+
+            for key_id, key in keys.items():
+                self.current_mapping.setdefault(key_id, key)
+
+    def start_jwks_monitoring(self) -> None:
+        if not self._monitoring_task:
+            self._monitoring_task = asyncio.create_task(
+                self.sync_jwks(), name=f"{self}:{self.start_jwks_monitoring.__name__}"
+            )
+
+    async def stop_jwks_monitoring(self) -> None:
+        if not self._monitoring_task:
+            return
+
+        self._monitoring_task.cancel()
+        try:
+            await self._monitoring_task
+        except asyncio.CancelledError:
+            pass
+        self._monitoring_task = None
 
     @cached_property
     def jwks_endpoint(self) -> str:
@@ -31,31 +83,9 @@ class KeyManager(metaclass=SingletonMetaclass):
             (self.app_config.CORE.AUTH_SERVER_NAME, self.app_config.JWKS.JWKS_ENDPOINT)
         )
 
-    def begin_polling(self) -> None:
-        if self._polling_task is None:
-            self._polling_task = asyncio.create_task(
-                self.background_poll(),
-                name=f"{id(self)}::{self.background_poll.__name__}",
-            )
-
-    async def stop_polling(self) -> None:
-        if self._polling_task is None:
-            raise RuntimeError("No polling task active")
-
-        try:
-            self._polling_task.cancel()
-            await self._polling_task
-        except asyncio.CancelledError:
-            pass
-
-        self._polling_task = None
-
-    def currently_polling(self) -> bool:
-        return self._polling_task is not None
-
     async def get_global_key_mapping(self) -> dict[str, bytes]:
         """Get JWKS cache in Redis"""
-        res: dict[str, str] = await self.redis_client.hgetall(
+        res: dict[str, str] = await self.app_redis_client.hgetall(
             RedisConstants.JWKS_MAPPING
         )  # type: ignore[reportGeneralTypeIssues]
 
@@ -80,7 +110,7 @@ class KeyManager(metaclass=SingletonMetaclass):
 
     async def update_jwks(self) -> None:
         """Fetch JWKS from auth server and load any new key mappings into current_mapping"""
-        res: int = await self.redis_client.set(
+        res: int = await self.app_redis_client.set(
             RedisConstants.JWKS_POLL_LOCK,
             1,
             ex=self.app_config.JWKS.UPDATION_LOCK_LIFESPAN,
@@ -90,7 +120,7 @@ class KeyManager(metaclass=SingletonMetaclass):
         # Wait for current worker and then read global key mapping
         if not res:
             for i in range(self.app_config.JWKS.MAX_GLOBAL_MAPPING_POLLS):
-                if await self.redis_client.get(RedisConstants.JWKS_POLL_LOCK):
+                if await self.app_redis_client.get(RedisConstants.JWKS_POLL_LOCK):
                     await asyncio.sleep(
                         self.app_config.JWKS.GLOBAL_MAPPING_POLL_INTERVAL * 2
                     )
@@ -133,7 +163,7 @@ class KeyManager(metaclass=SingletonMetaclass):
                     self.current_mapping[keyMetadata["kid"]] = vk.to_pem()
 
             # Update global list and values in Redis to inform other workers
-            async with self.redis_client.pipeline() as pipe:
+            async with self.app_redis_client.pipeline() as pipe:
                 # Overwrite mapping entirely
                 pipe.delete(RedisConstants.JWKS_MAPPING)
                 pipe.hset(RedisConstants.JWKS_MAPPING, mapping=self.current_mapping)
@@ -142,7 +172,7 @@ class KeyManager(metaclass=SingletonMetaclass):
         except Exception:
             print(format_exc())
         finally:
-            async with self.redis_client.pipeline() as pipe:
+            async with self.app_redis_client.pipeline() as pipe:
                 pipe.delete(RedisConstants.JWKS_POLL_LOCK)
                 pipe.set(
                     RedisConstants.JWKS_POLL_COOLDOWN,
@@ -150,13 +180,3 @@ class KeyManager(metaclass=SingletonMetaclass):
                     ex=self.app_config.JWKS.JWKS_POLL_INTERVAL,
                 )
                 await pipe.execute()
-
-    async def background_poll(self) -> None:
-        """Poll Redis and JWKS endpoints indefinitely to keep a given app's mappings consistent"""
-        while True:
-            try:
-                await self.update_jwks()
-            except Exception:
-                print(f"[JWKS POLLER]: Error: {format_exc()}")
-            finally:
-                await asyncio.sleep(self.app_config.JWKS.JWKS_POLL_INTERVAL)

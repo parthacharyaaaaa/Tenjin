@@ -59,7 +59,7 @@ SLAVE_WAIT_INTERVAL=5
 
 KEY_LEEWAY=3                    # minutes
 ALLOWED_ALGORITHMS=["ES256"]
-
+KEY_ANNOUNCEMENT_AUTH_CHANNEL="updates:jwks"
 
 [business]
 ACCOUNT_RECOVERY_PERIOD=7       # days

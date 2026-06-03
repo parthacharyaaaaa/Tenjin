@@ -154,6 +154,8 @@ class JWKSConfig(BaseModel):
         frozenset[str], BeforeValidator(lambda x: frozenset(i.upper() for i in x))
     ]
 
+    KEY_ANNOUNCEMENT_AUTH_CHANNEL: str
+
     # TODO: Add validation for time values
     @model_validator(mode="after")
     def validate_algorithms(self) -> Self:

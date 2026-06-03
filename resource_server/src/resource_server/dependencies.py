@@ -50,7 +50,7 @@ def get_auth_redis_client() -> Redis:
 
 @lru_cache(maxsize=1)
 def get_key_manager() -> KeyManager:
-    return KeyManager(get_app_config(), get_app_redis_client())
+    return KeyManager(get_app_config(), get_app_redis_client(), get_auth_redis_client())
 
 
 @lru_cache(maxsize=1)
