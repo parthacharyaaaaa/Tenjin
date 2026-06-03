@@ -475,15 +475,6 @@ class Forum(Base):
     posts: Mapped[int] = mapped_column(
         BIGINT, nullable=False, default=0, server_default=text("0")
     )
-    highlight_post_1: Mapped[int | None] = mapped_column(
-        BIGINT, ForeignKey("posts.id_"), nullable=False
-    )
-    highlight_post_2: Mapped[int | None] = mapped_column(
-        BIGINT, ForeignKey("posts.id_"), nullable=False
-    )
-    highlight_post_3: Mapped[int | None] = mapped_column(
-        BIGINT, ForeignKey("posts.id_"), nullable=False
-    )
 
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
     admin_count: Mapped[int] = mapped_column(
