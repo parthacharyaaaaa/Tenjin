@@ -1,31 +1,15 @@
 """Auxillary functions exclusive to the resource server"""
 
-import requests
 import re
-from auxillary.utils import from_base64url
-import ecdsa
 from redis import Redis
-from flask import Flask
 from werkzeug.exceptions import Gone, Conflict, NotFound
 from resource_server.redis_config import RedisConfig
-import time
 from traceback import format_exc
 from sqlalchemy import text
 from flask_sqlalchemy import SQLAlchemy
 from typing import Any, Optional, Sequence
 
 EMAIL_REGEX = r"^(?=.{1,320}$)([a-zA-Z0-9!#$%&'*+/=?^_`{|}~.-]{1,64})@([a-zA-Z0-9.-]{1,255}\.[a-zA-Z]{2,16})$"  # RFC approved babyyyyy
-
-
-def poll_global_key_mapping(interface: Redis) -> dict[str, bytes]:
-    """Poll "JWKS_MAPPING" hashmap in Redis for new key mapping"""
-    res: dict[str, str] = interface.hgetall("JWKS_MAPPING")
-    if not res:
-        raise RuntimeError("JWKS Mapping not found/ found but empty")
-
-    return {
-        kid: pub_pem.encode() for kid, pub_pem in res.items()
-    }  # interface has decoded responses, but PyJWT needs public pem in bytes
 
 
 def hset_with_ttl(
@@ -52,115 +36,6 @@ def batch_hset_with_ttl(
             pp.hset(name=names[idx], mapping=mapping)
             pp.expire(name=names[idx], time=ttl)
         pp.execute()
-
-
-def update_jwks(
-    endpoint: str,
-    currentMapping: dict[str, bytes],
-    interface: Redis,
-    lock_ttl: int = 300,
-    jwks_poll_cooldown: int = 300,
-    timeout: int = 3,
-    max_global_mapping_polls: int = 10,
-    max_tries: int = 10,
-) -> dict[str, str | int]:
-    """Fetch JWKS from auth server and load any new key mappings into currentMapping"""
-    res: int = interface.set("JWKS_POLL_LOCK", 1, ex=lock_ttl, nx=True)
-    if not res:
-        # Another worker is currently polling JWKS, wait until lock is released and then read global key mapping
-        while interface.get("JWKS_POLL_LOCK") and max_global_mapping_polls:
-            print(f"[JWKS POLLER] Standing by for master thread to perform updation")
-            time.sleep(timeout * 2)
-            max_global_mapping_polls -= 1  # Ideally, the lock would always be released no matter what, but a fallback to stop the thread from waiting forever wouldn't hurt
-
-        for t in range(max_tries):
-            try:
-                global_mapping: dict[str, bytes] = poll_global_key_mapping(
-                    interface=interface
-                )
-                break
-            except (ConnectionError, RuntimeError):
-                time.sleep(timeout)
-        else:
-            raise RuntimeError("Failed to concile JWKS")
-
-        return {kid: pub_pem.decode() for kid, pub_pem in global_mapping.items()}
-
-    try:
-        print("[JWKS POLLER] Attempting to update JWKS...")
-        response: requests.Response = requests.get(endpoint, timeout=timeout)
-        if response.status_code != 200:
-            return currentMapping
-
-        newMapping: dict[str, str | int] = response.json().get("keys")
-        if not newMapping:
-            # TODO: Ping auth server to indicate malformatted JWKS response
-            return currentMapping
-
-        local_keys: frozenset[str] = frozenset(currentMapping.keys())
-        global_valid_keys: frozenset[str] = frozenset(
-            mapping["kid"] for mapping in newMapping
-        )
-
-        # Purge local keys that are invalid
-        expired_keys: frozenset[str] = local_keys - global_valid_keys
-        for expired_key in expired_keys:
-            currentMapping.pop(expired_key)
-
-        # For any new items in newMapping, we'll need to construct a new dict entry with its public verificiation key
-        for keyMetadata in newMapping:
-            # New key found, welcome to the club >:3
-            if keyMetadata["kid"] not in currentMapping:
-                x = from_base64url(keyMetadata["x"])
-                y = from_base64url(keyMetadata["y"])
-                point = ecdsa.ellipticcurve.Point(ecdsa.SECP256k1.curve, x, y)
-                vk = ecdsa.VerifyingKey.from_public_point(point, curve=ecdsa.SECP256k1)
-
-                currentMapping[keyMetadata["kid"]] = vk.to_pem()
-
-        # Update global list and values in Redis to inform other workers
-        with interface.pipeline() as pipe:
-            # Overwrite mapping entirely
-            pipe.delete("JWKS_MAPPING")
-            pipe.hset("JWKS_MAPPING", mapping=currentMapping)
-
-            # Finally release lock and update cooldown
-            pipe.delete("JWKS_POLL_LOCK")
-            pipe.set("JWKS_POLL_COOLDOWN", value=1, ex=jwks_poll_cooldown)
-            pipe.execute()
-
-        return currentMapping
-    except Exception:
-        with interface.pipeline() as pipe:
-            pipe.delete("JWKS_POLL_LOCK")
-            pipe.set("JWKS_POLL_COOLDOWN", value=1, ex=jwks_poll_cooldown)
-            pipe.execute()
-        print(format_exc())
-        return currentMapping
-
-
-def background_poll(
-    current_app: Flask, interface: Redis, interval: int = 300, lock_ttl: int = 300
-) -> None:
-    """Poll Redis and JWKS endpoints indefinitely to keep a given app's mappings consistent
-    Args:
-        current_app: Flask instance for which the poll needs to be done
-        interface: Redis instance connected to server holding the `JWKS_MAPPING` hashmap
-        interval: Time in seconds to wait before subsequent polls
-        lock_ttl: Time in seconds for a lock to persist when polling
-    """
-    while True:
-        try:
-            update_jwks(
-                endpoint=f'{current_app.config["AUTH_SERVER_URL"]}/auth/jwks.json',
-                currentMapping=current_app.config["KEY_VK_MAPPING"],
-                lock_ttl=lock_ttl,
-                interface=interface,
-            )
-        except Exception:
-            print(f"[JWKS POLLER]: Error: {format_exc()}")
-        finally:
-            time.sleep(interval)
 
 
 def processUserInfo(**kwargs) -> tuple[bool, dict]:
@@ -500,15 +375,3 @@ def admin_cache_precheck(
         raise Conflict("A request for this action is already enqueued")
 
     return forum_mapping, user_mapping, latest_intent
-
-
-def distributed_create_db(client: Redis, sqlalchemy: SQLAlchemy) -> None:
-    lock: str = f"{RedisConfig.DISTRIBUTED_LOCK}:DB_INIT"
-    lock_set = client.set(lock, 1, ex=RedisConfig.TTL_STRONG, nx=True)
-    if not lock_set:
-        return
-
-    try:
-        sqlalchemy.create_all()
-    finally:
-        client.delete(lock)
