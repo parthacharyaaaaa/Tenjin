@@ -23,21 +23,34 @@ def get_app_config() -> AppConfig:
 
 
 @lru_cache(maxsize=1)
-def get_redis_client() -> Redis:
+def get_app_redis_client() -> Redis:
     config: Final[AppConfig] = get_app_config()
 
     return Redis(
-        host=str(config.REDIS.HOST),
-        port=config.REDIS.PORT,
-        db=config.REDIS.DB,
-        username=os.environ["RESOURCE_SERVER_REDIS_USERNAME"],
-        password=os.environ["RESOURCE_SERVER_REDIS_PASSWORD"],
+        host=str(config.REDIS.APP.HOST),
+        port=config.REDIS.APP.PORT,
+        db=config.REDIS.APP.DB,
+        username=os.environ["RESOURCE_WORKER_REDIS_USERNAME"],
+        password=os.environ["RESOURCE_WORKER_REDIS_PASSWORD"],
+    )
+
+
+@lru_cache(maxsize=1)
+def get_auth_redis_client() -> Redis:
+    config: Final[AppConfig] = get_app_config()
+
+    return Redis(
+        host=str(config.REDIS.AUTH.HOST),
+        port=config.REDIS.AUTH.PORT,
+        db=config.REDIS.AUTH.DB,
+        username=os.environ["RESOURCE_AUTH_WORKER_REDIS_USERNAME"],
+        password=os.environ["RESOURCE_AUTH_WORKER_REDIS_PASSWORD"],
     )
 
 
 @lru_cache(maxsize=1)
 def get_key_manager() -> KeyManager:
-    return KeyManager(get_app_config(), get_redis_client())
+    return KeyManager(get_app_config(), get_app_redis_client())
 
 
 @lru_cache(maxsize=1)

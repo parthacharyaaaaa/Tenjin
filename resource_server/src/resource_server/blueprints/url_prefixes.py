@@ -1,9 +1,9 @@
 from enum import Enum
 
-__all__ = ("URLPrefixes",)
+__all__ = ("URLPrefix",)
 
 
-class URLPrefixes(str, Enum):
+class URLPrefix(str, Enum):
     ANIMES = "animes"
     COMMENTS = "comments"
     FORUNS = "forums"

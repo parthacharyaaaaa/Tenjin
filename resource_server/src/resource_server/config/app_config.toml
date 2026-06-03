@@ -19,11 +19,16 @@ SQLALCHEMY_POOL_TIMEOUT=15
 SQLALCHEMY_TRACK_MODIFICATIONS=false
 
 
-[redis]
+[redis.app]
 HOST="127.0.0.1"
 PORT=6379
 DB=0
 
+
+[redis.auth]
+HOST="127.0.0.1"
+PORT=6390
+DB=0
 
 [cache]
 TTL_CAP=86400

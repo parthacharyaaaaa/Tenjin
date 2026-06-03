@@ -63,10 +63,15 @@ class DatabaseConfig(BaseModel):
     SQLALCHEMY: SQLAlchemyConfig
 
 
-class RedisConfig(BaseModel):
+class BaseRedisConfig(BaseModel):
     HOST: Annotated[str | IPvAnyAddress, BeforeValidator(_verify_hostname)]
     PORT: Annotated[int, Field(le=65_535, ge=1024)]
     DB: Annotated[int, Field(default=0, ge=0)]
+
+
+class RedisConfig(BaseModel):
+    APP: Annotated[BaseRedisConfig, Field(alias="app")]
+    AUTH: Annotated[BaseRedisConfig, Field(alias="auth")]
 
 
 class CacheConfig(BaseModel):

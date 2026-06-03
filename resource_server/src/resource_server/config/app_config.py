@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, ClassVar, Self
+from typing import Annotated, ClassVar
 
 from pydantic import Field, model_validator
 from pydantic_settings import (
@@ -22,23 +22,6 @@ class AppConfig(BaseSettings):
     DATABASE: Annotated[sub_config.DatabaseConfig, Field(alias="database")]
     CACHE: Annotated[sub_config.CacheConfig, Field(alias="cache")]
     JWKS: Annotated[sub_config.JWKSConfig, Field(alias="jwks")]
-
-    @model_validator(mode="after")
-    def validate_addresses(self) -> Self:
-        # Both Redis and Postgres use TCP, so overlap should not be allowed
-        if (
-            self.REDIS.HOST == self.DATABASE.POSTGRES_HOST
-            and self.REDIS.PORT == self.DATABASE.POSTGRES_PORT
-        ):
-            raise ValueError(
-                " ".join(
-                    (
-                        f"Redis and Postgres addresses identical:",
-                        f"{self.REDIS.HOST}:{self.REDIS.PORT}",
-                    )
-                )
-            )
-        return self
 
     @classmethod
     def settings_customise_sources(
