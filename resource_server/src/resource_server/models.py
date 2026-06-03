@@ -3,6 +3,7 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     CheckConstraint,
     UniqueConstraint,
+    and_,
     or_,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -581,7 +582,9 @@ class ForumRules(Base):
     time_created: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
 
     __table_args__ = (
-        CheckConstraint(1 <= rule_number <= 5, "enforce_forum_rules_range"),
+        CheckConstraint(
+            and_(rule_number >= 1, rule_number <= 5), "enforce_forum_rules_range"
+        ),
     )
 
     def __init__(

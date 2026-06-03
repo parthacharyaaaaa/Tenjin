@@ -76,8 +76,6 @@ class CacheConfig(BaseModel):
     NF_SENTINEL_KEY: str
     NF_SENTINEL_VALUE: str
 
-    DISTRIBUTED_LOCK: str
-
     RESOURCE_CREATION_PENDING_FLAG: str
     RESOURCE_DELETION_PENDING_FLAG: str
     RESOURCE_CREATION_PENDING_ALT_FLAG: str
@@ -92,11 +90,12 @@ class CacheConfig(BaseModel):
             "strongest": self.TTL_STRONGEST,
             "strong": self.TTL_STRONG,
             "weak": self.TTL_WEAK,
-            "promotion": self.TTL_PROMOTION,
             "ephemeral": self.TTL_EPHEMERAL,
+            "promotion": self.TTL_PROMOTION,
         }
 
-        if sorted(time_dict.values()) != list(time_dict.values()):
+        if sorted(time_dict.values(), reverse=True) != list(time_dict.values()):
+            print(sorted(time_dict.values()), list(time_dict.values()))
             raise ValueError(
                 " ".join(
                     (
