@@ -39,6 +39,15 @@ class AnimeRepository(metaclass=SingletonMetaclass):
 
         return Anime(**casted_mapping)
 
+    @staticmethod
+    def construct_cache_mapping(
+        anime: Anime, genres: list[Genre], stream_links: list[StreamLink]
+    ) -> dict[str, Any]:
+        return rediserialize(json_repr(anime)) | {
+            "genres": [g.name_ for g in genres],
+            "stream_links": {link.website: link.url for link in stream_links},
+        }
+
     async def check_anime_existence(self, anime_id: int) -> bool:
         cache_key: Final[str] = self.derive_cache_key(anime_id)
         cache_result: dict[str, Any] | None = await self.cache_manager.consult_cache(
@@ -63,7 +72,7 @@ class AnimeRepository(metaclass=SingletonMetaclass):
 
     async def get_anime_data(
         self, anime_id: int
-    ) -> tuple[Anime, list[Genre], list[StreamLink]] | None:
+    ) -> tuple[Anime, list[str], dict[str, str]] | None:
         cache_key: Final[str] = self.derive_cache_key(anime_id)
         cache_result: dict[str, Any] | None = await self.cache_manager.consult_cache(
             cache_key, dtype="string"
@@ -90,7 +99,11 @@ class AnimeRepository(metaclass=SingletonMetaclass):
             )
             asyncio.create_task(self.update_cache(anime, genres, stream_links))
 
-            return anime, genres, stream_links
+            return (
+                anime,
+                [g.name_ for g in genres],
+                {s.website: s.url for s in stream_links},
+            )
 
     async def get_anime_details(
         self, anime_id: int, *, session: AsyncSession | None = None
@@ -135,10 +148,9 @@ class AnimeRepository(metaclass=SingletonMetaclass):
         cache_key: str | None = None,
     ) -> None:
         cache_key = cache_key or self.derive_cache_key(anime.id_)
-        anime_mapping: dict[str, Any] = rediserialize(json_repr(anime)) | {
-            "genres": [g.name_ for g in genres],
-            "stream_links": {link.website: link.url for link in stream_links},
-        }
+        anime_mapping: dict[str, Any] = self.construct_cache_mapping(
+            anime, genres, stream_links
+        )
 
         await self.cache_manager.redis_client.set(
             cache_key, orjson.dumps(anime_mapping)
