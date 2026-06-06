@@ -16,6 +16,7 @@ from resource_server.cache_manager import CacheManager
 from resource_server.config.app_config import AppConfig
 from resource_server.key_manager import KeyManager
 from resource_server.models.database import Genre
+from resource_server.repositories.anime import AnimeRepository
 
 
 @lru_cache(maxsize=1)
@@ -97,3 +98,8 @@ async def get_genres() -> dict[str, int]:
         )
 
         return {g.name_: g.id_ for g in genres}
+
+
+@lru_cache(maxsize=1)
+def get_anime_repository() -> AnimeRepository:
+    return AnimeRepository(get_database_session_maker(), get_cache_manager())
