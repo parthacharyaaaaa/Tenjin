@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import (
     AsyncEngine,
 )
 
+from resource_server.cache_manager import CacheManager
 from resource_server.config.app_config import AppConfig
 from resource_server.key_manager import KeyManager
 from resource_server.models.database import Genre
@@ -51,6 +52,11 @@ def get_auth_redis_client() -> Redis:
 @lru_cache(maxsize=1)
 def get_key_manager() -> KeyManager:
     return KeyManager(get_app_config(), get_app_redis_client(), get_auth_redis_client())
+
+
+@lru_cache(maxsize=1)
+def get_cache_manager() -> CacheManager:
+    return CacheManager(get_app_redis_client(), get_app_config().CACHE)
 
 
 @lru_cache(maxsize=1)
