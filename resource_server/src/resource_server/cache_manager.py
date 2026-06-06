@@ -30,6 +30,14 @@ class CacheManager(metaclass=SingletonMetaclass):
         self.redis_client = redis  # type: ignore
         self.cache_config = cache_config
 
+    async def set_negative_string(self, key: str, *, ttl: int | None = None) -> None:
+        ttl = ttl or self.cache_config.TTL_EPHEMERAL
+        await self.redis_client.set(key, self.cache_config.NF_SENTINEL_KEY, ex=ttl)
+
+    async def set_negative_mapping(self, key: str, *, ttl: int | None = None) -> None:
+        ttl = ttl or self.cache_config.TTL_EPHEMERAL
+        await self.hset_with_ttl(key, self.cache_config.NF_MAPPING, ttl)
+
     async def hset_with_ttl(
         self, name: str, mapping: dict, ttl: int, transaction: bool = False
     ):
