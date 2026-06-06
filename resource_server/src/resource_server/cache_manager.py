@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, ClassVar, Final, Literal, Mapping, Sequence
 
 import orjson
 
@@ -26,9 +26,44 @@ class CacheManager(metaclass=SingletonMetaclass):
     redis_client: SupportsAsyncRedis
     cache_config: CacheConfig
 
+    allowed_intents: ClassVar[frozenset[str]] = frozenset(
+        [
+            CacheConfig.RESOURCE_DELETION_PENDING_FLAG,
+            CacheConfig.RESOURCE_CREATION_PENDING_ALT_FLAG,
+            CacheConfig.RESOURCE_CREATION_PENDING_FLAG,
+        ]
+    )
+
     def __init__(self, redis: Redis, cache_config: CacheConfig) -> None:
         self.redis_client = redis  # type: ignore
         self.cache_config = cache_config
+
+    @classmethod
+    def derive_intent_key(cls, flag: str, *args: str) -> str:
+        if flag not in cls.allowed_intents:
+            raise ValueError(
+                " ".join(
+                    ("Invalid intent flag, must be in:", ", ".join(cls.allowed_intents))
+                )
+            )
+        return ":".join((flag, *args))
+
+    @staticmethod
+    def derive_lock_key(*args: str) -> str:
+        return ":".join(("lock", *args))
+
+    @staticmethod
+    def derive_cache_key(resource_name: str, identifier: str | int) -> str:
+        return ":".join((resource_name, str(identifier)))
+
+    def derive_deletion_intent(self, resource_name: str, identifier: str | int) -> str:
+        return ":".join(
+            (
+                self.cache_config.RESOURCE_DELETION_PENDING_FLAG,
+                resource_name,
+                str(identifier),
+            )
+        )
 
     async def set_negative_string(self, key: str, *, ttl: int | None = None) -> None:
         ttl = ttl or self.cache_config.TTL_EPHEMERAL
@@ -228,12 +263,10 @@ class CacheManager(metaclass=SingletonMetaclass):
     async def resource_cache_precheck(
         self,
         identifier: str,
-        cache_key: str,
-        deletion_intent_flag: str,
+        resource: str,
         action_flag: str,
         lock_name: str,
         *,
-        resource_name: str | None = None,
         conflicting_intent: str | None = None,
         allow_deletion: bool = False,
     ) -> tuple[dict | None, str | None, bool]:
@@ -242,7 +275,7 @@ class CacheManager(metaclass=SingletonMetaclass):
         the request through cache and minimize DB lookups.
         Although this cannot guarantee resource validity,
         if it is found to be invalid through cache,
-        an appropriate HTTP exception is raised.
+        an appropriate exception is raised.
         Args:
             identifier: Unique identifier for resource (Typically PK)
             cache_key: cache key for this resource
@@ -255,21 +288,18 @@ class CacheManager(metaclass=SingletonMetaclass):
         Returns:
             resource_mapping (dict), latest_intent (str), deletion intent (bool)
         """
+        cache_key: Final[str] = self.derive_cache_key(resource, identifier)
         async with self.redis_client.pipeline() as pipe:
-            # Post
             pipe.hgetall(cache_key)
-            pipe.get(
-                deletion_intent_flag
-            )  # Existence alone is enough to prove deletion intent
-
-            pipe.get(action_flag)  # Get latest intent (if any) for this action
+            pipe.get(self.derive_deletion_intent(resource, identifier))
+            pipe.get(self.derive_intent_key(action_flag, identifier, resource))
             pipe.get(lock_name)
 
             resource_mapping, deletion_intent, latest_intent, lock = (
                 await pipe.execute()
             )
 
-        if deletion_intent and not allow_deletion:  # Deletion written in cache
+        if deletion_intent and not allow_deletion:
             raise ResourceDeletedException(
                 "This resource has been permanently deleted, and will soon be unavailable"
             )
@@ -280,7 +310,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                 cache_key, resource_mapping, self.cache_config.TTL_EPHEMERAL
             )  # Reannounce non-existence
             raise ResourceNotFoundException(
-                f"No {resource_name} with ID {identifier} could be found (Never existed, or deleted)"
+                f"No {resource} with ID {identifier} could be found (Never existed, or deleted)"
             )
 
         if lock:  # Stop race condition early
@@ -386,7 +416,7 @@ class CacheManager(metaclass=SingletonMetaclass):
 
         return forum_mapping, user_mapping, latest_intent
 
-    async def consult_cache(
+    async def fetch_from_cache(
         self,
         cache_key: str,
         *,
@@ -590,3 +620,18 @@ class CacheManager(metaclass=SingletonMetaclass):
             pipe.rpush(group_key, f"cursor:{cursor}")
             pipe.rpush(group_key, f"end:{end}")
             await pipe.execute()
+
+    async def set_intent(self, intent: str, *intent_args: str, ttl: int | None = None):
+        if intent not in self.allowed_intents:
+            raise ValueError(
+                " ".join(
+                    (
+                        "Intent not allowed, must be one of:",
+                        ", ".join(self.allowed_intents),
+                    )
+                )
+            )
+        ttl = ttl or self.cache_config.TTL_STRONGEST
+        await self.redis_client.set(
+            self.derive_intent_key(intent, *intent_args), 1, ex=ttl
+        )
