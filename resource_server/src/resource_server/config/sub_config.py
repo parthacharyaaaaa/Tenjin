@@ -89,6 +89,10 @@ class CacheConfig(BaseModel):
     RESOURCE_DELETION_PENDING_FLAG: str
     RESOURCE_CREATION_PENDING_ALT_FLAG: str
 
+    @property
+    def NF_MAPPING(self) -> dict[str, str]:
+        return {self.NF_SENTINEL_KEY: self.NF_SENTINEL_VALUE}
+
     @model_validator(mode="after")
     def validate_ttl_times(self) -> Self:
         time_dict: dict[str, int] = {
