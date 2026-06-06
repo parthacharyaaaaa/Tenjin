@@ -3,12 +3,18 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 import orjson
-from sqlalchemy import select
+from sqlalchemy import Row, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
-from sqlalchemy.exc import SQLAlchemyError
 
 from resource_server.cache_manager import CacheManager
-from resource_server.models.database import Anime, StreamLink, Genre, AnimeGenre
+from resource_server.models.database import (
+    Anime,
+    AnimeSubscription,
+    StreamLink,
+    Genre,
+    AnimeGenre,
+    User,
+)
 from resource_server.utils.singleton import SingletonMetaclass
 
 from auxillary.utils import rediserialize, json_repr
@@ -50,7 +56,7 @@ class AnimeRepository(metaclass=SingletonMetaclass):
 
     async def check_anime_existence(self, anime_id: int) -> bool:
         cache_key: Final[str] = self.derive_cache_key(anime_id)
-        cache_result: dict[str, Any] | None = await self.cache_manager.consult_cache(
+        cache_result: dict[str, Any] | None = await self.cache_manager.fetch_from_cache(
             cache_key, dtype="string"
         )
 
@@ -74,7 +80,7 @@ class AnimeRepository(metaclass=SingletonMetaclass):
         self, anime_id: int
     ) -> tuple[Anime, list[str], dict[str, str]] | None:
         cache_key: Final[str] = self.derive_cache_key(anime_id)
-        cache_result: dict[str, Any] | None = await self.cache_manager.consult_cache(
+        cache_result: dict[str, Any] | None = await self.cache_manager.fetch_from_cache(
             cache_key, dtype="string"
         )
 
@@ -159,3 +165,24 @@ class AnimeRepository(metaclass=SingletonMetaclass):
     async def _update_cache_from_anime(self, anime: Anime) -> None:
         genres, stream_links = await self.get_anime_details(anime.id_)
         await self.update_cache(anime, genres, stream_links)
+
+    async def get_anime_subscription(
+        self, anime_id: int, user_id: int
+    ) -> tuple[Anime, AnimeSubscription | None] | None:
+        async with self.session_maker() as session:
+            res: Row[tuple[Anime, AnimeSubscription]] | None = (
+                await session.execute(
+                    select(Anime, AnimeSubscription)
+                    .outerjoin(
+                        AnimeSubscription,
+                        (AnimeSubscription.anime_id == anime_id)
+                        & (AnimeSubscription.user_id == user_id),
+                    )
+                    .where(Anime.id_ == anime_id)
+                )
+            ).first()
+
+            if not res:
+                return None
+
+            return res[0], res[1]
