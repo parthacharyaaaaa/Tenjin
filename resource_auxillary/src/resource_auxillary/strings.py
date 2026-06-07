@@ -1,7 +1,16 @@
 from enum import StrEnum
+from typing import Final, LiteralString
+
+NAME_SEPERATOR: Final[LiteralString] = ":"
 
 
-class StreamName:
+class IntentFlag(StrEnum):
+    RESOURCE_CREATION_PENDING_FLAG = NAME_SEPERATOR.join(("flag", "c"))
+    RESOURCE_CREATION_PENDING_ALT_FLAG = NAME_SEPERATOR.join(("flag", "ca"))
+    RESOURCE_DELETION_PENDING_FLAG = NAME_SEPERATOR.join(("flag", "d"))
+
+
+class StreamName(StrEnum):
     USER_INTERACTIONS = "USER_INTERACTIONS"
 
 

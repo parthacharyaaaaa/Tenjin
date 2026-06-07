@@ -85,10 +85,6 @@ class CacheConfig(BaseModel):
     NF_SENTINEL_KEY: str
     NF_SENTINEL_VALUE: str
 
-    RESOURCE_CREATION_PENDING_FLAG: str
-    RESOURCE_DELETION_PENDING_FLAG: str
-    RESOURCE_CREATION_PENDING_ALT_FLAG: str
-
     @property
     def NF_MAPPING(self) -> dict[str, str]:
         return {self.NF_SENTINEL_KEY: self.NF_SENTINEL_VALUE}
@@ -116,17 +112,6 @@ class CacheConfig(BaseModel):
                     )
                 )
             )
-        return self
-
-    @model_validator(mode="after")
-    def validate_flag_uniqueness(self) -> Self:
-        flags: list[str] = [
-            self.RESOURCE_CREATION_PENDING_FLAG,
-            self.RESOURCE_CREATION_PENDING_FLAG,
-            self.RESOURCE_CREATION_PENDING_ALT_FLAG,
-        ]
-        if residue := [i for i in flags if i not in set(flags)]:
-            raise ValueError(f"Got duplicate flag names: {', '.join(residue)}")
         return self
 
 
