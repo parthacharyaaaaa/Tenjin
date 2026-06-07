@@ -82,6 +82,14 @@ class CacheConfig(BaseModel):
     TTL_WEAK: Annotated[int, Field(ge=0)]
     TTL_EPHEMERAL: Annotated[int, Field(ge=0)]
 
+    # Fetch locks, for thundering herds
+    TTL_FETCH_LOCK: Annotated[int, Field(ge=0)]
+    FETCH_WAITING_INITIAL_INTERVAL: Annotated[int, Field(ge=1)]
+    FETCH_WAITING_JITTER: Annotated[int, Field(ge=1)]
+    FETCH_WAITING_EXPONENT: Annotated[int, Field(ge=2)]
+    FETCH_WAITING_MAX_INTERVALS: Annotated[int, Field(ge=1)]
+    FETCH_MAX_RETRIES: Annotated[int, Field(ge=0)]
+
     NF_SENTINEL_KEY: str
     NF_SENTINEL_VALUE: str
 
@@ -109,6 +117,38 @@ class CacheConfig(BaseModel):
                         ", ".join(time_dict.keys()),
                         "got:",
                         ", ".join(f"{k}: {v}" for k, v in time_dict.items()),
+                    )
+                )
+            )
+        return self
+
+    @model_validator(mode="after")
+    def validate_fetch_lock_times(self) -> Self:
+        max_waiting_time: float = sum(
+            (
+                self.FETCH_WAITING_INITIAL_INTERVAL
+                * self.FETCH_WAITING_JITTER**self.FETCH_WAITING_EXPONENT
+            )
+            for _ in range(self.FETCH_WAITING_MAX_INTERVALS)
+        )
+        if self.FETCH_WAITING_JITTER > self.FETCH_WAITING_INITIAL_INTERVAL:
+            raise ValueError(
+                " ".join(
+                    (
+                        f"Jitter ({self.FETCH_WAITING_JITTER})",
+                        "cannot be greater than initial waiting",
+                        f"time {self.FETCH_WAITING_INITIAL_INTERVAL}",
+                    )
+                )
+            )
+
+        if self.TTL_FETCH_LOCK < max_waiting_time:
+            raise ValueError(
+                " ".join(
+                    (
+                        f"Fetch lock lifespan {self.TTL_FETCH_LOCK}",
+                        "Must be greater than highest possible",
+                        f"waiting time ({max_waiting_time})",
                     )
                 )
             )
