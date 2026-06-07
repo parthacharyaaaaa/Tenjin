@@ -14,6 +14,15 @@ class StreamName(StrEnum):
     USER_INTERACTIONS = "USER_INTERACTIONS"
 
 
+class Action(StrEnum):
+    SAVE = "save"
+    REPORT = "report"
+    VOTE = "vote"
+    UNVOTE = "unvote"
+    SUB = "sub"
+    UNSUB = "unsub"
+
+
 class EventNames(StrEnum):
     POST_SAVE = "POST_SAVE"
     POST_UNSAVE = "POST_UNSAVE"
