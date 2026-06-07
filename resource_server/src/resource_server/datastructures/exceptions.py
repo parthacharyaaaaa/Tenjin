@@ -8,3 +8,7 @@ class ResourceDeletedException(Exception):
 
 class OperationUnderwayException(Exception):
     pass
+
+
+class CacheCoherenceException(Exception):
+    pass
