@@ -12,7 +12,9 @@ from fastapi import Request, Response, HTTPException
 
 from fastapi.responses import JSONResponse
 
-from auxillary.typing_utils import SupportsJSON
+from redis.typing import FieldT, EncodableT
+
+from auxillary.typing_utils import SupportsJSON, SupportsCache
 
 
 def generic_error_handler(r: Request, e: Exception) -> Response:
@@ -112,4 +114,8 @@ def genericDBFetchException():
 
 
 def json_repr(arg: SupportsJSON) -> dict[str, Any]:
-    return arg.__json_like__()
+    return arg.__json_repr__()
+
+
+def cache_repr(arg: SupportsCache) -> dict[FieldT, EncodableT]:
+    return arg.__cache_repr__()

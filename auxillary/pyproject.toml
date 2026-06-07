@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "redis>=8.0.0",
+    "redis>=5,<6",
 ]
 
 [build-system]

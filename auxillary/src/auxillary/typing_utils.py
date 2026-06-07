@@ -1,12 +1,17 @@
 from typing import Any, Protocol
 
 from redis.asyncio.client import Pipeline
+from redis.typing import FieldT, EncodableT
 
 __all__ = ("SupportsJSON", "SupportsAsyncRedis")
 
 
 class SupportsJSON(Protocol):
-    def __json_like__(self) -> dict[str, Any]: ...
+    def __json_repr__(self) -> dict[str, Any]: ...
+
+
+class SupportsCache(Protocol):
+    def __cache_repr__(self) -> dict[FieldT, EncodableT]: ...
 
 
 class SupportsAsyncRedis(Protocol):
