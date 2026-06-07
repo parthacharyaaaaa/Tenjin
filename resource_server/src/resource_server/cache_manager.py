@@ -1,23 +1,36 @@
+import asyncio
 from dataclasses import dataclass
-from typing import Any, ClassVar, Final, Literal, Mapping, Sequence
+from random import randint
+import time
+from typing import Any, TypeVar, ClassVar, Coroutine, Final, Literal, Mapping, Sequence
 
 import orjson
 
 from redis import RedisError
 from redis.asyncio.client import Redis
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from auxillary.typing_utils import SupportsAsyncRedis
 
 from resource_server.config.sub_config import CacheConfig
 from resource_server.utils.singleton import SingletonMetaclass
 from resource_server.datastructures.exceptions import (
+    CacheCoherenceException,
     ResourceNotFoundException,
     ResourceDeletedException,
     OperationUnderwayException,
 )
+from resource_server.repositories.result_protocol import AbstractResult
+
+from resource_auxillary.strings import IntentFlag
+from resource_auxillary.cache import (
+    derive_cache_key,
+    derive_deletion_intent_flag,
+    create_creation_intent_flag,
+)
+
+DTO_T = TypeVar("DTO_T", bound=AbstractResult)
+
+type database_fallback_callable = Coroutine[Any, Any, AbstractResult | None]
 
 
 @dataclass(init=False, slots=True, weakref_slot=True)
@@ -28,9 +41,9 @@ class CacheManager(metaclass=SingletonMetaclass):
 
     allowed_intents: ClassVar[frozenset[str]] = frozenset(
         [
-            CacheConfig.RESOURCE_DELETION_PENDING_FLAG,
-            CacheConfig.RESOURCE_CREATION_PENDING_ALT_FLAG,
-            CacheConfig.RESOURCE_CREATION_PENDING_FLAG,
+            IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+            IntentFlag.RESOURCE_CREATION_PENDING_ALT_FLAG,
+            IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
         ]
     )
 
@@ -38,32 +51,9 @@ class CacheManager(metaclass=SingletonMetaclass):
         self.redis_client = redis  # type: ignore
         self.cache_config = cache_config
 
-    @classmethod
-    def derive_intent_key(cls, flag: str, *args: str) -> str:
-        if flag not in cls.allowed_intents:
-            raise ValueError(
-                " ".join(
-                    ("Invalid intent flag, must be in:", ", ".join(cls.allowed_intents))
-                )
-            )
-        return ":".join((flag, *args))
-
     @staticmethod
     def derive_lock_key(*args: str) -> str:
         return ":".join(("lock", *args))
-
-    @staticmethod
-    def derive_cache_key(resource_name: str, identifier: str | int) -> str:
-        return ":".join((resource_name, str(identifier)))
-
-    def derive_deletion_intent(self, resource_name: str, identifier: str | int) -> str:
-        return ":".join(
-            (
-                self.cache_config.RESOURCE_DELETION_PENDING_FLAG,
-                resource_name,
-                str(identifier),
-            )
-        )
 
     async def set_negative_string(self, key: str, *, ttl: int | None = None) -> None:
         ttl = ttl or self.cache_config.TTL_EPHEMERAL
@@ -97,47 +87,6 @@ class CacheManager(metaclass=SingletonMetaclass):
                 pipe.expire(name=names[idx], time=ttl)
             await pipe.execute()
 
-    async def update_global_counter(
-        self,
-        delta: int,
-        database_session: AsyncSession,
-        table: str,
-        column: str,
-        identifier: str,
-        hashmap_key: str | None = None,
-    ) -> None:
-        """
-        Update the global counter for a resource's field
-        Args:
-            self.redis_client: Redis instance connected to server holding the counters
-            delta: Whether to increment or decrement the counter
-            database_session: session fetch data from in case the counter is absent in Redis, and a new one needs to be made
-            table: Table name for the entity to be updated
-            column: Column of entity associated with the counter
-            identifier: Unique ID to identify the target record
-            hashmap_key: Optional key name for hashmap. If not passed, constructed as table:column
-        """
-        hashmap_key = hashmap_key or f"{table}:{column}"
-        counter = await self.redis_client.hget(hashmap_key, identifier)
-        if counter:
-            await self.redis_client.hincrby(hashmap_key, identifier, delta)
-            return
-
-        # No counter, create one
-        currentCount: int = (
-            await database_session.execute(
-                text(f"SELECT {column} FROM {table} WHERE id = :identifier"),
-                {"identifier": identifier},
-            )
-        ).scalar_one()
-
-        op = await self.redis_client.hsetnx(
-            hashmap_key, identifier, currentCount + delta
-        )
-        if not op:
-            # Counter made by another worker, update in place
-            await self.redis_client.hincrby(hashmap_key, identifier, delta)
-
     async def fetch_global_counters(
         self, hashmaps: Sequence[str], identifiers: Sequence[str]
     ) -> dict[str, list[int | None]]:
@@ -154,77 +103,6 @@ class CacheManager(metaclass=SingletonMetaclass):
         for idx, hashmap in enumerate(hashmaps):
             counter_mapping[hashmap] = counters[step * idx : step * (idx + 1)]
         return counter_mapping
-
-    async def posts_cache_precheck(
-        self,
-        post_id: str,
-        post_cache_key: str,
-        post_deletion_intent_flag: str,
-        action_flag: str,
-        lock_name: str,
-        conflicting_intent: str | None = None,
-    ) -> tuple[dict | None, str | None]:
-        """
-        Consult cache and perform a check on a given post to try to
-        validate the request thriugh cache and minimize DB lookups.
-        Although this cannot guarantee post validity,
-        if a post is found to be invalid through cache,
-        an appropriate HTTP exception is raised.
-        If all checks pass, then the post_mapping (if found)
-        and the latest intent (if found) are returned
-        Args:
-            post_id: Unique identifier for post
-            post_cache_key: cache key for this post
-            post_deletion_intent_flag: Deletion flag name for this post
-            action_flag: Flag name to check for latest user intent for this post
-            lock_name: Name of lock for this action
-            conflicting_intent: If specified, latest user intent is checked against this value for early rejection
-
-        Returns:
-            post_mapping (dict), latest_intent (str)
-        """
-        async with self.redis_client.pipeline() as pipe:
-            # Post
-            pipe.hgetall(post_cache_key)
-            pipe.get(
-                post_deletion_intent_flag
-            )  # Existence alone is enough to prove post deletion
-
-            pipe.get(action_flag)  # Get latest intent (if any) for this action
-            pipe.get(lock_name)
-
-            post_mapping, post_deletion_intent, latest_intent, lock = (
-                await pipe.execute()
-            )
-
-        if post_deletion_intent:  # Deletion written in cache
-            raise ResourceDeletedException(
-                "This post has been permanently deleted, and will soon be unavailable"
-            )
-        if (
-            post_mapping and self.cache_config.NF_SENTINEL_KEY in post_mapping
-        ):  # Post non-existence written in cache
-            await self.hset_with_ttl(
-                post_cache_key, post_mapping, self.cache_config.TTL_EPHEMERAL
-            )  # Reannounce post non-existence
-            raise ResourceNotFoundException(
-                f"No post with ID {post_id} could be found (Never existed, or deleted)"
-            )
-        if lock:  # Stop race condition early
-            raise OperationUnderwayException(
-                "Another worker is processing this exact request at the moment"
-            )
-        if (latest_intent and not conflicting_intent) or (
-            conflicting_intent and latest_intent == conflicting_intent
-        ):  # Stop duplicate requests
-            raise OperationUnderwayException(
-                f"This action for post {post_id} has already been requested"
-            )
-
-        return (
-            post_mapping,
-            latest_intent,
-        )  # post_mapping and latest intent may be required by the endpoint later
 
     async def resource_existence_cache_precheck(
         self,
@@ -330,154 +208,127 @@ class CacheManager(metaclass=SingletonMetaclass):
             bool(deletion_intent),
         )
 
-    async def admin_cache_precheck(
-        self,
-        user_id: int | str,
-        user_cache_key: str,
-        forum_id: int | str,
-        forum_cache_key: str,
-        admin_flag: str,
-        *,
-        lock_name: str | None = None,
-        user_status_flag: str | None = None,
-        forum_deletion_flag: str | None = None,
-        conflicting_intents: Sequence[str] | None = None,
-        message: str | None = None,
-    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
-        user_status_flag = user_status_flag or f"alive_status:{user_id}"
-        forum_deletion_flag = forum_deletion_flag or f"delete:{forum_id}"
-        lock_name = lock_name or f"lock:{admin_flag}"
-        async with self.redis_client.pipeline(transaction=False) as pipe:
-            # User
-            pipe.get(user_status_flag)
-            pipe.hgetall(user_cache_key)
-
-            # Forum
-            pipe.get(forum_deletion_flag)
-            pipe.hgetall(forum_cache_key)
-
-            # Forum admin status
-            pipe.get(admin_flag)
-
-            # Race
-            pipe.get(lock_name)
-            (
-                user_status,
-                user_mapping,
-                forum_mapping,
-                forum_deletion_intent,
-                latest_intent,
-                lock,
-            ) = await pipe.execute()
-
-        # Forum checks
-        if forum_deletion_intent:
-            raise ResourceDeletedException(
-                f"Forum with id {forum_id} has just been deleted"
-            )
-        if forum_mapping and self.cache_config.NF_SENTINEL_KEY in forum_mapping:
-            await self.hset_with_ttl(
-                forum_cache_key,
-                {
-                    self.cache_config.NF_SENTINEL_KEY: self.cache_config.NF_SENTINEL_VALUE
-                },
-                self.cache_config.TTL_EPHEMERAL,
-            )  # Reannounce non-existence of this forum
-            raise ResourceNotFoundException(f"No forum with ID {forum_id} found")
-
-        # User checks
-        if user_status == self.cache_config.RESOURCE_DELETION_PENDING_FLAG:
-            raise ResourceDeletedException(
-                f"User with id {user_id} has just been deleted"
-            )
-        if (
-            user_mapping and self.cache_config.NF_SENTINEL_KEY in user_mapping
-        ):  # User (to be made an admin) doesn't exist or has been deleted
-            await self.hset_with_ttl(
-                user_cache_key,
-                {
-                    self.cache_config.NF_SENTINEL_KEY: self.cache_config.NF_SENTINEL_VALUE
-                },
-                self.cache_config.TTL_EPHEMERAL,
-            )  # Reannounce non-existence of this forum
-            raise ResourceNotFoundException(f"No user with ID {user_id} found")
-
-        if (conflicting_intents and latest_intent in conflicting_intents) or (
-            not conflicting_intents and latest_intent
-        ):
-            raise OperationUnderwayException(
-                message
-                or f"This action is currently invalid, as the request may be logically invalid or duplicate"
-            )
-        if lock:
-            raise OperationUnderwayException(
-                "A request for this action is already enqueued"
-            )
-
-        return forum_mapping, user_mapping, latest_intent
-
-    async def fetch_from_cache(
+    async def check_negative_entry(
         self,
         cache_key: str,
+        cache_entry: dict | str,
         *,
-        ttl_cap: int | None = None,
-        ttl_promotion: int | None = None,
-        ttl_ephemeral: int | None = None,
         dtype: Literal["mapping", "string"] = "mapping",
-        suppress_errors: bool = True,
-    ) -> dict | None:
-        """
-        Consult Redis cache and attempt to fetch the given key.
-        Args:
-            cache_key: Name of the key to search for
-            ttl_cap: Maximum TTL in seconds for any entry in cache
-            ttl_promotion: Seconds to add to an existing entry's TTL on cache hit
-            ttl_ephemeral: TTL in seconds for ephemeral announcements
-            dtype: Redis data structure assosciated with this item. Defaults to hashmap
-            nf_repr: Representation of a key that does not exist. If dtype is mapping, then it is interpreted as {nf_val:-1}
-            suppress_errors: Flag to allow silent failures. Ideally this should be set to True to allow graceful fallback to database
+    ) -> bool:
+        if dtype == "mapping" and self.cache_config.NF_SENTINEL_KEY in cache_entry:
+            async with self.redis_client.pipeline() as pipe:
+                pipe.hset(cache_key, mapping=self.cache_config.NF_MAPPING)
+                pipe.expire(cache_key, self.cache_config.TTL_EPHEMERAL)
+                await pipe.execute()
+            return True
 
-        Returns
-            {self.cache_config.NF_SENTINEL_KEY : True} if nf_repr found, None on cache miss/suppressed failure, and cached mapping on cache hits
-        """
-        try:
-            async with self.redis_client.pipeline(transaction=False) as pipe:
-                if dtype == "mapping":
-                    pipe.hgetall(cache_key)
-                else:
-                    pipe.get(cache_key)
-                pipe.ttl(cache_key)
-                cache_entry, ttl = await pipe.execute()
+        elif dtype == "string" and cache_entry == self.cache_config.NF_SENTINEL_KEY:
+            await self.redis_client.set(
+                cache_key,
+                self.cache_config.NF_SENTINEL_KEY,
+                self.cache_config.TTL_EPHEMERAL,
+            )
+            return True
+        return False
 
-            if not cache_entry:  # Cache miss
-                return None
-
-            ttl_ephemeral = ttl_ephemeral or self.cache_config.TTL_EPHEMERAL
-            ttl_promotion = ttl_promotion or self.cache_config.TTL_PROMOTION
-            ttl_cap = ttl_cap or self.cache_config.TTL_CAP
-
-            if dtype == "mapping" and self.cache_config.NF_SENTINEL_KEY in cache_entry:
-                async with self.redis_client.pipeline() as pipe:
-                    pipe.hset(cache_key, mapping=self.cache_config.NF_MAPPING)
-                    pipe.expire(cache_key, ttl_ephemeral)
-                    await pipe.execute()
-                return self.cache_config.NF_MAPPING
-
-            elif dtype == "string" and cache_entry == self.cache_config.NF_SENTINEL_KEY:
-                await self.redis_client.set(
-                    cache_key, self.cache_config.NF_SENTINEL_KEY, ttl_ephemeral
-                )
-                return self.cache_config.NF_MAPPING
-
-            # Cache hit, and resource actually exists
-            await self.redis_client.expire(cache_key, min(ttl_cap, ttl_promotion + ttl))
-            return cache_entry if dtype == "mapping" else orjson.loads(cache_entry)
-
-        except RedisError as e:
-            if suppress_errors:
-                return None
+    async def _primitive_get_from_cache(
+        self, cache_key: str, *, dtype: Literal["mapping", "string"] = "mapping"
+    ) -> tuple[dict | str, int] | None:
+        async with self.redis_client.pipeline(transaction=False) as pipe:
+            if dtype == "mapping":
+                pipe.hgetall(cache_key)
             else:
-                raise RuntimeError("Unsuppressed cache failure") from e
+                pipe.get(cache_key)
+            pipe.ttl(cache_key)
+            cache_entry, ttl = await pipe.execute()
+
+        if not cache_entry:
+            return None
+        return cache_entry, ttl
+
+    async def _fetch_from_cache(
+        self, cache_key: str, *, dtype: Literal["mapping", "string"] = "mapping"
+    ) -> dict[str, Any] | None:
+        res = await self._primitive_get_from_cache(cache_key, dtype=dtype)
+        if not res:
+            return None
+
+        cache_entry, ttl = res
+        if await self.check_negative_entry(cache_key, cache_entry, dtype=dtype):
+            return self.cache_config.NF_MAPPING
+
+        # Cache hit, and resource actually exists
+        await self.redis_client.expire(
+            cache_key,
+            min(self.cache_config.TTL_CAP, self.cache_config.TTL_PROMOTION + ttl),
+        )
+
+        if isinstance(cache_entry, dict):
+            return cache_entry
+        return orjson.loads(cache_entry)
+
+    async def distributed_get_or_load(
+        self,
+        key: str,
+        fallback_coroutine: database_fallback_callable,
+        return_dto: type[DTO_T],
+        *,
+        fetch_dtype: Literal["mapping", "string"] = "mapping",
+    ) -> DTO_T | None:
+        result = await self._fetch_from_cache(key, dtype=fetch_dtype)
+        # Cache hit, either negative entry or actual entry found
+        if result:
+            if self.cache_config.NF_SENTINEL_KEY in result:
+                return None
+            return return_dto.construct_from_cache(result)
+
+        # Upon cache miss, elect a leader to actually talk to DB
+        lock_name: Final[str] = self.derive_lock_key(key)
+        for leader_attempt in range(self.cache_config.FETCH_MAX_RETRIES):
+            leader: bool = False
+            leader = bool(
+                await self.redis_client.set(
+                    lock_name, time.time(), px=self.cache_config.TTL_FETCH_LOCK, nx=True
+                )
+            )
+            if leader:
+                try:
+                    result_dto: AbstractResult | None = await fallback_coroutine
+                    if not result_dto:
+                        if fetch_dtype == "mapping":
+                            await self.set_negative_mapping(key)
+                        else:
+                            await self.set_negative_string(key)
+                        return None
+                    await self.hset_with_ttl(
+                        key, cache_repr(result_dto), self.cache_config.TTL_STRONG
+                    )
+                    return result_dto  # type: ignore[reportReturnType]
+                finally:
+                    await self.redis_client.delete(lock_name)
+            else:
+                for i in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
+                    if await self.redis_client.get(lock_name):
+                        await asyncio.sleep(
+                            self.cache_config.FETCH_WAITING_INITIAL_INTERVAL
+                            * randint(1, self.cache_config.FETCH_WAITING_JITTER)
+                            ** self.cache_config.FETCH_WAITING_EXPONENT
+                        )
+                        continue
+
+                    res = await self._primitive_get_from_cache(key, dtype=fetch_dtype)
+                    # Leader announced negative entry
+                    if res and self.cache_config.NF_SENTINEL_KEY in res:
+                        return None
+                    # Leader failed, try again
+                    if not res:
+                        break
+                    cache_entry = res[0]
+                    if isinstance(cache_entry, dict):
+                        return return_dto.construct_from_cache(cache_entry)
+                    return return_dto.construct_from_cache(orjson.loads(cache_entry))
+
+        raise CacheCoherenceException(f"Failed to fetch {key}")
 
     async def fetch_group_resources(
         self,
@@ -620,18 +471,3 @@ class CacheManager(metaclass=SingletonMetaclass):
             pipe.rpush(group_key, f"cursor:{cursor}")
             pipe.rpush(group_key, f"end:{end}")
             await pipe.execute()
-
-    async def set_intent(self, intent: str, *intent_args: str, ttl: int | None = None):
-        if intent not in self.allowed_intents:
-            raise ValueError(
-                " ".join(
-                    (
-                        "Intent not allowed, must be one of:",
-                        ", ".join(self.allowed_intents),
-                    )
-                )
-            )
-        ttl = ttl or self.cache_config.TTL_STRONGEST
-        await self.redis_client.set(
-            self.derive_intent_key(intent, *intent_args), 1, ex=ttl
-        )
