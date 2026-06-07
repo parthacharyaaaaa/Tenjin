@@ -17,6 +17,7 @@ from resource_server.config.app_config import AppConfig
 from resource_server.key_manager import KeyManager
 from resource_server.models.database import Genre
 from resource_server.repositories.anime import AnimeRepository
+from resource_server.event_streamer import EventStreamer
 
 
 @lru_cache(maxsize=1)
@@ -58,6 +59,11 @@ def get_key_manager() -> KeyManager:
 @lru_cache(maxsize=1)
 def get_cache_manager() -> CacheManager:
     return CacheManager(get_app_redis_client(), get_app_config().CACHE)
+
+
+@lru_cache(maxsize=1)
+def get_event_streamer() -> EventStreamer:
+    return EventStreamer(get_app_redis_client(), get_app_config().CACHE)
 
 
 @lru_cache(maxsize=1)
