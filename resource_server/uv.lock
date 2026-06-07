@@ -73,6 +73,17 @@ wheels = [
 ]
 
 [[package]]
+name = "auxillary"
+version = "0.1.0"
+source = { directory = "../auxillary" }
+dependencies = [
+    { name = "redis" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "redis", specifier = ">=5,<6" }]
+
+[[package]]
 name = "blinker"
 version = "1.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1281,6 +1292,11 @@ wheels = [
 ]
 
 [[package]]
+name = "resource-auxillary"
+version = "0.1.0"
+source = { directory = "../resource_auxillary" }
+
+[[package]]
 name = "resource-server"
 version = "0.1.0"
 source = { virtual = "." }
@@ -1288,6 +1304,7 @@ dependencies = [
     { name = "alembic" },
     { name = "async-timeout" },
     { name = "attrs" },
+    { name = "auxillary" },
     { name = "blinker" },
     { name = "certifi" },
     { name = "cffi" },
@@ -1320,6 +1337,7 @@ dependencies = [
     { name = "redis" },
     { name = "referencing" },
     { name = "requests" },
+    { name = "resource-auxillary" },
     { name = "rpds-py" },
     { name = "six" },
     { name = "sqlalchemy" },
@@ -1335,6 +1353,7 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.18.4" },
     { name = "async-timeout", specifier = "==5.0.1" },
     { name = "attrs", specifier = "==25.3.0" },
+    { name = "auxillary", directory = "../auxillary" },
     { name = "blinker", specifier = "==1.9.0" },
     { name = "certifi", specifier = "==2025.1.31" },
     { name = "cffi", specifier = "==1.17.1" },
@@ -1367,6 +1386,7 @@ requires-dist = [
     { name = "redis", specifier = "==5.2.1" },
     { name = "referencing", specifier = "==0.36.2" },
     { name = "requests", specifier = "==2.32.3" },
+    { name = "resource-auxillary", directory = "../resource_auxillary" },
     { name = "rpds-py", specifier = "==0.25.0" },
     { name = "six", specifier = "==1.17.0" },
     { name = "sqlalchemy", specifier = ">=2.0.50" },
