@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from functools import lru_cache
 from typing import Any, Mapping, Self
 
 from redis.typing import FieldT, EncodableT
@@ -18,3 +19,8 @@ class AbstractResult(ABC):
     def __json_repr__(self) -> dict[str, Any]: ...
     @abstractmethod
     def __cache_repr__(self) -> dict[FieldT, EncodableT]: ...
+
+    @lru_cache(maxsize=1)
+    @abstractmethod
+    @classmethod
+    def get_counter_fields(cls) -> dict[str, str]: ...

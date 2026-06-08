@@ -1,13 +1,13 @@
 from dataclasses import dataclass
-from typing import Any, Mapping, Self
+from functools import lru_cache
+from typing import Any, ClassVar, Mapping, Self
 
 import orjson
 
 from redis.typing import FieldT, EncodableT
 
-from sqlalchemy import Row, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
-from sqlalchemy.orm import DeclarativeBase
 
 from resource_server.models.database import (
     Anime,
@@ -19,7 +19,7 @@ from resource_server.models.database import (
 from resource_server.utils.singleton import SingletonMetaclass
 from resource_server.repositories.result_protocol import AbstractResult
 
-from auxillary.utils import rediserialize, json_repr
+from resource_auxillary.strings import NAME_SEPERATOR
 
 
 @dataclass(slots=True, init=False)
@@ -32,6 +32,15 @@ class AnimeResult(AbstractResult):
 
     genres: list[str]
     stream_links: dict[str, str]
+
+    COUNTER_FIELDS: ClassVar[tuple[str]] = ("members",)
+
+    @lru_cache(maxsize=1)
+    @classmethod
+    def get_counter_fields(cls) -> dict[str, str]:
+        return {
+            i: NAME_SEPERATOR.join((Anime.__tablename__, i)) for i in cls.COUNTER_FIELDS
+        }
 
     @classmethod
     def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
