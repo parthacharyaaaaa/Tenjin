@@ -31,7 +31,7 @@ from resource_server.datastructures.exceptions import (
 )
 from resource_server.repositories.result_protocol import AbstractResult
 
-from resource_auxillary.strings import Action, IntentFlag
+from resource_auxillary.strings import Action, IntentFlag, NAME_SEPERATOR
 from resource_auxillary.cache import derive_cache_key, create_intent_flag
 
 DTO_T = TypeVar("DTO_T", bound=AbstractResult)
@@ -61,7 +61,24 @@ class CacheManager(metaclass=SingletonMetaclass):
 
     @staticmethod
     def derive_lock_key(*args: str) -> str:
-        return ":".join(("lock", *args))
+        return NAME_SEPERATOR.join(("lock", *args))
+
+    @staticmethod
+    def derive_pagination_key(
+        resource_name: str,
+        cursor: int = 0,
+        genres: Sequence[int] | None = None,
+        search_param: str | None = None,
+    ) -> str:
+        # TODO: Add a proper sentinel value for search_param
+        return NAME_SEPERATOR.join(
+            (
+                resource_name,
+                str(cursor),
+                "-".join(str(g) for g in genres) if genres else "",
+                search_param or "",
+            )
+        )
 
     async def set_negative_string(self, key: str, *, ttl: int | None = None) -> None:
         ttl = ttl or self.cache_config.TTL_EPHEMERAL
@@ -111,117 +128,6 @@ class CacheManager(metaclass=SingletonMetaclass):
         for idx, hashmap in enumerate(hashmaps):
             counter_mapping[hashmap] = counters[step * idx : step * (idx + 1)]
         return counter_mapping
-
-    async def resource_existence_cache_precheck(
-        self,
-        identifier: str,
-        resource_name: str,
-        cache_key: str | None = None,
-        deletion_flag_key: str | None = None,
-    ) -> dict[str, Any]:
-        """Generic check for a resource's existence in cache. Raises appropriate HTTP exception if non-existence is guarenteed
-        Args:
-            identifier: Unique identifier (Typically PK) of resource
-            resource_name: Cache key for this resource
-            deletion_flag_key: Cache key for deletion flag for this resource
-
-        Returns:
-            resource_mapping (dict[str, Any]) on cache hit"""
-        cache_key = cache_key or f"{resource_name}:{identifier}"
-        deletion_flag_key = deletion_flag_key or f"delete:{cache_key}"
-
-        async with self.redis_client.pipeline() as pipe:
-            pipe.hgetall(cache_key)
-            pipe.get(deletion_flag_key)
-            resource_mapping, deletion_intent = await pipe.execute()
-        if deletion_intent:
-            raise ResourceDeletedException("This resource was just deleted")
-        if resource_mapping and self.cache_config.NF_SENTINEL_KEY in resource_mapping:
-            await self.hset_with_ttl(
-                cache_key, resource_mapping, self.cache_config.TTL_EPHEMERAL
-            )
-            raise ResourceNotFoundException(
-                f"No {resource_name} with ID {identifier} found"
-            )
-
-        return resource_mapping
-
-    async def resource_cache_precheck(
-        self,
-        identifier: str,
-        resource: str,
-        return_dto: type[DTO_T],
-        action_flag: str,
-        lock_name: str,
-        *,
-        conflicting_intent: str | None = None,
-        allow_deletion: bool = False,
-        creation_intent: IntentFlag = IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-    ) -> tuple[DTO_T | None, str | None, bool]:
-        """
-        Consult cache and perform a check on a given resource to try to validate
-        the request through cache and minimize DB lookups.
-        Although this cannot guarantee resource validity,
-        if it is found to be invalid through cache,
-        an appropriate exception is raised.
-        Args:
-            identifier: Unique identifier for resource (Typically PK)
-            cache_key: cache key for this resource
-            deletion_intent_flag: Deletion flag name for this resource
-            action_flag: Flag name to check for latest user intent for this resource
-            lock_name: Name of lock for this action
-            conflicting_intent: If specified, latest user intent is checked against
-            this value for early rejection
-
-        Returns:
-            resource_mapping (dict), latest_intent (str), deletion intent (bool)
-        """
-        cache_key: Final[str] = derive_cache_key(resource, identifier)
-
-        async with self.redis_client.pipeline() as pipe:
-            pipe.hgetall(cache_key)
-            pipe.get(derive_deletion_intent_flag(resource, identifier))
-            pipe.get(
-                create_creation_intent_flag(
-                    creation_intent, resource, action_flag, identifier
-                )
-            )
-            pipe.get(lock_name)
-
-            resource_mapping, deletion_intent, latest_intent, lock = (
-                await pipe.execute()
-            )
-
-        if deletion_intent and not allow_deletion:
-            raise ResourceDeletedException(
-                "This resource has been permanently deleted, and will soon be unavailable"
-            )
-        if (
-            resource_mapping and self.cache_config.NF_SENTINEL_KEY in resource_mapping
-        ) and not deletion_intent:  # Non-existence written in cache
-            await self.hset_with_ttl(
-                cache_key, resource_mapping, self.cache_config.TTL_EPHEMERAL
-            )  # Reannounce non-existence
-            raise ResourceNotFoundException(
-                f"No {resource} with ID {identifier} could be found (Never existed, or deleted)"
-            )
-
-        if lock:  # Stop race condition early
-            raise OperationUnderwayException(
-                "Another worker is processing this exact request at the moment"
-            )
-        if (latest_intent and not conflicting_intent) or (
-            latest_intent and conflicting_intent and latest_intent == conflicting_intent
-        ):  # Stop duplicate requests
-            raise OperationUnderwayException(
-                f"This action for resource {identifier} has already been requested"
-            )
-
-        return (
-            return_dto.construct_from_cache(resource_mapping),
-            latest_intent,
-            bool(deletion_intent),
-        )
 
     async def check_negative_entry(
         self,
