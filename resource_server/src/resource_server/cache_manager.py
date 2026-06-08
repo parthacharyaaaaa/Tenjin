@@ -2,14 +2,24 @@ import asyncio
 from dataclasses import dataclass
 from random import randint
 import time
-from typing import Any, TypeVar, ClassVar, Coroutine, Final, Literal, Mapping, Sequence
+from typing import (
+    Any,
+    Callable,
+    TypeVar,
+    ClassVar,
+    Coroutine,
+    Final,
+    Literal,
+    Mapping,
+    Sequence,
+)
 
 import orjson
 
-from redis import RedisError
 from redis.asyncio.client import Redis
 
 from auxillary.typing_utils import SupportsAsyncRedis
+from auxillary.utils import cache_repr
 
 from resource_server.config.sub_config import CacheConfig
 from resource_server.utils.singleton import SingletonMetaclass
@@ -30,7 +40,9 @@ from resource_auxillary.cache import (
 
 DTO_T = TypeVar("DTO_T", bound=AbstractResult)
 
-type database_fallback_callable = Coroutine[Any, Any, AbstractResult | None]
+type database_fallback_callable = Callable[
+    [], Coroutine[Any, Any, AbstractResult | None]
+]
 
 
 @dataclass(init=False, slots=True, weakref_slot=True)
@@ -142,12 +154,14 @@ class CacheManager(metaclass=SingletonMetaclass):
         self,
         identifier: str,
         resource: str,
+        return_dto: type[DTO_T],
         action_flag: str,
         lock_name: str,
         *,
         conflicting_intent: str | None = None,
         allow_deletion: bool = False,
-    ) -> tuple[dict | None, str | None, bool]:
+        creation_intent: IntentFlag = IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+    ) -> tuple[DTO_T | None, str | None, bool]:
         """
         Consult cache and perform a check on a given resource to try to validate
         the request through cache and minimize DB lookups.
@@ -166,11 +180,16 @@ class CacheManager(metaclass=SingletonMetaclass):
         Returns:
             resource_mapping (dict), latest_intent (str), deletion intent (bool)
         """
-        cache_key: Final[str] = self.derive_cache_key(resource, identifier)
+        cache_key: Final[str] = derive_cache_key(resource, identifier)
+
         async with self.redis_client.pipeline() as pipe:
             pipe.hgetall(cache_key)
-            pipe.get(self.derive_deletion_intent(resource, identifier))
-            pipe.get(self.derive_intent_key(action_flag, identifier, resource))
+            pipe.get(derive_deletion_intent_flag(resource, identifier))
+            pipe.get(
+                create_creation_intent_flag(
+                    creation_intent, resource, action_flag, identifier
+                )
+            )
             pipe.get(lock_name)
 
             resource_mapping, deletion_intent, latest_intent, lock = (
@@ -203,7 +222,7 @@ class CacheManager(metaclass=SingletonMetaclass):
             )
 
         return (
-            resource_mapping,
+            return_dto.construct_from_cache(resource_mapping),
             latest_intent,
             bool(deletion_intent),
         )
@@ -293,7 +312,7 @@ class CacheManager(metaclass=SingletonMetaclass):
             )
             if leader:
                 try:
-                    result_dto: AbstractResult | None = await fallback_coroutine
+                    result_dto: AbstractResult | None = await fallback_coroutine()
                     if not result_dto:
                         if fetch_dtype == "mapping":
                             await self.set_negative_mapping(key)
