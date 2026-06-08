@@ -5,6 +5,7 @@ from typing import Annotated, Self
 import jwt
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     BeforeValidator,
     Field,
@@ -24,6 +25,12 @@ def _verify_hostname(s: str) -> str | IPvAnyAddress:
     if not DOMAIN_REGEX.match(s.strip().lower()):
         raise ValueError(f"Incorrect application/logical name: {s}")
     return s
+
+
+def _verify_b64_compatible(arg: int) -> int:
+    if arg % 4 != 0:
+        raise ValueError(f"Base 64 string length must be multiple of 4, got {arg}")
+    return arg
 
 
 class CoreConfig(BaseModel):
@@ -164,6 +171,12 @@ class BusinessConfig(BaseModel):
     ]
     ACCOUNT_AUDIT_THRESHOLD: Annotated[
         timedelta, BeforeValidator(lambda x: timedelta(days=x))
+    ]
+
+    PAGINATION_SIZE: Annotated[int, Field(ge=1)]
+
+    PAGINATION_CURSOR_LENGTH: Annotated[
+        int, Field(ge=4), AfterValidator(_verify_b64_compatible)
     ]
 
 
