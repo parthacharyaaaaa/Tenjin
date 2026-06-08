@@ -251,24 +251,47 @@ class CacheManager(metaclass=SingletonMetaclass):
         return False
 
     async def _primitive_get_from_cache(
-        self, cache_key: str, *, dtype: Literal["mapping", "string"] = "mapping"
-    ) -> tuple[dict | str, int] | None:
+        self,
+        cache_key: str,
+        counter_fields: dict[str, str],
+        *,
+        dtype: Literal["mapping", "string"] = "mapping",
+    ) -> tuple[dict[str, Any], int] | None:
         async with self.redis_client.pipeline(transaction=False) as pipe:
             if dtype == "mapping":
                 pipe.hgetall(cache_key)
             else:
                 pipe.get(cache_key)
             pipe.ttl(cache_key)
-            cache_entry, ttl = await pipe.execute()
+
+            for map_name in counter_fields.values():
+                pipe.hget(map_name, cache_key)
+
+            cache_entry, ttl, *counters = await pipe.execute()
 
         if not cache_entry:
             return None
-        return cache_entry, ttl
+
+        if isinstance(cache_entry, dict):
+            for idx, field in enumerate(counter_fields.keys()):
+                cache_entry[field] += int(counters[idx] or 0)
+            return cache_entry, ttl
+
+        materialized_entry: dict[str, Any] = orjson.loads(cache_entry)
+        for idx, field in enumerate(counter_fields.keys()):
+            materialized_entry[field] += int(counters[idx] or 0)
+        return materialized_entry, ttl
 
     async def _fetch_from_cache(
-        self, cache_key: str, *, dtype: Literal["mapping", "string"] = "mapping"
+        self,
+        cache_key: str,
+        counter_fields: dict[str, str] | None,
+        *,
+        dtype: Literal["mapping", "string"] = "mapping",
     ) -> dict[str, Any] | None:
-        res = await self._primitive_get_from_cache(cache_key, dtype=dtype)
+        res = await self._primitive_get_from_cache(
+            cache_key, counter_fields or {}, dtype=dtype
+        )
         if not res:
             return None
 
@@ -282,9 +305,7 @@ class CacheManager(metaclass=SingletonMetaclass):
             min(self.cache_config.TTL_CAP, self.cache_config.TTL_PROMOTION + ttl),
         )
 
-        if isinstance(cache_entry, dict):
-            return cache_entry
-        return orjson.loads(cache_entry)
+        return cache_entry
 
     async def distributed_get_or_load(
         self,
@@ -294,7 +315,9 @@ class CacheManager(metaclass=SingletonMetaclass):
         *,
         fetch_dtype: Literal["mapping", "string"] = "mapping",
     ) -> DTO_T | None:
-        result = await self._fetch_from_cache(key, dtype=fetch_dtype)
+        result = await self._fetch_from_cache(
+            key, return_dto.get_counter_fields(), dtype=fetch_dtype
+        )
         # Cache hit, either negative entry or actual entry found
         if result:
             if self.cache_config.NF_SENTINEL_KEY in result:
@@ -335,7 +358,9 @@ class CacheManager(metaclass=SingletonMetaclass):
                         )
                         continue
 
-                    res = await self._primitive_get_from_cache(key, dtype=fetch_dtype)
+                    res = await self._primitive_get_from_cache(
+                        key, return_dto.get_counter_fields(), dtype=fetch_dtype
+                    )
                     # Leader announced negative entry
                     if res and self.cache_config.NF_SENTINEL_KEY in res:
                         return None
