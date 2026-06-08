@@ -31,12 +31,8 @@ from resource_server.datastructures.exceptions import (
 )
 from resource_server.repositories.result_protocol import AbstractResult
 
-from resource_auxillary.strings import IntentFlag
-from resource_auxillary.cache import (
-    derive_cache_key,
-    derive_deletion_intent_flag,
-    create_creation_intent_flag,
-)
+from resource_auxillary.strings import Action, IntentFlag
+from resource_auxillary.cache import derive_cache_key, create_intent_flag
 
 DTO_T = TypeVar("DTO_T", bound=AbstractResult)
 
@@ -373,6 +369,48 @@ class CacheManager(metaclass=SingletonMetaclass):
                     return return_dto.construct_from_cache(orjson.loads(cache_entry))
 
         raise CacheCoherenceException(f"Failed to fetch {key}")
+
+    async def fetch_indicators(
+        self,
+        user_identifier: str,
+        resource_identifier: str,
+        resource_name: str,
+        action: Action,
+    ) -> tuple[str | None, IntentFlag]:
+        """
+        Consult cache and perform a check on a given resource to try to validate
+        the request through cache and minimize DB lookups.
+        """
+        intent: str = create_intent_flag(
+            resource_name, action, user_identifier, resource_identifier
+        )
+        lock_name: str = self.derive_lock_key(
+            resource_name, action.value, user_identifier, resource_identifier
+        )
+
+        async with self.redis_client.pipeline() as pipe:
+            pipe.get(lock_name)
+            pipe.get(intent)
+            lock, intent = await pipe.execute()
+
+        return lock, IntentFlag(intent)
+
+    async def set_intent(
+        self,
+        user_identifier: str,
+        resource_identifier: str,
+        resource_name: str,
+        action: Action,
+        intent_flag: IntentFlag,
+        *,
+        ttl: int | None = None,
+    ):
+        intent: str = create_intent_flag(
+            resource_name, action, user_identifier, resource_identifier
+        )
+        await self.redis_client.set(
+            intent, intent_flag, ex=ttl or self.cache_config.TTL_STRONGEST
+        )
 
     async def fetch_group_resources(
         self,
