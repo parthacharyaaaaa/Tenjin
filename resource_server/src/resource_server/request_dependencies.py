@@ -1,16 +1,19 @@
 from datetime import timedelta
 from typing import Annotated, Final
 
-from fastapi import Depends, Request
+from fastapi import Depends, Query, Request
 from fastapi.exceptions import HTTPException
-
-from resource_server.config.app_config import AppConfig
-from resource_server.dependencies import get_app_config, get_key_manager
-from resource_server.key_manager import KeyManager
-from resource_server.utils.typing import StandardAccessTokenClaims
 
 import jwt
 from jwt.exceptions import PyJWTError, ExpiredSignatureError
+
+from auxillary.utils import from_base64url
+
+from resource_server.config.app_config import AppConfig
+from resource_server.dependencies import get_app_config, get_key_manager, get_genres
+from resource_server.key_manager import KeyManager
+from resource_server.models.database import Genre
+from resource_server.utils.typing import StandardAccessTokenClaims
 
 
 async def validate_access_token(
@@ -66,3 +69,51 @@ async def validate_access_token(
         raise HTTPException(401, "JWT token expired, begin refresh issuance")
     except PyJWTError as e:
         raise HTTPException(401, "JWT token invalid")
+
+
+def cursor_preprocessor(
+    raw_cursor: str | None = Query(default=None, alias="cursor")
+) -> int:
+    if not raw_cursor:
+        return 0
+
+    return from_base64url(raw_cursor)
+
+
+def search_param_preprocessor(
+    raw_search_param: str | None = Query(default=None, alias="search")
+) -> str | None:
+    if not raw_search_param:
+        return None
+
+    return raw_search_param.strip()
+
+
+async def anime_genres_preprocessor(
+    raw_genres: list[str] | None = Query(default=None, alias="genre")
+) -> list[Genre] | None:
+    if not raw_genres:
+        return None
+
+    raw_genres = [raw_genre.lower() for raw_genre in raw_genres]
+    genres_dict: dict[str, Genre] = {g.name_.lower(): g for g in await get_genres()}
+
+    residue: list[str] = []
+    genres: list[Genre] = []
+    for raw_genre in raw_genres:
+        genre: Genre | None = genres_dict.get(raw_genre)
+        if not genre:
+            residue.append(raw_genre)
+            continue
+        genres.append(genre)
+
+    if residue:
+        raise ValueError(
+            " ".join(
+                (
+                    f"No such genres found: {', '.join(residue)}",
+                    f"Available genres: {', '.join(genres_dict.keys())}",
+                )
+            )
+        )
+    return genres
