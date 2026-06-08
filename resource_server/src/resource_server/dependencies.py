@@ -97,15 +97,11 @@ async def get_database_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @lru_cache(maxsize=1)
-async def get_genres() -> dict[str, int]:
+async def get_genres() -> list[Genre]:
     async with get_database_session_maker()() as session:
-        genres: list[Genre] = list(
-            (await session.execute(select(Genre))).scalars().all()
-        )
-
-        return {g.name_: g.id_ for g in genres}
+        return list((await session.execute(select(Genre))).scalars().all())
 
 
 @lru_cache(maxsize=1)
 def get_anime_repository() -> AnimeRepository:
-    return AnimeRepository(get_database_session_maker(), get_cache_manager())
+    return AnimeRepository(get_database_session_maker())

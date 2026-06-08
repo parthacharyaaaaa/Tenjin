@@ -9,7 +9,7 @@ from redis.asyncio import Redis
 from resource_auxillary.strings import StreamName
 
 from resource_server.dependencies import get_genres, get_app_redis_client
-from resource_server.models.database import UserTicket
+from resource_server.models.database import Genre, UserTicket
 from resource_server.models.requests import UserTicketModel
 
 MISC: Final[APIRouter] = APIRouter()
@@ -17,7 +17,9 @@ MISC: Final[APIRouter] = APIRouter()
 
 @MISC.get("/genres")
 async def get_anime_genres() -> JSONResponse:
-    return JSONResponse(await get_genres())
+    genres: list[Genre] = await get_genres()
+
+    return JSONResponse({g.name_: g.id_ for g in genres})
 
 
 @MISC.post("/tickets")
