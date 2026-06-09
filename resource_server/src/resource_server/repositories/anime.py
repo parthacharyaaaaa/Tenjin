@@ -1,12 +1,13 @@
+from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any, ClassVar, Mapping, Self
+from typing import Any, ClassVar, Mapping, Self, Sequence
 
 import orjson
 
 from redis.typing import FieldT, EncodableT
 
-from sqlalchemy import select
+from sqlalchemy import Row, and_, select, ColumnElement
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from resource_server.models.database import (
@@ -160,3 +161,91 @@ class AnimeRepository(metaclass=SingletonMetaclass):
             ).scalar_one_or_none()
 
             return bool(subscription)
+
+    @staticmethod
+    def _order_anime_streams(
+        stream_links: list[StreamLink],
+    ) -> dict[int, list[StreamLink]]:
+        anime_stream_links: defaultdict[int, list[StreamLink]] = defaultdict(list)
+        for stream_link in stream_links:
+            anime_stream_links[stream_link.anime_id].append(stream_link)
+        return dict(anime_stream_links)
+
+    @staticmethod
+    def _order_anime_genres(
+        genres: Sequence[Row[tuple[int, Genre]]],
+    ) -> dict[int, list[Genre]]:
+        genres_by_anime: dict[int, list[Genre]] = defaultdict(list)
+        for anime_id, genre in genres:
+            genres_by_anime[anime_id].append(genre)
+        return dict(genres_by_anime)
+
+    async def get_animes(
+        self,
+        cursor: int = 0,
+        search_param: str | None = None,
+        genres: list[Genre] | None = None,
+    ) -> list[AnimeResult]:
+        where_clauses: list[ColumnElement] = [Anime.id_ > cursor]
+        if search_param:
+            where_clauses.append(Anime.title.ilike(f"%{search_param}%"))
+
+        animes: list[Anime] = []
+        stream_links: list[StreamLink] = []
+        anime_genres: dict[int, list[Genre]] = {}
+        async with self.session_maker() as session:
+            if genres:
+                animes = list(
+                    (await session.execute(select(Anime).where(and_(*where_clauses))))
+                    .scalars()
+                    .all()
+                )
+                anime_ids: list[int] = [a.id_ for a in animes]
+            else:
+                animes = list(
+                    (await session.execute(select(Anime).where(and_(*where_clauses))))
+                    .scalars()
+                    .all()
+                )
+                anime_ids: list[int] = [a.id_ for a in animes]
+
+                genres_result: list[Row[tuple[int, Genre]]] = list(
+                    (
+                        await session.execute(
+                            select(AnimeGenre.anime_id, Genre)
+                            .select_from(AnimeGenre)
+                            .join(Genre, AnimeGenre.genre_id == Genre.id_)
+                            .where(AnimeGenre.anime_id.in_(anime_ids))
+                        )
+                    ).all()
+                )
+                anime_genres = self._order_anime_genres(genres_result)
+
+            stream_links: list[StreamLink] = list(
+                (
+                    await session.execute(
+                        select(StreamLink).where(StreamLink.anime_id.in_(anime_ids))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            anime_stream_links: dict[int, list[StreamLink]] = self._order_anime_streams(
+                stream_links
+            )
+
+            if genres:
+                return [
+                    AnimeResult.construct_from_orm(
+                        anime, genres, anime_stream_links[anime.id_]
+                    )
+                    for anime in animes
+                ]
+            else:
+                return [
+                    AnimeResult.construct_from_orm(
+                        anime, anime_genres[anime.id_], anime_stream_links[anime.id_]
+                    )
+                    for anime in animes
+                ]
