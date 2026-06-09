@@ -5,6 +5,7 @@ import time
 from typing import (
     Any,
     Callable,
+    LiteralString,
     TypeVar,
     ClassVar,
     Coroutine,
@@ -16,19 +17,14 @@ from typing import (
 
 import orjson
 
-from redis.asyncio.client import Redis
+from redis.asyncio.client import Redis, Pipeline
 
-from auxillary.typing_utils import SupportsAsyncRedis
+from auxillary.typing_utils import SupportsAsyncRedis, SupportsCache
 from auxillary.utils import cache_repr
 
 from resource_server.config.sub_config import CacheConfig
 from resource_server.utils.singleton import SingletonMetaclass
-from resource_server.datastructures.exceptions import (
-    CacheCoherenceException,
-    ResourceNotFoundException,
-    ResourceDeletedException,
-    OperationUnderwayException,
-)
+from resource_server.datastructures.exceptions import CacheCoherenceException
 from resource_server.repositories.result_protocol import AbstractResult
 
 from resource_auxillary.strings import Action, IntentFlag, NAME_SEPERATOR
@@ -38,6 +34,10 @@ DTO_T = TypeVar("DTO_T", bound=AbstractResult)
 
 type database_fallback_callable = Callable[
     [], Coroutine[Any, Any, AbstractResult | None]
+]
+
+type pagination_database_fallback_callable = Callable[
+    [], Coroutine[Any, Any, Sequence[AbstractResult]]
 ]
 
 
@@ -55,6 +55,11 @@ class CacheManager(metaclass=SingletonMetaclass):
         ]
     )
 
+    PAGINATION_SUB_KEY_SEPERATOR: ClassVar[LiteralString] = "-"
+    CURSOR_UNDERIVABLE_SENTINEL: ClassVar[LiteralString] = "X"
+    PAGINATION_VERSION_MAP: ClassVar[LiteralString] = "pagination_versions"
+    MAX_CACHE_VERSION: ClassVar[int] = 64
+
     def __init__(self, redis: Redis, cache_config: CacheConfig) -> None:
         self.redis_client = redis  # type: ignore
         self.cache_config = cache_config
@@ -63,22 +68,25 @@ class CacheManager(metaclass=SingletonMetaclass):
     def derive_lock_key(*args: str) -> str:
         return NAME_SEPERATOR.join(("lock", *args))
 
-    @staticmethod
-    def derive_pagination_key(
+    async def derive_pagination_key(
+        self,
         resource_name: str,
         cursor: int = 0,
-        genres: Sequence[int] | None = None,
-        search_param: str | None = None,
+        *args: str,
     ) -> str:
-        # TODO: Add a proper sentinel value for search_param
-        return NAME_SEPERATOR.join(
-            (
-                resource_name,
-                str(cursor),
-                "-".join(str(g) for g in genres) if genres else "",
-                search_param or "",
-            )
+        version: str = (
+            await self.redis_client.hget(self.PAGINATION_VERSION_MAP, resource_name)
+            or "0"
         )
+        return NAME_SEPERATOR.join((version, resource_name, str(cursor), *args))
+
+    @staticmethod
+    def derive_resource_from_pagination_key(key: str) -> str:
+        return key.split(NAME_SEPERATOR)[0]
+
+    @staticmethod
+    def derive_cursor_from_pagination_key(key: str) -> str:
+        return key.split(NAME_SEPERATOR)[2]
 
     async def set_negative_string(self, key: str, *, ttl: int | None = None) -> None:
         ttl = ttl or self.cache_config.TTL_EPHEMERAL
@@ -183,6 +191,51 @@ class CacheManager(metaclass=SingletonMetaclass):
         for idx, field in enumerate(counter_fields.keys()):
             materialized_entry[field] += int(counters[idx] or 0)
         return materialized_entry, ttl
+
+    async def _primitive_pagination_get_from_cache(
+        self,
+        page_key: str,
+        counter_fields: dict[str, str],
+        *,
+        dtype: Literal["mapping", "string"] = "mapping",
+    ) -> tuple[int, list[str], list[tuple[dict[str, Any] | None, int]], str]:
+        keys: list[str] = await self.redis_client.lrange(page_key, 0, -1)
+        cursor: str = keys.pop(-1)
+        async with self.redis_client.pipeline(transaction=False) as pipe:
+            pipe.ttl(page_key)
+            for key in keys:
+                if dtype == "mapping":
+                    pipe.hgetall(key)
+                else:
+                    pipe.get(key)
+                pipe.ttl(key)
+                for map_name in counter_fields.values():
+                    pipe.hget(map_name, key)
+
+            page_ttl, *results = await pipe.execute()
+
+        result_collections: list[tuple[dict[str, Any] | None, int]] = []
+        for i in range(0, len(results), 2 + len(counter_fields)):
+            member_entry, member_ttl, *member_counters = results[
+                i : i + 2 + len(counter_fields)
+            ]
+            if (
+                member_entry == self.cache_config.NF_MAPPING or member_ttl == -2
+            ):  # TTL for non-existent keys
+                result_collections.append((None, member_ttl))
+                continue
+
+            elif isinstance(member_entry, dict):
+                for idx, field in enumerate(counter_fields.keys()):
+                    member_entry[field] += int(member_counters[idx] or 0)
+                    result_collections.append((member_entry, member_ttl))
+            else:
+                materialized_entry: dict[str, Any] = orjson.loads(member_entry)  # type: ignore[reportArgumentType]
+                for idx, field in enumerate(counter_fields.keys()):
+                    materialized_entry[field] += int(member_counters[idx] or 0)
+                    result_collections.append((materialized_entry, member_ttl))
+
+        return page_ttl, keys, result_collections, cursor
 
     async def _fetch_from_cache(
         self,
@@ -318,144 +371,162 @@ class CacheManager(metaclass=SingletonMetaclass):
             intent, intent_flag, ex=ttl or self.cache_config.TTL_STRONGEST
         )
 
-    async def fetch_group_resources(
+    async def _fetch_paginated_resources(
         self,
-        group_key: str,
+        page_key: str,
+        return_dto: type[DTO_T],
         *,
         element_dtype: Literal["mapping", "string"] = "mapping",
-    ) -> tuple[tuple[Any] | None, bool, str | None]:
-        """
-        Fetches all values for keys stored in a Redis iterable
-        (list, set, or sorted set) for cursor based pagination.
-        If any key is missing from the cache,
-        the function returns `None` to indicate a cache miss.
-        Args:
-            group_key: The Redis key pointing to a collection of resource keys.
-            element_dtype: The expected data type of each individual resource key
-            in the group (used for deserialization).
+    ) -> tuple[tuple[DTO_T | None, ...] | None, str | None]:
+        page_ttl, keys, paginated_entries, cursor = (
+            await self._primitive_pagination_get_from_cache(
+                page_key, return_dto.get_counter_fields(), dtype=element_dtype
+            )
+        )
 
-        Returns:
-            tuple: A tuple of values corresponding to each key in the group,
-            boolean indicating end of pagination, value of next cursor
-        """
-        keys: list[str] = await self.redis_client.lrange(group_key, 0, -1)
-
-        if not keys or self.cache_config.NF_SENTINEL_KEY in keys:
-            return None, True, None
-
-        cursor: str | None = None
-        end: bool = False
-        removed_entries: list[str] = []
-        for idx, entry in enumerate(keys):
-            if entry.startswith("cursor:"):
-                # Fetch next cursor for pagination if available
-                cursor = entry.split(":")[1]
-                removed_entries.append(entry)
-            elif entry.startswith("end:"):
-                removed_entries.append(entry)
-                end = False if entry.split(":")[1].lower() == "false" else True
-
-        for entry in removed_entries:
-            keys.remove(entry)  # Remove cursor and end keys from group keys
-
-        resources: list[dict[str, Any] | str] = []
-        async with self.redis_client.pipeline() as pipe:
-            for key in keys:
-                if element_dtype == "mapping":
-                    pipe.hgetall(key)
-                else:
-                    pipe.get(key)
-            resources = await pipe.execute()
-
-        # Account for sentinel mappings
-        if element_dtype == "mapping":
-            return (
-                tuple(
-                    map(
-                        lambda resource: (
-                            None
-                            if self.cache_config.NF_SENTINEL_KEY in resource
-                            else resource
-                        ),
-                        resources,
-                    )
-                ),
-                end,
-                cursor,
+        if all(i[0] for i in paginated_entries):
+            # Cached page clean
+            await self._promote_paginated_result(
+                page_key, page_ttl, keys, [i[1] for i in paginated_entries]
+            )
+        else:
+            # Cached page dirty
+            await self.update_cache_version(
+                self.derive_resource_from_pagination_key(page_key)
             )
 
         return (
             tuple(
                 map(
-                    lambda resource: (
-                        None
-                        if resource == self.cache_config.NF_SENTINEL_KEY
-                        else orjson.loads(resource)  # type: ignore[reportArgumentType]
-                    ),
-                    resources,
+                    lambda x: return_dto.construct_from_cache(x[0]) if x[0] else None,
+                    paginated_entries,
                 )
             ),
-            end,
             cursor,
         )
 
-    async def promote_group_ttl(
+    async def distributed_pagination_get_or_load(
         self,
-        group_key: str,
+        page_key: str,
+        fallback_coroutine: pagination_database_fallback_callable,
+        return_dto: type[DTO_T],
         *,
-        promotion_ttl: int | None = None,
-        max_ttl: int | None = None,
+        member_identifier: str = "id_",
+        fetch_dtype: Literal["mapping", "string"] = "mapping",
+    ) -> tuple[list[DTO_T], str | None]:
+        cached_results, next_cursor = await self._fetch_paginated_resources(
+            page_key, return_dto, element_dtype=fetch_dtype
+        )
+
+        if cached_results and all(cached_results):
+            return list(cached_results), next_cursor  # type: ignore[reportReturnType]
+
+        # Upon cache miss, elect a leader to actually talk to DB
+        lock_name: Final[str] = self.derive_lock_key(page_key)
+        for leader_attempt in range(self.cache_config.FETCH_MAX_RETRIES):
+            leader: bool = False
+            leader = bool(
+                await self.redis_client.set(
+                    lock_name, time.time(), px=self.cache_config.TTL_FETCH_LOCK, nx=True
+                )
+            )
+            if leader:
+                try:
+                    results: list[AbstractResult] = list(await fallback_coroutine())
+                    await self.cache_grouped_resource(
+                        page_key,
+                        {getattr(i, member_identifier): i for i in results},
+                        self.derive_cursor_from_pagination_key(page_key),
+                    )
+                    return results, self.CURSOR_UNDERIVABLE_SENTINEL  # type: ignore[reportReturnType]
+                finally:
+                    await self.redis_client.delete(lock_name)
+            else:
+                for i in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
+                    if await self.redis_client.get(lock_name):
+                        await asyncio.sleep(
+                            self.cache_config.FETCH_WAITING_INITIAL_INTERVAL
+                            * randint(1, self.cache_config.FETCH_WAITING_JITTER)
+                            ** self.cache_config.FETCH_WAITING_EXPONENT
+                        )
+                        continue
+
+                    *_, res, _ = await self._primitive_pagination_get_from_cache(
+                        page_key, return_dto.get_counter_fields(), dtype=fetch_dtype
+                    )
+                    # Leader failed, try again
+                    if not res:
+                        break
+                    return (
+                        list(
+                            map(
+                                lambda x: (
+                                    return_dto.construct_from_cache(x) if x else None
+                                ),
+                                (r[0] for r in res),
+                            )
+                        ),
+                        next_cursor,
+                    )
+
+        raise CacheCoherenceException(f"Failed to fetch {page_key}")
+
+    async def _promote_paginated_result(
+        self,
+        page_key: str,
+        page_ttl: int,
+        member_keys: list[str],
+        member_ttls: list[int],
     ) -> None:
-        max_ttl = max_ttl or self.cache_config.TTL_CAP
-        promotion_ttl = promotion_ttl or self.cache_config.TTL_PROMOTION
-        keys: list[str] = await self.redis_client.lrange(group_key, 0, -1)
-
-        if not keys:
-            return
-
-        # Fetch TTLs
-        async with self.redis_client.pipeline() as pipe:
-            pipe.ttl(group_key)
-            for key in keys:
-                pipe.ttl(key)
-
-            ttl_list: list[int] = await pipe.execute()
-
         # Promote TTls
         async with self.redis_client.pipeline() as pipe:
-            pipe.expire(group_key, min(max_ttl, ttl_list[0] + promotion_ttl))
+            pipe.expire(
+                page_key,
+                min(
+                    self.cache_config.TTL_CAP,
+                    page_ttl + self.cache_config.TTL_PROMOTION,
+                ),
+            )
 
-            for idx, key in enumerate(keys, start=1):
-                pipe.expire(key, min(max_ttl, ttl_list[idx] + promotion_ttl))
+            for idx, key in enumerate(member_keys):
+                pipe.expire(
+                    key,
+                    min(
+                        self.cache_config.TTL_CAP,
+                        member_ttls[idx] + self.cache_config.TTL_PROMOTION,
+                    ),
+                )
             await pipe.execute()
 
     async def cache_grouped_resource(
         self,
-        group_key: str,
-        resource_type: str,
-        resources: Mapping[str | int, dict],
-        weak_ttl: int,
-        strong_ttl: int,
-        cursor: str,
-        end: bool,
+        page_key: str,
+        resources: Mapping[str, SupportsCache],
+        cursor: str | None = None,
         *,
         member_dtype: Literal["mapping", "string"] = "mapping",
     ) -> None:
-        member_key_template: str = resource_type + ":{}"
+        async with self.redis_client.pipeline(transaction=True) as pipe:
+            pipe.expire(page_key, self.cache_config.TTL_WEAK)
+            for resource_key, resource_mapping in resources.items():
+                pipe.rpush(
+                    page_key, resource_key
+                )  # Push key name for resource into list
 
-        async with self.redis_client.pipeline() as pipe:
-            pipe.expire(group_key, weak_ttl)
-            for resourceID, resourceMapping in resources.items():
-                key_name: str = member_key_template.format(resourceID)
-                pipe.rpush(group_key, key_name)  # Push key name for resource into list
-
-                # Cache individual resource separately
                 if member_dtype == "mapping":
-                    pipe.hset(key_name, mapping=resourceMapping)
+                    pipe.hset(resource_key, mapping=cache_repr(resource_mapping))
                 else:
-                    pipe.set(key_name, orjson.dumps(resourceMapping).decode("utf-8"))
-                pipe.expire(key_name, strong_ttl)
+                    pipe.set(resource_key, orjson.dumps(cache_repr(resource_mapping)))
+                pipe.expire(resource_key, self.cache_config.TTL_STRONG)
 
-            pipe.rpush(group_key, f"cursor:{cursor}")
-            pipe.rpush(group_key, f"end:{end}")
+            pipe.rpush(page_key, cursor or "")
             await pipe.execute()
+
+    async def update_cache_version(self, resource_name: str) -> None:
+        await self.redis_client.hincrby(self.PAGINATION_VERSION_MAP, resource_name)
+
+    @classmethod
+    def _pipelined_update_cache_version(
+        cls, resource_name: str, pipeline: Pipeline
+    ) -> None:
+        pipeline.hincrby(cls.PAGINATION_VERSION_MAP, resource_name, 1)
