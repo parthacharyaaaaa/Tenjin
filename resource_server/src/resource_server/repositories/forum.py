@@ -7,9 +7,10 @@ from sqlalchemy import ColumnElement, and_, insert, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from instance.resource_models import AdminRoles
+from resource_server.repositories.user import UserResult
 from resource_server.utils.singleton import SingletonMetaclass
 from resource_server.repositories.result_protocol import AbstractResult
-from resource_server.models.database import Forum, ForumAdmin
+from resource_server.models.database import Forum, ForumAdmin, User
 
 from resource_auxillary.strings import NAME_SEPERATOR
 
@@ -148,4 +149,17 @@ class ForumRepository(metaclass=SingletonMetaclass):
             await session.commit()
             return ForumResult.construct_from_orm(forum)
 
-    async def get_forum_owner(self, forum_id: int): ...
+    async def get_forum_owner(self, forum_id: int) -> UserResult:
+        async with self.session_maker() as session:
+            user: User = (
+                await session.execute(
+                    select(User)
+                    .join(ForumAdmin, ForumAdmin.forum_id == Forum.id_)
+                    .join(User, User.id_ == ForumAdmin.user_id)
+                    .where(
+                        (Forum.id_ == forum_id) & (ForumAdmin.role == "owner")
+                    )  # TODO: Add StrEnum for this
+                )
+            ).scalar_one()
+
+            return UserResult.construct_from_orm(user)
