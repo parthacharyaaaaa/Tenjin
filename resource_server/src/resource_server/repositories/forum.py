@@ -1,9 +1,9 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import lru_cache
-from typing import Any, ClassVar, Mapping, Self
+from typing import Any, ClassVar, Literal, Mapping, Self, overload
 
-from sqlalchemy import ColumnElement, and_, insert, select
+from sqlalchemy import ColumnElement, and_, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from instance.resource_models import AdminRoles
@@ -67,6 +67,45 @@ class ForumResult(AbstractResult):
         instance.posts = obj.posts
         instance.created_at = obj.created_at
         instance.admin_count = obj.admin_count
+
+        return instance
+
+
+@dataclass(slots=True, init=False)
+class ForumAdminResult(AbstractResult):
+    forum_id: int
+    user_id: int
+    role: str
+
+    COUNTER_FIELDS: ClassVar[tuple[str, ...]] = tuple()
+
+    @lru_cache(maxsize=1)
+    @classmethod
+    def get_counter_fields(cls) -> dict[str, str]:
+        return {
+            i: NAME_SEPERATOR.join((Forum.__tablename__, i)) for i in cls.COUNTER_FIELDS
+        }
+
+    @classmethod
+    def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
+        instance = cls()
+        instance.user_id = mapping["user_id"]
+        instance.forum_id = mapping["forum_id"]
+        instance.role = mapping["role"]
+
+        return instance
+
+    @classmethod
+    def construct_from_orm(
+        cls,
+        obj: ForumAdmin,
+        *args,
+        **kwargs,
+    ) -> Self:
+        instance = cls()
+        instance.user_id = obj.user_id
+        instance.forum_id = obj.forum_id
+        instance.role = obj.role
 
         return instance
 
@@ -163,3 +202,80 @@ class ForumRepository(metaclass=SingletonMetaclass):
             ).scalar_one()
 
             return UserResult.construct_from_orm(user)
+
+    async def get_forum_admin(
+        self, forum_id: int, user_id: int
+    ) -> ForumAdminResult | None:
+        async with self.session_maker() as session:
+            admin: ForumAdmin | None = (
+                await session.execute(
+                    select(ForumAdmin).where(
+                        (ForumAdmin.forum_id == forum_id)
+                        & (ForumAdmin.user_id == user_id)
+                    )
+                )
+            ).scalar_one_or_none()
+
+            if not admin:
+                return None
+
+            return ForumAdminResult.construct_from_orm(admin)
+
+    @overload
+    async def update_forum(
+        self,
+        forum_id: int,
+        title: str | None,
+        description: str | None,
+        *,
+        return_forum: Literal[False],
+    ) -> None: ...
+
+    @overload
+    async def update_forum(
+        self,
+        forum_id: int,
+        title: str | None,
+        description: str | None,
+        *,
+        return_forum: Literal[True],
+    ) -> ForumResult: ...
+
+    @overload
+    async def update_forum(
+        self,
+        forum_id: int,
+        title: str | None,
+        description: str | None,
+    ) -> None: ...
+
+    async def update_forum(
+        self,
+        forum_id: int,
+        title: str | None,
+        description: str | None,
+        *,
+        return_forum: bool = False,
+    ) -> ForumResult | None:
+        if not (title or description):
+            raise ValueError("Empty updation requested")
+        update_clauses: dict[str, str] = {}
+        if title:
+            update_clauses["title"] = title
+        if description:
+            update_clauses["description"] = description
+
+        async with self.session_maker() as session:
+            forum: Forum = (
+                await session.execute(
+                    update(Forum)
+                    .where(Forum.id_ == forum_id)
+                    .values(**update_clauses)
+                    .returning(Forum)
+                )
+            ).scalar_one()
+
+            await session.commit()
+
+            if return_forum:
+                return ForumResult.construct_from_orm(forum)
