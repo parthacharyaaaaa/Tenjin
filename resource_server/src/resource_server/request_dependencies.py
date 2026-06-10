@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Annotated, Final
 
 from fastapi import Depends, Query, Request
@@ -14,6 +14,11 @@ from resource_server.dependencies import get_app_config, get_key_manager, get_ge
 from resource_server.key_manager import KeyManager
 from resource_server.models.database import Genre
 from resource_server.utils.typing import StandardAccessTokenClaims
+from resource_server.src.resource_server.datastructures.requests import (
+    SortOption,
+    TIMEFRAMES,
+    TimeFrameOption,
+)
 
 
 async def validate_access_token(
@@ -117,3 +122,31 @@ async def anime_genres_preprocessor(
             )
         )
     return genres
+
+
+def preprocess_sort_option(
+    raw_sort_option: str | None = Query(default=None, alias="cursor")
+) -> SortOption:
+    if not raw_sort_option:
+        return SortOption.DESCENDING
+    try:
+        return SortOption(raw_sort_option.lower().strip())
+    except ValueError:
+        return SortOption.DESCENDING
+
+
+def preprocess_timeframe(
+    raw_timeframe_option: str | None = Query(default=None, alias="timeframe")
+) -> tuple[TimeFrameOption, datetime]:
+    if not raw_timeframe_option:
+        return TimeFrameOption.ALL_TIME, TIMEFRAMES[TimeFrameOption.ALL_TIME](
+            datetime.now()
+        )
+    try:
+        timeframe_option = TimeFrameOption(raw_timeframe_option.strip().lower())
+    except ValueError:
+        timeframe_option = TimeFrameOption.ALL_TIME
+
+    func = TIMEFRAMES.get(timeframe_option, TIMEFRAMES[TimeFrameOption.ALL_TIME])
+
+    return timeframe_option, func(datetime.now())
