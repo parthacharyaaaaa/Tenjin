@@ -1,4 +1,20 @@
-from resource_auxillary.strings import NAME_SEPERATOR, Action, IntentFlag
+from datetime import datetime
+from types import MappingProxyType, NoneType
+from typing import Any, Callable, Final
+
+from resource_auxillary.strings import NAME_SEPERATOR, Action
+
+type t_cache_casting_map = MappingProxyType[type, Callable[[Any], Any]]
+
+CACHE_TYPE_MAPPING: Final[t_cache_casting_map] = MappingProxyType(
+    {
+        NoneType: lambda _: "",
+        bool: int,
+        datetime: lambda x: x.isoformat(),
+        list: str,
+        dict: str,
+    }
+)
 
 
 def create_intent_flag(
