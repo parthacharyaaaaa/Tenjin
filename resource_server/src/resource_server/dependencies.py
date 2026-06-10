@@ -17,6 +17,7 @@ from resource_server.config.app_config import AppConfig
 from resource_server.key_manager import KeyManager
 from resource_server.models.database import Genre
 from resource_server.repositories.anime import AnimeRepository
+from resource_server.repositories.forum import ForumRepository
 from resource_server.event_streamer import EventStreamer
 
 
@@ -105,3 +106,8 @@ async def get_genres() -> list[Genre]:
 @lru_cache(maxsize=1)
 def get_anime_repository() -> AnimeRepository:
     return AnimeRepository(get_database_session_maker())
+
+
+@lru_cache(maxsize=1)
+def get_forum_repository() -> ForumRepository:
+    return ForumRepository(get_database_session_maker())
