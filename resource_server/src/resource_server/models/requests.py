@@ -1,6 +1,6 @@
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, BeforeValidator, Field, model_validator
 
 from resource_server.models.annotations import (
     email_annotation,
@@ -27,3 +27,14 @@ class ForumCreationModel(BaseModel):
     title: forum_name_annotation
     description: forum_description_annotation
     parent_anime_id: Annotated[int, Field(ge=1, frozen=True)]
+
+
+class ForumUpdationModel(BaseModel):
+    title: forum_name_annotation | None
+    description: forum_description_annotation | None
+
+    @model_validator(mode="after")
+    def validate_non_emptiness(self) -> Self:
+        if not (self.title or self.description):
+            raise ValueError("At least one of title or description required")
+        return self
