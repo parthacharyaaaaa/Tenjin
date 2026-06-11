@@ -47,3 +47,5 @@ type forum_description_annotation = Annotated[
         frozen=True,
     ),
 ]
+
+type strong_entity_pk_annotation = Annotated[int, Field(ge=1, frozen=True)]

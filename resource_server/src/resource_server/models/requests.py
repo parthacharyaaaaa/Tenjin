@@ -1,13 +1,15 @@
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, BeforeValidator, Field, model_validator
 
 from resource_server.models.annotations import (
     email_annotation,
+    strong_entity_pk_annotation,
     forum_name_annotation,
     forum_description_annotation,
 )
 from resource_server.config.database_constants import UserTicketConstants
+from resource_server.models.database import AdminRoles
 
 
 class UserTicketModel(BaseModel):
@@ -38,3 +40,14 @@ class ForumUpdationModel(BaseModel):
         if not (self.title or self.description):
             raise ValueError("At least one of title or description required")
         return self
+
+
+class GenericAdminModel(BaseModel):
+    user_id: strong_entity_pk_annotation
+
+
+class AdminAddModel(GenericAdminModel):
+    role: Annotated[
+        Literal[AdminRoles.SUPER, AdminRoles.ADMIN],
+        BeforeValidator(lambda x: x.strip().upper()),
+    ]
