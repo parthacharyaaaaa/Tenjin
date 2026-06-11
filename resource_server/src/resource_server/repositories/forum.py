@@ -292,3 +292,16 @@ class ForumRepository(metaclass=SingletonMetaclass):
             return [
                 ForumAdminUserResult.construct_from_orm(*i) for i in forum_admin_users
             ]
+
+    async def update_admin_role(
+        self, forum_id: int, admin_id: int, role: AdminRoles
+    ) -> None:
+        async with self.session_maker() as session:
+            await session.execute(
+                update(ForumAdmin)
+                .where(
+                    (ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == admin_id)
+                )
+                .values(role=role.value)
+            )
+            await session.commit()
