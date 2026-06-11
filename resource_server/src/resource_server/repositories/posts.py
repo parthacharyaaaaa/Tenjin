@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from functools import lru_cache
-from typing import Any, ClassVar, Mapping, Self
+from typing import ClassVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -35,62 +34,6 @@ class PostResult(AbstractResult):
     time_posted: datetime
 
     COUNTER_FIELDS: ClassVar[tuple[str, ...]] = ("saves", "reports", "total_comments")
-
-    @lru_cache(maxsize=1)
-    @classmethod
-    def get_counter_fields(cls) -> dict[str, str]:
-        return {
-            i: NAME_SEPERATOR.join((Post.__tablename__, i)) for i in cls.COUNTER_FIELDS
-        }
-
-    @classmethod
-    def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
-        instance = cls()
-
-        instance.id_ = mapping["id"]
-        instance.author_id = mapping["author_id"]
-        instance.forum_id = mapping["forum_id"]
-
-        instance.score = mapping["score"]
-        instance.total_comments = mapping["total_comments"]
-        instance.saves = mapping["saves"]
-        instance.reports = mapping["reports"]
-
-        instance.title = mapping["title"]
-        instance.body_text = mapping["body_text"]
-
-        instance.flair = mapping["flair"]
-        instance.closed = mapping["closed"]
-        instance.time_posted = mapping["time_posted"]
-
-        return instance
-
-    @classmethod
-    def construct_from_orm(
-        cls,
-        obj: Post,
-        *args,
-        **kwargs,
-    ) -> Self:
-        instance = cls()
-
-        instance.id_ = obj.id_
-        instance.author_id = obj.author_id
-        instance.forum_id = obj.forum_id
-
-        instance.score = obj.score
-        instance.total_comments = obj.total_comments
-        instance.saves = obj.saves
-        instance.reports = obj.reports
-
-        instance.title = obj.title
-        instance.body_text = obj.body_text
-
-        instance.flair = obj.flair
-        instance.closed = obj.closed
-        instance.time_posted = obj.time_posted
-
-        return instance
 
 
 @dataclass(slots=True, weakref_slot=True)

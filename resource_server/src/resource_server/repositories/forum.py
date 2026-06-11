@@ -1,16 +1,15 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
 from typing import Any, ClassVar, Literal, Mapping, Self, overload
 
-from sqlalchemy import ColumnElement, and_, insert, select, update
+from sqlalchemy import ColumnElement, and_, delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from instance.resource_models import AdminRoles
 from resource_server.repositories.user import UserResult
 from resource_server.utils.singleton import SingletonMetaclass
 from resource_server.repositories.result_protocol import AbstractResult
-from resource_server.models.database import Forum, ForumAdmin, User
+from resource_server.models.database import Forum, ForumAdmin, User, AdminRoles
 
 from resource_auxillary.strings import NAME_SEPERATOR
 
@@ -23,59 +22,19 @@ class ForumResult(AbstractResult):
 
     description: str | None = None
 
-    subscribers: int = field(default=0)
-    posts: int = field(default=0)
+    subscribers: int
+    posts: int
     created_at: datetime
     admin_count: int
 
     COUNTER_FIELDS: ClassVar[tuple[str, ...]] = ("subscribers", "posts")
-
-    @lru_cache(maxsize=1)
-    @classmethod
-    def get_counter_fields(cls) -> dict[str, str]:
-        return {
-            i: NAME_SEPERATOR.join((Forum.__tablename__, i)) for i in cls.COUNTER_FIELDS
-        }
-
-    @classmethod
-    def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
-        instance = cls()
-        instance.id_ = mapping["id"]
-        instance.name_ = mapping["name"]
-        instance.anime = mapping["anime"]
-        instance.description = mapping["description"]
-        instance.subscribers = mapping["subscribers"]
-        instance.posts = mapping["posts"]
-        instance.created_at = mapping["created_at"]
-        instance.admin_count = mapping["admin_count"]
-
-        return instance
-
-    @classmethod
-    def construct_from_orm(
-        cls,
-        obj: Forum,
-        *args,
-        **kwargs,
-    ) -> Self:
-        instance = cls()
-        instance.id_ = obj.id_
-        instance.name_ = obj.name_
-        instance.anime = obj.anime
-        instance.description = obj.description
-        instance.subscribers = obj.subscribers
-        instance.posts = obj.posts
-        instance.created_at = obj.created_at
-        instance.admin_count = obj.admin_count
-
-        return instance
 
 
 @dataclass(slots=True, init=False)
 class ForumAdminResult(AbstractResult):
     forum_id: int
     user_id: int
-    role: str
+    role: AdminRoles
 
     COUNTER_FIELDS: ClassVar[tuple[str, ...]] = tuple()
 
@@ -91,7 +50,7 @@ class ForumAdminResult(AbstractResult):
         instance = cls()
         instance.user_id = mapping["user_id"]
         instance.forum_id = mapping["forum_id"]
-        instance.role = mapping["role"]
+        instance.role = AdminRoles(mapping["role"])
 
         return instance
 
@@ -105,7 +64,7 @@ class ForumAdminResult(AbstractResult):
         instance = cls()
         instance.user_id = obj.user_id
         instance.forum_id = obj.forum_id
-        instance.role = obj.role
+        instance.role = AdminRoles(obj.role)
 
         return instance
 
@@ -182,7 +141,7 @@ class ForumRepository(metaclass=SingletonMetaclass):
             await session.flush()
             await session.execute(
                 insert(ForumAdmin).values(
-                    forum_id=forum.id_, user_id=creator_id, role=AdminRoles.owner
+                    forum_id=forum.id_, user_id=creator_id, role=AdminRoles.OWNER
                 )
             )
             await session.commit()
@@ -196,8 +155,9 @@ class ForumRepository(metaclass=SingletonMetaclass):
                     .join(ForumAdmin, ForumAdmin.forum_id == Forum.id_)
                     .join(User, User.id_ == ForumAdmin.user_id)
                     .where(
-                        (Forum.id_ == forum_id) & (ForumAdmin.role == "owner")
-                    )  # TODO: Add StrEnum for this
+                        (Forum.id_ == forum_id)
+                        & (ForumAdmin.role == AdminRoles.OWNER.value)
+                    )
                 )
             ).scalar_one()
 

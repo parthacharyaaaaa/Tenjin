@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from functools import lru_cache
-from typing import Any, ClassVar, Mapping, Self
+from typing import ClassVar
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -30,51 +29,6 @@ class UserResult(AbstractResult):
         "total_posts",
         "total_comments",
     )
-
-    @classmethod
-    @lru_cache(maxsize=1)
-    def get_counter_fields(cls) -> dict[str, str]:
-        return {
-            field: NAME_SEPERATOR.join((User.__tablename__, field))
-            for field in cls.COUNTER_FIELDS
-        }
-
-    @classmethod
-    def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
-        instance = cls()
-
-        instance.id_ = mapping["id"]
-        instance.username = mapping["username"]
-
-        instance.aura = mapping["aura"]
-        instance.total_posts = mapping["total_posts"]
-        instance.total_comments = mapping["total_comments"]
-
-        instance.time_joined = mapping["time_joined"]
-        instance.last_login = mapping["last_login"]
-
-        return instance
-
-    @classmethod
-    def construct_from_orm(
-        cls,
-        obj: User,
-        *args,
-        **kwargs,
-    ) -> Self:
-        instance = cls()
-
-        instance.id_ = obj.id_
-        instance.username = obj.username
-
-        instance.aura = obj.aura
-        instance.total_posts = obj.total_posts
-        instance.total_comments = obj.total_comments
-
-        instance.time_joined = obj.time_joined
-        instance.last_login = obj.last_login
-
-        return instance
 
 
 @dataclass(slots=True, weakref_slot=True)

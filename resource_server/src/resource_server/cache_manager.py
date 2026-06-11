@@ -163,7 +163,7 @@ class CacheManager(metaclass=SingletonMetaclass):
     async def _primitive_get_from_cache(
         self,
         cache_key: str,
-        counter_fields: dict[str, str],
+        counter_fields: Mapping[str, str],
         *,
         dtype: Literal["mapping", "string"] = "mapping",
     ) -> tuple[dict[str, Any], int] | None:
@@ -195,7 +195,7 @@ class CacheManager(metaclass=SingletonMetaclass):
     async def _primitive_pagination_get_from_cache(
         self,
         page_key: str,
-        counter_fields: dict[str, str],
+        counter_fields: Mapping[str, str],
         *,
         dtype: Literal["mapping", "string"] = "mapping",
     ) -> tuple[int, list[str], list[tuple[dict[str, Any] | None, int]], str]:
@@ -240,7 +240,7 @@ class CacheManager(metaclass=SingletonMetaclass):
     async def _fetch_from_cache(
         self,
         cache_key: str,
-        counter_fields: dict[str, str] | None,
+        counter_fields: Mapping[str, str] | None,
         *,
         dtype: Literal["mapping", "string"] = "mapping",
     ) -> dict[str, Any] | None:
@@ -271,7 +271,7 @@ class CacheManager(metaclass=SingletonMetaclass):
         fetch_dtype: Literal["mapping", "string"] = "mapping",
     ) -> DTO_T | None:
         result = await self._fetch_from_cache(
-            key, return_dto.get_counter_fields(), dtype=fetch_dtype
+            key, return_dto.counter_fields_map, dtype=fetch_dtype
         )
         # Cache hit, either negative entry or actual entry found
         if result:
@@ -314,7 +314,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                         continue
 
                     res = await self._primitive_get_from_cache(
-                        key, return_dto.get_counter_fields(), dtype=fetch_dtype
+                        key, return_dto.counter_fields_map, dtype=fetch_dtype
                     )
                     # Leader announced negative entry
                     if res and self.cache_config.NF_SENTINEL_KEY in res:
@@ -380,7 +380,7 @@ class CacheManager(metaclass=SingletonMetaclass):
     ) -> tuple[tuple[DTO_T | None, ...] | None, str | None]:
         page_ttl, keys, paginated_entries, cursor = (
             await self._primitive_pagination_get_from_cache(
-                page_key, return_dto.get_counter_fields(), dtype=element_dtype
+                page_key, return_dto.counter_fields_map, dtype=element_dtype
             )
         )
 
@@ -452,7 +452,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                         continue
 
                     *_, res, _ = await self._primitive_pagination_get_from_cache(
-                        page_key, return_dto.get_counter_fields(), dtype=fetch_dtype
+                        page_key, return_dto.counter_fields_map, dtype=fetch_dtype
                     )
                     # Leader failed, try again
                     if not res:

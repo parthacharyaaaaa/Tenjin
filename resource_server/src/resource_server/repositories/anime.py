@@ -1,6 +1,5 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any, ClassVar, Mapping, Self, Sequence
 
 import orjson
@@ -36,25 +35,11 @@ class AnimeResult(AbstractResult):
 
     COUNTER_FIELDS: ClassVar[tuple[str]] = ("members",)
 
-    @lru_cache(maxsize=1)
-    @classmethod
-    def get_counter_fields(cls) -> dict[str, str]:
-        return {
-            i: NAME_SEPERATOR.join((Anime.__tablename__, i)) for i in cls.COUNTER_FIELDS
-        }
-
     @classmethod
     def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
-        instance = cls()
-        instance.id_ = mapping["id"]
-        instance.title = mapping["title"]
-        instance.rating = mapping["rating"]
-        instance.members = mapping["members"]
-        instance.synopsis = mapping["synopsis"]
-
+        instance = super().construct_from_cache(mapping)
         instance.genres = orjson.loads(mapping["genres"])
         instance.stream_links = orjson.loads(mapping["stream_links"])
-
         return instance
 
     @classmethod
@@ -66,16 +51,9 @@ class AnimeResult(AbstractResult):
         *args,
         **kwargs,
     ) -> Self:
-        instance = cls()
-        instance.id_ = obj.id_
-        instance.title = obj.title
-        instance.rating = obj.rating
-        instance.members = obj.members
-        instance.synopsis = obj.synopsis
-
+        instance = super().construct_from_orm(obj)
         instance.genres = [g.name_ for g in genres]
         instance.stream_links = {s.website: s.url for s in stream_links}
-
         return instance
 
     def __json_repr__(self) -> dict[str, Any]:
