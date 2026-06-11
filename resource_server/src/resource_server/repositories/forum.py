@@ -1,9 +1,8 @@
 from dataclasses import dataclass
 from datetime import datetime
-from functools import lru_cache
 from typing import Any, ClassVar, Literal, Mapping, Self, overload
 
-from sqlalchemy import ColumnElement, and_, delete, insert, select, update
+from sqlalchemy import ColumnElement, Row, and_, delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resource_server.repositories.user import UserResult
@@ -36,15 +35,6 @@ class ForumAdminResult(AbstractResult):
     user_id: int
     role: AdminRoles
 
-    COUNTER_FIELDS: ClassVar[tuple[str, ...]] = tuple()
-
-    @lru_cache(maxsize=1)
-    @classmethod
-    def get_counter_fields(cls) -> dict[str, str]:
-        return {
-            i: NAME_SEPERATOR.join((Forum.__tablename__, i)) for i in cls.COUNTER_FIELDS
-        }
-
     @classmethod
     def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
         instance = cls()
@@ -66,6 +56,27 @@ class ForumAdminResult(AbstractResult):
         instance.forum_id = obj.forum_id
         instance.role = AdminRoles(obj.role)
 
+        return instance
+
+
+@dataclass(slots=True, init=False)
+class ForumAdminUserResult(UserResult):
+    role: AdminRoles
+
+    @classmethod
+    def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
+        instance = super().construct_from_cache(mapping)
+        instance.role = AdminRoles(mapping["role"])
+        return instance
+
+    @classmethod
+    def construct_from_orm(
+        cls, obj: User, role: str | AdminRoles, *args, **kwargs
+    ) -> Self:
+        instance = super().construct_from_orm(obj, *args, **kwargs)
+        if not isinstance(role, AdminRoles):
+            role = AdminRoles(role)
+        instance.role = role
         return instance
 
 
@@ -239,3 +250,45 @@ class ForumRepository(metaclass=SingletonMetaclass):
 
             if return_forum:
                 return ForumResult.construct_from_orm(forum)
+
+    async def add_forum_admin(
+        self,
+        forum_id: int,
+        user_id: int,
+        role: Literal[AdminRoles.SUPER, AdminRoles.ADMIN],
+    ) -> None:
+        async with self.session_maker() as session:
+            await session.execute(
+                insert(ForumAdmin).values(
+                    forum_id=forum_id, user_id=user_id, role=role.value
+                )
+            )
+            await session.commit()
+
+    async def remove_forum_admin(self, forum_id: int, admin_id: int) -> None:
+        async with self.session_maker() as session:
+            await session.execute(
+                delete(ForumAdmin).where(
+                    (ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == admin_id)
+                )
+            )
+            await session.commit()
+
+    async def get_forum_admin_users(
+        self, forum_id: int, cursor: int = 0, limit: int | None = None
+    ) -> list[ForumAdminUserResult]:
+        async with self.session_maker() as session:
+            forum_admin_users: list[Row[tuple[User, str]]] = list(
+                (
+                    await session.execute(
+                        select(User, ForumAdmin.role)
+                        .join(ForumAdmin, ForumAdmin.user_id == User.id_)
+                        .where((ForumAdmin.forum_id == forum_id) & (User.id_ > cursor))
+                        .limit(limit)
+                    )
+                ).all()
+            )
+
+            return [
+                ForumAdminUserResult.construct_from_orm(*i) for i in forum_admin_users
+            ]
