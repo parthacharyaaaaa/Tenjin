@@ -6,19 +6,12 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from flask import g, jsonify
-from werkzeug import Response
-from werkzeug.exceptions import (
-    BadRequest,
-    InternalServerError,
-)
-
 from redis.typing import FieldT
 
 from auxillary.utils import cache_repr, json_repr, to_base64url
 
 from resource_auxillary.cache import Action, derive_cache_key
-from resource_auxillary.strings import EventNames, IntentFlag
+from resource_auxillary.strings import NAME_SEPERATOR, EventNames, IntentFlag
 
 from resource_server.cache_manager import CacheManager
 from resource_server.config.app_config import AppConfig
@@ -30,14 +23,21 @@ from resource_server.dependencies import (
     get_forum_repository,
     get_cache_manager,
     get_post_repository,
+    get_user_repository,
 )
-from resource_server.models.database import Forum, Post, Anime, User
-from resource_server.models.requests import ForumCreationModel, ForumUpdationModel
+from resource_server.models.database import Forum, ForumAdmin, Post, Anime
+from resource_server.models.requests import (
+    ForumCreationModel,
+    ForumUpdationModel,
+    AdminAddModel,
+    GenericAdminModel,
+)
 from resource_server.repositories.forum import (
     ForumAdminResult,
     ForumRepository,
     ForumResult,
 )
+from resource_server.repositories.user import UserRepository, UserResult
 from resource_server.request_dependencies import (
     cursor_preprocessor,
     preprocess_sort_option,
@@ -47,7 +47,8 @@ from resource_server.request_dependencies import (
 from resource_server.repositories.anime import AnimeRepository, AnimeResult
 from resource_server.repositories.posts import PostRepository, PostResult
 from resource_server.event_streamer import EventStreamer
-from resource_server.repositories.user import UserResult
+from resource_server.models.database_enums import AdminRoles
+from resource_server.models.admin_permissions import AdminPermissions, check_permission
 from resource_server.utils.typing import StandardAccessTokenClaims
 
 FORUMS: Final[APIRouter] = APIRouter()
@@ -210,19 +211,237 @@ async def delete_forum(
 
 
 @FORUMS.post("/{forum_id}/admins")
-def add_admin(forum_id: int) -> JSONResponse: ...
+async def add_admin(
+    forum_id: int,
+    access_token: Annotated[StandardAccessTokenClaims, Depends(validate_access_token)],
+    admin_model: AdminAddModel,
+    cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
+    forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
+    user_repo: Annotated[UserRepository, Depends(get_user_repository)],
+) -> JSONResponse:
+    forum: ForumResult | None = await cache_manager.distributed_get_or_load(
+        derive_cache_key(Forum.__tablename__, forum_id),
+        partial(forum_repo.get_forum, forum_id),
+        ForumResult,
+    )
+    if not forum:
+        raise HTTPException(404, f"No forum with id {forum_id} found")
+
+    forum_admin: ForumAdminResult | None = await cache_manager.distributed_get_or_load(
+        derive_cache_key(
+            ForumAdmin.__tablename__,
+            NAME_SEPERATOR.join((str(forum_id), str(access_token["sid"]))),
+        ),
+        partial(forum_repo.get_forum_admin, forum_id, access_token["sid"]),
+        ForumAdminResult,
+    )
+    if not forum_admin:
+        raise HTTPException(403, f"You are not an admin for forum: {forum.name_}")
+
+    match admin_model.role:
+        case AdminRoles.ADMIN:
+            permission = AdminPermissions.ADD_ADMIN
+        case AdminRoles.SUPER:
+            permission = AdminPermissions.ADD_SUPER
+
+    if not check_permission(forum_admin.role, permission):
+        raise HTTPException(
+            403, f"Insufficient permissions to add an admin of role {admin_model.role}"
+        )
+
+    existing_admin: ForumAdminResult | None = (
+        await cache_manager.distributed_get_or_load(
+            derive_cache_key(
+                ForumAdmin.__tablename__,
+                NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
+            ),
+            partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
+            ForumAdminResult,
+        )
+    )
+    if existing_admin:
+        raise HTTPException(
+            409, f"User is already an admin (role: {existing_admin.role.value})"
+        )
+
+    if not existing_admin:
+        user: UserResult | None = await cache_manager.distributed_get_or_load(
+            derive_cache_key(Forum.__tablename__, forum_id),
+            partial(user_repo.get_user, admin_model.user_id),
+            UserResult,
+        )
+        if not user:
+            raise HTTPException(404, f"No user with id {admin_model.user_id} found")
+
+    await forum_repo.add_forum_admin(forum_id, admin_model.user_id, admin_model.role)
+    return JSONResponse(
+        {
+            "message": "Admin added",
+            "role": admin_model.role,
+            "time_added": datetime.now().isoformat(),
+        },
+        201,
+    )
 
 
 @FORUMS.delete("/{forum_id}/admins")
-def remove_admin(forum_id: int) -> JSONResponse: ...
+async def remove_admin(
+    forum_id: int,
+    access_token: Annotated[StandardAccessTokenClaims, Depends(validate_access_token)],
+    admin_model: GenericAdminModel,
+    cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
+    forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
+) -> JSONResponse:
+    forum: ForumResult | None = await cache_manager.distributed_get_or_load(
+        derive_cache_key(Forum.__tablename__, forum_id),
+        partial(forum_repo.get_forum, forum_id),
+        ForumResult,
+    )
+    if not forum:
+        raise HTTPException(404, f"No forum with id {forum_id} found")
+
+    forum_admin: ForumAdminResult | None = await cache_manager.distributed_get_or_load(
+        derive_cache_key(
+            ForumAdmin.__tablename__,
+            NAME_SEPERATOR.join((str(forum_id), str(access_token["sid"]))),
+        ),
+        partial(forum_repo.get_forum_admin, forum_id, access_token["sid"]),
+        ForumAdminResult,
+    )
+    if not forum_admin:
+        raise HTTPException(403, f"You are not an admin for forum: {forum.name_}")
+
+    existing_admin: ForumAdminResult | None = (
+        await cache_manager.distributed_get_or_load(
+            derive_cache_key(
+                ForumAdmin.__tablename__,
+                NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
+            ),
+            partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
+            ForumAdminResult,
+        )
+    )
+    if not existing_admin:
+        raise HTTPException(404, "Admin does not exist")
+
+    if existing_admin.role == AdminRoles.OWNER:
+        raise HTTPException(403, "Cannot change forum ownership")
+
+    if existing_admin.role == AdminRoles.ADMIN:
+        permission = AdminPermissions.REMOVE_ADMIN
+    else:
+        permission = AdminPermissions.REMOVE_SUPER
+
+    if not check_permission(forum_admin.role, permission):
+        raise HTTPException(
+            403,
+            f"Insufficient permissions to remove an admin with role {existing_admin.role}",
+        )
+
+    await forum_repo.remove_forum_admin(forum_id, existing_admin.user_id)
+    return JSONResponse(
+        {
+            "message": "Admin removed",
+            "role": existing_admin.role,
+            "time_removed": datetime.now().isoformat(),
+        }
+    )
 
 
 @FORUMS.patch("/{forum_id}/admins")
-def edit_admin_permissions(forum_id: int) -> JSONResponse: ...
+async def edit_admin_permissions(
+    forum_id: int,
+    access_token: Annotated[StandardAccessTokenClaims, Depends(validate_access_token)],
+    admin_model: AdminAddModel,
+    cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
+    forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
+) -> JSONResponse:
+    forum: ForumResult | None = await cache_manager.distributed_get_or_load(
+        derive_cache_key(Forum.__tablename__, forum_id),
+        partial(forum_repo.get_forum, forum_id),
+        ForumResult,
+    )
+    if not forum:
+        raise HTTPException(404, f"No forum with id {forum_id} found")
+
+    forum_admin: ForumAdminResult | None = await cache_manager.distributed_get_or_load(
+        derive_cache_key(
+            ForumAdmin.__tablename__,
+            NAME_SEPERATOR.join((str(forum_id), str(access_token["sid"]))),
+        ),
+        partial(forum_repo.get_forum_admin, forum_id, access_token["sid"]),
+        ForumAdminResult,
+    )
+    if not forum_admin:
+        raise HTTPException(403, f"You are not an admin for forum: {forum.name_}")
+
+    existing_admin: ForumAdminResult | None = (
+        await cache_manager.distributed_get_or_load(
+            derive_cache_key(
+                ForumAdmin.__tablename__,
+                NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
+            ),
+            partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
+            ForumAdminResult,
+        )
+    )
+    if not existing_admin:
+        raise HTTPException(404, "Admin does not exist")
+    if existing_admin.role == AdminRoles.OWNER:
+        raise HTTPException(403, "Owner permissions cannot be changed")
+
+    if admin_model.role == existing_admin.role:
+        raise HTTPException(409, "Previous and new roles identical")
+    elif existing_admin.role == forum_admin.role:
+        raise HTTPException(403, "Cannot change roles of peer admins")
+
+    # Very brittle logic, but I can't see adding more admin roles anytime soon
+    if admin_model.role == AdminRoles.ADMIN:
+        permission = AdminPermissions.DEMOTE_TO_ADMIN
+    else:
+        permission = AdminPermissions.PROMOTE_TO_SUPER
+
+    if not check_permission(forum_admin.role, permission):
+        raise HTTPException(
+            403, "Insufficient permissions to change role in this manner"
+        )
+
+    await forum_repo.update_admin_role(forum_id, admin_model.user_id, admin_model.role)
+    return JSONResponse(
+        {
+            "message": "Updated role",
+            "previous_role": existing_admin.role,
+            "new_role": admin_model.role,
+        }
+    )
 
 
 @FORUMS.get("/{forum_id}/admins")
-def check_forum_admin(forum_id: int) -> JSONResponse: ...
+async def get_forum_admins(
+    forum_id: int,
+    app_config: Annotated[AppConfig, Depends(get_app_config)],
+    cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
+    forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
+) -> JSONResponse:
+    pagination_cache_key: str = await cache_manager.derive_pagination_key(
+        NAME_SEPERATOR.join((ForumAdmin.__tablename__, str(forum_id)))
+    )
+
+    admin_users, next_cursor = await cache_manager.distributed_pagination_get_or_load(
+        pagination_cache_key,
+        partial(forum_repo.get_forum_admin_users, forum_id),
+        ForumAdminResult,
+        fetch_dtype="string",
+    )
+
+    if next_cursor == CacheManager.CURSOR_UNDERIVABLE_SENTINEL:
+        next_cursor = to_base64url(
+            admin_users[-1].user_id, app_config.BUSINESS.PAGINATION_CURSOR_LENGTH
+        )
+
+    return JSONResponse(
+        {"admins": [json_repr(i) for i in admin_users], "cursor": next_cursor}
+    )
 
 
 @FORUMS.post("/{forum_id}/subscriptions")
@@ -343,7 +562,10 @@ async def edit_forum(
         raise HTTPException(404, f"No forum with ID {forum_id} exists")
 
     admin_role: ForumAdminResult | None = await cache_manager.distributed_get_or_load(
-        derive_cache_key(Forum.__tablename__, forum_id),
+        derive_cache_key(
+            ForumAdmin.__tablename__,
+            NAME_SEPERATOR.join((str(forum_id), str(access_token["sid"]))),
+        ),
         partial(forum_repo.get_forum_admin, forum_id, access_token["sid"]),
         ForumAdminResult,
     )
