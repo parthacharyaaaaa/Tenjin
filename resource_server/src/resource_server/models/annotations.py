@@ -3,7 +3,11 @@ from typing import Annotated
 from pydantic import Field, BeforeValidator
 
 from resource_server.config.constants import EMAIL_PATTERN
-from resource_server.config.database_constants import UserConstants, ForumConstants
+from resource_server.config.database_constants import (
+    UserConstants,
+    ForumConstants,
+    PostConstants,
+)
 
 type email_annotation = Annotated[
     str,
@@ -49,3 +53,19 @@ type forum_description_annotation = Annotated[
 ]
 
 type strong_entity_pk_annotation = Annotated[int, Field(ge=1, frozen=True)]
+
+type post_body_annotation = Annotated[
+    str,
+    BeforeValidator(lambda x: x.strip()),
+    Field(max_length=PostConstants.BODY_MAX_LENGTH, frozen=True),
+]
+
+type post_title_annotation = Annotated[
+    str,
+    BeforeValidator(lambda x: x.strip()),
+    Field(
+        max_length=PostConstants.TITLE_MAX_LENGTH,
+        min_length=PostConstants.TITLE_MIN_LENGTH,
+        frozen=True,
+    ),
+]

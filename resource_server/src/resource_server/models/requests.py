@@ -7,6 +7,8 @@ from resource_server.models.annotations import (
     strong_entity_pk_annotation,
     forum_name_annotation,
     forum_description_annotation,
+    post_title_annotation,
+    post_body_annotation,
 )
 from resource_server.config.database_constants import UserTicketConstants
 from resource_server.models.database import AdminRoles
@@ -51,3 +53,16 @@ class AdminAddModel(GenericAdminModel):
         Literal[AdminRoles.SUPER, AdminRoles.ADMIN],
         BeforeValidator(lambda x: x.strip().upper()),
     ]
+
+
+class PostContentModel(BaseModel):
+    title: post_title_annotation
+    body: post_body_annotation
+
+
+class PostCreationModel(PostContentModel):
+    forum_id: strong_entity_pk_annotation
+
+
+class PostAmendmentModel(PostContentModel):
+    closed: bool | None = None
