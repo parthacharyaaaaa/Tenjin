@@ -2,6 +2,7 @@ import time
 from functools import partial
 from typing import Annotated, Final
 from datetime import datetime
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -469,6 +470,23 @@ async def subscribe_forum(
     if latest_intent == IntentFlag.RESOURCE_CREATION_PENDING_FLAG.value:
         raise HTTPException(409, "Forum already subscribed")
 
+    intent_id: Final[str] = uuid4().hex
+
+    if not latest_intent:
+        subscribed: bool = await forum_repo.check_subscription(
+            forum_id=forum_id, user_id=access_token["sid"]
+        )
+        if subscribed:
+            await cache_manager.set_intent(
+                intent_id,
+                str(access_token["sid"]),
+                str(forum_id),
+                ForumResult.resource_name,
+                Action.SUB,
+                IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+            )
+            raise HTTPException(409, f"Already subscribed to forum {forum.name_}")
+
     forum_owner: UserResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(Forum.__tablename__ + "owner", forum_id),
         partial(forum_repo.get_forum_owner, forum_id),
@@ -517,7 +535,24 @@ async def unsubscribe_forum(
     if lock:
         raise HTTPException(409, "A request for this action is already underway")
     if latest_intent == IntentFlag.RESOURCE_DELETION_PENDING_FLAG.value:
-        raise HTTPException(409, "Forum already subscribed")
+        raise HTTPException(409, "Forum not subscribed")
+
+    intent_id: Final[str] = uuid4().hex
+
+    if not latest_intent:
+        subscribed: bool = await forum_repo.check_subscription(
+            forum_id=forum_id, user_id=access_token["sid"]
+        )
+        if not subscribed:
+            await cache_manager.set_intent(
+                intent_id,
+                str(access_token["sid"]),
+                str(forum_id),
+                ForumResult.resource_name,
+                Action.UNSUB,
+                IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+            )
+            raise HTTPException(409, f"Already unsubscribed to forum {forum.name_}")
 
     forum_owner: UserResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(Forum.__tablename__ + "owner", forum_id),
@@ -527,7 +562,7 @@ async def unsubscribe_forum(
 
     # NOTE: This should never happen
     if not forum_owner:
-        raise HTTPException(500, "Failed to perform subscription")
+        raise HTTPException(500, "Failed to perform unsubscription")
 
     event_body: dict[FieldT, int] = {"forum_id": forum_id}
     await event_streamer.emit_user_counter_event(
@@ -541,7 +576,7 @@ async def unsubscribe_forum(
         -1,
     )
 
-    return JSONResponse({"message": "Forum subscribed!"}, 202)
+    return JSONResponse({"message": "Forum unsubscribed!"}, 202)
 
 
 @FORUMS.patch("/{forum_id}")
