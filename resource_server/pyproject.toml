@@ -46,7 +46,7 @@ dependencies = [
     "six==1.17.0",
     "sqlalchemy>=2.0.50",
     "toml==0.10.2",
-    "typing-extensions==4.12.2",
+    "typing-extensions>=4.12.2",
     "ujson==5.10.0",
     "urllib3==2.3.0",
     "werkzeug==3.1.3",
