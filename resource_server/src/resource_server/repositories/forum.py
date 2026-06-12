@@ -8,7 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from resource_server.repositories.user import UserResult
 from resource_server.utils.singleton import SingletonMetaclass
 from resource_server.repositories.result_protocol import AbstractResult
-from resource_server.models.database import Forum, ForumAdmin, User, AdminRoles
+from resource_server.models.database import (
+    Forum,
+    ForumAdmin,
+    ForumSubscription,
+    User,
+    AdminRoles,
+)
 
 from resource_auxillary.strings import NAME_SEPERATOR
 
@@ -308,3 +314,16 @@ class ForumRepository(metaclass=SingletonMetaclass):
                 .values(role=role.value)
             )
             await session.commit()
+
+    async def check_subscription(self, forum_id: int, user_id: int) -> bool:
+        async with self.session_maker() as session:
+            subscription: ForumSubscription | None = (
+                await session.execute(
+                    select(ForumSubscription).where(
+                        (ForumSubscription.user_id == user_id)
+                        & (ForumSubscription.forum_id == forum_id)
+                    )
+                )
+            ).scalar_one_or_none()
+
+            return bool(subscription)
