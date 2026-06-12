@@ -5,25 +5,27 @@ NAME_SEPERATOR: Final[LiteralString] = ":"
 
 
 class IntentFlag(StrEnum):
-    RESOURCE_CREATION_PENDING_FLAG = NAME_SEPERATOR.join(("flag", "c"))
-    RESOURCE_CREATION_PENDING_ALT_FLAG = NAME_SEPERATOR.join(("flag", "ca"))
-    RESOURCE_DELETION_PENDING_FLAG = NAME_SEPERATOR.join(("flag", "d"))
+    RESOURCE_CREATION_PENDING_FLAG = NAME_SEPERATOR.join(("FLAG", "C"))
+    RESOURCE_CREATION_PENDING_ALT_FLAG = NAME_SEPERATOR.join(("FLAG", "CA"))
+    RESOURCE_DELETION_PENDING_FLAG = NAME_SEPERATOR.join(("FLAG", "D"))
 
 
 class StreamName(StrEnum):
     USER_INTERACTIONS = "USER_INTERACTIONS"
+    USER_EMAILS = "USER_EMAILS"
 
 
 class Action(StrEnum):
-    SAVE = "save"
-    REPORT = "report"
-    VOTE = "vote"
-    UNVOTE = "unvote"
-    SUB = "sub"
-    UNSUB = "unsub"
+    SAVE = "SAVE"
+    REPORT = "REPORT"
+    VOTE = "VOTE"
+    UNVOTE = "UNVOTE"
+    SUB = "SUB"
+    UNSUB = "UNSUB"
+    DELETE = "DELETE"
 
 
-class EventNames(StrEnum):
+class EventName(StrEnum):
     POST_SAVE = "POST_SAVE"
     POST_UNSAVE = "POST_UNSAVE"
     POST_REPORT = "POST_REPORT"
