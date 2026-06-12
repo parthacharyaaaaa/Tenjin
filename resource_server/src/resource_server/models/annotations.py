@@ -8,6 +8,7 @@ from resource_server.config.database_constants import (
     ForumConstants,
     PostConstants,
 )
+from resource_server.models.database_enums import ReportTags
 
 type email_annotation = Annotated[
     str,
@@ -66,6 +67,20 @@ type post_title_annotation = Annotated[
     Field(
         max_length=PostConstants.TITLE_MAX_LENGTH,
         min_length=PostConstants.TITLE_MIN_LENGTH,
+        frozen=True,
+    ),
+]
+
+type post_report_tag_annotation = Annotated[
+    ReportTags, BeforeValidator(lambda x: x.strip()), Field(frozen=True)
+]
+
+type post_report_description_annotation = Annotated[
+    str,
+    BeforeValidator(lambda x: x.strip()),
+    Field(
+        max_length=PostConstants.REPORT_DESCRIPTION_MAX_LENGTH,
+        min_length=PostConstants.REPORT_DESCRIPTION_MIN_LENGTH,
         frozen=True,
     ),
 ]

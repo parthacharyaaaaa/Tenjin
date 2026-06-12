@@ -9,6 +9,8 @@ from resource_server.models.annotations import (
     forum_description_annotation,
     post_title_annotation,
     post_body_annotation,
+    post_report_tag_annotation,
+    post_report_description_annotation,
 )
 from resource_server.config.database_constants import UserTicketConstants
 from resource_server.models.database import AdminRoles
@@ -71,3 +73,8 @@ class PostAmendmentModel(BaseModel):
         if not (self.closed or self.title or self.body):
             raise ValueError("Empty request provided for post amendment")
         return self
+
+
+class PostReportModel(BaseModel):
+    tag: post_report_tag_annotation
+    description: post_report_description_annotation
