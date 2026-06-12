@@ -511,13 +511,15 @@ async def subscribe_forum(
 
     counter_updates: tuple[CounterUpdate, ...] = (
         CounterUpdate(
-            counter_group=derive_hashmap_name(ForumResult.resource_name, Action.SUB),
+            counter_group=derive_hashmap_name(
+                ForumResult.resource_name, "subscriptions"
+            ),
             cache_key=cache_key,
             field_name="subscribers",
             delta=1,
         ),
         CounterUpdate(
-            counter_group=derive_hashmap_name(UserResult.resource_name, Action.AURA),
+            counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
             cache_key=derive_cache_key(UserResult.resource_name, forum_owner.id_),
             field_name="aura",
             delta=1,
@@ -604,13 +606,15 @@ async def unsubscribe_forum(
 
     counter_updates: tuple[CounterUpdate, ...] = (
         CounterUpdate(
-            counter_group=derive_hashmap_name(ForumResult.resource_name, Action.UNSUB),
+            counter_group=derive_hashmap_name(
+                ForumResult.resource_name, "subscriptions"
+            ),
             cache_key=cache_key,
             field_name="subscribers",
             delta=-1,
         ),
         CounterUpdate(
-            counter_group=derive_hashmap_name(UserResult.resource_name, Action.AURA),
+            counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
             cache_key=derive_cache_key(UserResult.resource_name, forum_owner.id_),
             field_name="aura",
             delta=-1,

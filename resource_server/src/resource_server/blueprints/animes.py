@@ -118,7 +118,9 @@ async def sub_anime(
 
     counter_updates: tuple[CounterUpdate, ...] = (
         CounterUpdate(
-            counter_group=derive_hashmap_name(AnimeResult.resource_name, Action.SUB),
+            counter_group=derive_hashmap_name(
+                AnimeResult.resource_name, "subscriptions"
+            ),
             cache_key=cache_key,
             field_name="subscribers",
             delta=1,
@@ -197,7 +199,9 @@ async def unsub_anime(
 
     counter_updates: tuple[CounterUpdate, ...] = (
         CounterUpdate(
-            counter_group=derive_hashmap_name(AnimeResult.resource_name, Action.UNSUB),
+            counter_group=derive_hashmap_name(
+                AnimeResult.resource_name, "subscriptions"
+            ),
             cache_key=cache_key,
             field_name="subscribers",
             delta=-1,
