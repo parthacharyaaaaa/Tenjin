@@ -9,7 +9,8 @@ from sqlalchemy.orm import DeclarativeBase
 from resource_server.datastructures.requests import SortOption
 from resource_server.utils.singleton import SingletonMetaclass
 from resource_server.repositories.result_protocol import AbstractResult
-from resource_server.models.database import Post, User
+from resource_server.models.database import Post, PostReport, PostSave, PostVote, User
+from resource_server.models.database_enums import ReportTags
 
 from resource_auxillary.strings import NAME_SEPERATOR
 
@@ -131,3 +132,44 @@ class PostRepository(metaclass=SingletonMetaclass):
             )
 
             return [PostResult.construct_from_orm(*p.tuple()) for p in posts]
+
+    async def check_saved(self, post_id: int, user_id) -> bool:
+        async with self.session_maker() as session:
+            saved: PostSave | None = (
+                await session.execute(
+                    select(PostSave).where(
+                        (PostSave.user_id == user_id) & (PostSave.post_id == post_id)
+                    )
+                )
+            ).scalar_one_or_none()
+            return bool(saved)
+
+    async def get_vote(self, post_id: int, user_id: int) -> bool | None:
+        async with self.session_maker() as session:
+            vote: PostVote | None = (
+                await session.execute(
+                    select(PostVote).where(
+                        (PostVote.voter_id == user_id) & (PostVote.post_id == post_id)
+                    )
+                )
+            ).scalar_one_or_none()
+
+            if not vote:
+                return None
+
+            return vote.vote
+
+    async def check_reported(
+        self, post_id: int, user_id, report_tag: ReportTags
+    ) -> bool:
+        async with self.session_maker() as session:
+            report: PostReport | None = (
+                await session.execute(
+                    select(PostReport).where(
+                        (PostReport.user_id == user_id)
+                        & (PostReport.post_id == post_id)
+                        & (PostReport.report_tag == report_tag.value)
+                    )
+                )
+            ).scalar_one_or_none()
+            return bool(report)
