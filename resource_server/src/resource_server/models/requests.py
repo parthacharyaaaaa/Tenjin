@@ -55,14 +55,19 @@ class AdminAddModel(GenericAdminModel):
     ]
 
 
-class PostContentModel(BaseModel):
+class PostCreationModel(BaseModel):
+    forum_id: strong_entity_pk_annotation
     title: post_title_annotation
     body: post_body_annotation
 
 
-class PostCreationModel(PostContentModel):
-    forum_id: strong_entity_pk_annotation
-
-
-class PostAmendmentModel(PostContentModel):
+class PostAmendmentModel(BaseModel):
     closed: bool | None = None
+    title: post_title_annotation | None = None
+    body: post_body_annotation | None = None
+
+    @model_validator(mode="after")
+    def validate_non_emptiness(self) -> Self:
+        if not (self.closed or self.title or self.body):
+            raise ValueError("Empty request provided for post amendment")
+        return self
