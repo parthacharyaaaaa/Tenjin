@@ -5,8 +5,9 @@ from typing import ClassVar, Self
 from sqlalchemy import Row, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from resource_server.models.database import Comment, CommentReport, CommentVote, User
+from resource_server.models.database_enums import ReportTags
 from resource_server.repositories.result_protocol import AbstractResult
-from resource_server.models.database import Comment, User
 from resource_server.utils.singleton import SingletonMetaclass
 
 type t_comment_result = Row[tuple[Comment, int, str]]
@@ -81,3 +82,34 @@ class CommentRepository(metaclass=SingletonMetaclass):
             )
 
             return [CommentResult.construct_from_orm(*r.tuple()) for r in results]
+
+    async def get_vote(self, comment_id: int, user_id: int) -> bool | None:
+        async with self.session_maker() as session:
+            vote: CommentVote | None = (
+                await session.execute(
+                    select(CommentVote).where(
+                        (CommentVote.voter_id == user_id)
+                        & (CommentVote.comment_id == comment_id)
+                    )
+                )
+            ).scalar_one_or_none()
+
+            if not vote:
+                return None
+
+            return vote.vote
+
+    async def check_reported(
+        self, comment_id: int, user_id, report_tag: ReportTags
+    ) -> bool:
+        async with self.session_maker() as session:
+            report: CommentReport | None = (
+                await session.execute(
+                    select(CommentReport).where(
+                        (CommentReport.user_id == user_id)
+                        & (CommentReport.comment_id == comment_id)
+                        & (CommentReport.report_tag == report_tag.value)
+                    )
+                )
+            ).scalar_one_or_none()
+            return bool(report)
