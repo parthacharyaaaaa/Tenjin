@@ -10,7 +10,6 @@ class CounterUpdate(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     counter_group: str
-    counter_id: str
     cache_key: str  # Cache entry whose counter needs to be updated
     field_name: str  # Field name of cache entry to update with flushed delta
     delta: int
