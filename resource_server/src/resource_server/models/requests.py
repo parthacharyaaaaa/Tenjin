@@ -78,3 +78,7 @@ class PostAmendmentModel(BaseModel):
 class PostReportModel(BaseModel):
     tag: post_report_tag_annotation
     description: post_report_description_annotation
+
+
+class PostVoteModel(BaseModel):
+    vote: Annotated[Literal[1, -1], Field(frozen=True)]
