@@ -14,11 +14,12 @@ from sqlalchemy.ext.asyncio import (
 
 from resource_server.cache_manager import CacheManager
 from resource_server.config.app_config import AppConfig
+from resource_server.event_streamer import EventStreamer
 from resource_server.key_manager import KeyManager
 from resource_server.models.database import Genre
 from resource_server.repositories.anime import AnimeRepository
+from resource_server.repositories.comment import CommentRepository
 from resource_server.repositories.forum import ForumRepository
-from resource_server.event_streamer import EventStreamer
 from resource_server.repositories.posts import PostRepository
 from resource_server.repositories.user import UserRepository
 
@@ -123,3 +124,8 @@ def get_post_repository() -> PostRepository:
 @lru_cache(maxsize=1)
 def get_user_repository() -> UserRepository:
     return UserRepository(get_database_session_maker())
+
+
+@lru_cache(maxsize=1)
+def get_comment_repository() -> CommentRepository:
+    return CommentRepository(get_database_session_maker())
