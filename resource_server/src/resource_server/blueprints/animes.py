@@ -1,11 +1,10 @@
 from functools import partial
+import time
 from typing import Annotated, Final
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-
-from redis.typing import FieldT
 
 from resource_server.cache_manager import CacheManager
 from resource_server.repositories.anime import AnimeRepository, AnimeResult
@@ -33,8 +32,18 @@ from resource_server.request_dependencies import (
 )
 from resource_server.event_streamer import EventStreamer
 
-from resource_auxillary.strings import Action, EventNames, IntentFlag
-from resource_auxillary.cache import derive_cache_key
+from resource_auxillary.cache import (
+    derive_cache_key,
+    derive_hashmap_name,
+    create_intent_flag,
+)
+from resource_auxillary.events import (
+    Event,
+    CounterUpdate,
+    EventSideEffects,
+    IntentUpdate,
+)
+from resource_auxillary.strings import Action, EventName, IntentFlag
 
 from auxillary.utils import (
     json_repr,
@@ -71,8 +80,9 @@ async def sub_anime(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
 ) -> JSONResponse:
+    cache_key: Final[str] = derive_cache_key(AnimeResult.resource_name, anime_id)
     anime: AnimeResult | None = await cache_manager.distributed_get_or_load(
-        derive_cache_key(Anime.__tablename__, anime_id),
+        cache_key,
         partial(anime_repo.get_anime, anime_id),
         AnimeResult,
         fetch_dtype="string",
@@ -106,18 +116,38 @@ async def sub_anime(
             )
             raise HTTPException(409, f"Already subscribed to anime {anime.title}")
 
-    event_body: dict[FieldT, int] = {"anime_id": anime_id}
-    await event_streamer.emit_user_counter_event(
-        EventNames.ANIME_SUB,
-        Anime.__tablename__,
-        anime_id,
-        Action.SUB,
-        IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-        access_token["sid"],
-        event_body,
-        1,
+    counter_updates: tuple[CounterUpdate, ...] = (
+        CounterUpdate(
+            counter_group=derive_hashmap_name(AnimeResult.resource_name, Action.SUB),
+            cache_key=cache_key,
+            field_name="subscribers",
+            delta=1,
+        ),
+    )
+    intent_updates: tuple[IntentUpdate, ...] = (
+        IntentUpdate(
+            intent_name=create_intent_flag(
+                AnimeResult.resource_name,
+                Action.SUB,
+                str(access_token["sid"]),
+                str(anime_id),
+            ),
+            intent_flag=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+            intent_id=intent_id,
+        ),
     )
 
+    subscription_event: Event = Event(
+        name=EventName.ANIME_SUB,
+        event_id=intent_id,
+        created_at=time.time(),
+        payload={"anime_id": anime_id, "user_id": access_token["sid"]},
+        side_effects=EventSideEffects(
+            counter_updates=counter_updates, intent_updates=intent_updates
+        ),  # type: ignore[reportCallIssue]
+    )
+
+    await event_streamer.emit_user_event(subscription_event)
     return JSONResponse({"message": "subscribed!"}, 202)
 
 
@@ -129,8 +159,9 @@ async def unsub_anime(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
 ) -> JSONResponse:
+    cache_key: Final[str] = derive_cache_key(Anime.__tablename__, anime_id)
     anime: AnimeResult | None = await cache_manager.distributed_get_or_load(
-        derive_cache_key(Anime.__tablename__, anime_id),
+        cache_key,
         partial(anime_repo.get_anime, anime_id),
         AnimeResult,
         fetch_dtype="string",
@@ -164,18 +195,38 @@ async def unsub_anime(
             )
             raise HTTPException(409, f"Not subscribed to anime {anime.title}")
 
-    event_body: dict[FieldT, int] = {"anime_id": anime_id}
-    await event_streamer.emit_user_counter_event(
-        EventNames.ANIME_UNSUB,
-        Anime.__tablename__,
-        anime_id,
-        Action.UNSUB,
-        IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-        access_token["sid"],
-        event_body,
-        -1,
+    counter_updates: tuple[CounterUpdate, ...] = (
+        CounterUpdate(
+            counter_group=derive_hashmap_name(AnimeResult.resource_name, Action.UNSUB),
+            cache_key=cache_key,
+            field_name="subscribers",
+            delta=-1,
+        ),
+    )
+    intent_updates: tuple[IntentUpdate, ...] = (
+        IntentUpdate(
+            intent_name=create_intent_flag(
+                AnimeResult.resource_name,
+                Action.UNSUB,
+                str(access_token["sid"]),
+                str(anime_id),
+            ),
+            intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+            intent_id=intent_id,
+        ),
     )
 
+    subscription_event: Event = Event(
+        name=EventName.ANIME_UNSUB,
+        event_id=intent_id,
+        created_at=time.time(),
+        payload={"anime_id": anime_id, "user_id": access_token["sid"]},
+        side_effects=EventSideEffects(
+            counter_updates=counter_updates, intent_updates=intent_updates
+        ),  # type: ignore[reportCallIssue]
+    )
+
+    await event_streamer.emit_user_event(subscription_event)
     return JSONResponse({"message": "unsubscribed!"}, 202)
 
 
