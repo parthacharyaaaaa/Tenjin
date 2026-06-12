@@ -20,6 +20,7 @@ from resource_server.repositories.anime import AnimeRepository
 from resource_server.repositories.forum import ForumRepository
 from resource_server.event_streamer import EventStreamer
 from resource_server.repositories.posts import PostRepository
+from resource_server.repositories.user import UserRepository
 
 
 @lru_cache(maxsize=1)
@@ -117,3 +118,8 @@ def get_forum_repository() -> ForumRepository:
 @lru_cache(maxsize=1)
 def get_post_repository() -> PostRepository:
     return PostRepository(get_database_session_maker())
+
+
+@lru_cache(maxsize=1)
+def get_user_repository() -> UserRepository:
+    return UserRepository(get_database_session_maker())
