@@ -27,6 +27,7 @@ class PostConstants:
 
 class CommentConstants:
     COMMENT_MAX_LENGTH: Final[int] = 8192
+    COMMENT_MIN_LENGTH: Final[int] = 1
 
 
 class ForumConstants:
@@ -36,6 +37,7 @@ class ForumConstants:
     RULE_DESCRIPTION_MIN_LENGTH: Final[int] = 8
     RULE_DESCRIPTION_MAX_LENGTH: Final[int] = 128
 
+    TITLE_MIN_LENGTH: Final[int] = 4
     TITLE_MAX_LENGTH: Final[int] = 64
     DESCRIPTION_MAX_LENGTH: Final[int] = 256
     DESCRIPTION_MIN_LENGTH: Final[int] = 8
