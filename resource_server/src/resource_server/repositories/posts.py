@@ -1,14 +1,15 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar
+from typing import Any, ClassVar, Mapping, Self
 
-from sqlalchemy import select
+from sqlalchemy import Row, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import DeclarativeBase
 
 from resource_server.datastructures.requests import SortOption
 from resource_server.utils.singleton import SingletonMetaclass
 from resource_server.repositories.result_protocol import AbstractResult
-from resource_server.models.database import Post
+from resource_server.models.database import Post, User
 
 from resource_auxillary.strings import NAME_SEPERATOR
 
@@ -18,6 +19,7 @@ class PostResult(AbstractResult):
     id_: int
     author_id: int
     forum_id: int
+    author_username: str
 
     # Post statistics
     score: int
@@ -35,20 +37,65 @@ class PostResult(AbstractResult):
 
     COUNTER_FIELDS: ClassVar[tuple[str, ...]] = ("saves", "reports", "total_comments")
 
+    @classmethod
+    def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
+        instance = super().construct_from_cache(mapping)
+        instance.author_username = mapping["author_username"]
+        return instance
+
+    @classmethod
+    def construct_from_orm(
+        cls, obj: DeclarativeBase, author_username: str, *args, **kwargs
+    ) -> Self:
+        instance = super().construct_from_orm(obj, *args, **kwargs)
+        instance.author_username = author_username
+        return instance
+
 
 @dataclass(slots=True, weakref_slot=True)
 class PostRepository(metaclass=SingletonMetaclass):
     session_maker: async_sessionmaker[AsyncSession]
 
-    async def get_post(self, post_id) -> PostResult | None:
+    async def get_post(self, post_id: int) -> PostResult | None:
         async with self.session_maker() as session:
-            post: Post | None = (
-                await session.execute(select(Post).where(Post.id_ == post_id))
-            ).scalar_one_or_none()
-            if not post:
+            result: Row[tuple[Post, str]] | None = (
+                await session.execute(
+                    select(Post, User.username)
+                    .join(User, User.id_ == Post.author_id)
+                    .where(
+                        (Post.id_ == post_id)
+                        & (Post.rtbf_hidden.isnot(True))
+                        & (Post.deleted == False)
+                    )
+                )
+            ).first()
+            if not result:
                 return None
+            return PostResult.construct_from_orm(*result.tuple())
 
-            return PostResult.construct_from_orm(post)
+    async def update_post(
+        self,
+        post_id: int,
+        post_title: str | None = None,
+        post_body: str | None = None,
+        closed: bool = False,
+    ) -> None:
+        update_kw: dict[str, Any] = {}
+        if post_title:
+            update_kw["title"] = post_title
+        if post_body:
+            update_kw["body"] = post_body
+        if closed:
+            update_kw["closed"] = True
+
+        if not update_kw:
+            raise ValueError("Empty update set provided")
+
+        async with self.session_maker() as session:
+            await session.execute(
+                update(Post).where(Post.id_ == post_id).values(**update_kw)
+            )
+            await session.commit()
 
     async def get_forum_posts(
         self,
@@ -66,10 +113,11 @@ class PostRepository(metaclass=SingletonMetaclass):
                 order_clause = Post.time_posted.asc
 
         async with self.session_maker() as session:
-            posts: list[Post] = list(
+            posts: list[Row[tuple[Post, str]]] = list(
                 (
                     await session.execute(
-                        select(Post)
+                        select(Post, User.username)
+                        .join(User, Post.author_id == User.id_)
                         .where(
                             (Post.id_ > cursor)
                             & (Post.forum_id == forum_id)
@@ -78,9 +126,7 @@ class PostRepository(metaclass=SingletonMetaclass):
                         .order_by(order_clause)
                         .limit(limit)
                     )
-                )
-                .scalars()
-                .all()
+                ).all()
             )
 
-            return [PostResult.construct_from_orm(p) for p in posts]
+            return [PostResult.construct_from_orm(*p.tuple()) for p in posts]
