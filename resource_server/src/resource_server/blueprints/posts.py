@@ -38,7 +38,7 @@ from resource_server.event_streamer import EventStreamer
 from resource_server.models.requests import (
     PostAmendmentModel,
     PostReportModel,
-    PostVoteModel,
+    VoteModel,
 )
 from resource_server.repositories.forum import (
     ForumAdminResult,
@@ -203,7 +203,7 @@ async def delete_post(
 async def vote_post(
     post_id: int,
     access_token: Annotated[StandardAccessTokenClaims, Depends(validate_access_token)],
-    vote_model: PostVoteModel,
+    vote_model: VoteModel,
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
@@ -498,7 +498,7 @@ async def unsave_post(
                 str(access_token["sid"]),
                 str(post_id),
                 PostResult.resource_name,
-                Action.UNSAVE,
+                Action.SAVE,
                 IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
             )
             raise HTTPException(409, "Post not saved")
@@ -521,7 +521,7 @@ async def unsave_post(
         IntentUpdate(
             intent_name=create_intent_flag(
                 PostResult.resource_name,
-                Action.UNSAVE,
+                Action.SAVE,
                 str(access_token["sid"]),
                 str(post_id),
             ),

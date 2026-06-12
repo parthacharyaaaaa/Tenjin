@@ -12,7 +12,10 @@ from resource_server.models.annotations import (
     post_report_tag_annotation,
     post_report_description_annotation,
 )
-from resource_server.config.database_constants import UserTicketConstants
+from resource_server.config.database_constants import (
+    CommentConstants,
+    UserTicketConstants,
+)
 from resource_server.models.database import AdminRoles
 
 
@@ -80,5 +83,17 @@ class PostReportModel(BaseModel):
     description: post_report_description_annotation
 
 
-class PostVoteModel(BaseModel):
+class VoteModel(BaseModel):
     vote: Annotated[Literal[1, -1], Field(frozen=True)]
+
+
+class CommentModel(BaseModel):
+    body: Annotated[
+        str,
+        BeforeValidator(lambda x: x.strip()),
+        Field(
+            max_length=CommentConstants.COMMENT_MAX_LENGTH,
+            min_length=CommentConstants.COMMENT_MIN_LENGTH,
+            frozen=True,
+        ),
+    ]
