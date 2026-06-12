@@ -171,7 +171,7 @@ async def unsub_anime(
         raise HTTPException(404, f"No anime with id {anime_id} could be found")
 
     lock, latest_intent = await cache_manager.fetch_indicators(
-        str(access_token["sid"]), str(anime_id), Anime.__tablename__, Action.SUB
+        str(access_token["sid"]), str(anime_id), Anime.__tablename__, Action.UNSUB
     )
     if lock:
         raise HTTPException(409, "Duplicate operation ongoing")
