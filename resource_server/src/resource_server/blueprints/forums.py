@@ -11,8 +11,19 @@ from redis.typing import FieldT
 
 from auxillary.utils import cache_repr, json_repr, to_base64url
 
-from resource_auxillary.cache import Action, derive_cache_key
-from resource_auxillary.strings import NAME_SEPERATOR, EventNames, IntentFlag
+from resource_auxillary.cache import (
+    Action,
+    create_intent_flag,
+    derive_cache_key,
+    derive_hashmap_name,
+)
+from resource_auxillary.events import (
+    CounterUpdate,
+    IntentUpdate,
+    EventSideEffects,
+    Event,
+)
+from resource_auxillary.strings import NAME_SEPERATOR, EventName, IntentFlag
 
 from resource_server.cache_manager import CacheManager
 from resource_server.config.app_config import AppConfig
@@ -453,8 +464,9 @@ async def subscribe_forum(
     forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
 ) -> JSONResponse:
+    cache_key: Final[str] = derive_cache_key(Forum.__tablename__, forum_id)
     forum: ForumResult | None = await cache_manager.distributed_get_or_load(
-        derive_cache_key(Forum.__tablename__, forum_id),
+        cache_key,
         partial(forum_repo.get_forum, forum_id),
         ForumResult,
     )
@@ -497,18 +509,43 @@ async def subscribe_forum(
     if not forum_owner:
         raise HTTPException(500, "Failed to perform subscription")
 
-    event_body: dict[FieldT, int] = {"forum_id": forum_id}
-    await event_streamer.emit_user_counter_event(
-        EventNames.FORUM_SUB,
-        Forum.__tablename__,
-        forum_id,
-        Action.SUB,
-        IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-        forum_owner.id_,
-        event_body,
-        1,
+    counter_updates: tuple[CounterUpdate, ...] = (
+        CounterUpdate(
+            counter_group=derive_hashmap_name(ForumResult.resource_name, Action.SUB),
+            cache_key=cache_key,
+            field_name="subscribers",
+            delta=1,
+        ),
+        CounterUpdate(
+            counter_group=derive_hashmap_name(UserResult.resource_name, Action.AURA),
+            cache_key=derive_cache_key(UserResult.resource_name, forum_owner.id_),
+            field_name="aura",
+            delta=1,
+        ),
+    )
+    intent_updates: tuple[IntentUpdate, ...] = (
+        IntentUpdate(
+            intent_name=create_intent_flag(
+                ForumResult.resource_name,
+                Action.SUB,
+                str(access_token["sid"]),
+                str(forum_id),
+            ),
+            intent_flag=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+            intent_id=intent_id,
+        ),
     )
 
+    subscription_event: Event = Event(
+        name=EventName.FORUM_SUB,
+        event_id=intent_id,
+        created_at=time.time(),
+        payload={"forum_id": forum_id, "user_id": access_token["sid"]},
+        side_effects=EventSideEffects(
+            counter_updates=counter_updates, intent_updates=intent_updates
+        ),  # type: ignore[reportCallIssue]
+    )
+    await event_streamer.emit_user_event(subscription_event)
     return JSONResponse({"message": "Forum subscribed!"}, 202)
 
 
@@ -520,8 +557,9 @@ async def unsubscribe_forum(
     forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
 ) -> JSONResponse:
+    cache_key: Final[str] = derive_cache_key(ForumResult.resource_name, forum_id)
     forum: ForumResult | None = await cache_manager.distributed_get_or_load(
-        derive_cache_key(Forum.__tablename__, forum_id),
+        cache_key,
         partial(forum_repo.get_forum, forum_id),
         ForumResult,
     )
@@ -564,18 +602,44 @@ async def unsubscribe_forum(
     if not forum_owner:
         raise HTTPException(500, "Failed to perform unsubscription")
 
-    event_body: dict[FieldT, int] = {"forum_id": forum_id}
-    await event_streamer.emit_user_counter_event(
-        EventNames.FORUM_UNSUB,
-        Forum.__tablename__,
-        forum_id,
-        Action.UNSUB,
-        IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-        forum_owner.id_,
-        event_body,
-        -1,
+    counter_updates: tuple[CounterUpdate, ...] = (
+        CounterUpdate(
+            counter_group=derive_hashmap_name(ForumResult.resource_name, Action.UNSUB),
+            cache_key=cache_key,
+            field_name="subscribers",
+            delta=-1,
+        ),
+        CounterUpdate(
+            counter_group=derive_hashmap_name(UserResult.resource_name, Action.AURA),
+            cache_key=derive_cache_key(UserResult.resource_name, forum_owner.id_),
+            field_name="aura",
+            delta=-1,
+        ),
+    )
+    intent_updates: tuple[IntentUpdate, ...] = (
+        IntentUpdate(
+            intent_name=create_intent_flag(
+                ForumResult.resource_name,
+                Action.UNSUB,
+                str(access_token["sid"]),
+                str(forum_id),
+            ),
+            intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+            intent_id=intent_id,
+        ),
     )
 
+    unsubscription_event: Event = Event(
+        name=EventName.FORUM_UNSUB,
+        event_id=intent_id,
+        created_at=time.time(),
+        payload={"forum_id": forum_id, "user_id": access_token["sid"]},
+        side_effects=EventSideEffects(
+            counter_updates=counter_updates, intent_updates=intent_updates
+        ),  # type: ignore[reportCallIssue]
+    )
+
+    await event_streamer.emit_user_event(unsubscription_event)
     return JSONResponse({"message": "Forum unsubscribed!"}, 202)
 
 
