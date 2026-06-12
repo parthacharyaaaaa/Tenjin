@@ -335,10 +335,13 @@ class CacheManager(metaclass=SingletonMetaclass):
         resource_identifier: str,
         resource_name: str,
         action: Action,
-    ) -> tuple[str | None, IntentFlag]:
+    ) -> tuple[str | None, IntentFlag | None]:
         """
-        Consult cache and perform a check on a given resource to try to validate
-        the request through cache and minimize DB lookups.
+        Returns:
+            (tuple[str | None, tuple[IntentFlag, str] | None]):
+            Active lock for operation, if found.
+            Active intent, if found
+
         """
         intent: str = create_intent_flag(
             resource_name, action, user_identifier, resource_identifier
@@ -351,11 +354,12 @@ class CacheManager(metaclass=SingletonMetaclass):
             pipe.get(lock_name)
             pipe.get(intent)
             lock, intent = await pipe.execute()
-
-        return lock, IntentFlag(intent)
+        intent_value, *_ = intent.split(NAME_SEPERATOR)
+        return lock, IntentFlag(intent_value) if intent_value else None
 
     async def set_intent(
         self,
+        intent_id: str,
         user_identifier: str,
         resource_identifier: str,
         resource_name: str,
@@ -368,7 +372,9 @@ class CacheManager(metaclass=SingletonMetaclass):
             resource_name, action, user_identifier, resource_identifier
         )
         await self.redis_client.set(
-            intent, intent_flag, ex=ttl or self.cache_config.TTL_STRONGEST
+            intent,
+            NAME_SEPERATOR.join((intent_flag, intent_id)),
+            ex=ttl or self.cache_config.TTL_STRONGEST,
         )
 
     async def _fetch_paginated_resources(

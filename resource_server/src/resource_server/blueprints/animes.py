@@ -1,5 +1,6 @@
 from functools import partial
 from typing import Annotated, Final
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -88,12 +89,15 @@ async def sub_anime(
     if latest_intent == IntentFlag.RESOURCE_CREATION_PENDING_FLAG:
         raise HTTPException(409, f"Already subscribed to anime {anime.title}")
 
+    intent_id: Final[str] = uuid4().hex
+
     if not latest_intent:
         subscription: bool = await anime_repo.check_subscription(
             anime_id, access_token["sid"]
         )
         if subscription:
             await cache_manager.set_intent(
+                intent_id,
                 str(access_token["sid"]),
                 str(anime_id),
                 AnimeSubscription.__tablename__,
@@ -143,12 +147,15 @@ async def unsub_anime(
     if latest_intent == IntentFlag.RESOURCE_DELETION_PENDING_FLAG:
         raise HTTPException(409, f"Not subscribed to anime {anime.title}")
 
+    intent_id: Final[str] = uuid4().hex
+
     if not latest_intent:
         subscription: bool = await anime_repo.check_subscription(
             anime_id, access_token["sid"]
         )
         if subscription:
             await cache_manager.set_intent(
+                intent_id,
                 str(access_token["sid"]),
                 str(anime_id),
                 AnimeSubscription.__tablename__,
