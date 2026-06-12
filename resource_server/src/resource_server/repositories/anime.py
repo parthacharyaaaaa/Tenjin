@@ -34,6 +34,7 @@ class AnimeResult(AbstractResult):
     stream_links: dict[str, str]
 
     COUNTER_FIELDS: ClassVar[tuple[str]] = ("members",)
+    resource_name: ClassVar[str] = Anime.__tablename__
 
     @classmethod
     def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:

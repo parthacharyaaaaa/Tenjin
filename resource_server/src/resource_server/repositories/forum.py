@@ -27,6 +27,7 @@ class ForumResult(AbstractResult):
     admin_count: int
 
     COUNTER_FIELDS: ClassVar[tuple[str, ...]] = ("subscribers", "posts")
+    resource_name: ClassVar[str] = Forum.__tablename__
 
 
 @dataclass(slots=True, init=False)
@@ -34,6 +35,8 @@ class ForumAdminResult(AbstractResult):
     forum_id: int
     user_id: int
     role: AdminRoles
+
+    resource_name: ClassVar[str] = ForumAdmin.__tablename__
 
     @classmethod
     def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:

@@ -21,9 +21,11 @@ class AbstractResult:
         cls._counter_fields_map = {
             i: NAME_SEPERATOR.join((cls.resource_name, i)) for i in cls._counter_fields
         }
+        if not hasattr(cls, "resource_name"):
+            raise ValueError(f"Missing class variable: resource_name")
 
     @classmethod
-    def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
+    def construct_from_cache(cls, mapping: Mapping[str, Any], *args, **kwargs) -> Self:
         instance = cls()
 
         for k, v in mapping.items():

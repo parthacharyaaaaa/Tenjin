@@ -29,6 +29,7 @@ class UserResult(AbstractResult):
         "total_posts",
         "total_comments",
     )
+    resource_name: ClassVar[str] = User.__tablename__
 
 
 @dataclass(slots=True, weakref_slot=True)

@@ -36,6 +36,7 @@ class PostResult(AbstractResult):
     time_posted: datetime
 
     COUNTER_FIELDS: ClassVar[tuple[str, ...]] = ("saves", "reports", "total_comments")
+    resource_name: ClassVar[str] = Post.__tablename__
 
     @classmethod
     def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
