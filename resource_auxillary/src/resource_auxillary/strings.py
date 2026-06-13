@@ -23,6 +23,7 @@ class Action(StrEnum):
     SUB = "SUB"
     UNSUB = "UNSUB"
     DELETE = "DELETE"
+    CREATE = "CREATE"
 
 
 class EventName(StrEnum):
@@ -35,6 +36,7 @@ class EventName(StrEnum):
     ANIME_SUB = "ANIME_SUB"
     ANIME_UNSUB = "ANIME_UNSUB"
 
+    COMMENT_CREATE = "COMMENT_CREATE"
     COMMENT_VOTE = "COMMENT_VOTE"  # Covers both upvote and downvote
     COMMENT_UNVOTE = "COMMENT_UNVOTE"
     COMMENT_REPORT = "COMMENT_REPORT"
