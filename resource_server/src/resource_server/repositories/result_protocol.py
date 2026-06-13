@@ -16,7 +16,6 @@ class AbstractResult:
     counter_fields_map: ClassVar[Mapping[str, str]] = {}
 
     def __init_subclass__(cls):
-        super().__init_subclass__()
         cls._fields = tuple(f.name for f in fields(cls))
         cls._counter_fields_map = {
             i: NAME_SEPERATOR.join((cls.resource_name, i)) for i in cls._counter_fields
