@@ -40,7 +40,7 @@ TTL_EPHEMERAL=60
 
 TTL_FETCH_LOCK=1000                     # milliseconds
 FETCH_WAITING_INITIAL_INTERVAL=5        # milliseconds
-FETCH_WAITING_JITTER=10                 # milliseconds
+FETCH_WAITING_JITTER=1                  # milliseconds
 FETCH_WAITING_EXPONENT=2
 FETCH_WAITING_MAX_INTERVALS=5
 
