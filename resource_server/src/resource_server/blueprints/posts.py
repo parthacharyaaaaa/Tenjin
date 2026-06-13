@@ -37,7 +37,7 @@ from resource_server.dependencies import (
 from resource_server.event_streamer import EventStreamer
 from resource_server.models.requests import (
     PostAmendmentModel,
-    PostReportModel,
+    ReportModel,
     VoteModel,
 )
 from resource_server.repositories.forum import (
@@ -548,7 +548,7 @@ async def unsave_post(
 async def report_post(
     post_id: int,
     access_token: Annotated[StandardAccessTokenClaims, Depends(validate_access_token)],
-    report_model: PostReportModel,
+    report_model: ReportModel,
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],

@@ -78,7 +78,7 @@ class PostAmendmentModel(BaseModel):
         return self
 
 
-class PostReportModel(BaseModel):
+class ReportModel(BaseModel):
     tag: post_report_tag_annotation
     description: post_report_description_annotation
 
