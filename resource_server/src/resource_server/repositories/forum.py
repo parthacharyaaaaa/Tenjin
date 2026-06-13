@@ -1,8 +1,18 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, ClassVar, Literal, Mapping, Self, overload
+from typing import Any, Callable, ClassVar, Literal, Mapping, Self, overload
 
-from sqlalchemy import ColumnElement, Row, and_, delete, insert, select, update
+from resource_server.datastructures.requests import SortOption
+from sqlalchemy import (
+    ColumnElement,
+    Row,
+    UnaryExpression,
+    and_,
+    delete,
+    insert,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resource_server.repositories.user import UserResult
@@ -327,3 +337,37 @@ class ForumRepository(metaclass=SingletonMetaclass):
             ).scalar_one_or_none()
 
             return bool(subscription)
+
+    async def get_user_forums(
+        self,
+        user_id: int,
+        limit: int,
+        cursor: int = 0,
+        sort_option: SortOption = SortOption.DESCENDING,
+    ) -> list[ForumResult]:
+        order_clause: Callable[[], UnaryExpression] = (
+            ForumSubscription.time_subscribed.desc
+        )
+        if sort_option == SortOption.ASCENDING:
+            order_clause = ForumSubscription.time_subscribed.asc
+
+        async with self.session_maker() as session:
+            forums: list[Forum] = list(
+                (
+                    await session.execute(
+                        select(Forum)
+                        .select_from(ForumSubscription)
+                        .join(Forum, Forum.id_ == ForumSubscription.forum_id)
+                        .where(
+                            (ForumSubscription.user_id == user_id)
+                            & (ForumSubscription.forum_id > cursor)
+                        )
+                        .order_by(order_clause)
+                        .limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            return [ForumResult.construct_from_orm(forum) for forum in forums]

@@ -123,8 +123,36 @@ class PostRepository(metaclass=SingletonMetaclass):
                         .where(
                             (Post.id_ > cursor)
                             & (Post.forum_id == forum_id)
-                            & (Post.time_posted > datetime)
+                            & (Post.time_posted > datetime_bound)
                         )
+                        .order_by(order_clause)
+                        .limit(limit)
+                    )
+                ).all()
+            )
+
+            return [PostResult.construct_from_orm(*p.tuple()) for p in posts]
+
+    async def get_user_posts(
+        self,
+        user_id: int,
+        limit: int,
+        cursor: int = 0,
+        sort_option: SortOption = SortOption.DESCENDING,
+    ) -> list[PostResult]:
+        match sort_option:
+            case SortOption.DESCENDING:
+                order_clause = Post.time_posted.desc
+            case SortOption.ASCENDING:
+                order_clause = Post.time_posted.asc
+
+        async with self.session_maker() as session:
+            posts: list[Row[tuple[Post, str]]] = list(
+                (
+                    await session.execute(
+                        select(Post, User.username)
+                        .join(User, Post.author_id == User.id_)
+                        .where((Post.id_ > cursor) & (Post.author_id == user_id))
                         .order_by(order_clause)
                         .limit(limit)
                     )

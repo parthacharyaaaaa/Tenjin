@@ -1,12 +1,13 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, ClassVar, Mapping, Self, Sequence
+from typing import Any, Callable, ClassVar, Mapping, Self, Sequence
 
 import orjson
 
 from redis.typing import FieldT, EncodableT
 
-from sqlalchemy import Row, and_, select, ColumnElement
+from resource_server.datastructures.requests import SortOption
+from sqlalchemy import Row, UnaryExpression, and_, select, ColumnElement
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from resource_server.models.database import (
@@ -159,6 +160,40 @@ class AnimeRepository(metaclass=SingletonMetaclass):
             genres_by_anime[anime_id].append(genre)
         return dict(genres_by_anime)
 
+    async def get_animes_details(
+        self, anime_ids: Sequence[int]
+    ) -> tuple[dict[int, list[Genre]], dict[int, list[StreamLink]]]:
+        async with self.session_maker() as session:
+            genres_result: list[Row[tuple[int, Genre]]] = list(
+                (
+                    await session.execute(
+                        select(AnimeGenre.anime_id, Genre)
+                        .select_from(AnimeGenre)
+                        .join(Genre, AnimeGenre.genre_id == Genre.id_)
+                        .where(AnimeGenre.anime_id.in_(anime_ids))
+                    )
+                ).all()
+            )
+            anime_genres: dict[int, list[Genre]] = self._order_anime_genres(
+                genres_result
+            )
+
+            stream_links: list[StreamLink] = list(
+                (
+                    await session.execute(
+                        select(StreamLink).where(StreamLink.anime_id.in_(anime_ids))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            anime_stream_links: dict[int, list[StreamLink]] = self._order_anime_streams(
+                stream_links
+            )
+
+            return anime_genres, anime_stream_links
+
     async def get_animes(
         self,
         cursor: int = 0,
@@ -228,3 +263,46 @@ class AnimeRepository(metaclass=SingletonMetaclass):
                     )
                     for anime in animes
                 ]
+
+    async def get_user_animes(
+        self,
+        user_id: int,
+        limit: int,
+        cursor: int = 0,
+        sort_option: SortOption = SortOption.DESCENDING,
+    ):
+        order_clause: Callable[[], UnaryExpression] = (
+            AnimeSubscription.time_subscribed.desc
+        )
+        if sort_option == SortOption.ASCENDING:
+            order_clause = AnimeSubscription.time_subscribed.asc
+
+        async with self.session_maker() as session:
+            animes: list[Anime] = list(
+                (
+                    await session.execute(
+                        select(Anime)
+                        .select_from(AnimeSubscription)
+                        .join(Anime, Anime.id_ == AnimeSubscription.anime_id)
+                        .where(
+                            (AnimeSubscription.user_id == user_id)
+                            & (AnimeSubscription.anime_id > cursor)
+                        )
+                        .order_by(order_clause)
+                        .limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            anime_ids: tuple[int, ...] = tuple(a.id_ for a in animes)
+
+            genres, stream_links = await self.get_animes_details(anime_ids)
+
+            return [
+                AnimeResult.construct_from_orm(
+                    anime, genres[anime.id_], stream_links[anime.id_]
+                )
+                for anime in animes
+            ]
