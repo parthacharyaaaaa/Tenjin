@@ -7,7 +7,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from auxillary.src.auxillary.utils import cache_repr, json_repr
+from auxillary.utils import cache_repr, json_repr, to_base64url
 
 from resource_auxillary.cache import (
     NAME_SEPERATOR,
@@ -30,6 +30,7 @@ from resource_server.config.app_config import AppConfig
 from resource_server.dependencies import (
     get_app_config,
     get_cache_manager,
+    get_comment_repository,
     get_event_streamer,
     get_forum_repository,
     get_post_repository,
@@ -47,9 +48,13 @@ from resource_server.repositories.forum import (
 )
 from resource_server.repositories.posts import PostRepository, PostResult
 from resource_server.repositories.user import UserResult
-from resource_server.request_dependencies import validate_access_token
+from resource_server.request_dependencies import (
+    cursor_preprocessor,
+    validate_access_token,
+)
 from resource_server.models.admin_permissions import AdminPermissions, check_permission
 from resource_server.models.database import PostVote
+from resource_server.repositories.comment import CommentRepository, CommentResult
 from resource_server.utils.typing import StandardAccessTokenClaims
 from resource_server.utils.validation import validate_duplicate_amendment_contents
 
@@ -633,4 +638,42 @@ async def report_post(
 
 
 @POSTS.get("/{post_id}/comments")
-def get_post_comments(post_id: int) -> JSONResponse: ...
+async def get_post_comments(
+    post_id: int,
+    cursor: Annotated[int, Depends(cursor_preprocessor)],
+    app_config: Annotated[AppConfig, Depends(get_app_config)],
+    cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
+    post_repo: Annotated[PostRepository, Depends(get_post_repository)],
+    comment_repo: Annotated[CommentRepository, Depends(get_comment_repository)],
+) -> JSONResponse:
+    post_cache_key: Final[str] = derive_cache_key(PostResult.resource_name, post_id)
+    post: PostResult | None = await cache_manager.distributed_get_or_load(
+        post_cache_key, partial(post_repo.get_post, post_id), PostResult
+    )
+    if not post:
+        raise HTTPException(404, f"No post with id {post_id} found")
+
+    pagination_cache_key: str = await cache_manager.derive_pagination_key(
+        CommentResult.resource_name,
+        cursor,
+    )
+
+    comments, next_cursor = await cache_manager.distributed_pagination_get_or_load(
+        pagination_cache_key,
+        partial(
+            comment_repo.get_post_comments,
+            post_id,
+            app_config.BUSINESS.PAGINATION_SIZE,
+            cursor,
+        ),
+        CommentResult,
+    )
+
+    if next_cursor == CacheManager.CURSOR_UNDERIVABLE_SENTINEL:
+        next_cursor = to_base64url(
+            comments[-1].id_, app_config.BUSINESS.PAGINATION_CURSOR_LENGTH
+        )
+
+    return JSONResponse(
+        {"comments": [json_repr(i) for i in comments], "cursor": next_cursor}
+    )
