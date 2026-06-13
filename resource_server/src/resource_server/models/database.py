@@ -11,7 +11,6 @@ from sqlalchemy.sql import text, func
 from sqlalchemy.dialects.postgresql import TIMESTAMP, BYTEA, ENUM
 from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, NUMERIC
 
-from enum import Enum
 from datetime import datetime
 from typing import Any
 from dataclasses import dataclass
@@ -19,19 +18,18 @@ from types import FunctionType
 
 from resource_server.config import database_constants
 from resource_server.config.constants import EMAIL_PATTERN
+from resource_server.models.database_enums import AdminRoles, ReportTags
 
 __all__ = (
     "ForumSubscription",
     "AnimeSubscription",
     "PostVote",
     "PostSave",
-    "ReportTags",
     "PostReport",
     "CommentReport",
     "CommentVote",
     "StreamLink",
     "AnimeGenre",
-    "AdminRoles",
     "ForumAdmin",
     "User",
     "UserTicket",
@@ -52,6 +50,15 @@ class Base(DeclarativeBase):
 ### Deserialization functions commonly used in all models
 deserialize_bool: FunctionType = lambda serial: bool(int(serial))
 deserialize_optional: FunctionType = lambda serial: None if not serial else serial
+
+### Enums ###
+ADMIN_ROLES = ENUM(*(i.value for i in AdminRoles), name="ADMIN_ROLES", create_type=True)
+
+REPORT_TAGS = ENUM(
+    *(i.value for i in ReportTags),
+    name="REPORT_TAGS",
+    create_type=True,
+)
 
 
 ### Assosciation Tables ###
@@ -100,29 +107,6 @@ class PostSave(Base):
     post_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("posts.id_", ondelete="CASCADE"), primary_key=True
     )
-
-
-REPORT_TAGS = ENUM(
-    "spam",
-    "harassment",
-    "hate",
-    "violence",
-    "other",
-    name="REPORT_TAGS",
-    create_type=True,
-)
-
-
-class ReportTags(Enum):
-    spam = "spam"
-    harassment = "harassment"
-    hate = "hate"
-    violence = "violence"
-    other = "other"
-
-    @staticmethod
-    def check_membership(arg: str) -> bool:
-        return arg in [v.value for v in ReportTags.__members__.values()]
 
 
 class PostReport(Base):
@@ -223,26 +207,6 @@ class AnimeGenre(Base):
 ADMIN_ROLES = ENUM("admin", "super", "owner", name="ADMIN_ROLES", create_type=True)
 
 
-class AdminRoles(Enum):
-    """Python representation of ADMIN_ROLES Enum in Postgres"""
-
-    admin = 1
-    super = 2
-    owner = 3
-
-    @staticmethod
-    def check_membership(arg: str) -> bool:
-        return arg in AdminRoles.__members__.keys()
-
-    @staticmethod
-    def getAdminAccessLevel(role: str) -> int:
-        """Get corresponding access level of admin role, return -1 on failure"""
-        try:
-            return AdminRoles[role].value
-        except:
-            return -1
-
-
 class ForumAdmin(Base):
     __tablename__ = "forum_admins"
     forum_id: Mapped[int] = mapped_column(
@@ -254,14 +218,6 @@ class ForumAdmin(Base):
     role: Mapped[str] = mapped_column(
         ADMIN_ROLES, nullable=False, server_default=text(f"'{ADMIN_ROLES.enums[0]}'")
     )
-
-
-### Tables ###
-setattr(
-    Base,
-    "__attrdict__",
-    lambda x: {k: v for k, v in x.__dict__.items() if k != "_sa_instance_state"},
-)
 
 
 class User(Base):
@@ -501,6 +457,10 @@ class Forum(Base):
                 description.is_(None),
             )
         ),
+        CheckConstraint(
+            func.length(name_) >= database_constants.ForumConstants.TITLE_MIN_LENGTH,
+            name="check_title_length",
+        ),
         UniqueConstraint("name_", "anime", name="uq_name_anime"),
     )
 
@@ -520,22 +480,6 @@ class Forum(Base):
             "rtbf_hidden": lambda rtbf: bool(int(rtbf)),
         }
 
-    def __init__(
-        self, name: str, anime: int, desc: str, epoch: datetime | None = None
-    ) -> None:
-        self.name_ = name
-        self.anime = anime
-        self.description = desc
-        self.subscribers = 0
-        self.posts = 0
-        self.highlight_post_1 = None
-        self.highlight_post_2 = None
-        self.highlight_post_3 = None
-        self.created_at = epoch or datetime.now()
-        self.admin_count = 1
-        self.deleted = False
-        self.time_deleted = None
-
     def __json_like__(self) -> dict[str, str | int | None]:
         return {
             "id": self.id_,
@@ -543,9 +487,6 @@ class Forum(Base):
             "subscribers": self.subscribers,
             "description": self.description,
             "posts": self.posts,
-            "highlight_post_1": self.highlight_post_1,
-            "highlight_post_2": self.highlight_post_2,
-            "highlight_post_3": self.highlight_post_3,
             "created_at": self.created_at.isoformat(),
             "admin_count": self.admin_count,
         }
@@ -579,22 +520,6 @@ class ForumRules(Base):
             and_(rule_number >= 1, rule_number <= 5), "enforce_forum_rules_range"
         ),
     )
-
-    def __init__(
-        self,
-        forumID: int,
-        ruleNumber: int,
-        title: str,
-        body: str,
-        authorID: int,
-        time_created: datetime | None = None,
-    ) -> None:
-        self.forum_id = forumID
-        self.rule_number = ruleNumber
-        self.title = title
-        self.body = body
-        self.author = authorID
-        self.time_created = time_created or datetime.now()
 
     def __json_like__(self) -> dict:
         return {
@@ -634,8 +559,8 @@ class Post(Base):
         index=True,
     )
 
-    body_text: Mapped[str] = mapped_column(
-        VARCHAR(database_constants.PostConstants.BODY_MAX_LENGTH), nullable=False
+    body_text: Mapped[str | None] = mapped_column(
+        VARCHAR(database_constants.PostConstants.BODY_MAX_LENGTH)
     )
 
     # TODO: Add assosciation table for forum and post flairs
@@ -675,32 +600,6 @@ class Post(Base):
             "rtbf_hidden": deserialize_bool,
         }
 
-    def __init__(
-        self,
-        author_id: int,
-        forum_id: int,
-        title: str,
-        body_text: str,
-        epoch: datetime,
-        flair: str | None = None,
-        score: int = 0,
-        total_comments: int = 0,
-        closed: bool = False,
-    ):
-        self.author_id = author_id
-        self.forum_id = forum_id
-        self.score = score
-        self.total_comments = total_comments
-        self.title = title
-        self.body_text = body_text
-        self.flair = flair
-        self.closed = closed
-        self.time_posted = epoch
-        self.saves = 0
-        self.reports = 0
-        self.deleted = False
-        self.time_deleted = None
-
     __table_args__ = (
         CheckConstraint(
             func.length(title) >= database_constants.PostConstants.TITLE_MIN_LENGTH,
@@ -716,7 +615,7 @@ class Post(Base):
         ),
     )
 
-    def __json_like__(self) -> dict[str, str | int]:
+    def __json_like__(self) -> dict[str, str | int | None]:
         return {
             "id": self.id_,
             "author_id": self.author_id,
@@ -770,7 +669,13 @@ class Comment(Base):
     time_deleted: Mapped[datetime | None] = mapped_column(TIMESTAMP)
     rtbf_hidden: Mapped[bool] = mapped_column(BOOLEAN, nullable=True)
 
-    __table_args__ = (CheckConstraint(reports > 0, "check_reports_value"),)
+    __table_args__ = (
+        CheckConstraint(reports > 0, "check_reports_value"),
+        CheckConstraint(
+            func.length(body) >= database_constants.CommentConstants.COMMENT_MIN_LENGTH,
+            "check_comment_length",
+        ),
+    )
 
     @classmethod
     def deserialize_mapping(cls) -> dict[str, Any]:
@@ -784,24 +689,6 @@ class Comment(Base):
             "deleted": deserialize_bool,
             "rtbf_hidden": deserialize_bool,
         }
-
-    def __init__(
-        self,
-        authorID: int,
-        parentForum: int,
-        epoch: datetime,
-        body: str,
-        parentPost: int,
-    ):
-        self.author_id = authorID
-        self.parent_forum = parentForum
-        self.time_created = epoch
-        self.body = body
-        self.parent_post = parentPost
-        self.score = 0
-        self.reports = 0
-        self.deleted = False
-        self.time_deleted = None
 
     def __json_like__(self) -> dict[str, str | int]:
         return {
