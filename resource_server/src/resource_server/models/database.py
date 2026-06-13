@@ -326,17 +326,17 @@ class UserTicket(Base):
 class PasswordRecoveryToken(Base):
     __tablename__ = "password_recovery_tokens"
 
-    user_id: Mapped[int] = mapped_column(BIGINT, ForeignKey("users.id_"))
+    user_id: Mapped[int] = mapped_column(
+        BIGINT, ForeignKey("users.id_"), primary_key=True
+    )
     expiry: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"), nullable=False, index=True
     )
-    url_hash: Mapped[bytes] = mapped_column(
-        BYTEA(database_constants.PasswordRecoveryConstants.URL_HASH_LENGTH),
+    url_hash: Mapped[str] = mapped_column(
+        VARCHAR(database_constants.PasswordRecoveryConstants.URL_HASH_LENGTH),
         nullable=False,
         unique=True,
     )
-
-    __table_args__ = (PrimaryKeyConstraint("user_id"),)
 
 
 @dataclass
