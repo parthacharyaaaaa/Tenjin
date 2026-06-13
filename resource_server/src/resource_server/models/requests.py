@@ -107,3 +107,11 @@ class UserCreationModel(BaseModel):
     username: username_annotation
     email: email_annotation
     password: user_password_annotation
+
+
+class GenericUserIdentificationModel(BaseModel):
+    identity: username_annotation | email_annotation
+
+
+class UserLoginModel(GenericUserIdentificationModel):
+    password: user_password_annotation

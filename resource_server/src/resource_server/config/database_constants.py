@@ -16,6 +16,8 @@ class UserConstants:
     PASSWORD_MAX_LENGTH: Final[int] = 128
     PASSWORD_HASH_LENGTH: Final[int] = 60
 
+    PASSWORD_RECOVERY_TOKEN_LENGTH: Final[int] = 16
+
 
 class PostConstants:
     TITLE_MIN_LENGTH: Final[int] = 4
