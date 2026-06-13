@@ -2,11 +2,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import ClassVar
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import Row, delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resource_server.repositories.result_protocol import AbstractResult
-from resource_server.models.database import User
+from resource_server.models.database import PasswordRecoveryToken, User
 from resource_server.utils.singleton import SingletonMetaclass
 
 from resource_auxillary.strings import NAME_SEPERATOR
@@ -100,6 +100,24 @@ class UserRepository(metaclass=SingletonMetaclass):
 
             return UserResult.construct_from_orm(user)
 
+    async def get_user_by_email(
+        self,
+        email: str,
+    ) -> UserResult | None:
+        async with self.session_maker() as session:
+            user: User | None = (
+                await session.execute(
+                    select(User).where(
+                        (User.email == email) & (User.deleted.is_(False))
+                    )
+                )
+            ).scalar_one_or_none()
+
+            if not user:
+                return None
+
+            return UserResult.construct_from_orm(user)
+
     async def get_rtbf(self, user_id: int) -> bool:
         async with self.session_maker() as session:
             return (
@@ -111,4 +129,60 @@ class UserRepository(metaclass=SingletonMetaclass):
             await session.execute(
                 update(User).where(User.id_ == user_id).values(rtbf=rtbf)
             )
+            await session.commit()
+
+    async def set_password_recovery_token(
+        self, user_id: int, url_hash: str, expiry: datetime
+    ) -> None:
+        async with self.session_maker() as session:
+            await session.execute(
+                delete(PasswordRecoveryToken).where(
+                    PasswordRecoveryToken.user_id == user_id
+                )
+            )
+            await session.execute(
+                insert(PasswordRecoveryToken).values(
+                    user_id=user_id, expiry=expiry, url_hash=url_hash
+                )
+            )
+            await session.commit()
+
+    async def get_user_password_recovery_token(
+        self, user_id: int
+    ) -> tuple[UserResult | None, tuple[str, datetime] | tuple[None, None]]:
+        async with self.session_maker() as session:
+            res: Row[tuple[User, str, datetime]] | None = (
+                await session.execute(
+                    select(
+                        User,
+                        PasswordRecoveryToken.url_hash,
+                        PasswordRecoveryToken.expiry,
+                    )
+                    .select_from(User)
+                    .outerjoin(
+                        PasswordRecoveryToken, PasswordRecoveryToken.user_id == User.id_
+                    )
+                    .where(User.id_ == user_id)
+                )
+            ).first()
+
+            if not res:
+                return None, (None, None)
+
+            user, url_hash, expiry = res.tuple()
+
+            return UserResult.construct_from_orm(user), (url_hash, expiry)
+
+    async def update_password(
+        self, user_id: int, password_hash: bytes | bytearray
+    ) -> None:
+        async with self.session_maker() as session:
+            await session.execute(
+                update(User).where(User.id_ == user_id).values(pw_hash=password_hash)
+            )
+
+            await session.execute(
+                delete(PasswordRecoveryToken).where(User.id_ == user_id)
+            )
+
             await session.commit()
