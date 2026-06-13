@@ -186,3 +186,9 @@ class UserRepository(metaclass=SingletonMetaclass):
             )
 
             await session.commit()
+
+    async def get_user_password(self, user_id: int) -> bytes:
+        async with self.session_maker() as session:
+            return (
+                await session.execute(select(User.pw_hash).where(User.id_ == user_id))
+            ).scalar_one()
