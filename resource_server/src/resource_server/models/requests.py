@@ -97,3 +97,5 @@ class CommentModel(BaseModel):
             frozen=True,
         ),
     ]
+
+    client_tag: Annotated[str | None, Field(frozen=True, default=None)]
