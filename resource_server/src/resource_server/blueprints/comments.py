@@ -1,3 +1,4 @@
+from datetime import datetime
 import time
 from functools import partial
 from typing import Annotated, Any, Final
@@ -12,6 +13,7 @@ from resource_auxillary.cache import (
     derive_hashmap_name,
 )
 from resource_auxillary.events import (
+    CacheUpdate,
     CounterUpdate,
     Event,
     IntentUpdate,
@@ -64,10 +66,10 @@ async def comment_on_post(
     intent_id: Final[str] = comment_model.client_tag or uuid4().hex
 
     lock, latest_intent = await cache_manager.fetch_indicators(
-        access_token["sid"],
+        str(access_token["sid"]),
         intent_id,
         CommentResult.resource_name,
-        Action.COMMENT_CREATE,
+        Action.CREATE,
     )
 
     if lock or latest_intent:
