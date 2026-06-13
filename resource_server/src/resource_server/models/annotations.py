@@ -84,3 +84,13 @@ type post_report_description_annotation = Annotated[
         frozen=True,
     ),
 ]
+
+type user_password_annotation = Annotated[
+    str,
+    BeforeValidator(lambda x: x.strip()),
+    Field(
+        max_length=UserConstants.PASSWORD_MAX_LENGTH,
+        min_length=UserConstants.PASSWORD_MIN_LENGTH,
+        frozen=True,
+    ),
+]

@@ -12,6 +12,8 @@ class UserConstants:
     EMAIL_MIN_LENGTH: Final[int] = 5  # x@x.x
 
     # Bcrypt produces a 60-byte salted hash (when using $2a$ or $2y$ as identifier)
+    PASSWORD_MIN_LENGTH: Final[int] = 8
+    PASSWORD_MAX_LENGTH: Final[int] = 128
     PASSWORD_HASH_LENGTH: Final[int] = 60
 
 

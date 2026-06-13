@@ -3,6 +3,8 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, BeforeValidator, Field, model_validator
 
 from resource_server.models.annotations import (
+    username_annotation,
+    user_password_annotation,
     email_annotation,
     strong_entity_pk_annotation,
     forum_name_annotation,
@@ -99,3 +101,9 @@ class CommentModel(BaseModel):
     ]
 
     client_tag: Annotated[str | None, Field(frozen=True, default=None)]
+
+
+class UserCreationModel(BaseModel):
+    username: username_annotation
+    email: email_annotation
+    password: user_password_annotation
