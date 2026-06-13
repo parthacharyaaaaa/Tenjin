@@ -6,13 +6,11 @@ from resource_server.models.database_enums import AdminRoles
 
 
 class AdminPermissions(StrEnum):
-    DELETE_POST = "DELETE_POST"
     ADD_RULE = "ADD_RULE"
-    DELETE_RULE = "DELETE_RULE"
-    EDIT_FORUM = "EDIT_FORUM"
-
     ADD_ADMIN = "ADD_ADMIN"
     ADD_SUPER = "ADD_SUPER"
+
+    EDIT_FORUM = "EDIT_FORUM"
 
     DEMOTE_TO_ADMIN = "DEMOTE_TO_ADMIN"
     PROMOTE_TO_SUPER = "PROMOTE_TO_SUPER"
@@ -20,6 +18,9 @@ class AdminPermissions(StrEnum):
     REMOVE_ADMIN = "REMOVE_ADMIN"
     REMOVE_SUPER = "REMOVE_SUPER"
 
+    DELETE_COMMENT = "DELETE_COMMENT"
+    DELETE_POST = "DELETE_POST"
+    DELETE_RULE = "DELETE_RULE"
     DELETE_FORUM = "DELETE_FORUM"
 
 
@@ -37,7 +38,10 @@ ADMIN_PERMISSIONS_MAPPING: Final[t_permissions_mapping] = MappingProxyType(
         AdminRoles.SUPER: tuple(
             set(i for i in AdminPermissions) - set(_OWNER_EXCLUSIVE_PERMISSIONS)
         ),
-        AdminRoles.ADMIN: (AdminPermissions.DELETE_POST,),
+        AdminRoles.ADMIN: (
+            AdminPermissions.DELETE_POST,
+            AdminPermissions.DELETE_COMMENT,
+        ),
     }
 )
 
