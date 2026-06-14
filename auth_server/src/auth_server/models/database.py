@@ -27,7 +27,6 @@ class Admin(Base):
     role: Mapped[str] = mapped_column(ADMIN_ROLES, nullable=False)
 
     password_hash: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
-    password_salt: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
 
     time_deleted: Mapped[datetime.datetime | None] = mapped_column(
         TIMESTAMP, server_default=text("null")

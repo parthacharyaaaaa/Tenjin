@@ -18,9 +18,9 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql import and_
 
 from auxillary.utils import (
+    bcrypt_check_password,
+    bcrypt_hash_password,
     genericDBFetchException,
-    verify_password,
-    hash_password,
 )
 
 from auth_server.config.app_config import AppConfig
@@ -91,9 +91,7 @@ async def admin_login(
     except SQLAlchemyError:
         raise Exception
 
-    if not verify_password(
-        auth_model.password, admin.password_hash, admin.password_salt
-    ):
+    if not bcrypt_check_password(auth_model.password, admin.password_hash):
         await report_suspicious_activity(
             session,
             config,
@@ -400,14 +398,13 @@ async def create_admin(
     except SQLAlchemyError:
         genericDBFetchException()
 
-    pw_hash, pw_salt = hash_password(admin_model.password)
+    pw_hash: bytes = bcrypt_hash_password(admin_model.password)
     _, signing_key, verification_key = generate_ecdsa_pair()
     try:
         await session.execute(
             insert(Admin).values(
                 username=admin_model.identity,
                 password_hash=pw_hash,
-                password_salt=pw_salt,
                 role=AdminRole.STAFF.value,
                 created_by=admin_session.admin_id,
                 signing_key=signing_key.to_pem(),
