@@ -115,3 +115,7 @@ class GenericUserIdentificationModel(BaseModel):
 
 class UserLoginModel(GenericUserIdentificationModel):
     password: user_password_annotation
+
+
+class UserPasswordModel(BaseModel):
+    password: user_password_annotation
