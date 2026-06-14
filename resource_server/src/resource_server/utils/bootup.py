@@ -1,18 +1,19 @@
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Final
 
-from fastapi import APIRouter, FastAPI
+from fastapi import FastAPI
 
 from auxillary.utils import generic_error_handler
 
-from resource_server.blueprints.url_prefixes import URLPrefix
-from resource_server.dependencies import get_key_manager
+from resource_server.config.app_config import AppConfig
+from resource_server.routers import ROUTER_PREFIXES, t_route_prefixes
+from resource_server.dependencies import get_app_config, get_key_manager
 from resource_server.key_manager import KeyManager
 
 
 def register_routers(
     app: FastAPI,
-    api_prefixes: tuple[tuple[APIRouter, tuple[URLPrefix, ...]], ...],
+    api_prefixes: t_route_prefixes,
     common_prefix: str = "",
 ) -> None:
     for router, url_prefixes in api_prefixes:
@@ -24,7 +25,12 @@ def register_routers(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.add_exception_handler(Exception, generic_error_handler)
-    # TODO: Add route registration
+
+    app_config: Final[AppConfig] = get_app_config()
+
+    register_routers(
+        app, ROUTER_PREFIXES, common_prefix=app_config.CORE.APPLICATION_ROOT
+    )
 
     key_manager: Final[KeyManager] = get_key_manager()
     key_manager.current_mapping = await key_manager.get_global_key_mapping()
