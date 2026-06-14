@@ -18,6 +18,7 @@ ROUTER_PREFIXES: Final[t_route_prefixes] = tuple(
     (
         (USERS, (URLPrefix.USERS,)),
         (ANIMES, (URLPrefix.ANIMES,)),
+        (FORUMS, (URLPrefix.FORUNS,)),
         (POSTS, (URLPrefix.POSTS,)),
         (COMMENTS, (URLPrefix.POSTS, URLPrefix.COMMENTS)),
         (MISC, ()),
