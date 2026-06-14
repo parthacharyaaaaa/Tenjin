@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "bcrypt>=5.0.0",
+    "fastapi>=0.136.3",
+    "redis>=5,<6",
+]
 
 [build-system]
 requires = ["setuptools >= 82.0.0",]
