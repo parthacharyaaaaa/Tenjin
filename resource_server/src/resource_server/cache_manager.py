@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from random import randint
 import time
@@ -24,7 +25,11 @@ from auxillary.utils import cache_repr
 
 from resource_server.config.sub_config import CacheConfig
 from resource_server.utils.singleton import SingletonMetaclass
-from resource_server.datastructures.exceptions import CacheCoherenceException
+from resource_server.datastructures.exceptions import (
+    CacheCoherenceException,
+    ConflictingIntentException,
+    DuplicateRequestException,
+)
 from resource_server.repositories.result_protocol import AbstractResult
 
 from resource_auxillary.strings import Action, IntentFlag, NAME_SEPERATOR
@@ -356,6 +361,48 @@ class CacheManager(metaclass=SingletonMetaclass):
             lock, intent = await pipe.execute()
         intent_value, *_ = intent.split(NAME_SEPERATOR)
         return lock, IntentFlag(intent_value) if intent_value else None
+
+    @asynccontextmanager
+    async def guard_action(
+        self,
+        user_identifier: str | int,
+        resource_identifier: str | int,
+        resource_name: str,
+        action: Action,
+        *,
+        lock_conflict_message: str | None = None,
+        conflicting_intent: IntentFlag | None = None,
+        intent_conflict_message: str | None = None,
+    ):
+        user_identifier = str(user_identifier)
+        resource_identifier = str(resource_identifier)
+
+        intent: str = create_intent_flag(
+            resource_name, action, user_identifier, resource_identifier
+        )
+        lock_name: str = self.derive_lock_key(
+            resource_name, action.value, user_identifier, resource_identifier
+        )
+        try:
+            async with self.redis_client.pipeline() as pipe:
+                pipe.set(lock_name, 1, nx=True, px=self.cache_config.TTL_FETCH_LOCK)
+                pipe.get(intent)
+                lock_set, intent = await pipe.execute()
+            if not lock_set:
+                raise DuplicateRequestException(
+                    lock_conflict_message or "Detected duplicate request"
+                )
+            if not intent:
+                yield None
+            intent_value: str = intent.split(NAME_SEPERATOR)[0]
+
+            if conflicting_intent == intent_value:
+                raise ConflictingIntentException(
+                    intent_conflict_message or "Operation already performed"
+                )
+            yield intent_value
+        finally:
+            await self.redis_client.delete(lock_name)
 
     async def set_intent(
         self,
