@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar
+from typing import Any, ClassVar, Mapping, Never, Self
 
-from sqlalchemy import Row, delete, insert, select, update
+from sqlalchemy import ColumnElement, Row, and_, delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resource_server.repositories.result_protocol import AbstractResult
@@ -30,6 +30,31 @@ class UserResult(AbstractResult):
         "total_comments",
     )
     resource_name: ClassVar[str] = User.__tablename__
+
+
+@dataclass(slots=True, init=False)
+class PrivateUserResult(UserResult):
+    pw_hash: bytes
+    deleted: bool
+    time_deleted: datetime
+    rtbf: bool
+
+    @classmethod
+    def construct_from_cache(cls, mapping: Mapping[str, Any], *args, **kwargs) -> Never:
+        raise RuntimeError("Cache mapping of private user data violates policy")
+
+    def __cache_repr__(self) -> Never:
+        raise RuntimeError("Cannot create cache representation of private user data")
+
+    @classmethod
+    def construct_from_orm(cls, obj: User, *args, **kwargs) -> Self:
+        instance = super().construct_from_orm(obj, *args, **kwargs)
+        instance.pw_hash = obj.pw_hash
+        instance.deleted = obj.deleted
+        instance.time_deleted = obj.time_deleted
+        instance.rtbf = obj.rtbf
+
+        return instance
 
 
 @dataclass(slots=True, weakref_slot=True)
@@ -192,3 +217,42 @@ class UserRepository(metaclass=SingletonMetaclass):
             return (
                 await session.execute(select(User.pw_hash).where(User.id_ == user_id))
             ).scalar_one()
+
+    async def delete_user(
+        self, user_id: int, *, deletion_time: datetime | None = None
+    ) -> None:
+        deletion_time = deletion_time or datetime.now()
+        async with self.session_maker() as session:
+            await session.execute(
+                update(User)
+                .where(User.id_ == user_id)
+                .values(deleted=True, time_deleted=deletion_time)
+            )
+
+            await session.commit()
+
+    async def get_full_user_profile(
+        self, username: str, *, skip_deleted: bool = False
+    ) -> PrivateUserResult | None:
+        where_clauses: list[ColumnElement] = [User.username == username]
+        if skip_deleted:
+            where_clauses.append(User.deleted.is_(False))
+
+        async with self.session_maker() as session:
+            user: User | None = (
+                await session.execute(select(User).where(and_(*where_clauses)))
+            ).scalar_one_or_none()
+
+            if not user:
+                return None
+
+            return PrivateUserResult.construct_from_orm(user)
+
+    async def recover_user(self, user_id: int) -> None:
+        async with self.session_maker() as session:
+            await session.execute(
+                update(User)
+                .where(User.id_ == user_id)
+                .values(deleted=False, time_deleted=None)
+            )
+            await session.commit()
