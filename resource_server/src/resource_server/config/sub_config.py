@@ -88,6 +88,7 @@ class CacheConfig(BaseModel):
     TTL_STRONG: Annotated[int, Field(ge=0)]
     TTL_WEAK: Annotated[int, Field(ge=0)]
     TTL_EPHEMERAL: Annotated[int, Field(ge=0)]
+    TTL_OPERATIONAL_LOCK: Annotated[int, Field(ge=0)]
 
     # Fetch locks, for thundering herds
     TTL_FETCH_LOCK: Annotated[int, Field(ge=0)]

@@ -31,12 +31,14 @@ PORT=6390
 DB=0
 
 [cache]
+# All units in seconds, unless specified otherwise
 TTL_CAP=86400
 TTL_PROMOTION=15
 TTL_STRONGEST=1200
 TTL_STRONG=600
 TTL_WEAK=300
 TTL_EPHEMERAL=60
+TTL_OPERATIONAL_LOCK=5
 
 TTL_FETCH_LOCK=1000                     # milliseconds
 FETCH_WAITING_INITIAL_INTERVAL=5        # milliseconds
