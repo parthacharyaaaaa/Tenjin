@@ -158,48 +158,58 @@ async def delete_comment(
             raise HTTPException(403, "Insufficient permissions to delete comment")
 
     intent_id: Final[str] = uuid4().hex
+    conflict_message: str = f"Already subscribed to forum: {forum.name_}"
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        comment_id,
+        CommentResult.resource_name,
+        Action.DELETE,
+        conflicting_intent=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+        intent_conflict_message=conflict_message,
+    ):
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(
+                    PostResult.resource_name, "total_comments"
+                ),
+                cache_key=derive_cache_key(PostResult.resource_name, post_id),
+                field_name="total_comments",
+                delta=-1,
+            ),
+            CounterUpdate(
+                counter_group=derive_hashmap_name(
+                    UserResult.resource_name, "total_comments"
+                ),
+                cache_key=derive_cache_key(
+                    UserResult.resource_name, access_token["sid"]
+                ),
+                field_name="total_comments",
+                delta=-1,
+            ),
+        )
+        intent_updates: tuple[IntentUpdate, ...] = (
+            IntentUpdate(
+                intent_name=create_intent_flag(
+                    CommentResult.resource_name,
+                    Action.DELETE,
+                    str(access_token["sid"]),
+                    str(comment_id),
+                ),
+                intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+                intent_id=intent_id,
+            ),
+        )
+        deletion_event: Event = Event(
+            name=EventName.COMMENT_DELETE,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload={"comment_id": comment_id},
+            side_effects=EventSideEffects(
+                counter_updates=counter_updates, intent_updates=intent_updates  # type: ignore[reportCallIssue]
+            ),
+        )
 
-    counter_updates: tuple[CounterUpdate, ...] = (
-        CounterUpdate(
-            counter_group=derive_hashmap_name(
-                PostResult.resource_name, "total_comments"
-            ),
-            cache_key=derive_cache_key(PostResult.resource_name, post_id),
-            field_name="total_comments",
-            delta=-1,
-        ),
-        CounterUpdate(
-            counter_group=derive_hashmap_name(
-                UserResult.resource_name, "total_comments"
-            ),
-            cache_key=derive_cache_key(UserResult.resource_name, access_token["sid"]),
-            field_name="total_comments",
-            delta=-1,
-        ),
-    )
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                CommentResult.resource_name,
-                Action.DELETE,
-                str(access_token["sid"]),
-                str(comment_id),
-            ),
-            intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-            intent_id=intent_id,
-        ),
-    )
-    deletion_event: Event = Event(
-        name=EventName.COMMENT_DELETE,
-        event_id=intent_id,
-        created_at=time.time(),
-        payload={"comment_id": comment_id},
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates, intent_updates=intent_updates  # type: ignore[reportCallIssue]
-        ),
-    )
-
-    await event_streamer.emit_user_event(deletion_event)
+        await event_streamer.emit_user_event(deletion_event)
     return JSONResponse({"message": "Comment queued for deletion"}, 202)
 
 
@@ -216,6 +226,12 @@ async def vote_comment(
     comment_cache_key: Final[str] = derive_cache_key(
         CommentResult.resource_name, comment_id
     )
+    comment: CommentResult | None = await cache_manager.distributed_get_or_load(
+        comment_cache_key, partial(comment_repo.get_comment, comment_id), CommentResult
+    )
+
+    if not comment:
+        raise HTTPException(404, "Comment not found")
     intent: Final[IntentFlag] = (
         IntentFlag.RESOURCE_CREATION_PENDING_FLAG
         if vote_model.vote == 1
@@ -223,91 +239,80 @@ async def vote_comment(
     )
     delta: int = vote_model.vote
 
-    comment: CommentResult | None = await cache_manager.distributed_get_or_load(
-        comment_cache_key, partial(comment_repo.get_comment, comment_id), CommentResult
+    conflict_message: str = (
+        f"Comment already {'upvoted' if vote_model.vote == 1 else 'downvoted'}"
     )
-
-    if not comment:
-        raise HTTPException(404, "Comment not found")
-
-    lock, latest_intent = await cache_manager.fetch_indicators(
-        str(access_token["sid"]),
-        str(comment_id),
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        comment_id,
         CommentResult.resource_name,
         Action.VOTE,
-    )
-
-    if lock:
-        raise HTTPException(409, "An identical request is being processed")
-
-    intent_id: Final[str] = uuid4().hex
-
-    if latest_intent == intent:
-        raise HTTPException(
-            409, f"Comment already {'upvoted' if vote_model.vote == 1 else 'downvoted'}"
-        )
-    elif not latest_intent:
-        existing_vote: bool | None = await comment_repo.get_vote(
-            post_id, access_token["sid"]
-        )
-        if (existing_vote == True and vote_model.vote == 1) or (
-            existing_vote == False and vote_model.vote == -1
-        ):
-            await cache_manager.set_intent(
-                intent_id,
-                str(access_token["sid"]),
-                str(comment_id),
-                CommentVote.__tablename__,
-                Action.VOTE,
-                intent,
+        conflicting_intent=intent,
+        intent_conflict_message=conflict_message,
+    ) as latest_intent:
+        intent_id: Final[str] = uuid4().hex
+        if not latest_intent:
+            existing_vote: bool | None = await comment_repo.get_vote(
+                post_id, access_token["sid"]
             )
-            raise HTTPException(409, "Same vote already casted")
-        elif existing_vote:
-            # Transitioning from upvote to downvote, or vice-versa
-            delta *= 2
+            if (existing_vote == True and vote_model.vote == 1) or (
+                existing_vote == False and vote_model.vote == -1
+            ):
+                await cache_manager.set_intent(
+                    intent_id,
+                    str(access_token["sid"]),
+                    str(comment_id),
+                    CommentVote.__tablename__,
+                    Action.VOTE,
+                    intent,
+                )
+                raise HTTPException(409, conflict_message)
+            elif existing_vote:
+                # Transitioning from upvote to downvote, or vice-versa
+                delta *= 2
 
-    counter_updates: tuple[CounterUpdate, ...] = (
-        CounterUpdate(
-            counter_group=derive_hashmap_name(CommentResult.resource_name, "score"),
-            cache_key=comment_cache_key,
-            field_name="score",
-            delta=delta,
-        ),
-        CounterUpdate(
-            counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
-            cache_key=derive_cache_key(UserResult.resource_name, comment.author_id),
-            field_name="aura",
-            delta=delta,
-        ),
-    )
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                CommentResult.resource_name,
-                Action.VOTE,
-                str(access_token["sid"]),
-                str(comment_id),
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(CommentResult.resource_name, "score"),
+                cache_key=comment_cache_key,
+                field_name="score",
+                delta=delta,
             ),
-            intent_flag=intent,
-            intent_id=intent_id,
-        ),
-    )
+            CounterUpdate(
+                counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
+                cache_key=derive_cache_key(UserResult.resource_name, comment.author_id),
+                field_name="aura",
+                delta=delta,
+            ),
+        )
+        intent_updates: tuple[IntentUpdate, ...] = (
+            IntentUpdate(
+                intent_name=create_intent_flag(
+                    CommentResult.resource_name,
+                    Action.VOTE,
+                    str(access_token["sid"]),
+                    str(comment_id),
+                ),
+                intent_flag=intent,
+                intent_id=intent_id,
+            ),
+        )
 
-    vote_event: Event = Event(
-        name=EventName.COMMENT_VOTE,
-        event_id=intent_id,
-        created_at=time.time(),
-        payload={
-            "comment_id": comment_id,
-            "user_id": access_token["sid"],
-            "vote": True if vote_model.vote else False,
-        },
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
-    )
+        vote_event: Event = Event(
+            name=EventName.COMMENT_VOTE,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload={
+                "comment_id": comment_id,
+                "user_id": access_token["sid"],
+                "vote": True if vote_model.vote else False,
+            },
+            side_effects=EventSideEffects(
+                counter_updates=counter_updates, intent_updates=intent_updates
+            ),  # type: ignore[reportCallIssue]
+        )
 
-    await event_streamer.emit_user_event(vote_event)
+        await event_streamer.emit_user_event(vote_event)
     return JSONResponse({"message": "Voted"}, 202)
 
 
@@ -328,85 +333,80 @@ async def unvote_comment(
     comment: CommentResult | None = await cache_manager.distributed_get_or_load(
         comment_cache_key, partial(comment_repo.get_comment, comment_id), CommentResult
     )
-
     if not comment:
         raise HTTPException(404, "Comment not found")
 
-    lock, latest_intent = await cache_manager.fetch_indicators(
-        str(access_token["sid"]),
-        str(comment_id),
+    conflict_message: str = "No vote casted on this comment"
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        comment_id,
         CommentResult.resource_name,
         Action.VOTE,
-    )
-
-    if lock:
-        raise HTTPException(409, "An identical request is being processed")
-
-    intent_id: Final[str] = uuid4().hex
-
-    if latest_intent == IntentFlag.RESOURCE_DELETION_PENDING_FLAG:
-        raise HTTPException(409, "No vote casted on this comment")
-    elif latest_intent == IntentFlag.RESOURCE_CREATION_PENDING_ALT_FLAG:  # Downvote
-        delta = -1
-    elif not latest_intent:
-        existing_vote: bool | None = await comment_repo.get_vote(
-            post_id, access_token["sid"]
-        )
-        if not existing_vote:
-            await cache_manager.set_intent(
-                intent_id,
-                str(access_token["sid"]),
-                str(comment_id),
-                CommentVote.__tablename__,
-                Action.VOTE,
-                IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-            )
-            raise HTTPException(409, "No vote casted on this comment")
-        elif existing_vote == False:  # downvote
+        conflicting_intent=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+        intent_conflict_message=conflict_message,
+    ) as latest_intent:
+        intent_id: Final[str] = uuid4().hex
+        if latest_intent == IntentFlag.RESOURCE_CREATION_PENDING_ALT_FLAG:  # Downvote
             delta = -1
+        elif not latest_intent:
+            existing_vote: bool | None = await comment_repo.get_vote(
+                post_id, access_token["sid"]
+            )
+            if not existing_vote:
+                await cache_manager.set_intent(
+                    intent_id,
+                    str(access_token["sid"]),
+                    str(comment_id),
+                    CommentVote.__tablename__,
+                    Action.VOTE,
+                    IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+                )
+                raise HTTPException(409, conflict_message)
+            elif existing_vote == False:  # downvote
+                delta = -1
 
-    counter_updates: tuple[CounterUpdate, ...] = (
-        CounterUpdate(
-            counter_group=derive_hashmap_name(CommentResult.resource_name, "score"),
-            cache_key=comment_cache_key,
-            field_name="score",
-            delta=delta,
-        ),
-        CounterUpdate(
-            counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
-            cache_key=derive_cache_key(UserResult.resource_name, comment.author_id),
-            field_name="aura",
-            delta=delta,
-        ),
-    )
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                CommentResult.resource_name,
-                Action.UNVOTE,
-                str(access_token["sid"]),
-                str(comment_id),
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(CommentResult.resource_name, "score"),
+                cache_key=comment_cache_key,
+                field_name="score",
+                delta=delta,
             ),
-            intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-            intent_id=intent_id,
-        ),
-    )
+            CounterUpdate(
+                counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
+                cache_key=derive_cache_key(UserResult.resource_name, comment.author_id),
+                field_name="aura",
+                delta=delta,
+            ),
+        )
+        intent_updates: tuple[IntentUpdate, ...] = (
+            IntentUpdate(
+                intent_name=create_intent_flag(
+                    CommentResult.resource_name,
+                    Action.UNVOTE,
+                    str(access_token["sid"]),
+                    str(comment_id),
+                ),
+                intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+                intent_id=intent_id,
+            ),
+        )
 
-    vote_event: Event = Event(
-        name=EventName.COMMENT_UNVOTE,
-        event_id=intent_id,
-        created_at=time.time(),
-        payload={
-            "comment_id": comment_id,
-            "user_id": access_token["sid"],
-            "vote": delta,
-        },
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
-    )
+        vote_event: Event = Event(
+            name=EventName.COMMENT_UNVOTE,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload={
+                "comment_id": comment_id,
+                "user_id": access_token["sid"],
+                "vote": delta,
+            },
+            side_effects=EventSideEffects(
+                counter_updates=counter_updates, intent_updates=intent_updates
+            ),  # type: ignore[reportCallIssue]
+        )
 
-    await event_streamer.emit_user_event(vote_event)
+        await event_streamer.emit_user_event(vote_event)
     return JSONResponse({"message": "Removed vote"}, 202)
 
 
@@ -432,69 +432,69 @@ async def report_comment(
     resource_name: str = NAME_SEPERATOR.join(
         (CommentResult.resource_name, report_model.tag)
     )
-    lock, latest_intent = await cache_manager.fetch_indicators(
-        str(access_token["sid"]), str(comment_id), resource_name, Action.REPORT
-    )
 
-    if lock:
-        raise HTTPException(409, "An identical request is being processed")
+    conflict_message: str = f"Comment already reported for reason: {report_model.tag}"
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        comment_id,
+        resource_name,
+        Action.REPORT,
+        conflicting_intent=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+        intent_conflict_message=conflict_message,
+    ) as latest_intent:
+        intent_id: Final[str] = uuid4().hex
+        if not latest_intent:
+            if await comment_repo.check_reported(
+                comment_id, access_token["sid"], report_model.tag
+            ):
+                await cache_manager.set_intent(
+                    intent_id,
+                    str(access_token["sid"]),
+                    str(comment_id),
+                    resource_name,
+                    Action.REPORT,
+                    IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+                )
+                raise HTTPException(409, conflict_message)
 
-    intent_id: Final[str] = uuid4().hex
-
-    if latest_intent:
-        raise HTTPException(409, "Post already reported")
-    else:
-        if await comment_repo.check_reported(
-            comment_id, access_token["sid"], report_model.tag
-        ):
-            await cache_manager.set_intent(
-                intent_id,
-                str(access_token["sid"]),
-                str(comment_id),
-                resource_name,
-                Action.REPORT,
-                IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-            )
-            raise HTTPException(
-                409, f"Comment already reported for reason: {report_model.tag}"
-            )
-
-    counter_updates: tuple[CounterUpdate, ...] = (
-        CounterUpdate(
-            counter_group=derive_hashmap_name(CommentResult.resource_name, "reports"),
-            cache_key=comment_cache_key,
-            field_name="reports",
-            delta=1,
-        ),
-    )
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                resource_name,
-                Action.REPORT,
-                str(access_token["sid"]),
-                str(comment_id),
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(
+                    CommentResult.resource_name, "reports"
+                ),
+                cache_key=comment_cache_key,
+                field_name="reports",
+                delta=1,
             ),
-            intent_flag=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-            intent_id=intent_id,
-        ),
-    )
+        )
+        intent_updates: tuple[IntentUpdate, ...] = (
+            IntentUpdate(
+                intent_name=create_intent_flag(
+                    resource_name,
+                    Action.REPORT,
+                    str(access_token["sid"]),
+                    str(comment_id),
+                ),
+                intent_flag=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+                intent_id=intent_id,
+            ),
+        )
 
-    report_event: Event = Event(
-        name=EventName.POST_UNSAVE,
-        event_id=intent_id,
-        created_at=time.time(),
-        payload={
-            "post_id": post_id,
-            "user_id": access_token["sid"],
-            "report_tag": report_model.tag,
-            "report_description": report_model.description,
-            "report_time": datetime.now().isoformat(),
-        },
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
-    )
+        report_event: Event = Event(
+            name=EventName.POST_UNSAVE,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload={
+                "post_id": post_id,
+                "user_id": access_token["sid"],
+                "report_tag": report_model.tag,
+                "report_description": report_model.description,
+                "report_time": datetime.now().isoformat(),
+            },
+            side_effects=EventSideEffects(
+                counter_updates=counter_updates, intent_updates=intent_updates
+            ),  # type: ignore[reportCallIssue]
+        )
 
-    await event_streamer.emit_user_event(report_event)
+        await event_streamer.emit_user_event(report_event)
     return JSONResponse({"message": "post reported"}, 202)

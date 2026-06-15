@@ -474,80 +474,82 @@ async def subscribe_forum(
     if not forum:
         raise HTTPException(404, f"No forum with ID {forum_id} exists")
 
-    lock, latest_intent = await cache_manager.fetch_indicators(
-        str(access_token["sid"]), str(forum_id), Forum.__tablename__, Action.SUB
-    )
-    if lock:
-        raise HTTPException(409, "A request for this action is already underway")
-    if latest_intent == IntentFlag.RESOURCE_CREATION_PENDING_FLAG.value:
-        raise HTTPException(409, "Forum already subscribed")
-
-    intent_id: Final[str] = uuid4().hex
-
-    if not latest_intent:
-        subscribed: bool = await forum_repo.check_subscription(
-            forum_id=forum_id, user_id=access_token["sid"]
-        )
-        if subscribed:
-            await cache_manager.set_intent(
-                intent_id,
-                str(access_token["sid"]),
-                str(forum_id),
-                ForumResult.resource_name,
-                Action.SUB,
-                IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+    conflict_message: str = f"Already subscribed to forum: {forum.name_}"
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        forum_id,
+        ForumResult.resource_name,
+        Action.SUB,
+        conflicting_intent=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+        intent_conflict_message=conflict_message,
+    ) as latest_intent:
+        intent_id: Final[str] = uuid4().hex
+        if not latest_intent:
+            subscribed: bool = await forum_repo.check_subscription(
+                forum_id=forum_id, user_id=access_token["sid"]
             )
-            raise HTTPException(409, f"Already subscribed to forum {forum.name_}")
+            if subscribed:
+                await cache_manager.set_intent(
+                    intent_id,
+                    str(access_token["sid"]),
+                    str(forum_id),
+                    ForumResult.resource_name,
+                    Action.SUB,
+                    IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+                )
+                raise HTTPException(409, conflict_message)
 
-    forum_owner: UserResult | None = await cache_manager.distributed_get_or_load(
-        derive_cache_key(Forum.__tablename__ + "owner", forum_id),
-        partial(forum_repo.get_forum_owner, forum_id),
-        UserResult,
-    )
-
-    # NOTE: This should never happen
-    if not forum_owner:
-        raise HTTPException(500, "Failed to perform subscription")
-
-    counter_updates: tuple[CounterUpdate, ...] = (
-        CounterUpdate(
-            counter_group=derive_hashmap_name(
-                ForumResult.resource_name, "subscriptions"
+        forum_owner: UserResult | None = await cache_manager.distributed_get_or_load(
+            derive_cache_key(
+                NAME_SEPERATOR.join((ForumResult.resource_name, "owner")), forum_id
             ),
-            cache_key=cache_key,
-            field_name="subscribers",
-            delta=1,
-        ),
-        CounterUpdate(
-            counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
-            cache_key=derive_cache_key(UserResult.resource_name, forum_owner.id_),
-            field_name="aura",
-            delta=1,
-        ),
-    )
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                ForumResult.resource_name,
-                Action.SUB,
-                str(access_token["sid"]),
-                str(forum_id),
-            ),
-            intent_flag=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-            intent_id=intent_id,
-        ),
-    )
+            partial(forum_repo.get_forum_owner, forum_id),
+            UserResult,
+        )
 
-    subscription_event: Event = Event(
-        name=EventName.FORUM_SUB,
-        event_id=intent_id,
-        created_at=time.time(),
-        payload={"forum_id": forum_id, "user_id": access_token["sid"]},
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
-    )
-    await event_streamer.emit_user_event(subscription_event)
+        # NOTE: This should never happen
+        if not forum_owner:
+            raise HTTPException(500, "Failed to perform subscription")
+
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(
+                    ForumResult.resource_name, "subscriptions"
+                ),
+                cache_key=cache_key,
+                field_name="subscribers",
+                delta=1,
+            ),
+            CounterUpdate(
+                counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
+                cache_key=derive_cache_key(UserResult.resource_name, forum_owner.id_),
+                field_name="aura",
+                delta=1,
+            ),
+        )
+        intent_updates: tuple[IntentUpdate, ...] = (
+            IntentUpdate(
+                intent_name=create_intent_flag(
+                    ForumResult.resource_name,
+                    Action.SUB,
+                    str(access_token["sid"]),
+                    str(forum_id),
+                ),
+                intent_flag=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+                intent_id=intent_id,
+            ),
+        )
+
+        subscription_event: Event = Event(
+            name=EventName.FORUM_SUB,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload={"forum_id": forum_id, "user_id": access_token["sid"]},
+            side_effects=EventSideEffects(
+                counter_updates=counter_updates, intent_updates=intent_updates
+            ),  # type: ignore[reportCallIssue]
+        )
+        await event_streamer.emit_user_event(subscription_event)
     return JSONResponse({"message": "Forum subscribed!"}, 202)
 
 
@@ -569,81 +571,84 @@ async def unsubscribe_forum(
     if not forum:
         raise HTTPException(404, f"No forum with ID {forum_id} exists")
 
-    lock, latest_intent = await cache_manager.fetch_indicators(
-        str(access_token["sid"]), str(forum_id), Forum.__tablename__, Action.SUB
-    )
-    if lock:
-        raise HTTPException(409, "A request for this action is already underway")
-    if latest_intent == IntentFlag.RESOURCE_DELETION_PENDING_FLAG.value:
-        raise HTTPException(409, "Forum not subscribed")
+    conflicting_message: str = f"Not subscribed to forum: {forum.name_}"
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        forum_id,
+        ForumResult.resource_name,
+        Action.SUB,
+        conflicting_intent=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+        intent_conflict_message=conflicting_message,
+    ) as latest_intent:
+        intent_id: Final[str] = uuid4().hex
 
-    intent_id: Final[str] = uuid4().hex
-
-    if not latest_intent:
-        subscribed: bool = await forum_repo.check_subscription(
-            forum_id=forum_id, user_id=access_token["sid"]
-        )
-        if not subscribed:
-            await cache_manager.set_intent(
-                intent_id,
-                str(access_token["sid"]),
-                str(forum_id),
-                ForumResult.resource_name,
-                Action.UNSUB,
-                IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+        if not latest_intent:
+            subscribed: bool = await forum_repo.check_subscription(
+                forum_id=forum_id, user_id=access_token["sid"]
             )
-            raise HTTPException(409, f"Already unsubscribed to forum {forum.name_}")
+            if not subscribed:
+                await cache_manager.set_intent(
+                    intent_id,
+                    str(access_token["sid"]),
+                    str(forum_id),
+                    ForumResult.resource_name,
+                    Action.UNSUB,
+                    IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+                )
+                raise HTTPException(409, conflicting_message)
 
-    forum_owner: UserResult | None = await cache_manager.distributed_get_or_load(
-        derive_cache_key(Forum.__tablename__ + "owner", forum_id),
-        partial(forum_repo.get_forum_owner, forum_id),
-        UserResult,
-    )
-
-    # NOTE: This should never happen
-    if not forum_owner:
-        raise HTTPException(500, "Failed to perform unsubscription")
-
-    counter_updates: tuple[CounterUpdate, ...] = (
-        CounterUpdate(
-            counter_group=derive_hashmap_name(
-                ForumResult.resource_name, "subscriptions"
+        forum_owner: UserResult | None = await cache_manager.distributed_get_or_load(
+            derive_cache_key(
+                NAME_SEPERATOR.join((ForumResult.resource_name, "owner")), forum_id
             ),
-            cache_key=cache_key,
-            field_name="subscribers",
-            delta=-1,
-        ),
-        CounterUpdate(
-            counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
-            cache_key=derive_cache_key(UserResult.resource_name, forum_owner.id_),
-            field_name="aura",
-            delta=-1,
-        ),
-    )
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                ForumResult.resource_name,
-                Action.UNSUB,
-                str(access_token["sid"]),
-                str(forum_id),
+            partial(forum_repo.get_forum_owner, forum_id),
+            UserResult,
+        )
+
+        # NOTE: This should never happen
+        if not forum_owner:
+            raise HTTPException(500, "Failed to perform unsubscription")
+
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(
+                    ForumResult.resource_name, "subscriptions"
+                ),
+                cache_key=cache_key,
+                field_name="subscribers",
+                delta=-1,
             ),
-            intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-            intent_id=intent_id,
-        ),
-    )
+            CounterUpdate(
+                counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
+                cache_key=derive_cache_key(UserResult.resource_name, forum_owner.id_),
+                field_name="aura",
+                delta=-1,
+            ),
+        )
+        intent_updates: tuple[IntentUpdate, ...] = (
+            IntentUpdate(
+                intent_name=create_intent_flag(
+                    ForumResult.resource_name,
+                    Action.UNSUB,
+                    str(access_token["sid"]),
+                    str(forum_id),
+                ),
+                intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+                intent_id=intent_id,
+            ),
+        )
 
-    unsubscription_event: Event = Event(
-        name=EventName.FORUM_UNSUB,
-        event_id=intent_id,
-        created_at=time.time(),
-        payload={"forum_id": forum_id, "user_id": access_token["sid"]},
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
-    )
+        unsubscription_event: Event = Event(
+            name=EventName.FORUM_UNSUB,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload={"forum_id": forum_id, "user_id": access_token["sid"]},
+            side_effects=EventSideEffects(
+                counter_updates=counter_updates, intent_updates=intent_updates
+            ),  # type: ignore[reportCallIssue]
+        )
 
-    await event_streamer.emit_user_event(unsubscription_event)
+        await event_streamer.emit_user_event(unsubscription_event)
     return JSONResponse({"message": "Forum unsubscribed!"}, 202)
 
 

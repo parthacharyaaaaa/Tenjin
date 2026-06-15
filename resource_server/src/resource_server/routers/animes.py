@@ -91,65 +91,66 @@ async def sub_anime(
     if not anime:
         raise HTTPException(404, f"No anime with id {anime_id} could be found")
 
-    lock, latest_intent = await cache_manager.fetch_indicators(
-        str(access_token["sid"]), str(anime_id), Anime.__tablename__, Action.SUB
-    )
-    if lock:
-        raise HTTPException(409, "Duplicate operation ongoing")
-    if latest_intent == IntentFlag.RESOURCE_CREATION_PENDING_FLAG:
-        raise HTTPException(409, f"Already subscribed to anime {anime.title}")
-
-    intent_id: Final[str] = uuid4().hex
-
-    if not latest_intent:
-        subscription: bool = await anime_repo.check_subscription(
-            anime_id, access_token["sid"]
-        )
-        if subscription:
-            await cache_manager.set_intent(
-                intent_id,
-                str(access_token["sid"]),
-                str(anime_id),
-                AnimeSubscription.__tablename__,
-                Action.SUB,
-                IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+    conflict_message: str = f"Already subscribed to anime {anime.title}"
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        anime_id,
+        AnimeResult.resource_name,
+        Action.SUB,
+        conflicting_intent=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+        intent_conflict_message=conflict_message,
+    ) as latest_intent:
+        intent_id: Final[str] = uuid4().hex
+        if not latest_intent:
+            subscription: bool = await anime_repo.check_subscription(
+                anime_id, access_token["sid"]
             )
-            raise HTTPException(409, f"Already subscribed to anime {anime.title}")
+            if subscription:
+                await cache_manager.set_intent(
+                    intent_id,
+                    str(access_token["sid"]),
+                    str(anime_id),
+                    AnimeSubscription.__tablename__,
+                    Action.SUB,
+                    IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+                )
+                raise HTTPException(409, conflict_message)
 
-    counter_updates: tuple[CounterUpdate, ...] = (
-        CounterUpdate(
-            counter_group=derive_hashmap_name(
-                AnimeResult.resource_name, "subscriptions"
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(
+                    AnimeResult.resource_name, "subscriptions"
+                ),
+                cache_key=cache_key,
+                field_name="subscribers",
+                delta=1,
             ),
-            cache_key=cache_key,
-            field_name="subscribers",
-            delta=1,
-        ),
-    )
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                AnimeResult.resource_name,
-                Action.SUB,
-                str(access_token["sid"]),
-                str(anime_id),
+        )
+        intent_updates: tuple[IntentUpdate, ...] = (
+            IntentUpdate(
+                intent_name=create_intent_flag(
+                    AnimeResult.resource_name,
+                    Action.SUB,
+                    str(access_token["sid"]),
+                    str(anime_id),
+                ),
+                intent_flag=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+                intent_id=intent_id,
             ),
-            intent_flag=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-            intent_id=intent_id,
-        ),
-    )
+        )
 
-    subscription_event: Event = Event(
-        name=EventName.ANIME_SUB,
-        event_id=intent_id,
-        created_at=time.time(),
-        payload={"anime_id": anime_id, "user_id": access_token["sid"]},
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
-    )
+        subscription_event: Event = Event(
+            name=EventName.ANIME_SUB,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload={"anime_id": anime_id, "user_id": access_token["sid"]},
+            side_effects=EventSideEffects(
+                counter_updates=counter_updates, intent_updates=intent_updates
+            ),  # type: ignore[reportCallIssue]
+        )
 
-    await event_streamer.emit_user_event(subscription_event)
+        await event_streamer.emit_user_event(subscription_event)
+
     return JSONResponse({"message": "subscribed!"}, 202)
 
 
@@ -172,65 +173,62 @@ async def unsub_anime(
     if not anime:
         raise HTTPException(404, f"No anime with id {anime_id} could be found")
 
-    lock, latest_intent = await cache_manager.fetch_indicators(
-        str(access_token["sid"]), str(anime_id), Anime.__tablename__, Action.UNSUB
-    )
-    if lock:
-        raise HTTPException(409, "Duplicate operation ongoing")
-    if latest_intent == IntentFlag.RESOURCE_DELETION_PENDING_FLAG:
-        raise HTTPException(409, f"Not subscribed to anime {anime.title}")
+    conflict_message: str = f"Not subscribed to anime {anime.title}"
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        anime_id,
+        AnimeResult.resource_name,
+        Action.SUB,
+        conflicting_intent=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+        intent_conflict_message=conflict_message,
+    ) as latest_intent:
+        intent_id: Final[str] = uuid4().hex
+        if not latest_intent:
+            if await anime_repo.check_subscription(anime_id, access_token["sid"]):
+                await cache_manager.set_intent(
+                    intent_id,
+                    str(access_token["sid"]),
+                    str(anime_id),
+                    AnimeSubscription.__tablename__,
+                    Action.UNSUB,
+                    IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+                )
+                raise HTTPException(409, conflict_message)
 
-    intent_id: Final[str] = uuid4().hex
-
-    if not latest_intent:
-        subscription: bool = await anime_repo.check_subscription(
-            anime_id, access_token["sid"]
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(
+                    AnimeResult.resource_name, "subscriptions"
+                ),
+                cache_key=cache_key,
+                field_name="subscribers",
+                delta=-1,
+            ),
         )
-        if subscription:
-            await cache_manager.set_intent(
-                intent_id,
-                str(access_token["sid"]),
-                str(anime_id),
-                AnimeSubscription.__tablename__,
-                Action.UNSUB,
-                IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-            )
-            raise HTTPException(409, f"Not subscribed to anime {anime.title}")
-
-    counter_updates: tuple[CounterUpdate, ...] = (
-        CounterUpdate(
-            counter_group=derive_hashmap_name(
-                AnimeResult.resource_name, "subscriptions"
+        intent_updates: tuple[IntentUpdate, ...] = (
+            IntentUpdate(
+                intent_name=create_intent_flag(
+                    AnimeResult.resource_name,
+                    Action.SUB,
+                    str(access_token["sid"]),
+                    str(anime_id),
+                ),
+                intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+                intent_id=intent_id,
             ),
-            cache_key=cache_key,
-            field_name="subscribers",
-            delta=-1,
-        ),
-    )
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                AnimeResult.resource_name,
-                Action.UNSUB,
-                str(access_token["sid"]),
-                str(anime_id),
-            ),
-            intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-            intent_id=intent_id,
-        ),
-    )
+        )
 
-    subscription_event: Event = Event(
-        name=EventName.ANIME_UNSUB,
-        event_id=intent_id,
-        created_at=time.time(),
-        payload={"anime_id": anime_id, "user_id": access_token["sid"]},
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
-    )
+        subscription_event: Event = Event(
+            name=EventName.ANIME_UNSUB,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload={"anime_id": anime_id, "user_id": access_token["sid"]},
+            side_effects=EventSideEffects(
+                counter_updates=counter_updates, intent_updates=intent_updates
+            ),  # type: ignore[reportCallIssue]
+        )
 
-    await event_streamer.emit_user_event(subscription_event)
+        await event_streamer.emit_user_event(subscription_event)
     return JSONResponse({"message": "unsubscribed!"}, 202)
 
 

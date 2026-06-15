@@ -142,65 +142,68 @@ async def delete_post(
     if not post:
         raise HTTPException(404, f"No post with id {post_id} found")
 
-    lock, latest_intent = await cache_manager.fetch_indicators(
-        str(access_token["sid"]), str(post_id), PostResult.resource_name, Action.DELETE
-    )
-
-    if lock:
-        raise HTTPException(409, "An identical operation is underway")
-    if latest_intent == IntentFlag.RESOURCE_DELETION_PENDING_FLAG:
-        raise HTTPException(410, "Post already deleted")
-
-    if access_token["sid"] != post.author_id:
-        forum_admin: ForumAdminResult | None = (
-            await cache_manager.distributed_get_or_load(
-                derive_cache_key(
-                    ForumAdminResult.resource_name,
-                    NAME_SEPERATOR.join((str(post.forum_id), str(access_token["sid"]))),
-                ),
-                partial(forum_repo.get_forum_admin, post.forum_id, access_token["sid"]),
-                ForumAdminResult,
+    conflicting_message: str = f"Post already deleted"
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        post_id,
+        PostResult.resource_name,
+        Action.DELETE,
+        conflicting_intent=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+        intent_conflict_message=conflicting_message,
+    ) as latest_intent:
+        intent_id: Final[str] = uuid4().hex
+        if access_token["sid"] != post.author_id:
+            forum_admin: ForumAdminResult | None = (
+                await cache_manager.distributed_get_or_load(
+                    derive_cache_key(
+                        ForumAdminResult.resource_name,
+                        NAME_SEPERATOR.join(
+                            (str(post.forum_id), str(access_token["sid"]))
+                        ),
+                    ),
+                    partial(
+                        forum_repo.get_forum_admin, post.forum_id, access_token["sid"]
+                    ),
+                    ForumAdminResult,
+                )
             )
-        )
-        if not forum_admin:
-            raise HTTPException(403, "Only author and admins can delete post")
-        if not check_permission(forum_admin.role, AdminPermissions.DELETE_POST):
-            raise HTTPException(403, "Insufficient permissions to delete post")
+            if not forum_admin:
+                raise HTTPException(403, "Only author and admins can delete post")
+            if not check_permission(forum_admin.role, AdminPermissions.DELETE_POST):
+                raise HTTPException(403, "Insufficient permissions to delete post")
 
-    intent_id: Final[str] = uuid4().hex
-
-    counter_updates: tuple[CounterUpdate, ...] = (
-        CounterUpdate(
-            counter_group=derive_hashmap_name(ForumResult.resource_name, "posts"),
-            cache_key=derive_cache_key(ForumResult.resource_name, post.forum_id),
-            field_name="posts",
-            delta=-1,
-        ),
-    )
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                ForumResult.resource_name,
-                Action.DELETE,
-                str(access_token["sid"]),
-                str(post_id),
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(ForumResult.resource_name, "posts"),
+                cache_key=derive_cache_key(ForumResult.resource_name, post.forum_id),
+                field_name="posts",
+                delta=-1,
             ),
-            intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-            intent_id=intent_id,
-        ),
-    )
+        )
+        intent_updates: tuple[IntentUpdate, ...] = (
+            IntentUpdate(
+                intent_name=create_intent_flag(
+                    ForumResult.resource_name,
+                    Action.DELETE,
+                    str(access_token["sid"]),
+                    str(post_id),
+                ),
+                intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+                intent_id=intent_id,
+            ),
+        )
 
-    subscription_event: Event = Event(
-        name=EventName.ANIME_UNSUB,
-        event_id=intent_id,
-        created_at=time.time(),
-        payload={"post_id": post_id},
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
-    )
+        subscription_event: Event = Event(
+            name=EventName.ANIME_UNSUB,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload={"post_id": post_id},
+            side_effects=EventSideEffects(
+                counter_updates=counter_updates, intent_updates=intent_updates
+            ),  # type: ignore[reportCallIssue]
+        )
 
-    await event_streamer.emit_user_event(subscription_event)
+        await event_streamer.emit_user_event(subscription_event)
     return JSONResponse({"message": "post queued for deletion"}, 202)
 
 
@@ -227,77 +230,76 @@ async def vote_post(
     if not post:
         raise HTTPException(404, f"No post with id {post_id} found")
 
-    lock, latest_intent = await cache_manager.fetch_indicators(
-        str(access_token["sid"]), str(post_id), PostResult.resource_name, Action.VOTE
+    conflicting_message: str = (
+        f"Post already {'upvoted' if vote_model.vote == 1 else 'downvoted'}"
     )
-
-    if lock:
-        raise HTTPException(409, "An identical request is being processed")
-
-    intent_id: Final[str] = uuid4().hex
-
-    if latest_intent == intent:
-        raise HTTPException(
-            409, f"Post already {'upvoted' if vote_model.vote == 1 else 'downvoted'}"
-        )
-    elif not latest_intent:
-        existing_vote: bool | None = await post_repo.get_vote(
-            post_id, access_token["sid"]
-        )
-        if (existing_vote == True and vote_model.vote == 1) or (
-            existing_vote == False and vote_model.vote == -1
-        ):
-            await cache_manager.set_intent(
-                intent_id,
-                str(access_token["sid"]),
-                str(post_id),
-                PostVote.__tablename__,
-                Action.VOTE,
-                intent,
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        post_id,
+        PostResult.resource_name,
+        Action.SAVE,
+        conflicting_intent=intent,
+        intent_conflict_message=conflicting_message,
+    ) as latest_intent:
+        intent_id: Final[str] = uuid4().hex
+        if not latest_intent:
+            existing_vote: bool | None = await post_repo.get_vote(
+                post_id, access_token["sid"]
             )
-            raise HTTPException(409, "Same vote already casted")
-        elif existing_vote:
-            # Transitioning from upvote to downvote, or vice-versa
-            delta *= 2
+            if (existing_vote == True and vote_model.vote == 1) or (
+                existing_vote == False and vote_model.vote == -1
+            ):
+                await cache_manager.set_intent(
+                    intent_id,
+                    str(access_token["sid"]),
+                    str(post_id),
+                    PostVote.__tablename__,
+                    Action.VOTE,
+                    intent,
+                )
+                raise HTTPException(409, "Same vote already casted")
+            elif existing_vote:
+                # Transitioning from upvote to downvote, or vice-versa
+                delta *= 2
 
-    counter_updates: tuple[CounterUpdate, ...] = (
-        CounterUpdate(
-            counter_group=derive_hashmap_name(PostResult.resource_name, "score"),
-            cache_key=post_cache_key,
-            field_name="score",
-            delta=delta,
-        ),
-        CounterUpdate(
-            counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
-            cache_key=derive_cache_key(UserResult.resource_name, post.author_id),
-            field_name="aura",
-            delta=delta,
-        ),
-    )
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                PostResult.resource_name,
-                Action.VOTE,
-                str(access_token["sid"]),
-                str(post_id),
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(PostResult.resource_name, "score"),
+                cache_key=post_cache_key,
+                field_name="score",
+                delta=delta,
             ),
-            intent_flag=intent,
-            intent_id=intent_id,
-        ),
-    )
+            CounterUpdate(
+                counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
+                cache_key=derive_cache_key(UserResult.resource_name, post.author_id),
+                field_name="aura",
+                delta=delta,
+            ),
+        )
+        intent_updates: tuple[IntentUpdate, ...] = (
+            IntentUpdate(
+                intent_name=create_intent_flag(
+                    PostResult.resource_name,
+                    Action.VOTE,
+                    str(access_token["sid"]),
+                    str(post_id),
+                ),
+                intent_flag=intent,
+                intent_id=intent_id,
+            ),
+        )
 
-    vote_event: Event = Event(
-        name=EventName.POST_UNSAVE,
-        event_id=intent_id,
-        created_at=time.time(),
-        payload={"post_id": post_id, "user_id": access_token["sid"]},
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
-    )
+        vote_event: Event = Event(
+            name=EventName.POST_UNSAVE,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload={"post_id": post_id, "user_id": access_token["sid"]},
+            side_effects=EventSideEffects(
+                counter_updates=counter_updates, intent_updates=intent_updates
+            ),  # type: ignore[reportCallIssue]
+        )
 
-    await event_streamer.emit_user_event(vote_event)
+        await event_streamer.emit_user_event(vote_event)
     return JSONResponse({"message": "Voted"}, 202)
 
 
@@ -317,75 +319,75 @@ async def unvote_post(
     if not post:
         raise HTTPException(404, f"No post with id {post_id} found")
 
-    lock, latest_intent = await cache_manager.fetch_indicators(
-        str(access_token["sid"]), str(post_id), PostResult.resource_name, Action.VOTE
-    )
+    conflicting_message: str = "No vote casted on post"
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        post_id,
+        PostResult.resource_name,
+        Action.SAVE,
+        conflicting_intent=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+        intent_conflict_message=conflicting_message,
+    ) as latest_intent:
+        intent_id: Final[str] = uuid4().hex
+        delta: int = 1  # default to upvote
 
-    if lock:
-        raise HTTPException(409, "An identical request is being processed")
-
-    intent_id: Final[str] = uuid4().hex
-
-    delta: int = 1  # default to upvote
-    if latest_intent == IntentFlag.RESOURCE_DELETION_PENDING_FLAG:
-        raise HTTPException(409, f"No vote casted on post {post_id}")
-    elif latest_intent == IntentFlag.RESOURCE_CREATION_PENDING_ALT_FLAG:  # downvote
-        delta = -1
-    elif not latest_intent:
-        existing_vote: bool | None = await post_repo.get_vote(
-            post_id, access_token["sid"]
-        )
-        if existing_vote is None:
-            await cache_manager.set_intent(
-                intent_id,
-                str(access_token["sid"]),
-                str(post_id),
-                PostVote.__tablename__,
-                Action.VOTE,
-                IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-            )
-            raise HTTPException(409, f"No vote casted on post {post_id}")
-        if existing_vote == False:  # downvote
+        if latest_intent == IntentFlag.RESOURCE_CREATION_PENDING_ALT_FLAG:  # downvote
             delta = -1
+        elif not latest_intent:
+            existing_vote: bool | None = await post_repo.get_vote(
+                post_id, access_token["sid"]
+            )
+            if existing_vote is None:
+                await cache_manager.set_intent(
+                    intent_id,
+                    str(access_token["sid"]),
+                    str(post_id),
+                    PostVote.__tablename__,
+                    Action.VOTE,
+                    IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+                )
+                raise HTTPException(409, conflicting_message)
+            if existing_vote == False:  # downvote
+                delta = -1
 
-    counter_updates: tuple[CounterUpdate, ...] = (
-        CounterUpdate(
-            counter_group=derive_hashmap_name(PostResult.resource_name, "score"),
-            cache_key=post_cache_key,
-            field_name="score",
-            delta=delta,
-        ),
-        CounterUpdate(
-            counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
-            cache_key=derive_cache_key(UserResult.resource_name, post.author_id),
-            field_name="aura",
-            delta=delta,
-        ),
-    )
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                PostResult.resource_name,
-                Action.VOTE,
-                str(access_token["sid"]),
-                str(post_id),
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(PostResult.resource_name, "score"),
+                cache_key=post_cache_key,
+                field_name="score",
+                delta=delta,
             ),
-            intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-            intent_id=intent_id,
-        ),
-    )
+            CounterUpdate(
+                counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
+                cache_key=derive_cache_key(UserResult.resource_name, post.author_id),
+                field_name="aura",
+                delta=delta,
+            ),
+        )
+        intent_updates: tuple[IntentUpdate, ...] = (
+            IntentUpdate(
+                intent_name=create_intent_flag(
+                    PostResult.resource_name,
+                    Action.VOTE,
+                    str(access_token["sid"]),
+                    str(post_id),
+                ),
+                intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+                intent_id=intent_id,
+            ),
+        )
 
-    unvote_event: Event = Event(
-        name=EventName.POST_UNVOTE,
-        event_id=intent_id,
-        created_at=time.time(),
-        payload={"post_id": post_id, "user_id": access_token["sid"]},
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
-    )
+        unvote_event: Event = Event(
+            name=EventName.POST_UNVOTE,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload={"post_id": post_id, "user_id": access_token["sid"]},
+            side_effects=EventSideEffects(
+                counter_updates=counter_updates, intent_updates=intent_updates
+            ),  # type: ignore[reportCallIssue]
+        )
 
-    await event_streamer.emit_user_event(unvote_event)
+        await event_streamer.emit_user_event(unvote_event)
     return JSONResponse({"message": "Unvoted"}, 202)
 
 
@@ -405,67 +407,66 @@ async def save_post(
     if not post:
         raise HTTPException(404, f"No post with id {post_id} found")
 
-    lock, latest_intent = await cache_manager.fetch_indicators(
-        str(access_token["sid"]), str(post_id), PostResult.resource_name, Action.SAVE
-    )
+    conflicting_message: str = "Post already saved"
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        post_id,
+        PostResult.resource_name,
+        Action.SAVE,
+        conflicting_intent=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+        intent_conflict_message=conflicting_message,
+    ) as latest_intent:
+        intent_id: Final[str] = uuid4().hex
+        if not latest_intent:
+            if await post_repo.check_saved(post_id, access_token["sid"]):
+                await cache_manager.set_intent(
+                    intent_id,
+                    str(access_token["sid"]),
+                    str(post_id),
+                    PostResult.resource_name,
+                    Action.SAVE,
+                    IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+                )
+                raise HTTPException(409, conflicting_message)
 
-    if lock:
-        raise HTTPException(409, "An identical request is being processed")
-    if latest_intent == IntentFlag.RESOURCE_CREATION_PENDING_FLAG:
-        raise HTTPException(409, "Post already saved")
-
-    intent_id: Final[str] = uuid4().hex
-
-    if not latest_intent:
-        if await post_repo.check_saved(post_id, access_token["sid"]):
-            await cache_manager.set_intent(
-                intent_id,
-                str(access_token["sid"]),
-                str(post_id),
-                PostResult.resource_name,
-                Action.SAVE,
-                IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-            )
-            raise HTTPException(409, "Post already saved")
-
-    counter_updates: tuple[CounterUpdate, ...] = (
-        CounterUpdate(
-            counter_group=derive_hashmap_name(PostResult.resource_name, "saves"),
-            cache_key=post_cache_key,
-            field_name="saves",
-            delta=1,
-        ),
-        CounterUpdate(
-            counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
-            cache_key=derive_cache_key(UserResult.resource_name, post.author_id),
-            field_name="aura",
-            delta=1,
-        ),
-    )
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                PostResult.resource_name,
-                Action.SAVE,
-                str(access_token["sid"]),
-                str(post_id),
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(PostResult.resource_name, "saves"),
+                cache_key=post_cache_key,
+                field_name="saves",
+                delta=1,
             ),
-            intent_flag=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-            intent_id=intent_id,
-        ),
-    )
+            CounterUpdate(
+                counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
+                cache_key=derive_cache_key(UserResult.resource_name, post.author_id),
+                field_name="aura",
+                delta=1,
+            ),
+        )
+        intent_updates: tuple[IntentUpdate, ...] = (
+            IntentUpdate(
+                intent_name=create_intent_flag(
+                    PostResult.resource_name,
+                    Action.SAVE,
+                    str(access_token["sid"]),
+                    str(post_id),
+                ),
+                intent_flag=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+                intent_id=intent_id,
+            ),
+        )
 
-    save_event: Event = Event(
-        name=EventName.POST_SAVE,
-        event_id=intent_id,
-        created_at=time.time(),
-        payload={"post_id": post_id, "user_id": access_token["sid"]},
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
-    )
+        save_event: Event = Event(
+            name=EventName.POST_SAVE,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload={"post_id": post_id, "user_id": access_token["sid"]},
+            side_effects=EventSideEffects(
+                counter_updates=counter_updates, intent_updates=intent_updates
+            ),  # type: ignore[reportCallIssue]
+        )
 
-    await event_streamer.emit_user_event(save_event)
+        await event_streamer.emit_user_event(save_event)
     return JSONResponse({"message": "post saved"}, 202)
 
 
@@ -485,67 +486,66 @@ async def unsave_post(
     if not post:
         raise HTTPException(404, f"No post with id {post_id} found")
 
-    lock, latest_intent = await cache_manager.fetch_indicators(
-        str(access_token["sid"]), str(post_id), PostResult.resource_name, Action.SAVE
-    )
+    conflicting_message: str = "Post not saved"
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        post_id,
+        PostResult.resource_name,
+        Action.SAVE,
+        conflicting_intent=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+        intent_conflict_message=conflicting_message,
+    ) as latest_intent:
+        intent_id: Final[str] = uuid4().hex
+        if not latest_intent:
+            if not (await post_repo.check_saved(post_id, access_token["sid"])):
+                await cache_manager.set_intent(
+                    intent_id,
+                    str(access_token["sid"]),
+                    str(post_id),
+                    PostResult.resource_name,
+                    Action.SAVE,
+                    IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+                )
+                raise HTTPException(409, "Post not saved")
 
-    if lock:
-        raise HTTPException(409, "An identical request is being processed")
-    if latest_intent == IntentFlag.RESOURCE_DELETION_PENDING_FLAG:
-        raise HTTPException(409, "Post not saved")
-
-    intent_id: Final[str] = uuid4().hex
-
-    if not latest_intent:
-        if not (await post_repo.check_saved(post_id, access_token["sid"])):
-            await cache_manager.set_intent(
-                intent_id,
-                str(access_token["sid"]),
-                str(post_id),
-                PostResult.resource_name,
-                Action.SAVE,
-                IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-            )
-            raise HTTPException(409, "Post not saved")
-
-    counter_updates: tuple[CounterUpdate, ...] = (
-        CounterUpdate(
-            counter_group=derive_hashmap_name(PostResult.resource_name, "saves"),
-            cache_key=post_cache_key,
-            field_name="saves",
-            delta=-1,
-        ),
-        CounterUpdate(
-            counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
-            cache_key=derive_cache_key(UserResult.resource_name, post.author_id),
-            field_name="aura",
-            delta=-1,
-        ),
-    )
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                PostResult.resource_name,
-                Action.SAVE,
-                str(access_token["sid"]),
-                str(post_id),
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(PostResult.resource_name, "saves"),
+                cache_key=post_cache_key,
+                field_name="saves",
+                delta=-1,
             ),
-            intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-            intent_id=intent_id,
-        ),
-    )
+            CounterUpdate(
+                counter_group=derive_hashmap_name(UserResult.resource_name, "aura"),
+                cache_key=derive_cache_key(UserResult.resource_name, post.author_id),
+                field_name="aura",
+                delta=-1,
+            ),
+        )
+        intent_updates: tuple[IntentUpdate, ...] = (
+            IntentUpdate(
+                intent_name=create_intent_flag(
+                    PostResult.resource_name,
+                    Action.SAVE,
+                    str(access_token["sid"]),
+                    str(post_id),
+                ),
+                intent_flag=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+                intent_id=intent_id,
+            ),
+        )
 
-    unsave_event: Event = Event(
-        name=EventName.POST_UNSAVE,
-        event_id=intent_id,
-        created_at=time.time(),
-        payload={"post_id": post_id, "user_id": access_token["sid"]},
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
-    )
+        unsave_event: Event = Event(
+            name=EventName.POST_UNSAVE,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload={"post_id": post_id, "user_id": access_token["sid"]},
+            side_effects=EventSideEffects(
+                counter_updates=counter_updates, intent_updates=intent_updates
+            ),  # type: ignore[reportCallIssue]
+        )
 
-    await event_streamer.emit_user_event(unsave_event)
+        await event_streamer.emit_user_event(unsave_event)
     return JSONResponse({"message": "post unsaved"}, 202)
 
 
