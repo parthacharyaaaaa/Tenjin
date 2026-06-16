@@ -67,6 +67,8 @@ class PostCreationModel(BaseModel):
     title: post_title_annotation
     body: post_body_annotation
 
+    client_tag: Annotated[str | None, Field(frozen=True, default=None)]
+
 
 class PostAmendmentModel(BaseModel):
     closed: bool | None = None
