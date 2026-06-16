@@ -275,17 +275,6 @@ class User(Base):
         CheckConstraint(email.regexp_match(str(EMAIL_PATTERN)), "check_email_regex"),
     )
 
-    @classmethod
-    def deserialize_mapping(cls) -> dict[str, Any]:
-        return {
-            "id": int,
-            "rtbf": deserialize_bool,
-            "aura": int,
-            "total_posts": int,
-            "total_comments": int,
-            "deleted": deserialize_bool,
-        }
-
     def __json_like__(self) -> dict[str, str | int]:
         return {
             "id": self.id_,
@@ -676,19 +665,6 @@ class Comment(Base):
             "check_comment_length",
         ),
     )
-
-    @classmethod
-    def deserialize_mapping(cls) -> dict[str, Any]:
-        return {
-            "id": int,
-            "author_id": int,
-            "parent_forum": int,
-            "parent_post": int,
-            "score": int,
-            "reports": int,
-            "deleted": deserialize_bool,
-            "rtbf_hidden": deserialize_bool,
-        }
 
     def __json_like__(self) -> dict[str, str | int]:
         return {
