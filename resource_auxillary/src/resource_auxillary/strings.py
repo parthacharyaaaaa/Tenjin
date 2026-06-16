@@ -27,11 +27,13 @@ class Action(StrEnum):
 
 
 class EventName(StrEnum):
+    POST_CREATE = "POST_CREATE"
     POST_SAVE = "POST_SAVE"
     POST_UNSAVE = "POST_UNSAVE"
     POST_REPORT = "POST_REPORT"
     POST_VOTE = "POST_VOTE"  # Covers both upvote and downvote
     POST_UNVOTE = "POST_UNVOTE"
+    POST_DELETE = "POST_DELETE"
 
     ANIME_SUB = "ANIME_SUB"
     ANIME_UNSUB = "ANIME_UNSUB"
@@ -40,6 +42,7 @@ class EventName(StrEnum):
     COMMENT_VOTE = "COMMENT_VOTE"  # Covers both upvote and downvote
     COMMENT_UNVOTE = "COMMENT_UNVOTE"
     COMMENT_REPORT = "COMMENT_REPORT"
+    COMMENT_DELETE = "COMMENT_DELETE"
 
     FORUM_SUB = "FORUM_SUB"
     FORUM_UNSUB = "FORUM_UNSUB"
