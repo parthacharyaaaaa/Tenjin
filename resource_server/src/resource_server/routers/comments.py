@@ -485,7 +485,7 @@ async def report_comment(
             event_id=intent_id,
             created_at=time.time(),
             payload={
-                "post_id": post_id,
+                "comment_id": comment_id,
                 "user_id": access_token["sid"],
                 "report_tag": report_model.tag,
                 "report_description": report_model.description,
