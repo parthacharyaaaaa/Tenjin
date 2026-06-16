@@ -9,6 +9,7 @@ type t_event_payload_mapping = MappingProxyType[EventName, type]
 
 EVENT_PAYLOAD_TYPES: Final[t_event_payload_mapping] = MappingProxyType(
     {
+        EventName.POST_CREATE: standalone.PostCreation,
         EventName.POST_SAVE: assosciation.GenericPostAssosciaation,
         EventName.POST_UNSAVE: assosciation.GenericPostAssosciaation,
         EventName.POST_VOTE: assosciation.PostVoteAssosciation,
@@ -18,6 +19,7 @@ EVENT_PAYLOAD_TYPES: Final[t_event_payload_mapping] = MappingProxyType(
         EventName.COMMENT_CREATE: standalone.CommentCreation,
         EventName.COMMENT_UNVOTE: assosciation.CommentVoteAssosciation,
         EventName.COMMENT_REPORT: assosciation.CommentReportAssosciation,
+        EventName.COMMENT_DELETE: standalone.CommentDeletion,
         EventName.FORUM_SUB: assosciation.ForumSubscriptionAssosciation,
         EventName.FORUM_UNSUB: assosciation.ForumSubscriptionAssosciation,
         EventName.ANIME_SUB: assosciation.AnimeSubscriptionAssosciation,
