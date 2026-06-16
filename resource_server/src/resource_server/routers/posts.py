@@ -38,6 +38,7 @@ from resource_server.dependencies import (
 from resource_server.event_streamer import EventStreamer
 from resource_server.models.requests import (
     PostAmendmentModel,
+    PostCreationModel,
     ReportModel,
     VoteModel,
 )
@@ -62,7 +63,66 @@ POSTS: Final[APIRouter] = APIRouter()
 
 
 @POSTS.post("/")
-async def create_post() -> JSONResponse: ...
+async def create_post(
+    post_model: PostCreationModel,
+    access_token: Annotated[StandardAccessTokenClaims, Depends(validate_access_token)],
+    cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
+    forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
+    event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+) -> JSONResponse:
+    forum_cache_key: Final[str] = derive_cache_key(
+        ForumResult.resource_name, post_model.forum_id
+    )
+    forum: ForumResult | None = await cache_manager.distributed_get_or_load(
+        forum_cache_key, partial(forum_repo.get_forum, post_model.forum_id), ForumResult
+    )
+    if not forum:
+        raise HTTPException(404, "Forum not found")
+
+    intent_id: Final[str] = post_model.client_tag or uuid4().hex
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        intent_id,
+        PostResult.resource_name,
+        Action.CREATE,
+        conflicting_intent=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+    ):
+        counter_updates: tuple[CounterUpdate, ...] = (
+            CounterUpdate(
+                counter_group=derive_hashmap_name(ForumResult.resource_name, "posts"),
+                cache_key=forum_cache_key,
+                field_name="posts",
+                delta=1,
+            ),
+            CounterUpdate(
+                counter_group=derive_hashmap_name(
+                    UserResult.resource_name, "total_posts"
+                ),
+                cache_key=derive_cache_key(
+                    UserResult.resource_name, access_token["sub"]
+                ),
+                field_name="total_posts",
+                delta=1,
+            ),
+        )
+
+        event_paylaod: dict[str, str | int] = {
+            "author_id": access_token["sid"],
+            "forum_id": forum.id_,
+            "title": post_model.title,
+            "body_text": post_model.body,
+            "time_posted": datetime.now().isoformat(),
+        }
+
+        post_event: Event = Event(
+            name=EventName.POST_CREATE,
+            event_id=intent_id,
+            created_at=time.time(),
+            payload=event_paylaod,
+            side_effects=EventSideEffects(counter_updates=counter_updates),
+        )
+        await event_streamer.emit_user_event(post_event)
+    return JSONResponse({"message": "post created"}, 202)
 
 
 @POSTS.get("/{post_id}")
