@@ -1,4 +1,4 @@
-from typing import Final, Mapping
+from typing import Final, Mapping, Sequence
 
 from psycopg.sql import Literal, Identifier, SQL, Composed
 
@@ -25,4 +25,42 @@ def prepare_updation_sql(
             )
             for id_, delta in counter_data.items()
         ),
+    )
+
+
+TEMP_TABLE_SQL: Final[SQL] = SQL("""CREATE TEMP TABLE {table}
+                                 (LIKE {reference} INCLUDING DEFAULTS)
+                                 ON COMMIT DROP""")
+
+
+def prepare_temp_table_sql(tablename: str, reference_table: str) -> Composed:
+    return TEMP_TABLE_SQL.format(
+        table=Identifier(tablename), reference=Identifier(reference_table)
+    )
+
+
+WEAK_INSERTION_COPY_SQL: Final[SQL] = SQL("""COPY {table}
+                                          ({columns})
+                                          FROM STDIN""")
+
+
+def prepare_weak_insertion_copy_sql(table: str, *columns: str) -> Composed:
+    return WEAK_INSERTION_COPY_SQL.format(
+        table=Identifier(table), columns=SQL(", ").join(Identifier(c) for c in columns)
+    )
+
+
+WEAK_INSERTION_SQL: Final[SQL] = SQL("""INSERT INTO {table} ({columns})
+                                     SELECT {columns}
+                                     FROM {temp_table}
+                                     ON CONFLICT DO NOTHING""")
+
+
+def prepare_weak_insertion_sql(
+    table: str, temp_table: str, columns: Sequence[str]
+) -> Composed:
+    return WEAK_INSERTION_SQL.format(
+        table=Identifier(table),
+        columns=SQL(", ").join(map(Identifier, columns)),
+        temp_table=Identifier(temp_table),
     )
