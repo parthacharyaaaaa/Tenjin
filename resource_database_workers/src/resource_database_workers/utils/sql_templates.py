@@ -1,6 +1,6 @@
 from typing import Final, Mapping, Sequence
 
-from psycopg.sql import Literal, Identifier, SQL, Composed
+from psycopg.sql import Literal, Identifier, SQL, Composed, Placeholder
 
 UPDATION_SQL: Final[SQL] = SQL("""UPDATE {table} t
                                SET t.{column} = t.{column} + v.delta
@@ -30,7 +30,7 @@ def prepare_updation_sql(
 
 TEMP_TABLE_SQL: Final[SQL] = SQL("""CREATE TEMP TABLE {table}
                                  (LIKE {reference} INCLUDING DEFAULTS)
-                                 ON COMMIT DROP""")
+                                 ON COMMIT DROP;""")
 
 
 def prepare_temp_table_sql(tablename: str, reference_table: str) -> Composed:
@@ -41,7 +41,7 @@ def prepare_temp_table_sql(tablename: str, reference_table: str) -> Composed:
 
 WEAK_INSERTION_COPY_SQL: Final[SQL] = SQL("""COPY {table}
                                           ({columns})
-                                          FROM STDIN""")
+                                          FROM STDIN;""")
 
 
 def prepare_weak_insertion_copy_sql(table: str, *columns: str) -> Composed:
@@ -53,7 +53,7 @@ def prepare_weak_insertion_copy_sql(table: str, *columns: str) -> Composed:
 WEAK_INSERTION_SQL: Final[SQL] = SQL("""INSERT INTO {table} ({columns})
                                      SELECT {columns}
                                      FROM {temp_table}
-                                     ON CONFLICT DO NOTHING""")
+                                     ON CONFLICT DO NOTHING;""")
 
 
 def prepare_weak_insertion_sql(
@@ -63,4 +63,16 @@ def prepare_weak_insertion_sql(
         table=Identifier(table),
         columns=SQL(", ").join(map(Identifier, columns)),
         temp_table=Identifier(temp_table),
+    )
+
+
+STRONG_INSERTION_SQL: Final[SQL] = SQL("""INSERT INTO {table}
+                                      VALUES ({placeholders});""")
+
+
+def format_strong_insertion_sql(table: str, columns: Sequence[str]) -> Composed:
+    return STRONG_INSERTION_SQL.format(
+        table=Identifier(table),
+        columns=SQL(", ").join(map(Identifier, columns)),
+        placeholders=SQL(", ").join(Placeholder(column) for column in columns),
     )
