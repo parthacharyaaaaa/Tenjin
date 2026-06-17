@@ -6,6 +6,7 @@ from resource_auxillary.datastructures.payloads import assosciation
 from resource_auxillary.datastructures.payloads import standalone
 
 type t_event_payload_mapping = MappingProxyType[EventName, type]
+type t_event_db_metadata_mapping = MappingProxyType[EventName, str]
 
 EVENT_PAYLOAD_TYPES: Final[t_event_payload_mapping] = MappingProxyType(
     {
@@ -24,5 +25,25 @@ EVENT_PAYLOAD_TYPES: Final[t_event_payload_mapping] = MappingProxyType(
         EventName.FORUM_UNSUB: assosciation.ForumSubscriptionAssosciation,
         EventName.ANIME_SUB: assosciation.AnimeSubscriptionAssosciation,
         EventName.ANIME_UNSUB: assosciation.AnimeSubscriptionAssosciation,
+    }
+)
+
+ASSOCIATION_DB_METADATA: Final[t_event_db_metadata_mapping] = MappingProxyType(
+    {
+        EventName.POST_CREATE: "posts",
+        EventName.POST_SAVE: "post_saves",
+        EventName.POST_UNSAVE: "post_saves",
+        EventName.POST_VOTE: "post_votes",
+        EventName.POST_UNVOTE: "post_votes",
+        EventName.POST_REPORT: "post_reports",
+        EventName.COMMENT_CREATE: "comments",
+        EventName.COMMENT_VOTE: "comment_votes",
+        EventName.COMMENT_UNVOTE: "comment_votes",
+        EventName.COMMENT_REPORT: "comment_reportss",
+        EventName.COMMENT_DELETE: "comments",
+        EventName.FORUM_SUB: "forum_subscriptions",
+        EventName.FORUM_UNSUB: "forum_subscriptions",
+        EventName.ANIME_SUB: "anime_subscriptions",
+        EventName.ANIME_UNSUB: "anime_subscriptions",
     }
 )
