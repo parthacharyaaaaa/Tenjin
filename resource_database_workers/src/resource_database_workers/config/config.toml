@@ -34,3 +34,13 @@ TTL_EPHEMERAL=60
 
 NF_SENTINEL_KEY="__NF__"
 NF_SENTINEL_VALUE="1"
+
+[worker]
+MAX_RETRIES=2
+
+DLQ_NAME="DLQ"
+COUNTER_REGISTRY_NAME="counters"
+COUNTER_RETRY_REGISTRY_NAME="counters:retries"
+COUNTER_REGISTRY_REFRESH_INTERVAL=1800          # seconds
+COUNTER_FLUSH_LOCK_TTL=120                      # seconds
+COUNTER_FLUSH_INTERVAL=10                       # seconds

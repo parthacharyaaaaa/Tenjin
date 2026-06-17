@@ -26,6 +26,13 @@ class WorkerConfig(BaseModel):
     MAX_RETRIES: Annotated[int, Field(ge=0)]
     DLQ_NAME: Annotated[str, BeforeValidator(lambda x: x.strip())]
 
+    # Counters
+    COUNTER_REGISTRY_NAME: Annotated[str, BeforeValidator(lambda x: x.strip())]
+    COUNTER_RETRY_REGISTRY_NAME: Annotated[str, BeforeValidator(lambda x: x.strip())]
+    COUNTER_REGISTRY_REFRESH_INTERVAL: Annotated[int, Field(ge=0)]
+    COUNTER_FLUSH_LOCK_TTL: Annotated[int, Field(ge=0)]
+    COUNTER_FLUSH_INTERVAL: Annotated[int, Field(ge=0)]
+
 
 class SQLAlchemyConfig(BaseModel):
     _SQLALCHEMY_DATABASE_URI_TEMPLATE: str = PrivateAttr(
