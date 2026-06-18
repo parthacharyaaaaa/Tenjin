@@ -1,6 +1,5 @@
 from sqlalchemy import (
     ForeignKey,
-    PrimaryKeyConstraint,
     CheckConstraint,
     UniqueConstraint,
     and_,
@@ -9,12 +8,18 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import text, func
 from sqlalchemy.dialects.postgresql import TIMESTAMP, BYTEA, ENUM
-from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, NUMERIC
+from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, NUMERIC, TEXT
 
 from datetime import datetime
 from typing import Any
 from dataclasses import dataclass
 from types import FunctionType
+
+from resource_auxillary.events import (
+    EVENTS_TABLE_NAME,
+    EVENT_ID_COLUMN_NAME,
+    EVENT_TIMESTAMP_COLUMN_NAME,
+)
 
 from resource_server.config import database_constants
 from resource_server.config.constants import EMAIL_PATTERN
@@ -676,3 +681,17 @@ class Comment(Base):
             "parent_post": self.parent_post,
             "score": self.score,
         }
+
+
+class StreamEvent(Base):
+    __tablename__ = EVENTS_TABLE_NAME
+
+    event_id: Mapped[str] = mapped_column(
+        TEXT, primary_key=True, name=EVENT_ID_COLUMN_NAME
+    )
+    acknowledgement_time: Mapped[datetime] = mapped_column(
+        TIMESTAMP,
+        server_default=text("CURRENT_TIMESTAMP"),
+        index=True,
+        name=EVENT_TIMESTAMP_COLUMN_NAME,
+    )

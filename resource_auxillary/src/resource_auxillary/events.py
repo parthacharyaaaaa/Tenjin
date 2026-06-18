@@ -1,9 +1,13 @@
 from functools import cached_property
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, LiteralString, Final
 
 from pydantic import BaseModel, BeforeValidator, Field, ConfigDict
 
 from resource_auxillary.strings import NAME_SEPERATOR, EventName, IntentFlag
+
+EVENTS_TABLE_NAME: Final[LiteralString] = "stream_events"
+EVENT_ID_COLUMN_NAME: Final[LiteralString] = "event_id"
+EVENT_TIMESTAMP_COLUMN_NAME: Final[LiteralString] = "acknowledgement_time"
 
 
 class CounterUpdate(BaseModel):

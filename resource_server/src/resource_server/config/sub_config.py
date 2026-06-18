@@ -42,7 +42,7 @@ class CoreConfig(BaseModel):
 
 class SQLAlchemyConfig(BaseModel):
     _SQLALCHEMY_DATABASE_URI_TEMPLATE: str = PrivateAttr(
-        default="postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}"
+        default="postgresql+psycopg://{username}:{password}@{host}:{port}/{database}"
     )
     SQLALCHEMY_POOL_SIZE: Annotated[int, Field(ge=1)]
     SQLALCHEMY_MAX_OVERFLOW: Annotated[int, Field(ge=0)]
