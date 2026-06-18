@@ -59,7 +59,6 @@ async def batch_insert_entities(conn: AsyncConnection, events: Sequence[Event]) 
                 await copy.write_row(row)
 
         await cursor.execute(prepare_weak_insertion_sql(table, temp_table, columns))
-    await conn.commit()
 
 
 async def batch_insert_strong_entities(
@@ -93,4 +92,3 @@ async def batch_insert_strong_entities(
     insertion_sql: Final[Composed] = format_strong_insertion_sql(table, columns)
     async with conn.cursor() as cursor:
         await cursor.executemany(insertion_sql, insertion_records)
-    await conn.commit()
