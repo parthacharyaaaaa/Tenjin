@@ -44,3 +44,8 @@ COUNTER_RETRY_REGISTRY_NAME="counters:retries"
 COUNTER_REGISTRY_REFRESH_INTERVAL=1800          # seconds
 COUNTER_FLUSH_LOCK_TTL=120                      # seconds
 COUNTER_FLUSH_INTERVAL=10                       # seconds
+
+CONSUMER_READ_INTERVAL=500                      # milliseconds
+CONSUMER_READ_SIZE=1000
+CONSUMER_BLOCK_TIME=500                         # milliseconds
+CONSUMER_GROUP_NAME="consumers"

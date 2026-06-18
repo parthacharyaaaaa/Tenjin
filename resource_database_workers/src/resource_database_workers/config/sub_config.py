@@ -33,6 +33,12 @@ class WorkerConfig(BaseModel):
     COUNTER_FLUSH_LOCK_TTL: Annotated[int, Field(ge=0)]
     COUNTER_FLUSH_INTERVAL: Annotated[int, Field(ge=0)]
 
+    # Consumers
+    CONSUMER_READ_INTERVAL: Annotated[int, Field(ge=0)]
+    CONSUMER_READ_SIZE: Annotated[int, Field(ge=1)]
+    CONSUMER_BLOCK_TIME: Annotated[int, Field(ge=0)]
+    CONSUMER_GROUP_NAME: Annotated[str, Field(frozen=True)]
+
 
 class SQLAlchemyConfig(BaseModel):
     _SQLALCHEMY_DATABASE_URI_TEMPLATE: str = PrivateAttr(
