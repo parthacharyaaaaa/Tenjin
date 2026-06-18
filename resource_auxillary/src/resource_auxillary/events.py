@@ -9,6 +9,9 @@ EVENTS_TABLE_NAME: Final[LiteralString] = "stream_events"
 EVENT_ID_COLUMN_NAME: Final[LiteralString] = "event_id"
 EVENT_TIMESTAMP_COLUMN_NAME: Final[LiteralString] = "acknowledgement_time"
 
+DLQ_TABLE_NAME: Final[LiteralString] = "dlq_events"
+DLQ_PAYLOAD_COLUMN_NAME: Final[LiteralString] = "payload"
+
 
 class CounterUpdate(BaseModel):
     model_config = ConfigDict(frozen=True)
