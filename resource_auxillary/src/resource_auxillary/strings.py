@@ -46,6 +46,3 @@ class EventName(StrEnum):
 
     FORUM_SUB = "FORUM_SUB"
     FORUM_UNSUB = "FORUM_UNSUB"
-
-    ADMIN_ASSIGN = "ADMIN_ASSIGN"
-    ADMIN_REMOVE = "ADMIN_REMOVE"
