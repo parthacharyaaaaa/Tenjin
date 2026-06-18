@@ -49,3 +49,8 @@ CONSUMER_READ_INTERVAL=500                      # milliseconds
 CONSUMER_READ_SIZE=1000
 CONSUMER_BLOCK_TIME=500                         # milliseconds
 CONSUMER_GROUP_NAME="consumers"
+
+IQ_CONSUMER_BASE_WAITING_TIME=2                     # seconds
+IQ_CONSUMER_BATCH_SIZE_QUOTA=0.1
+IQ_CONSUMER_GET_TIMEOUT=0.1                         # seconds
+IQ_CONSUMER_SLEEP_INTERVAL=0.01                     # seconds

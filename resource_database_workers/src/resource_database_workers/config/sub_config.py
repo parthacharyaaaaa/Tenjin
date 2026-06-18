@@ -39,6 +39,12 @@ class WorkerConfig(BaseModel):
     CONSUMER_BLOCK_TIME: Annotated[int, Field(ge=0)]
     CONSUMER_GROUP_NAME: Annotated[str, Field(frozen=True)]
 
+    # Internal queue consumers
+    IQ_CONSUMER_BASE_WAITING_TIME: Annotated[int, Field(ge=0)]
+    IQ_CONSUMER_GET_TIMEOUT: Annotated[int, Field(ge=0)]
+    IQ_CONSUMER_BATCH_SIZE_QUOTA: Annotated[int, Field(ge=1)]
+    IQ_CONSUMER_SLEEP_INTERVAL: Annotated[int, Field(ge=0)]
+
 
 class SQLAlchemyConfig(BaseModel):
     _SQLALCHEMY_DATABASE_URI_TEMPLATE: str = PrivateAttr(
