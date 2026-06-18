@@ -12,8 +12,8 @@ dependencies = [
     "psycopg>=3.3.4",
     "pyjwt>=2.13.0",
     "python-dotenv>=1.2.2",
-    "redis>=5.2.1, <6",
-    "resource-auxillary>=0.1.0",
+    "redis>=7.0.0, <8",
+    "resource_auxillary>=0.1.0",
     "sqlalchemy>=2.0.50",
 ]
 
@@ -22,5 +22,5 @@ dependencies = [
 where = ["src"]
 
 [tool.uv.sources]
-auxillary = { path = "../auxillary"}
-resource_auxillary = { path = "../resource_auxillary"}
+auxillary = { workspace = true}
+resource_auxillary = { workspace = true}

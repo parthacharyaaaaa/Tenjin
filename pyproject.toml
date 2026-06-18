@@ -9,3 +9,12 @@ dependencies = [
     "black>=26.3.1",
     "pre-commit>=4.6.0",
 ]
+
+[tool.uv.workspace]
+members = [
+    "auth_server",
+    "auxillary",
+    "resource_auxillary",
+    "resource_database_workers",
+    "resource_server"
+]

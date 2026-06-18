@@ -8,7 +8,7 @@ dependencies = [
     "psycopg>=3.3.4",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
-    "redis>=8.0.0",
+    "redis>=7.0.0, <8",
     "resource_auxillary",
     "sqlalchemy>=2.0.50"
 ]
@@ -17,4 +17,4 @@ dependencies = [
 where = ["src"]
 
 [tool.uv.sources]
-resource_auxillary = { path = "../resource_auxillary"}
+resource_auxillary = { workspace = true}
