@@ -3,6 +3,8 @@ from typing import Final, LiteralString
 
 NAME_SEPERATOR: Final[LiteralString] = ":"
 
+MALFORMED_EVENT_PREFIX: Final[LiteralString] = "MALFORMED"
+
 
 class IntentFlag(StrEnum):
     RESOURCE_CREATION_PENDING_FLAG = NAME_SEPERATOR.join(("FLAG", "C"))
@@ -46,3 +48,5 @@ class EventName(StrEnum):
 
     FORUM_SUB = "FORUM_SUB"
     FORUM_UNSUB = "FORUM_UNSUB"
+
+    MALFORMED = "MALFORMED"

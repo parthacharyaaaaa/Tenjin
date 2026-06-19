@@ -1,5 +1,7 @@
 from functools import cached_property
-from typing import Annotated, Any, Literal, LiteralString, Final
+import time
+from typing import Annotated, Any, Literal, LiteralString, Final, Self
+from uuid import uuid4
 
 from auxillary.utils import cache_repr, json_repr
 import orjson
@@ -8,7 +10,12 @@ from pydantic import BaseModel, BeforeValidator, Field, ConfigDict
 
 from redis.typing import FieldT, EncodableT
 
-from resource_auxillary.strings import NAME_SEPERATOR, EventName, IntentFlag
+from resource_auxillary.strings import (
+    MALFORMED_EVENT_PREFIX,
+    NAME_SEPERATOR,
+    EventName,
+    IntentFlag,
+)
 
 EVENTS_TABLE_NAME: Final[LiteralString] = "stream_events"
 EVENT_ID_COLUMN_NAME: Final[LiteralString] = "event_id"
@@ -144,3 +151,22 @@ class Event(BaseModel):
             "payload": self.payload,
             "side_effects": json_repr(self.side_effects),
         }
+
+    @classmethod
+    def safe_construct_from_malformed_stream(cls, stream_entry: dict[str, str]) -> Self:
+        creation_time = time.time()
+
+        if stream_creation_time := stream_entry.get("created_at"):
+            splits: list[str] = stream_creation_time.split(".")
+            if len(splits) == 2 and all(s.isnumeric() for s in splits):
+                creation_time = float(stream_creation_time)
+
+        return Event(
+            name=EventName.MALFORMED,
+            event_id=stream_entry.get(
+                "event_id", NAME_SEPERATOR.join((MALFORMED_EVENT_PREFIX, uuid4().hex))
+            ),
+            created_at=creation_time,
+            payload=stream_entry,
+            side_effects=EventSideEffects(),  # type: ignore[reportCallIssue]
+        )
