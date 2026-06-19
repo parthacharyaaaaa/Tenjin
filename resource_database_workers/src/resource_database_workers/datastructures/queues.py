@@ -8,6 +8,8 @@ from auxillary.singleton import SingletonMetaclass
 from resource_auxillary.events import Event
 from resource_auxillary.strings import EventName
 
+from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
+
 
 @dataclass(slots=True, frozen=True)
 class QueueRegistry(metaclass=SingletonMetaclass):
@@ -39,6 +41,10 @@ class QueueRegistry(metaclass=SingletonMetaclass):
     user_deletions: Queue[tuple[Event]]
     forum_deletions: Queue[tuple[Event]]
     user_recovery: Queue[tuple[Event]]
+
+    # DLQ
+    dead_letter: Queue[Event]
+    counter_dead_letter: Queue[tuple[DeadCounterBatch]]
 
     @cached_property
     def event_queue_mapping(self) -> MappingProxyType[EventName, Queue[tuple[Event]]]:

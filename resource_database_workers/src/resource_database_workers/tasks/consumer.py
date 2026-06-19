@@ -16,8 +16,12 @@ from resource_database_workers.datastructures.queues import QueueRegistry
 from resource_auxillary.strings import EventName, StreamName
 from resource_auxillary.events import Event
 
+from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
 from resource_database_workers.utils.typing import BatchInsertionFunction
-from resource_database_workers.utils.sql_templates import format_dlq_insertion_sql
+from resource_database_workers.utils.sql_templates import (
+    format_dlq_insertion_sql,
+    format_counters_dlq_insertion_sql,
+)
 
 
 async def stream_consumer(
@@ -61,8 +65,10 @@ async def stream_consumer(
             try:
                 event_name: EventName = EventName(event_data[1]["name"])
                 event: Event = Event.serialize_from_stream(event[1])  # type: ignore
-            except ValueError:
-                ...  # DLQ
+            except (KeyError, ValueError):
+                await queue_registry.dead_letter.put(
+                    Event.safe_construct_from_malformed_stream(event_data[1])
+                )
                 continue
             event_dict[queue_registry.event_queue_mapping[event_name]].append(event)
 
@@ -77,6 +83,7 @@ async def queue_consumer(
     pool: AsyncConnectionPool,
     redis: Redis,
     queue: asyncio.Queue[tuple[Event]],
+    dead_letter_queue: asyncio.Queue[Event],
     batch_function: BatchInsertionFunction,
 ) -> None:
     batch: list[Event] = []
@@ -109,14 +116,19 @@ async def queue_consumer(
                 # Logic to insert into dedup table, using CTE or exectemany and view to fetch unique events
                 inserted_ids: list[str] = await batch_function(conn, batch)
                 await conn.commit()
+
                 successful_events.extend(inserted_ids)
                 del inserted_ids
             except (LockNotAvailable, OperationalError, InternalError):
                 # Possible recoverable database exceptions
                 ...
             except Error:
-                # Unrecoverable, straight to DLQ
-                ...
+                failed_events: list[Event] = [
+                    event for event in batch if event.event_id not in successful_events
+                ]
+                for event in failed_events:
+                    await dead_letter_queue.put(event)
+                failed_events.clear()
             finally:
                 await redis.xack(
                     StreamName.USER_INTERACTIONS,
@@ -135,5 +147,19 @@ async def dlq_consumer(pool: AsyncConnectionPool, queue: asyncio.Queue[Event]) -
         async with pool.connection() as conn:
             await conn.execute(
                 insertion_sql, (dlq_event.event_id, json_repr(dlq_event))
+            )
+            await conn.commit()
+
+
+async def counters_dlq_consumer(
+    pool: AsyncConnectionPool, queue: asyncio.Queue[DeadCounterBatch]
+) -> None:
+    insertion_sql: Final[Composed] = format_counters_dlq_insertion_sql()
+    while True:
+        batch: DeadCounterBatch = await queue.get()
+        async with pool.connection() as conn:
+            await conn.execute(
+                insertion_sql,
+                (batch.table, batch.column, batch.failure_time, batch.counters),
             )
             await conn.commit()

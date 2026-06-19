@@ -26,10 +26,12 @@ def resolve_entity_table(event: Event):
     return ASSOCIATION_DB_METADATA[event.name]
 
 
-async def batch_insert_entities(conn: AsyncConnection, events: Sequence[Event]) -> None:
+async def batch_insert_entities(
+    conn: AsyncConnection, events: Sequence[Event]
+) -> list[int]:
     payload_type = EVENT_PAYLOAD_TYPES.get(events[0].name)
     if not payload_type:
-        return  # DLQ
+        return []  # Mark entire batch as failed
 
     payload_field_types: dict[str, type] = get_type_hints(payload_type)
 
@@ -59,14 +61,15 @@ async def batch_insert_entities(conn: AsyncConnection, events: Sequence[Event]) 
                 await copy.write_row(row)
 
         await cursor.execute(prepare_weak_insertion_sql(table, temp_table, columns))
+        return []  # TODO: Add RETURNING/CTE
 
 
 async def batch_insert_strong_entities(
     conn: AsyncConnection, events: Sequence[Event]
-) -> None:
+) -> list[int]:
     payload_type = EVENT_PAYLOAD_TYPES.get(events[0].name)
     if not payload_type:
-        return  # DLQ
+        return []  # Mark entire batch as failed
 
     payload_field_types: dict[str, type] = get_type_hints(payload_type)
 
@@ -92,3 +95,4 @@ async def batch_insert_strong_entities(
     insertion_sql: Final[Composed] = format_strong_insertion_sql(table, columns)
     async with conn.cursor() as cursor:
         await cursor.executemany(insertion_sql, insertion_records)
+        return []  # TODO: Add RETURNING/CTE

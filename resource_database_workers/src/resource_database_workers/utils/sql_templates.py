@@ -2,7 +2,7 @@ from typing import Final, Mapping, Sequence
 
 from psycopg.sql import Literal, Identifier, SQL, Composed, Placeholder
 
-from resource_auxillary.events import DLQ_TABLE_NAME
+from resource_auxillary.events import COUNTERS_DLQ_TABLE_NAME, DLQ_TABLE_NAME
 
 UPDATION_SQL: Final[SQL] = SQL("""UPDATE {table} t
                                SET t.{column} = t.{column} + v.delta
@@ -83,4 +83,10 @@ def format_strong_insertion_sql(table: str, columns: Sequence[str]) -> Composed:
 def format_dlq_insertion_sql() -> Composed:
     return STRONG_INSERTION_SQL.format(
         table=DLQ_TABLE_NAME, placeholders=SQL(", ").join(Placeholder() * 2)
+    )
+
+
+def format_counters_dlq_insertion_sql() -> Composed:
+    return STRONG_INSERTION_SQL.format(
+        table=COUNTERS_DLQ_TABLE_NAME, placeholders=SQL(", ").join(Placeholder() * 4)
     )
