@@ -1,11 +1,15 @@
 import asyncio
 from collections import defaultdict
 import time
+from typing import Final
 
 from psycopg.errors import LockNotAvailable, OperationalError, InternalError, Error
 from psycopg_pool import AsyncConnectionPool
+from psycopg.sql import Composed
 
 from redis.asyncio import Redis
+
+from auxillary.utils import json_repr
 
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.queues import QueueRegistry
@@ -13,6 +17,7 @@ from resource_auxillary.strings import EventName, StreamName
 from resource_auxillary.events import Event
 
 from resource_database_workers.utils.typing import BatchInsertionFunction
+from resource_database_workers.utils.sql_templates import format_dlq_insertion_sql
 
 
 async def stream_consumer(
@@ -121,3 +126,14 @@ async def queue_consumer(
                 successful_events.clear()
                 batch.clear()
                 reference_time = time.monotonic()
+
+
+async def dlq_consumer(pool: AsyncConnectionPool, queue: asyncio.Queue[Event]) -> None:
+    insertion_sql: Final[Composed] = format_dlq_insertion_sql()
+    while True:
+        dlq_event: Event = await queue.get()
+        async with pool.connection() as conn:
+            await conn.execute(
+                insertion_sql, (dlq_event.event_id, json_repr(dlq_event))
+            )
+            await conn.commit()
