@@ -17,6 +17,11 @@ EVENT_TIMESTAMP_COLUMN_NAME: Final[LiteralString] = "acknowledgement_time"
 DLQ_TABLE_NAME: Final[LiteralString] = "dlq_events"
 DLQ_PAYLOAD_COLUMN_NAME: Final[LiteralString] = "payload"
 
+COUNTERS_DLQ_TABLE_NAME: Final[LiteralString] = "counters_dlq"
+COUNTERS_DLQ_FAILURE_TIME_COLUMN_NAME: Final[LiteralString] = "failure_time"
+COUNTERS_DLQ_AFFECTED_RELATION_COLUMN_NAME: Final[LiteralString] = "affected_table"
+COUNTERS_DLQ_AFFECTED_COLUMN_COLUMN_NAME: Final[LiteralString] = "affected_column"
+
 
 class CounterUpdate(BaseModel):
     model_config = ConfigDict(frozen=True)

@@ -16,6 +16,10 @@ from dataclasses import dataclass
 from types import FunctionType
 
 from resource_auxillary.events import (
+    COUNTERS_DLQ_AFFECTED_COLUMN_COLUMN_NAME,
+    COUNTERS_DLQ_AFFECTED_RELATION_COLUMN_NAME,
+    COUNTERS_DLQ_FAILURE_TIME_COLUMN_NAME,
+    COUNTERS_DLQ_TABLE_NAME,
     EVENTS_TABLE_NAME,
     EVENT_ID_COLUMN_NAME,
     EVENT_TIMESTAMP_COLUMN_NAME,
@@ -706,5 +710,37 @@ class DeadLetterQueue(Base):
         TEXT, primary_key=True, name=EVENT_ID_COLUMN_NAME
     )
     payload: Mapped[Any] = mapped_column(
+        JSONB, nullable=False, name=DLQ_PAYLOAD_COLUMN_NAME
+    )
+
+
+class CounterDeadLetterQueue(Base):
+    __tablename__ = COUNTERS_DLQ_TABLE_NAME
+
+    id_: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+
+    table_name: Mapped[str] = mapped_column(
+        VARCHAR(64),
+        index=True,
+        nullable=False,
+        name=COUNTERS_DLQ_AFFECTED_RELATION_COLUMN_NAME,
+    )
+
+    column_name: Mapped[str] = mapped_column(
+        VARCHAR(64),
+        index=True,
+        nullable=False,
+        name=COUNTERS_DLQ_AFFECTED_COLUMN_COLUMN_NAME,
+    )
+
+    failure_time: Mapped[datetime] = mapped_column(
+        TIMESTAMP,
+        nullable=False,
+        index=True,
+        server_default=text("CURRENT_TIMESTAMP"),
+        name=COUNTERS_DLQ_FAILURE_TIME_COLUMN_NAME,
+    )
+
+    counter_data: Mapped[Any] = mapped_column(
         JSONB, nullable=False, name=DLQ_PAYLOAD_COLUMN_NAME
     )
