@@ -705,12 +705,6 @@ class DeadLetterQueue(Base):
     event_id: Mapped[str] = mapped_column(
         TEXT, primary_key=True, name=EVENT_ID_COLUMN_NAME
     )
-    acknowledgement_time: Mapped[datetime] = mapped_column(
-        TIMESTAMP,
-        server_default=text("CURRENT_TIMESTAMP"),
-        index=True,
-        name=EVENT_TIMESTAMP_COLUMN_NAME,
-    )
     payload: Mapped[Any] = mapped_column(
         JSONB, nullable=False, name=DLQ_PAYLOAD_COLUMN_NAME
     )
