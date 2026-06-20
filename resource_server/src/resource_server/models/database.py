@@ -15,7 +15,7 @@ from typing import Any
 from dataclasses import dataclass
 from types import FunctionType
 
-from resource_auxillary.events import (
+from resource_auxillary.database import (
     COUNTERS_DLQ_AFFECTED_COLUMN_COLUMN_NAME,
     COUNTERS_DLQ_AFFECTED_RELATION_COLUMN_NAME,
     COUNTERS_DLQ_FAILURE_TIME_COLUMN_NAME,

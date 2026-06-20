@@ -1,6 +1,6 @@
 from functools import cached_property
 import time
-from typing import Annotated, Any, Literal, LiteralString, Final, Self
+from typing import Annotated, Any, Literal, Self
 from uuid import uuid4
 
 from auxillary.utils import cache_repr, json_repr
@@ -16,18 +16,6 @@ from resource_auxillary.strings import (
     EventName,
     IntentFlag,
 )
-
-EVENTS_TABLE_NAME: Final[LiteralString] = "stream_events"
-EVENT_ID_COLUMN_NAME: Final[LiteralString] = "event_id"
-EVENT_TIMESTAMP_COLUMN_NAME: Final[LiteralString] = "acknowledgement_time"
-
-DLQ_TABLE_NAME: Final[LiteralString] = "dlq_events"
-DLQ_PAYLOAD_COLUMN_NAME: Final[LiteralString] = "payload"
-
-COUNTERS_DLQ_TABLE_NAME: Final[LiteralString] = "counters_dlq"
-COUNTERS_DLQ_FAILURE_TIME_COLUMN_NAME: Final[LiteralString] = "failure_time"
-COUNTERS_DLQ_AFFECTED_RELATION_COLUMN_NAME: Final[LiteralString] = "affected_table"
-COUNTERS_DLQ_AFFECTED_COLUMN_COLUMN_NAME: Final[LiteralString] = "affected_column"
 
 
 class CounterUpdate(BaseModel):
