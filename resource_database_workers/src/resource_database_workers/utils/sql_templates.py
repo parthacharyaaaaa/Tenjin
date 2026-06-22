@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Final, Mapping, Sequence
+from typing import Final, Iterable, Mapping, Sequence
 from typing import Literal as typing_literal
 
 from psycopg.sql import Literal, Identifier, SQL, Composed, Placeholder
@@ -124,6 +124,28 @@ def format_counters_dlq_insertion_sql() -> Composed:
     )
 
 
+STRONG_DELETION_SQL: Final[SQL] = SQL("""UPDATE {table}
+    SET {deletion_column} = data.{deletion_column},
+    {deleted_at} = data.{deleted_at}
+    FROM (
+        VALUES
+        {values_collection}
+    ) AS data({identifier}, {deletion_column}, {deleted_at})
+    WHERE {table}.{identifier} = data.{identifier};""")
+
+
+def prepare_strong_deletion_sql(
+    table: str, identifier_column: str, deletion_data: Iterable[tuple[int, datetime]]
+) -> Composed:
+    return STRONG_DELETION_SQL.format(
+        table=Identifier(table),
+        identifier=Identifier(identifier_column),
+        deletion_column=DELETED_COLUMN_NAME,
+        deleted_at=DELETED_AT_COLUMN_NAME,
+        values=SQL(", ").join(SQL("({}, true, {})").format(*i) for i in deletion_data),
+    )
+
+
 KILL_ORPHANS_SQL: Final[SQL] = SQL("""UPDATE {orphan_table}
     SET {deletion_column} = true;
     {deleted_at} = {deletion_time}
@@ -147,6 +169,7 @@ SELECT_AUTHORS_SQL: Final[SQL] = SQL(
     """SELECT {author_idenfitier_column}, COUNT({author_identifier_column}) AS delta
     FROM {table}
     WHERE {identifier_column} < {threshold}
+    AND {parent_column} = {parent_key}
     AND {deleted_at} = {deletion_time}
     LIMIT {limit}
     OFFSET {offset};
@@ -157,6 +180,8 @@ SELECT_AUTHORS_SQL: Final[SQL] = SQL(
 def prepare_deltas_selection(
     author_column: str,
     table: str,
+    parent_column: str,
+    parent_key: int,
     deletion_time: datetime,
     limit: int,
     offset: int,
@@ -171,4 +196,6 @@ def prepare_deltas_selection(
         deletion_time=Literal(deletion_time),
         limit=Literal(limit),
         offset=Literal(offset),
+        parent_column=parent_column,
+        parent_key=parent_key,
     )

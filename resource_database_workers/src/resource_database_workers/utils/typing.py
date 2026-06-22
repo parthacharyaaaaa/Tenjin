@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal, Protocol, Sequence
+from typing import Iterable, Literal, Protocol, Sequence
 
 from psycopg import AsyncConnection
 
@@ -21,8 +21,17 @@ class BatchInsertionFunction(Protocol):
 
 
 class BatchDeletionFunction(Protocol):
-    """Batch insertion function, returning event IDs of succesfully inserted event payloads"""
+    async def __call__(
+        self,
+        conn: AsyncConnection,
+        table: str,
+        identifier_column: str,
+        deletion_data: Iterable[tuple[int, datetime]],
+        /,
+    ) -> None: ...
 
+
+class BatchDownstreamDeletionFunction(Protocol):
     async def __call__(
         self,
         conn: AsyncConnection,
