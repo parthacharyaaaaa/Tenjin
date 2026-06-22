@@ -7,6 +7,7 @@ from typing import Final
 from psycopg.errors import OperationalError, InternalError
 from psycopg_pool import AsyncConnectionPool
 from psycopg.sql import Composed
+from resource_auxillary.cache import derive_cache_key
 
 from redis.asyncio import Redis
 
@@ -15,10 +16,11 @@ from resource_auxillary.database import ORPHAN_MAPPING, StrongEntity
 
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.queues import QueueRegistry
-from resource_auxillary.strings import EventName, StreamName
+from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
 from resource_auxillary.events import Event
 
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
+from resource_database_workers.tasks.selections import select_author_deltas
 from resource_database_workers.utils.typing import (
     BatchDeletionFunction,
     BatchInsertionFunction,
@@ -27,6 +29,7 @@ from resource_database_workers.utils.typing import (
 from resource_database_workers.utils.sql_templates import (
     format_dlq_insertion_sql,
     format_counters_dlq_insertion_sql,
+    prepare_deltas_selection,
 )
 
 
@@ -246,6 +249,87 @@ async def queue_downstream_deletion_consumer(
                 )  # type: ignore
                 await redis.xadd(
                     name=StreamName.DOWNSTREAM_DELETIONS, fields=cache_repr(event)
+                )
+
+
+async def queue_downstream_decrement_consumer(
+    config: AppConfig,
+    pool: AsyncConnectionPool,
+    redis: Redis,
+    queue: asyncio.Queue[Event],
+    dead_letter_queue: asyncio.Queue[Event],
+    stream_name: StreamName,
+    group_name: str,
+) -> None:
+    while True:
+        event: Event = await queue.get()
+        try:
+            deletion_time = datetime.fromisoformat(event.payload["deletion_time"])
+            if event.name == EventName.DOWNSTREAM_POST_DECREMENT:
+                parent_entity = StrongEntity.FORUM
+                author_column = "author_id"
+                hashmap_name = NAME_SEPERATOR.join(
+                    (StrongEntity.USER, StrongEntity.POST)
+                )
+            elif event.name == EventName.DOWNSTREAM_COMMENT_DECREMENT:
+                parent_entity = StrongEntity.POST
+                author_column = "author_id"
+                hashmap_name = NAME_SEPERATOR.join(
+                    (StrongEntity.USER, StrongEntity.COMMENT)
+                )
+            else:
+                raise ValueError()
+
+            identifier_column, table = ORPHAN_MAPPING[parent_entity][:2]
+        except (KeyError, ValueError):
+            await dead_letter_queue.put(event)
+            continue
+
+        failed: bool = False
+        limit, offset = config.WORKER.DOWNSTREAM_COUNTER_BATCH_SIZE, 0
+        async with pool.connection() as conn:
+            for attempt in range(config.WORKER.MAX_RETRIES):
+                try:
+                    results: list[dict[str, int]] = [{}]
+                    while results:
+                        results = await select_author_deltas(
+                            conn,
+                            deletion_time,
+                            limit,
+                            offset,
+                            author_column,
+                            table,
+                            identifier_column,
+                        )
+                        offset = offset + limit
+                        async with redis.pipeline() as pipeline:
+                            for result in results:
+                                pipeline.hincrby(
+                                    hashmap_name,
+                                    derive_cache_key(
+                                        StrongEntity.USER.value, result["author_id"]
+                                    ),
+                                    -result["delta"],
+                                )
+                            await pipeline.execute()
+                except (OperationalError, InternalError):
+                    failed = True
+                    await conn.rollback()
+                    continue
+                except Exception:
+                    await dead_letter_queue.put(event)
+                    await redis.xack(stream_name, group_name, event.event_id)
+                    await conn.rollback()
+                    break
+
+            if failed:  # Non-transient faults exceed max retries
+                await dead_letter_queue.put(event)
+                await redis.xack(stream_name, group_name, event.event_id)
+            else:  # downstream deletion succesful
+                await redis.xack(
+                    stream_name,
+                    group_name,
+                    event.event_id,
                 )
 
 

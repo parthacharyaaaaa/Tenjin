@@ -141,3 +141,34 @@ def prepare_orphan_deletion(
         parent_fk_column=parent_fk_column,
         parent_values=Literal(parent_fk),
     )
+
+
+SELECT_AUTHORS_SQL: Final[SQL] = SQL(
+    """SELECT {author_idenfitier_column}, COUNT({author_identifier_column}) AS delta
+    FROM {table}
+    WHERE {identifier_column} < {threshold}
+    AND {deleted_at} = {deletion_time}
+    LIMIT {limit}
+    OFFSET {offset};
+    """
+)
+
+
+def prepare_deltas_selection(
+    author_column: str,
+    table: str,
+    deletion_time: datetime,
+    limit: int,
+    offset: int,
+    identifier_column: str = "id_",
+) -> Composed:
+    return SELECT_AUTHORS_SQL.format(
+        author_identifier_column=Identifier(author_column),
+        table=Identifier(table),
+        identifier_column=Identifier(identifier_column),
+        deletion_column=Identifier(DELETED_COLUMN_NAME),
+        deleted_at=Identifier(DELETED_AT_COLUMN_NAME),
+        deletion_time=Literal(deletion_time),
+        limit=Literal(limit),
+        offset=Literal(offset),
+    )
