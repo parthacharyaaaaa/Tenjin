@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal, Protocol, Sequence
 
 from psycopg import AsyncConnection
@@ -17,3 +18,17 @@ class BatchInsertionFunction(Protocol):
         action: t_action_literal,
         /,
     ) -> list[int]: ...
+
+
+class BatchDeletionFunction(Protocol):
+    """Batch insertion function, returning event IDs of succesfully inserted event payloads"""
+
+    async def __call__(
+        self,
+        conn: AsyncConnection,
+        parent_foreign_key: int,
+        orphan_table: str,
+        foreign_key_column: str,
+        deletion_time: datetime | None = None,
+        /,
+    ) -> None: ...

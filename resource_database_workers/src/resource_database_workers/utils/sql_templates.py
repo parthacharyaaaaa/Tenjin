@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Final, Mapping, Sequence
 from typing import Literal as typing_literal
 
@@ -10,6 +11,8 @@ from resource_auxillary.database import (
     EVENT_SUB_COLUMN_NAME,
     EVENT_SAVE_COLUMN_NAME,
     EVENT_VOTE_COLUMN_NAME,
+    DELETED_COLUMN_NAME,
+    DELETED_AT_COLUMN_NAME,
 )
 
 UPDATION_SQL: Final[SQL] = SQL("""UPDATE {table} t
@@ -118,4 +121,23 @@ def format_dlq_insertion_sql() -> Composed:
 def format_counters_dlq_insertion_sql() -> Composed:
     return STRONG_INSERTION_SQL.format(
         table=COUNTERS_DLQ_TABLE_NAME, placeholders=SQL(", ").join(Placeholder() * 4)
+    )
+
+
+KILL_ORPHANS_SQL: Final[SQL] = SQL("""UPDATE {orphan_table}
+    SET {deletion_column} = true;
+    {deleted_at} = {deletion_time}
+    WHERE {parent_fk_column} = {parent_fk};""")
+
+
+def prepare_orphan_deletion(
+    orphan_table: str, parent_fk_column: str, parent_fk: int, deletion_time: datetime
+) -> Composed:
+    return KILL_ORPHANS_SQL.format(
+        orphan_table=orphan_table,
+        deletion_column=DELETED_COLUMN_NAME,
+        deleted_at=DELETED_AT_COLUMN_NAME,
+        deletion_time=Literal(deletion_time),
+        parent_fk_column=parent_fk_column,
+        parent_values=Literal(parent_fk),
     )

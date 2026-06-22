@@ -1,3 +1,5 @@
+from enum import StrEnum
+from types import MappingProxyType
 from typing import Final, LiteralString
 
 EVENTS_TABLE_NAME: Final[LiteralString] = "stream_events"
@@ -16,3 +18,31 @@ LAST_EVENT_IDENTIFIER_COLUMN_NAME: Final[LiteralString] = "last_event_id"
 EVENT_SAVE_COLUMN_NAME: Final[LiteralString] = "is_saved"
 EVENT_SUB_COLUMN_NAME: Final[LiteralString] = "is_subscribed"
 EVENT_VOTE_COLUMN_NAME: Final[LiteralString] = "vote_type"
+
+DELETED_COLUMN_NAME: Final[LiteralString] = "deleted"
+DELETED_AT_COLUMN_NAME: Final[LiteralString] = "deleted_at"
+
+
+class StrongEntity(StrEnum):
+    USER = "users"
+    POST = "posts"
+    COMMENT = "comments"
+    FORUM = "forums"
+
+
+ENTITY_PK_MAPPING: Final[MappingProxyType[StrongEntity, str]] = MappingProxyType(
+    {
+        StrongEntity.POST: "post_id",
+        StrongEntity.COMMENT: "comment_id",
+        StrongEntity.FORUM: "forum_id",
+    }
+)
+
+ORPHAN_MAPPING: Final[MappingProxyType[StrongEntity, tuple[str, str, str]]] = (
+    MappingProxyType(
+        {
+            StrongEntity.FORUM: ("id_", StrongEntity.POST.value, "forum_id"),
+            StrongEntity.POST: ("id_", StrongEntity.COMMENT.value, "parent_post"),
+        }
+    )
+)

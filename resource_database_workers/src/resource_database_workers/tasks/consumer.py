@@ -1,5 +1,6 @@
 import asyncio
 from collections import defaultdict
+from datetime import datetime
 import time
 from typing import Final
 
@@ -10,6 +11,7 @@ from psycopg.sql import Composed
 from redis.asyncio import Redis
 
 from auxillary.utils import json_repr
+from resource_auxillary.database import ORPHAN_MAPPING, StrongEntity
 
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.queues import QueueRegistry
@@ -18,6 +20,7 @@ from resource_auxillary.events import Event
 
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
 from resource_database_workers.utils.typing import (
+    BatchDeletionFunction,
     BatchInsertionFunction,
     t_action_literal,
 )
@@ -81,7 +84,7 @@ async def stream_consumer(
         await asyncio.sleep(config.WORKER.CONSUMER_READ_INTERVAL)
 
 
-async def queue_consumer(
+async def queue_insertion_consumer(
     config: AppConfig,
     pool: AsyncConnectionPool,
     redis: Redis,
@@ -164,6 +167,75 @@ async def queue_consumer(
 
             batch.clear()
             reference_time = time.monotonic()
+
+
+async def queue_downstream_deletion_consumer(
+    config: AppConfig,
+    pool: AsyncConnectionPool,
+    redis: Redis,
+    queue: asyncio.Queue[Event],
+    dead_letter_queue: asyncio.Queue[Event],
+    batch_function: BatchDeletionFunction,
+    stream_name: StreamName,
+    group_name: str,
+) -> None:
+    while True:
+        event: Event = await queue.get()
+        try:
+            foreign_key: int = int(event.payload["foreign_key"])
+            if "deleted_at" in event.payload:
+                deletion_time = datetime.fromisoformat(event.payload["deleted_at"])
+            else:
+                deletion_time = datetime.fromtimestamp(event.created_at)
+        except (KeyError, ValueError):
+            await dead_letter_queue.put(event)
+            continue
+
+        if event.name == EventName.ORPHANED_POST_DELETE:
+            parent_table = StrongEntity.POST
+        elif event.name == EventName.ORPHANED_COMMENT_DELETE:
+            parent_table = StrongEntity.COMMENT
+        else:
+            await dead_letter_queue.put(event)
+            continue
+
+        orphan_table, foreign_key_column = ORPHAN_MAPPING[parent_table][1:]
+
+        failed: bool = False
+        async with pool.connection() as conn:
+            for attempt in range(config.WORKER.MAX_RETRIES):
+                try:
+                    # TODO: Add logic to insert into dedup table
+                    await batch_function(
+                        conn,
+                        foreign_key,
+                        orphan_table,
+                        foreign_key_column,
+                        deletion_time,
+                    )
+                    await conn.commit()
+                    failed = False
+                    break
+                except (OperationalError, InternalError):
+                    failed = True
+                    await conn.rollback()
+                except Exception:
+                    # Ideally a subclass of psycopg.errors.Error,
+                    # but Python errors are also non-transient
+                    await dead_letter_queue.put(event)
+                    await redis.xack(stream_name, group_name, event.event_id)
+                    await conn.rollback()
+                    break
+
+            if failed:  # Non-transient faults exceed max retries
+                await dead_letter_queue.put(event)
+                await redis.xack(stream_name, group_name, event.event_id)
+            else:  # downstream deletion succesful
+                await redis.xack(
+                    stream_name,
+                    group_name,
+                    event.event_id,
+                )
 
 
 async def dlq_consumer(pool: AsyncConnectionPool, queue: asyncio.Queue[Event]) -> None:
