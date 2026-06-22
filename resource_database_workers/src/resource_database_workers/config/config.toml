@@ -54,3 +54,5 @@ IQ_CONSUMER_BASE_WAITING_TIME=2                     # seconds
 IQ_CONSUMER_BATCH_SIZE_QUOTA=0.1
 IQ_CONSUMER_GET_TIMEOUT=0.1                         # seconds
 IQ_CONSUMER_SLEEP_INTERVAL=0.01                     # seconds
+
+DOWNSTREAM_COUNTER_BATCH_SIZE=10000

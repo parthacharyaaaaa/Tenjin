@@ -45,6 +45,9 @@ class WorkerConfig(BaseModel):
     IQ_CONSUMER_BATCH_SIZE_QUOTA: Annotated[int, Field(ge=1)]
     IQ_CONSUMER_SLEEP_INTERVAL: Annotated[int, Field(ge=0)]
 
+    # Downstream counter consumers
+    DOWNSTREAM_COUNTER_BATCH_SIZE: Annotated[int, Field(ge=1)]
+
 
 class SQLAlchemyConfig(BaseModel):
     _SQLALCHEMY_DATABASE_URI_TEMPLATE: str = PrivateAttr(
