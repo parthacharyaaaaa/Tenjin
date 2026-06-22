@@ -10,7 +10,7 @@ from psycopg.sql import Composed
 
 from redis.asyncio import Redis
 
-from auxillary.utils import json_repr
+from auxillary.utils import cache_repr, json_repr
 from resource_auxillary.database import ORPHAN_MAPPING, StrongEntity
 
 from resource_database_workers.config.config import AppConfig
@@ -235,6 +235,17 @@ async def queue_downstream_deletion_consumer(
                     stream_name,
                     group_name,
                     event.event_id,
+                )
+                event_name: EventName = (
+                    EventName.DOWNSTREAM_POST_DECREMENT
+                    if parent_table == StrongEntity.FORUM
+                    else EventName.DOWNSTREAM_COMMENT_DECREMENT
+                )
+                event: Event = Event(
+                    name=event_name, payload={"deletion_time": deletion_time}
+                )  # type: ignore
+                await redis.xadd(
+                    name=StreamName.DOWNSTREAM_DELETIONS, fields=cache_repr(event)
                 )
 
 
