@@ -1153,7 +1153,6 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "redis" },
     { name = "resource-auxillary" },
-    { name = "sqlalchemy" },
 ]
 
 [package.metadata]
@@ -1164,7 +1163,6 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.14.1" },
     { name = "redis", specifier = ">=7.0.0,<8" },
     { name = "resource-auxillary", editable = "resource_auxillary" },
-    { name = "sqlalchemy", specifier = ">=2.0.50" },
 ]
 
 [[package]]
