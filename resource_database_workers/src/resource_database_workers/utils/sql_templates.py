@@ -1,8 +1,16 @@
 from typing import Final, Mapping, Sequence
+from typing import Literal as typing_literal
 
 from psycopg.sql import Literal, Identifier, SQL, Composed, Placeholder
 
-from resource_auxillary.events import COUNTERS_DLQ_TABLE_NAME, DLQ_TABLE_NAME
+from resource_auxillary.database import (
+    COUNTERS_DLQ_TABLE_NAME,
+    DLQ_TABLE_NAME,
+    LAST_EVENT_IDENTIFIER_COLUMN_NAME,
+    EVENT_SUB_COLUMN_NAME,
+    EVENT_SAVE_COLUMN_NAME,
+    EVENT_VOTE_COLUMN_NAME,
+)
 
 UPDATION_SQL: Final[SQL] = SQL("""UPDATE {table} t
                                SET t.{column} = t.{column} + v.delta
@@ -52,19 +60,40 @@ def prepare_weak_insertion_copy_sql(table: str, *columns: str) -> Composed:
     )
 
 
-WEAK_INSERTION_SQL: Final[SQL] = SQL("""INSERT INTO {table} ({columns})
-                                     SELECT {columns}
-                                     FROM {temp_table}
-                                     ON CONFLICT DO NOTHING;""")
+WEAK_INSERTION_SQL: Final[SQL] = SQL(
+    """INSERT INTO {table} AS insertion_table ({columns})
+    SELECT {columns}
+    FROM {temp_table}
+    ON CONFLICT ({conflict_columns})
+    DO UPDATE SET
+    {state_column} = EXCLUDED.{state_column},
+    {event_seq_column} = EXCLUDED.{event_seq_column}
+    WHERE {event_seq_column} < EXCLUDED.{event_seq_column}
+    RETURNING insertion_table.{event_id_column};"""
+)
 
 
 def prepare_weak_insertion_sql(
-    table: str, temp_table: str, columns: Sequence[str]
+    table: str,
+    temp_table: str,
+    columns: Sequence[str],
+    conflicting_columns: Sequence[str],
+    action: typing_literal["save", "vote", "subscribe"],
 ) -> Composed:
+    if action == "save":
+        state_column = EVENT_SAVE_COLUMN_NAME
+    elif action == "vote":
+        state_column = EVENT_VOTE_COLUMN_NAME
+    else:
+        state_column = EVENT_SUB_COLUMN_NAME
+
     return WEAK_INSERTION_SQL.format(
         table=Identifier(table),
         columns=SQL(", ").join(map(Identifier, columns)),
         temp_table=Identifier(temp_table),
+        state_column=state_column,
+        event_seq_column=LAST_EVENT_IDENTIFIER_COLUMN_NAME,
+        conflict_columns=SQL(", ").join(Identifier(c) for c in conflicting_columns),
     )
 
 

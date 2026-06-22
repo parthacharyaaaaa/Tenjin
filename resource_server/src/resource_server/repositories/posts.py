@@ -185,7 +185,7 @@ class PostRepository(metaclass=SingletonMetaclass):
             if not vote:
                 return None
 
-            return vote.vote
+            return vote.vote_type
 
     async def check_reported(
         self, post_id: int, user_id, report_tag: ReportTags

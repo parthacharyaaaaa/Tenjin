@@ -119,7 +119,7 @@ async def create_post(
             event_id=intent_id,
             created_at=time.time(),
             payload=event_paylaod,
-            side_effects=EventSideEffects(counter_updates=counter_updates),
+            side_effects=EventSideEffects(counter_updates=counter_updates),  # type: ignore[reportCallIssue]
         )
         await event_streamer.emit_user_event(post_event)
     return JSONResponse({"message": "post created"}, 202)

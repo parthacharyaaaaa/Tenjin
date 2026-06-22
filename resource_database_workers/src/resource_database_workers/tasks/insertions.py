@@ -1,7 +1,8 @@
-from typing import Any, Final, Sequence, get_type_hints
+from typing import Any, Final, Literal, Sequence, get_type_hints
 from uuid import uuid4
 
 from psycopg import AsyncConnection
+from psycopg.errors import IntegrityError
 from psycopg.sql import Composed
 
 from resource_auxillary.events import Event
@@ -20,22 +21,45 @@ from resource_database_workers.utils.sql_templates import (
     prepare_temp_table_sql,
     format_strong_insertion_sql,
 )
+from resource_database_workers.utils.typing import t_action_literal
 
 
-def resolve_entity_table(event: Event):
+def resolve_entity_metadata(event: Event) -> tuple[str, tuple[str, ...]]:
     return ASSOCIATION_DB_METADATA[event.name]
 
 
-async def batch_insert_entities(
-    conn: AsyncConnection, events: Sequence[Event]
+async def batch_association_insert_with_isolation(
+    conn: AsyncConnection, events: Sequence[Event], action: t_action_literal
+) -> list[int]:
+    try:
+        async with conn.transaction():
+            return await batch_insert_association_entities(conn, events, action)
+    except IntegrityError:
+        await conn.rollback()
+        if len(events) == 1:
+            return []
+        bisected_length: int = len(events) // 2
+        left = await batch_association_insert_with_isolation(
+            conn, events[:bisected_length], action
+        )
+        right = await batch_association_insert_with_isolation(
+            conn, events[bisected_length:], action
+        )
+        return left + right
+
+
+async def batch_insert_association_entities(
+    conn: AsyncConnection,
+    events: Sequence[Event],
+    action: Literal["save", "vote", "subscribe"],
 ) -> list[int]:
     payload_type = EVENT_PAYLOAD_TYPES.get(events[0].name)
     if not payload_type:
-        return []  # Mark entire batch as failed
+        raise ValueError(f"Unknown payload type for event name {events[0].name}")
 
     payload_field_types: dict[str, type] = get_type_hints(payload_type)
 
-    table = resolve_entity_table(events[0])
+    table, pk_columns = resolve_entity_metadata(events[0])
     columns: tuple[str, ...] = tuple(payload_field_types)
 
     temp_table = f"_staging_{table}_{uuid4().hex}"
@@ -60,7 +84,9 @@ async def batch_insert_entities(
                         row.append(default_serializer(value, field_type))
                 await copy.write_row(row)
 
-        await cursor.execute(prepare_weak_insertion_sql(table, temp_table, columns))
+        await cursor.execute(
+            prepare_weak_insertion_sql(table, temp_table, columns, pk_columns, action)
+        )
         return []  # TODO: Add RETURNING/CTE
 
 
@@ -73,7 +99,7 @@ async def batch_insert_strong_entities(
 
     payload_field_types: dict[str, type] = get_type_hints(payload_type)
 
-    table = resolve_entity_table(events[0])
+    table, *_ = resolve_entity_metadata(events[0])
     columns: tuple[str, ...] = tuple(payload_field_types)
     insertion_records: list[dict[str, Any]] = []
 

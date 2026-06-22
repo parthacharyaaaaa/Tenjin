@@ -20,6 +20,7 @@ from resource_auxillary.database import (
     COUNTERS_DLQ_AFFECTED_RELATION_COLUMN_NAME,
     COUNTERS_DLQ_FAILURE_TIME_COLUMN_NAME,
     COUNTERS_DLQ_TABLE_NAME,
+    EVENT_SUB_COLUMN_NAME,
     EVENTS_TABLE_NAME,
     EVENT_ID_COLUMN_NAME,
     EVENT_TIMESTAMP_COLUMN_NAME,
@@ -30,6 +31,11 @@ from resource_auxillary.database import (
 from resource_server.config import database_constants
 from resource_server.config.constants import EMAIL_PATTERN
 from resource_server.models.database_enums import AdminRoles, ReportTags
+from resource_server.models.database_mixins import (
+    SaveAssociationMixin,
+    SubAssociationMixin,
+    VoteAssociationMixin,
+)
 
 __all__ = (
     "ForumSubscription",
@@ -73,7 +79,7 @@ REPORT_TAGS = ENUM(
 
 
 ### Assosciation Tables ###
-class ForumSubscription(Base):
+class ForumSubscription(SubAssociationMixin, Base):
     __tablename__ = "forum_subscriptions"
     user_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("users.id_", ondelete="CASCADE"), primary_key=True
@@ -86,7 +92,7 @@ class ForumSubscription(Base):
     )
 
 
-class AnimeSubscription(Base):
+class AnimeSubscription(SubAssociationMixin, Base):
     __tablename__ = "anime_subscriptions"
     user_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("users.id_", ondelete="CASCADE"), primary_key=True
@@ -99,7 +105,7 @@ class AnimeSubscription(Base):
     )
 
 
-class PostVote(Base):
+class PostVote(VoteAssociationMixin, Base):
     __tablename__ = "post_votes"
     voter_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("users.id_"), primary_key=True
@@ -107,10 +113,9 @@ class PostVote(Base):
     post_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("posts.id_", ondelete="CASCADE"), primary_key=True
     )
-    vote: Mapped[bool] = mapped_column(BOOLEAN, nullable=False)
 
 
-class PostSave(Base):
+class PostSave(SaveAssociationMixin, Base):
     __tablename__ = "post_saves"
     user_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("users.id_", ondelete="CASCADE"), primary_key=True
@@ -175,7 +180,7 @@ class CommentReport(Base):
         }
 
 
-class CommentVote(Base):
+class CommentVote(VoteAssociationMixin, Base):
     __tablename__ = "comment_votes"
     voter_id: Mapped[int] = mapped_column(
         BIGINT, ForeignKey("users.id_"), primary_key=True
@@ -185,7 +190,6 @@ class CommentVote(Base):
         ForeignKey("comments.id_", ondelete="CASCADE"),
         primary_key=True,
     )
-    vote: Mapped[bool] = mapped_column(BOOLEAN, nullable=False)
 
 
 class StreamLink(Base):

@@ -6,7 +6,9 @@ from resource_auxillary.datastructures.payloads import assosciation
 from resource_auxillary.datastructures.payloads import standalone
 
 type t_event_payload_mapping = MappingProxyType[EventName, type]
-type t_event_db_metadata_mapping = MappingProxyType[EventName, str]
+type t_event_db_metadata_mapping = MappingProxyType[
+    EventName, tuple[str, tuple[str, ...]]
+]
 
 EVENT_PAYLOAD_TYPES: Final[t_event_payload_mapping] = MappingProxyType(
     {
@@ -28,22 +30,24 @@ EVENT_PAYLOAD_TYPES: Final[t_event_payload_mapping] = MappingProxyType(
     }
 )
 
+user_post_pk: Final[tuple[str, str]] = ("user_id", "post_id")
+user_comment_pk: Final[tuple[str, str]] = ("user_id", "comment_id")
+user_anime_pk: Final[tuple[str, str]] = ("user_id", "anime_id")
+user_forum_pk: Final[tuple[str, str]] = ("user_id", "forum_id")
+
 ASSOCIATION_DB_METADATA: Final[t_event_db_metadata_mapping] = MappingProxyType(
     {
-        EventName.POST_CREATE: "posts",
-        EventName.POST_SAVE: "post_saves",
-        EventName.POST_UNSAVE: "post_saves",
-        EventName.POST_VOTE: "post_votes",
-        EventName.POST_UNVOTE: "post_votes",
-        EventName.POST_REPORT: "post_reports",
-        EventName.COMMENT_CREATE: "comments",
-        EventName.COMMENT_VOTE: "comment_votes",
-        EventName.COMMENT_UNVOTE: "comment_votes",
-        EventName.COMMENT_REPORT: "comment_reportss",
-        EventName.COMMENT_DELETE: "comments",
-        EventName.FORUM_SUB: "forum_subscriptions",
-        EventName.FORUM_UNSUB: "forum_subscriptions",
-        EventName.ANIME_SUB: "anime_subscriptions",
-        EventName.ANIME_UNSUB: "anime_subscriptions",
+        EventName.POST_SAVE: ("post_saves", user_post_pk),
+        EventName.POST_UNSAVE: ("post_saves", user_post_pk),
+        EventName.POST_VOTE: ("post_votes", user_post_pk),
+        EventName.POST_UNVOTE: ("post_votes", user_post_pk),
+        EventName.POST_REPORT: ("post_reports", user_post_pk),
+        EventName.COMMENT_VOTE: ("comment_votes", user_comment_pk),
+        EventName.COMMENT_UNVOTE: ("comment_votes", user_comment_pk),
+        EventName.COMMENT_REPORT: ("comment_reportss", user_comment_pk),
+        EventName.FORUM_SUB: ("forum_subscriptions", user_comment_pk),
+        EventName.FORUM_UNSUB: ("forum_subscriptions", user_comment_pk),
+        EventName.ANIME_SUB: ("anime_subscriptions", user_anime_pk),
+        EventName.ANIME_UNSUB: ("anime_subscriptions", user_anime_pk),
     }
 )

@@ -3,7 +3,7 @@ from collections import defaultdict
 import time
 from typing import Final
 
-from psycopg.errors import LockNotAvailable, OperationalError, InternalError, Error
+from psycopg.errors import OperationalError, InternalError
 from psycopg_pool import AsyncConnectionPool
 from psycopg.sql import Composed
 
@@ -17,7 +17,10 @@ from resource_auxillary.strings import EventName, StreamName
 from resource_auxillary.events import Event
 
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
-from resource_database_workers.utils.typing import BatchInsertionFunction
+from resource_database_workers.utils.typing import (
+    BatchInsertionFunction,
+    t_action_literal,
+)
 from resource_database_workers.utils.sql_templates import (
     format_dlq_insertion_sql,
     format_counters_dlq_insertion_sql,
@@ -85,10 +88,14 @@ async def queue_consumer(
     queue: asyncio.Queue[tuple[Event]],
     dead_letter_queue: asyncio.Queue[Event],
     batch_function: BatchInsertionFunction,
+    stream_name: StreamName,
+    group_name: str,
+    action: t_action_literal,
 ) -> None:
     batch: list[Event] = []
-    successful_events: list[str] = []
+    successful_events: list[int] = []
     reference_time: float = time.monotonic()
+
     while True:
         if not (
             (len(batch) >= config.WORKER.IQ_CONSUMER_BATCH_SIZE_QUOTA)
@@ -111,33 +118,52 @@ async def queue_consumer(
             reference_time = time.monotonic()
             continue
 
+        failed: bool = False
         async with pool.connection() as conn:
-            try:
-                # Logic to insert into dedup table, using CTE or exectemany and view to fetch unique events
-                inserted_ids: list[str] = await batch_function(conn, batch)
-                await conn.commit()
+            for attempt in range(config.WORKER.MAX_RETRIES):
+                try:
+                    # TODO: Add logic to insert into dedup table
+                    inserted_ids: list[int] = await batch_function(conn, batch, action)
+                    await conn.commit()
 
-                successful_events.extend(inserted_ids)
-                del inserted_ids
-            except (LockNotAvailable, OperationalError, InternalError):
-                # Possible recoverable database exceptions
-                ...
-            except Error:
-                failed_events: list[Event] = [
-                    event for event in batch if event.event_id not in successful_events
-                ]
-                for event in failed_events:
+                    successful_events.extend(inserted_ids)
+                    del inserted_ids
+                    failed = False
+                    break
+                except (OperationalError, InternalError):
+                    failed = True
+                    await conn.rollback()
+                except Exception:
+                    # Ideally a subclass of psycopg.errors.Error,
+                    # but Python errors are also non-transient
+                    failed_events: list[Event] = [
+                        event
+                        for event in batch
+                        if event.event_id not in successful_events
+                    ]
+                    for event in failed_events:
+                        await dead_letter_queue.put(event)
+                    await redis.xack(
+                        stream_name, group_name, *(e.event_id for e in failed_events)
+                    )
+                    failed_events.clear()
+                    await conn.rollback()
+                    break
+
+            await redis.xack(
+                StreamName.USER_INTERACTIONS,
+                config.WORKER.CONSUMER_GROUP_NAME,
+                *successful_events,
+            )
+            successful_events.clear()
+
+            if failed:
+                for event in batch:
                     await dead_letter_queue.put(event)
-                failed_events.clear()
-            finally:
-                await redis.xack(
-                    StreamName.USER_INTERACTIONS,
-                    config.WORKER.CONSUMER_GROUP_NAME,
-                    *successful_events,
-                )
-                successful_events.clear()
-                batch.clear()
-                reference_time = time.monotonic()
+                await redis.xack(stream_name, group_name, *(e.event_id for e in batch))
+
+            batch.clear()
+            reference_time = time.monotonic()
 
 
 async def dlq_consumer(pool: AsyncConnectionPool, queue: asyncio.Queue[Event]) -> None:
