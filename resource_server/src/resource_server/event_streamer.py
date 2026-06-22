@@ -2,6 +2,8 @@ from dataclasses import dataclass
 
 from redis.asyncio.client import Redis, Pipeline
 
+from auxillary.utils import cache_repr
+
 from resource_server.config.sub_config import CacheConfig
 from resource_server.utils.singleton import SingletonMetaclass
 
@@ -34,8 +36,7 @@ class EventStreamer(metaclass=SingletonMetaclass):
         stream: StreamName,
         event: Event,
     ) -> None:
-        # TODO: Add cache_repr for Event
-        pipeline.xadd(stream.value, event.model_dump(), nomkstream=False)  # type: ignore
+        pipeline.xadd(stream.value, cache_repr(event), nomkstream=False)  # type: ignore
 
     async def emit_user_event(self, event: Event) -> None:
         async with self.redis_client.pipeline(transaction=True) as pipeline:
