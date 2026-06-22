@@ -111,8 +111,8 @@ class Event(BaseModel):
         EventName, Field(frozen=True), BeforeValidator(lambda x: x.strip().upper())
     ]
 
-    event_id: Annotated[str, Field(frozen=True)]
-    created_at: Annotated[float, Field(frozen=True, ge=0)]
+    event_id: Annotated[str, Field(frozen=True, default_factory=time.time_ns)]
+    created_at: Annotated[float, Field(frozen=True, ge=0, default=time.time_ns)]
 
     payload: dict[str, Any]
 
