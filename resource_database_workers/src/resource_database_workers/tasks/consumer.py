@@ -12,7 +12,7 @@ from resource_auxillary.cache import derive_cache_key
 from redis.asyncio import Redis
 
 from auxillary.utils import cache_repr, json_repr
-from resource_auxillary.database import ORPHAN_MAPPING, StrongEntity
+from resource_auxillary.datastructures.database import ORPHAN_MAPPING, StrongEntity
 
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.queues import QueueRegistry

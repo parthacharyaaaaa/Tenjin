@@ -4,15 +4,11 @@ from typing import Literal as typing_literal
 
 from psycopg.sql import Literal, Identifier, SQL, Composed, Placeholder
 
-from resource_auxillary.database import (
-    COUNTERS_DLQ_TABLE_NAME,
-    DLQ_TABLE_NAME,
-    LAST_EVENT_IDENTIFIER_COLUMN_NAME,
-    EVENT_SUB_COLUMN_NAME,
-    EVENT_SAVE_COLUMN_NAME,
-    EVENT_VOTE_COLUMN_NAME,
-    DELETED_COLUMN_NAME,
-    DELETED_AT_COLUMN_NAME,
+from resource_auxillary.datastructures.database import (
+    EventLiteral,
+    EventMetadataLiteral,
+    DeletionColumnLiteral,
+    DeadLetterQueueLiteral,
 )
 
 UPDATION_SQL: Final[SQL] = SQL("""UPDATE {table} t
@@ -84,18 +80,18 @@ def prepare_weak_insertion_sql(
     action: typing_literal["save", "vote", "subscribe"],
 ) -> Composed:
     if action == "save":
-        state_column = EVENT_SAVE_COLUMN_NAME
+        state_column = EventMetadataLiteral.EVENT_SAVE_COLUMN_NAME
     elif action == "vote":
-        state_column = EVENT_VOTE_COLUMN_NAME
+        state_column = EventMetadataLiteral.EVENT_VOTE_COLUMN_NAME
     else:
-        state_column = EVENT_SUB_COLUMN_NAME
+        state_column = EventMetadataLiteral.EVENT_SUB_COLUMN_NAME
 
     return WEAK_INSERTION_SQL.format(
         table=Identifier(table),
         columns=SQL(", ").join(map(Identifier, columns)),
         temp_table=Identifier(temp_table),
         state_column=state_column,
-        event_seq_column=LAST_EVENT_IDENTIFIER_COLUMN_NAME,
+        event_seq_column=EventMetadataLiteral.LAST_EVENT_IDENTIFIER_COLUMN_NAME,
         conflict_columns=SQL(", ").join(Identifier(c) for c in conflicting_columns),
     )
 
@@ -114,13 +110,15 @@ def format_strong_insertion_sql(table: str, columns: Sequence[str]) -> Composed:
 
 def format_dlq_insertion_sql() -> Composed:
     return STRONG_INSERTION_SQL.format(
-        table=DLQ_TABLE_NAME, placeholders=SQL(", ").join(Placeholder() * 2)
+        table=DeadLetterQueueLiteral.TABLE_NAME,
+        placeholders=SQL(", ").join(Placeholder() * 2),
     )
 
 
 def format_counters_dlq_insertion_sql() -> Composed:
     return STRONG_INSERTION_SQL.format(
-        table=COUNTERS_DLQ_TABLE_NAME, placeholders=SQL(", ").join(Placeholder() * 4)
+        table=DeadLetterQueueLiteral.COUNTERS_TABLE_NAME,
+        placeholders=SQL(", ").join(Placeholder() * 4),
     )
 
 
@@ -140,8 +138,8 @@ def prepare_strong_deletion_sql(
     return STRONG_DELETION_SQL.format(
         table=Identifier(table),
         identifier=Identifier(identifier_column),
-        deletion_column=DELETED_COLUMN_NAME,
-        deleted_at=DELETED_AT_COLUMN_NAME,
+        deletion_column=DeletionColumnLiteral.DELETED_COLUMN_NAME,
+        deleted_at=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME,
         values=SQL(", ").join(SQL("({}, true, {})").format(*i) for i in deletion_data),
     )
 
@@ -157,8 +155,8 @@ def prepare_orphan_deletion(
 ) -> Composed:
     return KILL_ORPHANS_SQL.format(
         orphan_table=orphan_table,
-        deletion_column=DELETED_COLUMN_NAME,
-        deleted_at=DELETED_AT_COLUMN_NAME,
+        deletion_column=DeletionColumnLiteral.DELETED_COLUMN_NAME,
+        deleted_at=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME,
         deletion_time=Literal(deletion_time),
         parent_fk_column=parent_fk_column,
         parent_values=Literal(parent_fk),
@@ -191,8 +189,8 @@ def prepare_deltas_selection(
         author_identifier_column=Identifier(author_column),
         table=Identifier(table),
         identifier_column=Identifier(identifier_column),
-        deletion_column=Identifier(DELETED_COLUMN_NAME),
-        deleted_at=Identifier(DELETED_AT_COLUMN_NAME),
+        deletion_column=DeletionColumnLiteral.DELETED_COLUMN_NAME,
+        deleted_at=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME,
         deletion_time=Literal(deletion_time),
         limit=Literal(limit),
         offset=Literal(offset),

@@ -10,7 +10,7 @@ from psycopg.sql import Composed
 from psycopg.rows import dict_row
 from psycopg.errors import OperationalError, LockNotAvailable, InternalError, Error
 
-from resource_auxillary.database import StrongEntity
+from resource_auxillary.datastructures.database import StrongEntity
 from resource_auxillary.events import Event
 from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
 

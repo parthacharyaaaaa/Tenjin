@@ -1,9 +1,4 @@
-from resource_auxillary.database import (
-    EVENT_SAVE_COLUMN_NAME,
-    EVENT_SUB_COLUMN_NAME,
-    EVENT_VOTE_COLUMN_NAME,
-    LAST_EVENT_IDENTIFIER_COLUMN_NAME,
-)
+from resource_auxillary.datastructures.database import EventMetadataLiteral
 from sqlalchemy import text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import BIGINT, BOOLEAN
@@ -11,7 +6,9 @@ from sqlalchemy.dialects.postgresql import BIGINT, BOOLEAN
 
 class EventAssociationMixin:
     last_event_seq: Mapped[int] = mapped_column(
-        BIGINT, nullable=False, name=LAST_EVENT_IDENTIFIER_COLUMN_NAME
+        BIGINT,
+        nullable=False,
+        name=EventMetadataLiteral.LAST_EVENT_IDENTIFIER_COLUMN_NAME,
     )
 
 
@@ -20,12 +17,14 @@ class SaveAssociationMixin(EventAssociationMixin):
         BOOLEAN,
         nullable=False,
         server_default=text("true"),
-        name=EVENT_SAVE_COLUMN_NAME,
+        name=EventMetadataLiteral.EVENT_SAVE_COLUMN_NAME,
     )
 
 
 class VoteAssociationMixin(EventAssociationMixin):
-    vote_type: Mapped[bool] = mapped_column(BOOLEAN, name=EVENT_VOTE_COLUMN_NAME)
+    vote_type: Mapped[bool] = mapped_column(
+        BOOLEAN, name=EventMetadataLiteral.EVENT_VOTE_COLUMN_NAME
+    )
 
 
 class SubAssociationMixin(EventAssociationMixin):
@@ -33,5 +32,5 @@ class SubAssociationMixin(EventAssociationMixin):
         BOOLEAN,
         nullable=False,
         server_default=text("true"),
-        name=EVENT_SUB_COLUMN_NAME,
+        name=EventMetadataLiteral.EVENT_SUB_COLUMN_NAME,
     )

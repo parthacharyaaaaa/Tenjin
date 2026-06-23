@@ -15,17 +15,15 @@ from typing import Any
 from dataclasses import dataclass
 from types import FunctionType
 
-from resource_auxillary.database import (
-    COUNTERS_DLQ_AFFECTED_COLUMN_COLUMN_NAME,
-    COUNTERS_DLQ_AFFECTED_RELATION_COLUMN_NAME,
-    COUNTERS_DLQ_FAILURE_TIME_COLUMN_NAME,
-    COUNTERS_DLQ_TABLE_NAME,
-    EVENT_SUB_COLUMN_NAME,
-    EVENTS_TABLE_NAME,
-    EVENT_ID_COLUMN_NAME,
-    EVENT_TIMESTAMP_COLUMN_NAME,
-    DLQ_TABLE_NAME,
-    DLQ_PAYLOAD_COLUMN_NAME,
+from resource_auxillary.datastructures.database import (
+    StrongEntity,
+    EventLiteral,
+    EventMetadataLiteral,
+    DeadLetterQueueLiteral,
+    DeletionColumnLiteral,
+    ForeignKeyColumnLiteral,
+    AssociationColumnLiteral,
+    GenericLiterals,
 )
 
 from resource_server.config import database_constants
@@ -82,10 +80,16 @@ REPORT_TAGS = ENUM(
 class ForumSubscription(SubAssociationMixin, Base):
     __tablename__ = "forum_subscriptions"
     user_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("users.id_", ondelete="CASCADE"), primary_key=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.USER}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.USER_ID,
     )
     forum_id: Mapped[int] = mapped_column(
-        INTEGER, ForeignKey("forums.id_", ondelete="CASCADE"), primary_key=True
+        INTEGER,
+        ForeignKey(f"{StrongEntity.FORUM}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.FORUM_ID,
     )
     time_subscribed: Mapped[datetime] = mapped_column(
         TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
@@ -95,10 +99,16 @@ class ForumSubscription(SubAssociationMixin, Base):
 class AnimeSubscription(SubAssociationMixin, Base):
     __tablename__ = "anime_subscriptions"
     user_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("users.id_", ondelete="CASCADE"), primary_key=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.USER}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.USER_ID,
     )
     anime_id: Mapped[int] = mapped_column(
-        INTEGER, ForeignKey("animes.id_", ondelete="CASCADE"), primary_key=True
+        INTEGER,
+        ForeignKey(f"{StrongEntity.ANIME}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.ANIME_ID,
     )
     time_subscribed: Mapped[datetime] = mapped_column(
         TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
@@ -108,30 +118,48 @@ class AnimeSubscription(SubAssociationMixin, Base):
 class PostVote(VoteAssociationMixin, Base):
     __tablename__ = "post_votes"
     voter_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("users.id_"), primary_key=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.USER}.{GenericLiterals.ID}"),
+        primary_key=True,
+        name=AssociationColumnLiteral.USER_ID,
     )
     post_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("posts.id_", ondelete="CASCADE"), primary_key=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.POST}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.POST_ID,
     )
 
 
 class PostSave(SaveAssociationMixin, Base):
     __tablename__ = "post_saves"
     user_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("users.id_", ondelete="CASCADE"), primary_key=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.USER}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.USER_ID,
     )
     post_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("posts.id_", ondelete="CASCADE"), primary_key=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.POST}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.POST_ID,
     )
 
 
 class PostReport(Base):
     __tablename__ = "post_reports"
     user_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("users.id_", ondelete="CASCADE"), primary_key=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.USER}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.USER_ID,
     )
     post_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("posts.id_", ondelete="CASCADE"), primary_key=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.POST}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.POST_ID,
     )
     report_tag: Mapped[str] = mapped_column(
         REPORT_TAGS, nullable=False, primary_key=True
@@ -155,12 +183,16 @@ class PostReport(Base):
 class CommentReport(Base):
     __tablename__ = "comment_reports"
     user_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("users.id_", ondelete="CASCADE"), primary_key=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.USER}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.USER_ID,
     )
     comment_id: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey("comments.id_", ondelete="CASCADE"),
         primary_key=True,
+        name=AssociationColumnLiteral.COMMENT_ID,
     )
     report_tag: Mapped[str] = mapped_column(
         REPORT_TAGS, nullable=False, primary_key=True
@@ -170,32 +202,30 @@ class CommentReport(Base):
     )
     report_description: Mapped[str] = mapped_column(VARCHAR(256), nullable=False)
 
-    def __json_like__(self) -> dict[str, int | str]:
-        return {
-            "user": self.user_id,
-            "comment": self.comment_id,
-            "tag": self.report_tag,
-            "description": self.report_description,
-            "time": self.report_time.isoformat(),
-        }
-
 
 class CommentVote(VoteAssociationMixin, Base):
     __tablename__ = "comment_votes"
     voter_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("users.id_"), primary_key=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.USER}.{GenericLiterals.ID}"),
+        primary_key=True,
+        name=AssociationColumnLiteral.USER_ID,
     )
     comment_id: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey("comments.id_", ondelete="CASCADE"),
         primary_key=True,
+        name=AssociationColumnLiteral.COMMENT_ID,
     )
 
 
 class StreamLink(Base):
     __tablename__ = "stream_links"
     anime_id: Mapped[int] = mapped_column(
-        INTEGER, ForeignKey("animes.id_", ondelete="CASCADE"), primary_key=True
+        INTEGER,
+        ForeignKey(f"{StrongEntity.ANIME}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.ANIME_ID,
     )
     url: Mapped[str] = mapped_column(
         VARCHAR(database_constants.StreamLinkConstants.URL_MAX_LENGTH),
@@ -210,37 +240,46 @@ class StreamLink(Base):
 class AnimeGenre(Base):
     __tablename__ = "anime_genres"
     anime_id: Mapped[int] = mapped_column(
-        INTEGER, ForeignKey("animes.id_", ondelete="CASCADE"), primary_key=True
+        INTEGER,
+        ForeignKey(f"{StrongEntity.ANIME}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.ANIME_ID,
     )
     genre_id: Mapped[int] = mapped_column(
         SMALLINT,
         ForeignKey("genres.id_", ondelete="CASCADE"),
         primary_key=True,
+        name=AssociationColumnLiteral.GENRE_ID,
     )
-
-
-ADMIN_ROLES = ENUM("admin", "super", "owner", name="ADMIN_ROLES", create_type=True)
 
 
 class ForumAdmin(Base):
     __tablename__ = "forum_admins"
     forum_id: Mapped[int] = mapped_column(
-        INTEGER, ForeignKey("forums.id_", ondelete="CASCADE"), primary_key=True
+        INTEGER,
+        ForeignKey(f"{StrongEntity.FORUM}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.FORUM_ID,
     )
     user_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("users.id_", ondelete="CASCADE"), primary_key=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.USER}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.USER_ID,
     )
     role: Mapped[str] = mapped_column(
-        ADMIN_ROLES, nullable=False, server_default=text(f"'{ADMIN_ROLES.enums[0]}'")
+        ADMIN_ROLES, nullable=False, server_default=text(AdminRoles.ADMIN)
     )
 
 
 class User(Base):
-    __tablename__ = "users"
+    __tablename__ = StrongEntity.USER
 
     ### Attributes ###
     # Basic identification
-    id_: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    id_: Mapped[int] = mapped_column(
+        BIGINT, primary_key=True, autoincrement=True, name=GenericLiterals.ID
+    )
     username: Mapped[str] = mapped_column(
         VARCHAR(database_constants.UserConstants.USERNAME_MAX_LENGTH),
         nullable=False,
@@ -255,7 +294,7 @@ class User(Base):
         BOOLEAN, server_default=text("false"), nullable=False
     )
 
-    # Passwords and salts
+    # bcrypt password hash
     pw_hash: Mapped[bytes] = mapped_column(
         BYTEA(database_constants.UserConstants.PASSWORD_HASH_LENGTH), nullable=False
     )
@@ -274,9 +313,14 @@ class User(Base):
     last_login: Mapped[datetime] = mapped_column(TIMESTAMP)
 
     deleted: Mapped[bool] = mapped_column(
-        BOOLEAN, nullable=False, server_default=text("false")
+        BOOLEAN,
+        nullable=False,
+        server_default=text("false"),
+        name=DeletionColumnLiteral.DELETED_COLUMN_NAME,
     )
-    time_deleted: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=True)
+    time_deleted: Mapped[datetime] = mapped_column(
+        TIMESTAMP, nullable=True, name=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -290,23 +334,12 @@ class User(Base):
         CheckConstraint(email.regexp_match(str(EMAIL_PATTERN)), "check_email_regex"),
     )
 
-    def __json_like__(self) -> dict[str, str | int]:
-        return {
-            "id": self.id_,
-            "username": self.username,
-            "aura": self.aura,
-            "total_posts": self.total_posts,
-            "total_comments": self.total_comments,
-            "epoch": self.time_joined.isoformat(),
-            "last_login": self.last_login.isoformat(),
-        }
-
 
 @dataclass
 class UserTicket(Base):
     __tablename__ = "user_tickets"
 
-    id: Mapped[int] = mapped_column(BIGINT, primary_key=True)
+    id_: Mapped[int] = mapped_column(BIGINT, primary_key=True, name=GenericLiterals.ID)
     email: Mapped[str] = mapped_column(
         VARCHAR(database_constants.UserConstants.EMAIL_MAX_LENGTH), nullable=False
     )
@@ -331,7 +364,9 @@ class PasswordRecoveryToken(Base):
     __tablename__ = "password_recovery_tokens"
 
     user_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("users.id_"), primary_key=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.USER}.{GenericLiterals.ID}"),
+        primary_key=True,
     )
     expiry: Mapped[datetime] = mapped_column(
         TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"), nullable=False, index=True
@@ -345,15 +380,18 @@ class PasswordRecoveryToken(Base):
 
 @dataclass
 class Anime(Base):
-    __tablename__ = "animes"
+    __tablename__ = StrongEntity.ANIME
 
-    id_: Mapped[int] = mapped_column(INTEGER, primary_key=True, autoincrement=True)
+    id_: Mapped[int] = mapped_column(
+        INTEGER, primary_key=True, autoincrement=True, name=GenericLiterals.ID
+    )
     title: Mapped[str] = mapped_column(
         VARCHAR(database_constants.AnimeConstants.TITLE_MAX_LENGTH),
         nullable=False,
         unique=True,
     )
 
+    # NOTE: what
     rating: Mapped[float] = mapped_column(NUMERIC(3, 2), nullable=False)
     mal_rating: Mapped[int | None] = mapped_column(INTEGER)
     members: Mapped[int] = mapped_column(
@@ -374,32 +412,14 @@ class Anime(Base):
         ),
     )
 
-    @classmethod
-    def deserialization_mapping(cls):
-        return {
-            "id": int,
-            "rating": float,
-            "mal_rating": int,
-            "members": int,
-            "genres": lambda x: x.split(":"),
-        }
-
-    def __json_like__(self) -> dict[str, str | int | float | None]:
-        return {
-            "id": self.id_,
-            "title": self.title,
-            "rating": float(self.rating),
-            "mal_rating": self.mal_rating,
-            "members": self.members,
-            "synopsis": self.synopsis,
-        }
-
 
 @dataclass
 class Genre(Base):
-    __tablename__ = "genres"
+    __tablename__ = StrongEntity.GENRE
 
-    id_: Mapped[int] = mapped_column(SMALLINT, primary_key=True, autoincrement=True)
+    id_: Mapped[int] = mapped_column(
+        SMALLINT, primary_key=True, autoincrement=True, name=GenericLiterals.ID
+    )
     name_: Mapped[str] = mapped_column(
         VARCHAR(database_constants.GenreConstants.TITLE_MAX_LENGTH),
         nullable=False,
@@ -414,15 +434,21 @@ class Genre(Base):
 
 
 class Forum(Base):
-    __tablename__ = "forums"
+    __tablename__ = StrongEntity.FORUM
 
     # Basic identification
-    id_: Mapped[int] = mapped_column(INTEGER, primary_key=True, autoincrement=True)
+    id_: Mapped[int] = mapped_column(
+        INTEGER, primary_key=True, autoincrement=True, name=GenericLiterals.ID
+    )
     name_: Mapped[str] = mapped_column(
         VARCHAR(database_constants.ForumConstants.TITLE_MAX_LENGTH), nullable=False
     )
     anime: Mapped[int] = mapped_column(
-        INTEGER, ForeignKey("animes.id_"), index=True, nullable=True
+        INTEGER,
+        ForeignKey(f"{StrongEntity.ANIME}.{GenericLiterals.ID}"),
+        index=True,
+        nullable=True,
+        name=ForeignKeyColumnLiteral.PARENT_ANIME,
     )
 
     # Appearance
@@ -445,9 +471,14 @@ class Forum(Base):
 
     # Deletion metadata
     deleted: Mapped[bool] = mapped_column(
-        BOOLEAN, nullable=False, server_default=text("false")
+        BOOLEAN,
+        nullable=False,
+        server_default=text("false"),
+        name=DeletionColumnLiteral.DELETED_COLUMN_NAME,
     )
-    time_deleted: Mapped[datetime | None] = mapped_column(TIMESTAMP)
+    time_deleted: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP, name=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME
+    )
     rtbf_hidden: Mapped[bool] = mapped_column(BOOLEAN)
 
     __table_args__ = (
@@ -465,35 +496,8 @@ class Forum(Base):
             func.length(name_) >= database_constants.ForumConstants.TITLE_MIN_LENGTH,
             name="check_title_length",
         ),
-        UniqueConstraint("name_", "anime", name="uq_name_anime"),
+        UniqueConstraint("name_", name="uq_forum_name"),
     )
-
-    @classmethod
-    def deserialization_mapping(cls) -> dict[str, Any]:
-        hp_func = lambda hp: None if not hp else int(hp)
-        return {
-            "id": int,
-            "anime": int,
-            "subscribers": int,
-            "posts": int,
-            "admin_count": int,
-            "highlight_post_1": hp_func,
-            "highlight_post_2": hp_func,
-            "highlight_post_3": hp_func,
-            "deleted": lambda deleted: bool(int(deleted)),
-            "rtbf_hidden": lambda rtbf: bool(int(rtbf)),
-        }
-
-    def __json_like__(self) -> dict[str, str | int | None]:
-        return {
-            "id": self.id_,
-            "name": self.name_,
-            "subscribers": self.subscribers,
-            "description": self.description,
-            "posts": self.posts,
-            "created_at": self.created_at.isoformat(),
-            "admin_count": self.admin_count,
-        }
 
 
 class ForumRules(Base):
@@ -501,7 +505,10 @@ class ForumRules(Base):
 
     # Identification
     forum_id: Mapped[int] = mapped_column(
-        INTEGER, ForeignKey("forums.id_", ondelete="CASCADE"), primary_key=True
+        INTEGER,
+        ForeignKey(f"{StrongEntity.FORUM}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        primary_key=True,
+        name=AssociationColumnLiteral.FORUM_ID,
     )
 
     # Data
@@ -514,7 +521,7 @@ class ForumRules(Base):
         server_default="No additional description provided for this rule.",
     )
     author: Mapped[int] = mapped_column(
-        INTEGER, ForeignKey("users.id_"), nullable=False
+        INTEGER, ForeignKey(f"{StrongEntity.USER}.{GenericLiterals.ID}"), nullable=False
     )
 
     time_created: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
@@ -525,27 +532,26 @@ class ForumRules(Base):
         ),
     )
 
-    def __json_like__(self) -> dict:
-        return {
-            "forum_id": self.forum_id,
-            "rule_number": self.rule_number,
-            "title": self.title,
-            "body": self.body,
-            "author": self.author,
-            "epoch": self.time_created.isoformat(),
-        }
-
 
 class Post(Base):
-    __tablename__ = "posts"
+    __tablename__ = StrongEntity.POST
 
     # Basic identification
-    id_: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    id_: Mapped[int] = mapped_column(
+        BIGINT, primary_key=True, autoincrement=True, name=GenericLiterals.ID
+    )
     author_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("users.id_"), nullable=False, index=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.USER}.{GenericLiterals.ID}"),
+        nullable=False,
+        index=True,
+        name=ForeignKeyColumnLiteral.AUTHOR_ID,
     )
     forum_id: Mapped[int] = mapped_column(
-        INTEGER, ForeignKey("forums.id_", ondelete="CASCADE"), nullable=False
+        INTEGER,
+        ForeignKey(f"{StrongEntity.FORUM}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        nullable=False,
+        name=ForeignKeyColumnLiteral.PARENT_FORUM,
     )
 
     # Post statistics
@@ -586,23 +592,16 @@ class Post(Base):
     deleted: Mapped[bool] = mapped_column(
         BOOLEAN, nullable=False, server_default=text("false")
     )
-    time_deleted: Mapped[datetime | None] = mapped_column(TIMESTAMP)
+    deleted: Mapped[bool] = mapped_column(
+        BOOLEAN,
+        nullable=False,
+        server_default=text("false"),
+        name=DeletionColumnLiteral.DELETED_COLUMN_NAME,
+    )
+    time_deleted: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP, name=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME
+    )
     rtbf_hidden: Mapped[bool] = mapped_column(BOOLEAN, nullable=True)
-
-    @classmethod
-    def deserialization_mapping(cls) -> dict[str, Any]:
-        return {
-            "id": int,
-            "author_id": int,
-            "forum_id": int,
-            "score": int,
-            "total_comments": int,
-            "closed": deserialize_bool,
-            "saves": int,
-            "reports": int,
-            "deleted": deserialize_bool,
-            "rtbf_hidden": deserialize_bool,
-        }
 
     __table_args__ = (
         CheckConstraint(
@@ -619,31 +618,33 @@ class Post(Base):
         ),
     )
 
-    def __json_like__(self) -> dict[str, str | int | None]:
-        return {
-            "id": self.id_,
-            "author_id": self.author_id,
-            "forum_id": self.forum_id,
-            "score": self.score,
-            "total_comments": self.total_comments,
-            "title": self.title,
-            "body_text": self.body_text,
-            "closed": self.closed,
-            "epoch": self.time_posted.strftime("%d/%m/%y, %H:%M:%S"),
-            "saves": self.saves,
-        }
-
 
 class Comment(Base):
-    __tablename__ = "comments"
+    __tablename__ = StrongEntity.COMMENT
 
     # Basic identification
-    id_: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    id_: Mapped[int] = mapped_column(
+        BIGINT, primary_key=True, autoincrement=True, name=GenericLiterals.ID
+    )
     author_id: Mapped[int] = mapped_column(
-        BIGINT, ForeignKey("users.id_"), nullable=False, index=True
+        BIGINT,
+        ForeignKey(f"{StrongEntity.USER}.{GenericLiterals.ID}"),
+        nullable=False,
+        index=True,
+        name=ForeignKeyColumnLiteral.AUTHOR_ID,
     )
     parent_forum: Mapped[int] = mapped_column(
-        INTEGER, ForeignKey("forums.id_", ondelete="CASCADE"), nullable=False
+        INTEGER,
+        ForeignKey(f"{StrongEntity.FORUM}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        nullable=False,
+        name=ForeignKeyColumnLiteral.PARENT_FORUM,
+    )
+    parent_post: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey(f"{StrongEntity.POST}.{GenericLiterals.ID}", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        name=ForeignKeyColumnLiteral.PARENT_POST,
     )
 
     # Comment details
@@ -652,12 +653,6 @@ class Comment(Base):
     )
     body: Mapped[str] = mapped_column(
         VARCHAR(database_constants.CommentConstants.COMMENT_MAX_LENGTH), nullable=False
-    )
-    parent_post: Mapped[int] = mapped_column(
-        BIGINT,
-        ForeignKey("posts.id_", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
     )
     score: Mapped[int] = mapped_column(
         BIGINT, nullable=False, default=0, server_default=text("0")
@@ -668,9 +663,14 @@ class Comment(Base):
 
     # Deletion metadata
     deleted: Mapped[bool] = mapped_column(
-        BOOLEAN, nullable=False, server_default=text("false")
+        BOOLEAN,
+        nullable=False,
+        server_default=text("false"),
+        name=DeletionColumnLiteral.DELETED_COLUMN_NAME,
     )
-    time_deleted: Mapped[datetime | None] = mapped_column(TIMESTAMP)
+    time_deleted: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP, name=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME
+    )
     rtbf_hidden: Mapped[bool] = mapped_column(BOOLEAN, nullable=True)
 
     __table_args__ = (
@@ -681,60 +681,29 @@ class Comment(Base):
         ),
     )
 
-    def __json_like__(self) -> dict[str, str | int]:
-        return {
-            "id": self.id_,
-            "author_id": self.author_id,
-            "parent_forum": self.parent_forum,
-            "time_created": self.time_created.isoformat(),
-            "body": self.body,
-            "parent_post": self.parent_post,
-            "score": self.score,
-        }
-
 
 class StreamEvent(Base):
-    __tablename__ = EVENTS_TABLE_NAME
+    __tablename__ = EventLiteral.EVENTS_TABLE_NAME
 
     event_id: Mapped[str] = mapped_column(
-        TEXT, primary_key=True, name=EVENT_ID_COLUMN_NAME
+        TEXT, primary_key=True, name=EventLiteral.EVENT_ID_COLUMN_NAME
     )
     acknowledgement_time: Mapped[datetime] = mapped_column(
         TIMESTAMP,
         server_default=text("CURRENT_TIMESTAMP"),
         index=True,
-        name=EVENT_TIMESTAMP_COLUMN_NAME,
+        name=EventLiteral.EVENT_TIMESTAMP_COLUMN_NAME,
     )
 
 
 class DeadLetterQueue(Base):
-    __tablename__ = DLQ_TABLE_NAME
+    __tablename__ = DeadLetterQueueLiteral.TABLE_NAME
 
     event_id: Mapped[str] = mapped_column(
-        TEXT, primary_key=True, name=EVENT_ID_COLUMN_NAME
+        TEXT, primary_key=True, name=EventLiteral.EVENT_ID_COLUMN_NAME
     )
     payload: Mapped[Any] = mapped_column(
-        JSONB, nullable=False, name=DLQ_PAYLOAD_COLUMN_NAME
-    )
-
-
-class CounterDeadLetterQueue(Base):
-    __tablename__ = COUNTERS_DLQ_TABLE_NAME
-
-    id_: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
-
-    table_name: Mapped[str] = mapped_column(
-        VARCHAR(64),
-        index=True,
-        nullable=False,
-        name=COUNTERS_DLQ_AFFECTED_RELATION_COLUMN_NAME,
-    )
-
-    column_name: Mapped[str] = mapped_column(
-        VARCHAR(64),
-        index=True,
-        nullable=False,
-        name=COUNTERS_DLQ_AFFECTED_COLUMN_COLUMN_NAME,
+        JSONB, nullable=False, name=DeadLetterQueueLiteral.PAYLOAD_COLUMN_NAME
     )
 
     failure_time: Mapped[datetime] = mapped_column(
@@ -742,9 +711,37 @@ class CounterDeadLetterQueue(Base):
         nullable=False,
         index=True,
         server_default=text("CURRENT_TIMESTAMP"),
-        name=COUNTERS_DLQ_FAILURE_TIME_COLUMN_NAME,
+        name=DeadLetterQueueLiteral.COUNTERS_FAILURE_TIME_COLUMN_NAME,
+    )
+
+
+class CounterDeadLetterQueue(Base):
+    __tablename__ = DeadLetterQueueLiteral.COUNTERS_TABLE_NAME
+
+    id_: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+
+    table_name: Mapped[str] = mapped_column(
+        VARCHAR(64),
+        index=True,
+        nullable=False,
+        name=DeadLetterQueueLiteral.COUNTERS_AFFECTED_RELATION_COLUMN_NAME,
+    )
+
+    column_name: Mapped[str] = mapped_column(
+        VARCHAR(64),
+        index=True,
+        nullable=False,
+        name=DeadLetterQueueLiteral.COUNTERS_AFFECTED_COLUMN_COLUMN_NAME,
+    )
+
+    failure_time: Mapped[datetime] = mapped_column(
+        TIMESTAMP,
+        nullable=False,
+        index=True,
+        server_default=text("CURRENT_TIMESTAMP"),
+        name=DeadLetterQueueLiteral.COUNTERS_FAILURE_TIME_COLUMN_NAME,
     )
 
     counter_data: Mapped[Any] = mapped_column(
-        JSONB, nullable=False, name=DLQ_PAYLOAD_COLUMN_NAME
+        JSONB, nullable=False, name=DeadLetterQueueLiteral.PAYLOAD_COLUMN_NAME
     )
