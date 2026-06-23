@@ -17,7 +17,7 @@ from resource_auxillary.datastructures.database import ORPHAN_MAPPING, StrongEnt
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.queues import QueueRegistry
 from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
-from resource_auxillary.events import Event
+from resource_auxillary.events import StreamedEvent
 
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
 from resource_database_workers.utils.tasks import dispatch_downstream_events
@@ -68,19 +68,20 @@ async def stream_consumer(
         event_stream_subset = result[0][1]
         del result
 
-        event_dict: defaultdict[asyncio.Queue[tuple[Event, ...]], list[Event]] = (
-            defaultdict(list[Event])
-        )
+        event_dict: defaultdict[
+            asyncio.Queue[tuple[StreamedEvent, ...]], list[StreamedEvent]
+        ] = defaultdict(list[StreamedEvent])
         for event_data in event_stream_subset:
             try:
-                event_name: EventName = EventName(event_data[1]["name"])
-                event: Event = Event.serialize_from_stream(event[1])  # type: ignore
-            except (KeyError, ValueError):
+                event: StreamedEvent = StreamedEvent.construct_from_stream_record(
+                    event_data
+                )
+            except ValueError:
                 await queue_registry.dead_letter.put(
-                    Event.safe_construct_from_malformed_stream(event_data[1])
+                    StreamedEvent.safe_construct_from_malformed_stream(event_data)
                 )
                 continue
-            event_dict[queue_registry.event_queue_mapping[event_name]].append(event)
+            event_dict[queue_registry.event_queue_mapping[event.name]].append(event)
 
         for queue, events in event_dict.items():
             queue.put_nowait(tuple(events))
@@ -92,14 +93,14 @@ async def queue_insertion_consumer(
     config: AppConfig,
     pool: AsyncConnectionPool,
     redis: Redis,
-    queue: asyncio.Queue[tuple[Event]],
-    dead_letter_queue: asyncio.Queue[Event],
+    queue: asyncio.Queue[tuple[StreamedEvent]],
+    dead_letter_queue: asyncio.Queue[StreamedEvent],
     batch_function: BatchInsertionFunction,
     stream_name: StreamName,
     group_name: str,
     action: t_action_literal,
 ) -> None:
-    batch: list[Event] = []
+    batch: list[StreamedEvent] = []
     successful_events: list[int] = []
     reference_time: float = time.monotonic()
 
@@ -110,7 +111,7 @@ async def queue_insertion_consumer(
             > config.WORKER.IQ_CONSUMER_BASE_WAITING_TIME
         ):
             try:
-                new_entries: tuple[Event] = await asyncio.wait_for(
+                new_entries: tuple[StreamedEvent] = await asyncio.wait_for(
                     queue.get(), config.WORKER.IQ_CONSUMER_GET_TIMEOUT
                 )
                 if not batch:
@@ -143,7 +144,7 @@ async def queue_insertion_consumer(
                 except Exception:
                     # Ideally a subclass of psycopg.errors.Error,
                     # but Python errors are also non-transient
-                    failed_events: list[Event] = [
+                    failed_events: list[StreamedEvent] = [
                         event
                         for event in batch
                         if event.event_id not in successful_events
@@ -180,13 +181,13 @@ async def queue_deletion_consumer(
     table: StrongEntity,
     cache_id_field: str,
     identifier_column: str,
-    queue: asyncio.Queue[tuple[Event]],
-    dead_letter_queue: asyncio.Queue[Event],
+    queue: asyncio.Queue[tuple[StreamedEvent]],
+    dead_letter_queue: asyncio.Queue[StreamedEvent],
     batch_function: BatchDeletionFunction,
     stream_name: StreamName,
     group_name: str,
 ) -> None:
-    batch: list[Event] = []
+    batch: list[StreamedEvent] = []
     reference_time: float = time.monotonic()
 
     while True:
@@ -196,7 +197,7 @@ async def queue_deletion_consumer(
             > config.WORKER.IQ_CONSUMER_BASE_WAITING_TIME
         ):
             try:
-                new_entries: tuple[Event] = await asyncio.wait_for(
+                new_entries: tuple[StreamedEvent] = await asyncio.wait_for(
                     queue.get(), config.WORKER.IQ_CONSUMER_GET_TIMEOUT
                 )
                 if not batch:
@@ -262,22 +263,19 @@ async def queue_downstream_deletion_consumer(
     config: AppConfig,
     pool: AsyncConnectionPool,
     redis: Redis,
-    queue: asyncio.Queue[Event],
-    dead_letter_queue: asyncio.Queue[Event],
+    queue: asyncio.Queue[StreamedEvent],
+    dead_letter_queue: asyncio.Queue[StreamedEvent],
     batch_function: BatchDownstreamDeletionFunction,
     stream_name: StreamName,
     group_name: str,
 ) -> None:
     while True:
-        event: Event = await queue.get()
+        event: StreamedEvent = await queue.get()
         try:
             foreign_key: int = int(event.payload["foreign_key"])
             foreign_key_column: str = event.payload["foreign_key_column"]
             orphan_table: str = event.payload["orphan_table"]
-            if "deleted_at" in event.payload:
-                deletion_time = datetime.fromisoformat(event.payload["deleted_at"])
-            else:
-                deletion_time = datetime.fromtimestamp(event.created_at)
+            deletion_time = datetime.fromisoformat(event.payload["deleted_at"])
         except (KeyError, ValueError):
             await dead_letter_queue.put(event)
             continue
@@ -330,7 +328,7 @@ async def queue_downstream_deletion_consumer(
                     if parent_table == StrongEntity.FORUM
                     else EventName.DOWNSTREAM_COMMENT_DECREMENT
                 )
-                event: Event = Event(
+                event: StreamedEvent = StreamedEvent(
                     name=event_name,
                     payload={
                         "deletion_time": deletion_time,
@@ -347,13 +345,13 @@ async def queue_downstream_decrement_consumer(
     config: AppConfig,
     pool: AsyncConnectionPool,
     redis: Redis,
-    queue: asyncio.Queue[Event],
-    dead_letter_queue: asyncio.Queue[Event],
+    queue: asyncio.Queue[StreamedEvent],
+    dead_letter_queue: asyncio.Queue[StreamedEvent],
     stream_name: StreamName,
     group_name: str,
 ) -> None:
     while True:
-        event: Event = await queue.get()
+        event: StreamedEvent = await queue.get()
         try:
             deletion_time: datetime = datetime.fromisoformat(
                 event.payload["deletion_time"]
@@ -430,10 +428,12 @@ async def queue_downstream_decrement_consumer(
                 )
 
 
-async def dlq_consumer(pool: AsyncConnectionPool, queue: asyncio.Queue[Event]) -> None:
+async def dlq_consumer(
+    pool: AsyncConnectionPool, queue: asyncio.Queue[StreamedEvent]
+) -> None:
     insertion_sql: Final[Composed] = format_dlq_insertion_sql()
     while True:
-        dlq_event: Event = await queue.get()
+        dlq_event: StreamedEvent = await queue.get()
         async with pool.connection() as conn:
             await conn.execute(
                 insertion_sql, (dlq_event.event_id, json_repr(dlq_event))

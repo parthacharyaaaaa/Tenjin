@@ -5,7 +5,7 @@ from psycopg import AsyncConnection
 from psycopg.errors import IntegrityError
 from psycopg.sql import Composed
 
-from resource_auxillary.events import Event
+from resource_auxillary.events import StreamedEvent
 from resource_auxillary.datastructures.translation import (
     EVENT_PAYLOAD_TYPES,
     ASSOCIATION_DB_METADATA,
@@ -24,12 +24,12 @@ from resource_database_workers.utils.sql_templates import (
 from resource_database_workers.utils.typing import t_action_literal
 
 
-def resolve_entity_metadata(event: Event) -> tuple[str, tuple[str, ...]]:
+def resolve_entity_metadata(event: StreamedEvent) -> tuple[str, tuple[str, ...]]:
     return ASSOCIATION_DB_METADATA[event.name]
 
 
 async def batch_association_insert_with_isolation(
-    conn: AsyncConnection, events: Sequence[Event], action: t_action_literal
+    conn: AsyncConnection, events: Sequence[StreamedEvent], action: t_action_literal
 ) -> list[int]:
     try:
         async with conn.transaction():
@@ -50,7 +50,7 @@ async def batch_association_insert_with_isolation(
 
 async def batch_insert_association_entities(
     conn: AsyncConnection,
-    events: Sequence[Event],
+    events: Sequence[StreamedEvent],
     action: Literal["save", "vote", "subscribe"],
 ) -> list[int]:
     payload_type = EVENT_PAYLOAD_TYPES.get(events[0].name)
@@ -91,7 +91,7 @@ async def batch_insert_association_entities(
 
 
 async def batch_insert_strong_entities(
-    conn: AsyncConnection, events: Sequence[Event]
+    conn: AsyncConnection, events: Sequence[StreamedEvent]
 ) -> list[int]:
     payload_type = EVENT_PAYLOAD_TYPES.get(events[0].name)
     if not payload_type:

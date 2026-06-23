@@ -1,7 +1,5 @@
 from functools import cached_property
-import time
 from typing import Annotated, Any, Literal, Self
-from uuid import uuid4
 
 from auxillary.utils import cache_repr, json_repr
 import orjson
@@ -11,7 +9,6 @@ from pydantic import BaseModel, BeforeValidator, Field, ConfigDict
 from redis.typing import FieldT, EncodableT
 
 from resource_auxillary.strings import (
-    MALFORMED_EVENT_PREFIX,
     NAME_SEPERATOR,
     EventName,
     IntentFlag,
@@ -110,12 +107,7 @@ class Event(BaseModel):
     name: Annotated[
         EventName, Field(frozen=True), BeforeValidator(lambda x: x.strip().upper())
     ]
-
-    event_id: Annotated[str, Field(frozen=True, default_factory=time.time_ns)]
-    created_at: Annotated[float, Field(frozen=True, ge=0, default=time.time_ns)]
-
     payload: dict[str, Any]
-
     side_effects: Annotated[EventSideEffects, Field(frozen=True)]
 
     @property
@@ -125,8 +117,6 @@ class Event(BaseModel):
     def __cache_repr__(self) -> dict[FieldT, EncodableT]:
         return {
             "name": self.name,
-            "event_id": self.event_id,
-            "created_at": self.created_at,
             "payload": orjson.dumps(self.payload),
             "side_effects": orjson.dumps(cache_repr(self.side_effects)),
         }
@@ -134,27 +124,79 @@ class Event(BaseModel):
     def __json_repr__(self) -> dict[str, Any]:
         return {
             "name": self.name,
-            "event_id": self.event_id,
-            "created_at": self.created_at,
             "payload": self.payload,
             "side_effects": json_repr(self.side_effects),
         }
 
     @classmethod
-    def safe_construct_from_malformed_stream(cls, stream_entry: dict[str, str]) -> Self:
-        creation_time = time.time()
+    def reconstruct_from_stream(cls, stream_entry: dict[str, str]) -> Self:
+        try:
+            name: EventName = EventName(stream_entry["name"])
+            payload: dict[str, Any] = orjson.loads(stream_entry["payload"])
+            raw_side_effects: dict[str, Any] = orjson.loads(
+                stream_entry["side_effects"]
+            )
 
-        if stream_creation_time := stream_entry.get("created_at"):
-            splits: list[str] = stream_creation_time.split(".")
-            if len(splits) == 2 and all(s.isnumeric() for s in splits):
-                creation_time = float(stream_creation_time)
+            counter_updates = tuple(
+                CounterUpdate(**cu)
+                for cu in orjson.loads(raw_side_effects.get("counter_updates", b"[]"))
+            )
+            intent_updates = tuple(
+                IntentUpdate(**iu)
+                for iu in orjson.loads(raw_side_effects.get("intent_updates", b"[]"))
+            )
+            cache_invalidations = tuple(
+                CacheUpdate(**ci)
+                for ci in orjson.loads(
+                    raw_side_effects.get("cache_invalidations", b"[]")
+                )
+            )
 
-        return Event(
+            return cls(
+                name=name,
+                payload=payload,
+                side_effects=EventSideEffects(
+                    counter_updates=counter_updates,
+                    intent_updates=intent_updates,
+                    cache_invalidations=cache_invalidations,
+                ),
+            )
+        except (KeyError, ValueError, orjson.JSONDecodeError) as e:
+            raise ValueError(f"Malformed stream entry: {e}") from e
+
+
+class StreamedEvent(Event):
+    """Event that has been streamed to Redis and is assosciated with a unique, chronological ID"""
+
+    event_id: int
+
+    def __cache_repr__(self) -> dict[FieldT, EncodableT]:
+        return super().__cache_repr__() | {"event_id": self.event_id}
+
+    def __json_repr__(self) -> dict[str, Any]:
+        return super().__json_repr__() | {"event_id": self.event_id}
+
+    @classmethod
+    def construct_from_stream_record(cls, stream: tuple[str, dict[str, str]]) -> Self:
+        stream_id, stream_entry = stream
+        event_id: int = int(stream_id.replace("-", ""))
+        base_event: Event = Event.reconstruct_from_stream(stream_entry)
+        return cls(
+            event_id=event_id,
+            name=base_event.name,
+            payload=base_event.payload,
+            side_effects=base_event.side_effects,
+        )
+
+    @classmethod
+    def safe_construct_from_malformed_stream(
+        cls, stream_entry: tuple[str, dict[str, str]]
+    ) -> Self:
+        event_id: int = int(stream_entry[0].replace("-", ""))
+
+        return StreamedEvent(
             name=EventName.MALFORMED,
-            event_id=stream_entry.get(
-                "event_id", NAME_SEPERATOR.join((MALFORMED_EVENT_PREFIX, uuid4().hex))
-            ),
-            created_at=creation_time,
-            payload=stream_entry,
+            payload=stream_entry[1],
+            event_id=event_id,
             side_effects=EventSideEffects(),  # type: ignore[reportCallIssue]
         )

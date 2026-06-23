@@ -86,8 +86,6 @@ async def dispatch_downstream_events(
         events.extend(
             Event(
                 name=EventName.ORPHANED_POST_DELETE,
-                event_id=str(time.time_ns()),
-                created_at=time.time_ns(),
                 payload=generate_downstream_event_payload(
                     "forum_id" if upstream_table == StrongEntity.FORUM else "author_id",
                     deleted_id,
@@ -102,8 +100,6 @@ async def dispatch_downstream_events(
     events.extend(
         Event(
             name=EventName.ORPHANED_COMMENT_DELETE,
-            event_id=str(time.time_ns()),
-            created_at=time.time_ns(),
             payload=generate_downstream_event_payload(
                 "parent_forum" if upstream_table == StrongEntity.FORUM else "author_id",
                 deleted_id,

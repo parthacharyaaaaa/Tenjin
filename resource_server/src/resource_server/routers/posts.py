@@ -1,6 +1,5 @@
 from datetime import datetime
 from functools import partial
-import time
 from typing import Annotated, Final
 from uuid import uuid4
 
@@ -116,8 +115,6 @@ async def create_post(
 
         post_event: Event = Event(
             name=EventName.POST_CREATE,
-            event_id=intent_id,
-            created_at=time.time(),
             payload=event_paylaod,
             side_effects=EventSideEffects(counter_updates=counter_updates),  # type: ignore[reportCallIssue]
         )
@@ -255,8 +252,6 @@ async def delete_post(
 
         subscription_event: Event = Event(
             name=EventName.ANIME_UNSUB,
-            event_id=intent_id,
-            created_at=time.time(),
             payload={"post_id": post_id},
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
@@ -351,8 +346,6 @@ async def vote_post(
 
         vote_event: Event = Event(
             name=EventName.POST_UNSAVE,
-            event_id=intent_id,
-            created_at=time.time(),
             payload={"post_id": post_id, "user_id": access_token["sid"]},
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
@@ -439,8 +432,6 @@ async def unvote_post(
 
         unvote_event: Event = Event(
             name=EventName.POST_UNVOTE,
-            event_id=intent_id,
-            created_at=time.time(),
             payload={"post_id": post_id, "user_id": access_token["sid"]},
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
@@ -518,8 +509,6 @@ async def save_post(
 
         save_event: Event = Event(
             name=EventName.POST_SAVE,
-            event_id=intent_id,
-            created_at=time.time(),
             payload={"post_id": post_id, "user_id": access_token["sid"]},
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
@@ -597,8 +586,6 @@ async def unsave_post(
 
         unsave_event: Event = Event(
             name=EventName.POST_UNSAVE,
-            event_id=intent_id,
-            created_at=time.time(),
             payload={"post_id": post_id, "user_id": access_token["sid"]},
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
@@ -679,8 +666,6 @@ async def report_post(
 
     report_event: Event = Event(
         name=EventName.POST_UNSAVE,
-        event_id=intent_id,
-        created_at=time.time(),
         payload={
             "post_id": post_id,
             "user_id": access_token["sid"],

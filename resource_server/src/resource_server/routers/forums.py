@@ -542,8 +542,6 @@ async def subscribe_forum(
 
         subscription_event: Event = Event(
             name=EventName.FORUM_SUB,
-            event_id=intent_id,
-            created_at=time.time(),
             payload={"forum_id": forum_id, "user_id": access_token["sid"]},
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
@@ -640,8 +638,6 @@ async def unsubscribe_forum(
 
         unsubscription_event: Event = Event(
             name=EventName.FORUM_UNSUB,
-            event_id=intent_id,
-            created_at=time.time(),
             payload={"forum_id": forum_id, "user_id": access_token["sid"]},
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates

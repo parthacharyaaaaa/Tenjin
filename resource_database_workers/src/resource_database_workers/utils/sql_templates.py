@@ -5,7 +5,6 @@ from typing import Literal as typing_literal
 from psycopg.sql import Literal, Identifier, SQL, Composed, Placeholder
 
 from resource_auxillary.datastructures.database import (
-    EventLiteral,
     EventMetadataLiteral,
     DeletionColumnLiteral,
     DeadLetterQueueLiteral,

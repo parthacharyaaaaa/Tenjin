@@ -4,7 +4,6 @@ from typing import Literal
 from redis.asyncio import Redis
 
 from psycopg import AsyncConnection
-from resource_auxillary.events import Event
 from resource_auxillary.strings import NAME_SEPERATOR
 
 from resource_database_workers.config.config import AppConfig

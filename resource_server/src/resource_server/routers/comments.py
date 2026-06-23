@@ -1,5 +1,4 @@
 from datetime import datetime
-import time
 from functools import partial
 from typing import Annotated, Any, Final
 from uuid import uuid4
@@ -103,8 +102,6 @@ async def comment_on_post(
 
     deletion_event: Event = Event(
         name=EventName.COMMENT_CREATE,
-        event_id=intent_id,
-        created_at=time.time(),
         payload=comment_payload,
         side_effects=EventSideEffects(
             counter_updates=counter_updates  # type: ignore[reportCallIssue]
@@ -158,7 +155,7 @@ async def delete_comment(
             raise HTTPException(403, "Insufficient permissions to delete comment")
 
     intent_id: Final[str] = uuid4().hex
-    conflict_message: str = f"Already subscribed to forum: {forum.name_}"
+    conflict_message: str = f"Already deleted comment"
     async with cache_manager.guard_action(
         access_token["sid"],
         comment_id,
@@ -201,8 +198,6 @@ async def delete_comment(
         )
         deletion_event: Event = Event(
             name=EventName.COMMENT_DELETE,
-            event_id=intent_id,
-            created_at=time.time(),
             payload={"comment_id": comment_id},
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates  # type: ignore[reportCallIssue]
@@ -300,8 +295,6 @@ async def vote_comment(
 
         vote_event: Event = Event(
             name=EventName.COMMENT_VOTE,
-            event_id=intent_id,
-            created_at=time.time(),
             payload={
                 "comment_id": comment_id,
                 "user_id": access_token["sid"],
@@ -394,8 +387,6 @@ async def unvote_comment(
 
         vote_event: Event = Event(
             name=EventName.COMMENT_UNVOTE,
-            event_id=intent_id,
-            created_at=time.time(),
             payload={
                 "comment_id": comment_id,
                 "user_id": access_token["sid"],
@@ -482,8 +473,6 @@ async def report_comment(
 
         report_event: Event = Event(
             name=EventName.POST_UNSAVE,
-            event_id=intent_id,
-            created_at=time.time(),
             payload={
                 "comment_id": comment_id,
                 "user_id": access_token["sid"],

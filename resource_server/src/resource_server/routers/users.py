@@ -1,4 +1,3 @@
-import time
 from datetime import datetime
 from functools import partial
 from typing import Annotated, Final
@@ -142,8 +141,6 @@ async def delete_user(
     await user_repo.delete_user(user.id_)
     deletion_event: Event = Event(
         name=EventName.USER_CLEANUP,
-        event_id=uuid4().hex,
-        created_at=time.time(),
         payload={"user_id": user.id_, "username": username, "rtbf": rtbf},
         side_effects=EventSideEffects(),  # type: ignore[reportCallIssue]
     )
@@ -223,13 +220,11 @@ async def recover_user(
 
     recovery_event: Event = Event(
         name=EventName.RECOVERY,
-        event_id=intent_id,
-        created_at=time.time(),
         payload=({"user_id": user.id_, "username": username, "rtbf": user.rtbf}),
         side_effects=EventSideEffects(
             intent_updates=intent_updates, cache_invalidations=cache_updates
-        ),
-    )  # type: ignore[reportCallIssue]
+        ),  # type: ignore[reportCallIssue]
+    )
     await event_streamer.emit_user_event(recovery_event)
     return JSONResponse(
         {

@@ -3,7 +3,7 @@ from typing import Iterable, Literal, Protocol, Sequence
 
 from psycopg import AsyncConnection
 
-from resource_auxillary.events import Event
+from resource_auxillary.events import StreamedEvent
 
 type t_action_literal = Literal["save", "vote", "subscribe"]
 
@@ -14,7 +14,7 @@ class BatchInsertionFunction(Protocol):
     async def __call__(
         self,
         conn: AsyncConnection,
-        events: Sequence[Event],
+        events: Sequence[StreamedEvent],
         action: t_action_literal,
         /,
     ) -> list[int]: ...

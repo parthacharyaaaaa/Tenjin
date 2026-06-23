@@ -1,5 +1,4 @@
 from functools import partial
-import time
 from typing import Annotated, Final
 from uuid import uuid4
 
@@ -141,8 +140,6 @@ async def sub_anime(
 
         subscription_event: Event = Event(
             name=EventName.ANIME_SUB,
-            event_id=intent_id,
-            created_at=time.time(),
             payload={"anime_id": anime_id, "user_id": access_token["sid"]},
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
@@ -220,8 +217,6 @@ async def unsub_anime(
 
         subscription_event: Event = Event(
             name=EventName.ANIME_UNSUB,
-            event_id=intent_id,
-            created_at=time.time(),
             payload={"anime_id": anime_id, "user_id": access_token["sid"]},
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates

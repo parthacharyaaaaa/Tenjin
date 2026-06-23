@@ -5,7 +5,7 @@ from types import MappingProxyType
 
 from auxillary.singleton import SingletonMetaclass
 
-from resource_auxillary.events import Event
+from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import EventName
 
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
@@ -14,40 +14,42 @@ from resource_database_workers.datastructures.dead_counter_batch import DeadCoun
 @dataclass(slots=True, frozen=True)
 class QueueRegistry(metaclass=SingletonMetaclass):
     # Strong entity insertions
-    post_insertions: Queue[tuple[Event]]
-    comment_insertions: Queue[tuple[Event]]
+    post_insertions: Queue[tuple[StreamedEvent]]
+    comment_insertions: Queue[tuple[StreamedEvent]]
 
     # Weak entity insertions
-    post_report_insertions: Queue[tuple[Event]]
-    post_save_insertions: Queue[tuple[Event]]
-    post_vote_insertions: Queue[tuple[Event]]
-    comment_report_insertions: Queue[tuple[Event]]
-    comment_vote_insertions: Queue[tuple[Event]]
-    forum_subscription_insertions: Queue[tuple[Event]]
-    anime_subscription_insertions: Queue[tuple[Event]]
+    post_report_insertions: Queue[tuple[StreamedEvent]]
+    post_save_insertions: Queue[tuple[StreamedEvent]]
+    post_vote_insertions: Queue[tuple[StreamedEvent]]
+    comment_report_insertions: Queue[tuple[StreamedEvent]]
+    comment_vote_insertions: Queue[tuple[StreamedEvent]]
+    forum_subscription_insertions: Queue[tuple[StreamedEvent]]
+    anime_subscription_insertions: Queue[tuple[StreamedEvent]]
 
     # Weak entity deletions
-    post_save_deletions: Queue[tuple[Event]]
-    post_vote_deletions: Queue[tuple[Event]]
-    comment_vote_deletions: Queue[tuple[Event]]
-    forum_subscription_deletions: Queue[tuple[Event]]
-    anime_subscription_deletions: Queue[tuple[Event]]
+    post_save_deletions: Queue[tuple[StreamedEvent]]
+    post_vote_deletions: Queue[tuple[StreamedEvent]]
+    comment_vote_deletions: Queue[tuple[StreamedEvent]]
+    forum_subscription_deletions: Queue[tuple[StreamedEvent]]
+    anime_subscription_deletions: Queue[tuple[StreamedEvent]]
 
     # Strong entity deletions
-    post_deletions: Queue[tuple[Event]]
-    comment_deletions: Queue[tuple[Event]]
+    post_deletions: Queue[tuple[StreamedEvent]]
+    comment_deletions: Queue[tuple[StreamedEvent]]
 
     # Deletions
-    user_deletions: Queue[tuple[Event]]
-    forum_deletions: Queue[tuple[Event]]
-    user_recovery: Queue[tuple[Event]]
+    user_deletions: Queue[tuple[StreamedEvent]]
+    forum_deletions: Queue[tuple[StreamedEvent]]
+    user_recovery: Queue[tuple[StreamedEvent]]
 
     # DLQ
-    dead_letter: Queue[Event]
+    dead_letter: Queue[StreamedEvent]
     counter_dead_letter: Queue[tuple[DeadCounterBatch]]
 
     @cached_property
-    def event_queue_mapping(self) -> MappingProxyType[EventName, Queue[tuple[Event]]]:
+    def event_queue_mapping(
+        self,
+    ) -> MappingProxyType[EventName, Queue[tuple[StreamedEvent]]]:
         return MappingProxyType(
             {
                 EventName.POST_CREATE: self.post_insertions,
