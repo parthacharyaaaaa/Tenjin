@@ -18,9 +18,7 @@ from types import FunctionType
 from resource_auxillary.datastructures.database import (
     StrongEntity,
     EventLiteral,
-    EventMetadataLiteral,
     DeadLetterQueueLiteral,
-    DeletionColumnLiteral,
     ForeignKeyColumnLiteral,
     AssociationColumnLiteral,
     GenericLiterals,
@@ -31,6 +29,8 @@ from resource_server.config.constants import EMAIL_PATTERN
 from resource_server.models.database_enums import AdminRoles, ReportTags
 from resource_server.models.database_mixins import (
     SaveAssociationMixin,
+    SoftDeletionMixin,
+    SoftEventDeletionMixin,
     SubAssociationMixin,
     VoteAssociationMixin,
 )
@@ -272,10 +272,9 @@ class ForumAdmin(Base):
     )
 
 
-class User(Base):
+class User(SoftDeletionMixin, Base):
     __tablename__ = StrongEntity.USER
 
-    ### Attributes ###
     # Basic identification
     id_: Mapped[int] = mapped_column(
         BIGINT, primary_key=True, autoincrement=True, name=GenericLiterals.ID
@@ -311,16 +310,6 @@ class User(Base):
         TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
     last_login: Mapped[datetime] = mapped_column(TIMESTAMP)
-
-    deleted: Mapped[bool] = mapped_column(
-        BOOLEAN,
-        nullable=False,
-        server_default=text("false"),
-        name=DeletionColumnLiteral.DELETED_COLUMN_NAME,
-    )
-    time_deleted: Mapped[datetime] = mapped_column(
-        TIMESTAMP, nullable=True, name=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME
-    )
 
     __table_args__ = (
         CheckConstraint(
@@ -433,7 +422,7 @@ class Genre(Base):
     )
 
 
-class Forum(Base):
+class Forum(SoftEventDeletionMixin, Base):
     __tablename__ = StrongEntity.FORUM
 
     # Basic identification
@@ -469,16 +458,6 @@ class Forum(Base):
         SMALLINT, default=1, server_default=text("1"), nullable=False
     )
 
-    # Deletion metadata
-    deleted: Mapped[bool] = mapped_column(
-        BOOLEAN,
-        nullable=False,
-        server_default=text("false"),
-        name=DeletionColumnLiteral.DELETED_COLUMN_NAME,
-    )
-    time_deleted: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP, name=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME
-    )
     rtbf_hidden: Mapped[bool] = mapped_column(BOOLEAN)
 
     __table_args__ = (
@@ -533,7 +512,7 @@ class ForumRules(Base):
     )
 
 
-class Post(Base):
+class Post(SoftEventDeletionMixin, Base):
     __tablename__ = StrongEntity.POST
 
     # Basic identification
@@ -592,15 +571,7 @@ class Post(Base):
     deleted: Mapped[bool] = mapped_column(
         BOOLEAN, nullable=False, server_default=text("false")
     )
-    deleted: Mapped[bool] = mapped_column(
-        BOOLEAN,
-        nullable=False,
-        server_default=text("false"),
-        name=DeletionColumnLiteral.DELETED_COLUMN_NAME,
-    )
-    time_deleted: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP, name=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME
-    )
+
     rtbf_hidden: Mapped[bool] = mapped_column(BOOLEAN, nullable=True)
 
     __table_args__ = (
@@ -619,7 +590,7 @@ class Post(Base):
     )
 
 
-class Comment(Base):
+class Comment(SoftEventDeletionMixin, Base):
     __tablename__ = StrongEntity.COMMENT
 
     # Basic identification
@@ -661,16 +632,6 @@ class Comment(Base):
         INTEGER, default=0, server_default=text("0"), nullable=False
     )
 
-    # Deletion metadata
-    deleted: Mapped[bool] = mapped_column(
-        BOOLEAN,
-        nullable=False,
-        server_default=text("false"),
-        name=DeletionColumnLiteral.DELETED_COLUMN_NAME,
-    )
-    time_deleted: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP, name=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME
-    )
     rtbf_hidden: Mapped[bool] = mapped_column(BOOLEAN, nullable=True)
 
     __table_args__ = (
