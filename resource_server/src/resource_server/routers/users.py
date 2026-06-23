@@ -139,13 +139,14 @@ async def delete_user(
     rtbf: bool = await user_repo.get_rtbf(user.id_)
 
     await cache_manager.set_negative_mapping(user_cache_key)
+    await user_repo.delete_user(user.id_)
     deletion_event: Event = Event(
-        name=EventName.USER_DELETE,
+        name=EventName.USER_CLEANUP,
         event_id=uuid4().hex,
         created_at=time.time(),
         payload={"user_id": user.id_, "username": username, "rtbf": rtbf},
-        side_effects=EventSideEffects(),
-    )  # type: ignore[reportCallIssue]
+        side_effects=EventSideEffects(),  # type: ignore[reportCallIssue]
+    )
 
     await event_streamer.emit_user_event(deletion_event)
     # TODO: Add mail dispatch
