@@ -1,6 +1,6 @@
 from datetime import datetime
 import time
-from typing import Any, Sequence
+from typing import Any, Iterable
 
 from auxillary.utils import cache_repr
 from redis.asyncio import Redis
@@ -22,6 +22,11 @@ from resource_database_workers.datastructures.exceptions import (
 from resource_database_workers.utils.strings import derive_retry_batch_name
 from resource_database_workers.src.resource_database_workers.utils.sql_templates import (
     prepare_updation_sql,
+)
+from resource_database_workers.datastructures.downstream import (
+    DownstreamDeletionMapping,
+    AnonymousDownstreamDeletionData,
+    DownstreamDeletionData,
 )
 
 
@@ -77,38 +82,23 @@ def generate_downstream_event_payload(
 async def dispatch_downstream_events(
     redis: Redis,
     upstream_table: StrongEntity,
-    deleted_ids: Sequence[int],
+    deleted_data: Iterable[tuple[int, datetime]],
 ) -> None:
     events: list[Event] = []
-    deletion_time: datetime = datetime.now()
-    if upstream_table == StrongEntity.FORUM or upstream_table == StrongEntity.USER:
-        # Downstream to posts
+    downstream_bases: tuple[AnonymousDownstreamDeletionData, ...] = (
+        DownstreamDeletionMapping[upstream_table]
+    )
+    for deleted_entry in deleted_data:
         events.extend(
             Event(
-                name=EventName.ORPHANED_POST_DELETE,
-                payload=generate_downstream_event_payload(
-                    "forum_id" if upstream_table == StrongEntity.FORUM else "author_id",
-                    deleted_id,
-                    StrongEntity.POST.value,
-                    deletion_time,
-                ),  # type: ignore[reportCallIssue]
+                name=EventName.ORPHANED_COMMENT_DELETE,
+                payload=DownstreamDeletionData(
+                    foreign_key=deleted_entry[0], deleted_at=deleted_entry[1], **base
+                ),  # type: ignore
+                side_effects=EventSideEffects(),  # type: ignore
             )
-            for deleted_id in deleted_ids
+            for base in downstream_bases
         )
-
-    # Comment downstream common to all deletions
-    events.extend(
-        Event(
-            name=EventName.ORPHANED_COMMENT_DELETE,
-            payload=generate_downstream_event_payload(
-                "parent_forum" if upstream_table == StrongEntity.FORUM else "author_id",
-                deleted_id,
-                StrongEntity.COMMENT.value,
-                deletion_time,
-            ),  # type: ignore[reportCallIssue]
-        )
-        for deleted_id in deleted_ids
-    )
 
     async with redis.pipeline() as pipeline:
         for event in events:

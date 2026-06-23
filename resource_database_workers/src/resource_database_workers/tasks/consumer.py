@@ -242,6 +242,7 @@ async def queue_deletion_consumer(
                     batch.clear()
                     await conn.rollback()
                     break
+
             if failed:
                 for event in batch:
                     await dead_letter_queue.put(event)
@@ -252,7 +253,12 @@ async def queue_deletion_consumer(
                 await redis.xack(stream_name, group_name, *(e.event_id for e in batch))
 
             await dispatch_downstream_events(
-                redis, table, [event.payload[cache_id_field] for event in batch]
+                redis,
+                table,
+                (
+                    (event.payload[cache_id_field], event.payload["deleted_at"])
+                    for event in batch
+                ),
             )
 
             batch.clear()
