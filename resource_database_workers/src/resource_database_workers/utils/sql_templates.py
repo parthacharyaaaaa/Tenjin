@@ -165,9 +165,7 @@ def prepare_orphan_deletion(
 SELECT_AUTHORS_SQL: Final[SQL] = SQL(
     """SELECT {author_idenfitier_column}, COUNT({author_identifier_column}) AS delta
     FROM {table}
-    WHERE {identifier_column} < {threshold}
-    AND {parent_column} = {parent_key}
-    AND {deleted_at} = {deletion_time}
+    WHERE {deletion_author_event_id_column} = {deletion_author_event_id}
     LIMIT {limit}
     OFFSET {offset};
     """
@@ -177,22 +175,17 @@ SELECT_AUTHORS_SQL: Final[SQL] = SQL(
 def prepare_deltas_selection(
     author_column: str,
     table: str,
-    parent_column: str,
-    parent_key: int,
-    deletion_time: datetime,
+    deletion_author_event_id: int,
     limit: int,
     offset: int,
-    identifier_column: str = "id_",
 ) -> Composed:
     return SELECT_AUTHORS_SQL.format(
         author_identifier_column=Identifier(author_column),
         table=Identifier(table),
-        identifier_column=Identifier(identifier_column),
-        deletion_column=DeletionColumnLiteral.DELETED_COLUMN_NAME,
-        deleted_at=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME,
-        deletion_time=Literal(deletion_time),
+        deletion_author_event_id_column=Identifier(
+            DeletionColumnLiteral.DELETION_AUTHOR_EVENT
+        ),
+        deletion_author_event_id=Literal(deletion_author_event_id),
         limit=Literal(limit),
         offset=Literal(offset),
-        parent_column=parent_column,
-        parent_key=parent_key,
     )

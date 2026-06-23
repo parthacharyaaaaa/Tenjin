@@ -20,7 +20,11 @@ from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
 from resource_auxillary.events import StreamedEvent
 
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
-from resource_database_workers.utils.tasks import dispatch_downstream_events
+from resource_database_workers.utils.tasks import (
+    dispatch_downstream_counter_decrements,
+    dispatch_downstream_events,
+    emit_downstream_counter_decrement_updates,
+)
 from resource_database_workers.tasks.selections import select_author_deltas
 from resource_database_workers.utils.typing import (
     BatchDeletionFunction,
@@ -31,6 +35,12 @@ from resource_database_workers.utils.typing import (
 from resource_database_workers.utils.sql_templates import (
     format_dlq_insertion_sql,
     format_counters_dlq_insertion_sql,
+)
+from resource_database_workers.datastructures.downstream import (
+    DownstreamCounterDecrementData,
+    DownstreamDeletionData,
+    reconstruct_downstream_counter_data_from_stream,
+    reconstruct_downstream_data_from_stream,
 )
 
 
@@ -278,19 +288,10 @@ async def queue_downstream_deletion_consumer(
     while True:
         event: StreamedEvent = await queue.get()
         try:
-            foreign_key: int = int(event.payload["foreign_key"])
-            foreign_key_column: str = event.payload["foreign_key_column"]
-            orphan_table: str = event.payload["orphan_table"]
-            deletion_time = datetime.fromisoformat(event.payload["deleted_at"])
+            event_payload: DownstreamDeletionData = (
+                reconstruct_downstream_data_from_stream(event.payload)
+            )
         except (KeyError, ValueError):
-            await dead_letter_queue.put(event)
-            continue
-
-        if event.name == EventName.ORPHANED_POST_DELETE:
-            parent_table = StrongEntity.POST
-        elif event.name == EventName.ORPHANED_COMMENT_DELETE:
-            parent_table = StrongEntity.COMMENT
-        else:
             await dead_letter_queue.put(event)
             continue
 
@@ -301,10 +302,10 @@ async def queue_downstream_deletion_consumer(
                     # TODO: Add logic to insert into dedup table
                     await batch_function(
                         conn,
-                        foreign_key,
-                        orphan_table,
-                        foreign_key_column,
-                        deletion_time,
+                        event_payload["foreign_key"],
+                        event_payload["orphan_table"],
+                        event_payload["foreign_key_column"],
+                        event_payload["deleted_at"],
                     )
                     await conn.commit()
                     failed = False
@@ -329,21 +330,8 @@ async def queue_downstream_deletion_consumer(
                     group_name,
                     event.event_id,
                 )
-                event_name: EventName = (
-                    EventName.DOWNSTREAM_POST_DECREMENT
-                    if parent_table == StrongEntity.FORUM
-                    else EventName.DOWNSTREAM_COMMENT_DECREMENT
-                )
-                event: StreamedEvent = StreamedEvent(
-                    name=event_name,
-                    payload={
-                        "deletion_time": deletion_time,
-                        "foreign_key_column": foreign_key_column,
-                        "foreign_key": foreign_key,
-                    },
-                )  # type: ignore
-                await redis.xadd(
-                    name=StreamName.DOWNSTREAM_DELETIONS, fields=cache_repr(event)
+                await dispatch_downstream_counter_decrements(
+                    redis, event_payload["orphan_table"], event.event_id
                 )
 
 
@@ -359,60 +347,36 @@ async def queue_downstream_decrement_consumer(
     while True:
         event: StreamedEvent = await queue.get()
         try:
-            deletion_time: datetime = datetime.fromisoformat(
-                event.payload["deletion_time"]
+            event_payload: DownstreamCounterDecrementData = (
+                reconstruct_downstream_counter_data_from_stream(event.payload)
             )
-            foreign_key_column: str = event.payload["foreign_key_column"]
-            foreign_key: int = int(event.payload["foreign_key"])
-            if event.name == EventName.DOWNSTREAM_POST_DECREMENT:
-                parent_entity = StrongEntity.FORUM
-                author_column = "author_id"
-                hashmap_name = NAME_SEPERATOR.join(
-                    (StrongEntity.USER, StrongEntity.POST)
-                )
-            elif event.name == EventName.DOWNSTREAM_COMMENT_DECREMENT:
-                parent_entity = StrongEntity.POST
-                author_column = "author_id"
-                hashmap_name = NAME_SEPERATOR.join(
-                    (StrongEntity.USER, StrongEntity.COMMENT)
-                )
-            else:
-                raise ValueError()
-
-            identifier_column, table = ORPHAN_MAPPING[parent_entity][:2]
         except (KeyError, ValueError):
             await dead_letter_queue.put(event)
             continue
 
         failed: bool = False
+        # Downstream counters may be too big to materialize all at once
         limit, offset = config.WORKER.DOWNSTREAM_COUNTER_BATCH_SIZE, 0
         async with pool.connection() as conn:
             for attempt in range(config.WORKER.MAX_RETRIES):
                 try:
-                    results: list[dict[str, int]] = [{}]
+                    # temp truthy tuple to enter loop
+                    results: list[tuple[str, int]] = [("", 0)]
                     while results:
-                        results = await select_author_deltas(
+                        results: list[tuple[str, int]] = await select_author_deltas(
                             conn,
-                            deletion_time,
-                            foreign_key_column,
-                            foreign_key,
                             limit,
                             offset,
-                            author_column,
-                            table,
-                            identifier_column,
+                            event_payload["affected_table_name"],
+                            event_payload["deletion_author_event_id"],
                         )
-                        offset = offset + limit
-                        async with redis.pipeline() as pipeline:
-                            for result in results:
-                                pipeline.hincrby(
-                                    hashmap_name,
-                                    derive_cache_key(
-                                        StrongEntity.USER.value, result["author_id"]
-                                    ),
-                                    -result["delta"],
-                                )
-                            await pipeline.execute()
+                        offset += limit
+                        await emit_downstream_counter_decrement_updates(
+                            redis,
+                            results,
+                            event_payload["hashmap_name"],
+                            event_payload["affected_table_name"],
+                        )
                 except (OperationalError, InternalError):
                     failed = True
                     await conn.rollback()
@@ -426,7 +390,7 @@ async def queue_downstream_decrement_consumer(
             if failed:  # Non-transient faults exceed max retries
                 await dead_letter_queue.put(event)
                 await redis.xack(stream_name, group_name, event.event_id)
-            else:  # downstream deletion succesful
+            else:
                 await redis.xack(
                     stream_name,
                     group_name,

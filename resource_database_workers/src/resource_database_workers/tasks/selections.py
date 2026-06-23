@@ -1,32 +1,23 @@
-from datetime import datetime
-
 from psycopg import AsyncConnection
-from psycopg.rows import dict_row
+from resource_auxillary.datastructures.database import ForeignKeyColumnLiteral
 
 from resource_database_workers.utils.sql_templates import prepare_deltas_selection
 
 
 async def select_author_deltas(
     conn: AsyncConnection,
-    deletion_time: datetime,
-    parent_column: str,
-    parent_key: int,
     limit: int,
     offset: int,
-    author_column: str,
     table: str,
-    identifier_column: str,
-) -> list[dict[str, int]]:
+    deletion_author_event_id: int,
+) -> list[tuple[str, int]]:
     selection_statement = prepare_deltas_selection(
-        author_column,
+        ForeignKeyColumnLiteral.AUTHOR_ID,
         table,
-        parent_column,
-        parent_key,
-        deletion_time,
+        deletion_author_event_id,
         limit,
         offset,
-        identifier_column,
     )
-    async with conn.cursor(row_factory=dict_row) as cursor:
+    async with conn.cursor() as cursor:
         await cursor.execute(selection_statement)
         return await cursor.fetchall()

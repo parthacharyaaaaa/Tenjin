@@ -18,6 +18,35 @@ class DownstreamDeletionData(AnonymousDownstreamDeletionData):
     deleted_at: datetime
 
 
+def reconstruct_downstream_data_from_stream(
+    payload: dict[str, str],
+) -> DownstreamDeletionData:
+    return DownstreamDeletionData(
+        foreign_key_column=ForeignKeyColumnLiteral(payload["foreign_key_column"]),
+        orphan_table=StrongEntity(payload["orphan_table"]),
+        foreign_key=int(payload["foreign_key"]),
+        deleted_at=datetime.fromisoformat(payload["deleted_at"]),
+    )
+
+
+class DownstreamCounterDecrementData(TypedDict):
+    hashmap_name: str
+    affected_table_name: StrongEntity
+    affected_column_name: ForeignKeyColumnLiteral
+    deletion_author_event_id: int
+
+
+def reconstruct_downstream_counter_data_from_stream(
+    payload: dict[str, str],
+) -> DownstreamCounterDecrementData:
+    return DownstreamCounterDecrementData(
+        hashmap_name=payload["hashmap_name"],
+        affected_table_name=StrongEntity(payload["affected_table_name"]),
+        affected_column_name=ForeignKeyColumnLiteral(payload["affected_column_name"]),
+        deletion_author_event_id=int(payload["deletion_author_event_id"]),
+    )
+
+
 FORUM_COMMENT_DOWNSTREAM_DELETION_DATA = AnonymousDownstreamDeletionData(
     foreign_key_column=ForeignKeyColumnLiteral.PARENT_FORUM,
     orphan_table=StrongEntity.COMMENT,

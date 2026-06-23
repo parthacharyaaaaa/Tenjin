@@ -1,6 +1,6 @@
 from datetime import datetime
 import time
-from typing import Any, Iterable
+from typing import Iterable
 
 from auxillary.utils import cache_repr
 from redis.asyncio import Redis
@@ -10,7 +10,11 @@ from psycopg.sql import Composed
 from psycopg.rows import dict_row
 from psycopg.errors import OperationalError, LockNotAvailable, InternalError, Error
 
-from resource_auxillary.datastructures.database import StrongEntity
+from resource_auxillary.cache import derive_cache_key
+from resource_auxillary.datastructures.database import (
+    ForeignKeyColumnLiteral,
+    StrongEntity,
+)
 from resource_auxillary.events import Event
 from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
 
@@ -27,6 +31,7 @@ from resource_database_workers.datastructures.downstream import (
     DownstreamDeletionMapping,
     AnonymousDownstreamDeletionData,
     DownstreamDeletionData,
+    DownstreamCounterDecrementData,
 )
 
 
@@ -68,17 +73,6 @@ async def flush_counter_updates(
             raise UnrecoverableDatabaseException()
 
 
-def generate_downstream_event_payload(
-    foreign_key_column: str, foreign_key: int, orphan_table: str, deleted_at: datetime
-) -> dict[str, Any]:
-    return {
-        "foreign_key_column": foreign_key_column,
-        "foreign_key": foreign_key,
-        "orphan_table": orphan_table,
-        "deleted_at": deleted_at,
-    }
-
-
 async def dispatch_downstream_events(
     redis: Redis,
     upstream_table: StrongEntity,
@@ -105,5 +99,53 @@ async def dispatch_downstream_events(
             pipeline.xadd(
                 StreamName.DOWNSTREAM_DELETIONS,
                 cache_repr(event),
+            )
+        await pipeline.execute()
+
+
+async def dispatch_downstream_counter_decrements(
+    redis: Redis, deleted_entity: StrongEntity, deletion_author_event_id: int
+) -> None:
+    # NOTE: Not so elegant, but so far only these 2 tables
+    # have downstream counter decrements
+    if deleted_entity == StrongEntity.POST:
+        event_name = EventName.DOWNSTREAM_POST_DECREMENT
+        hashmap_name = NAME_SEPERATOR.join((StrongEntity.USER, StrongEntity.POST))
+    elif deleted_entity == StrongEntity.COMMENT:
+        event_name = EventName.DOWNSTREAM_COMMENT_DECREMENT
+        hashmap_name = NAME_SEPERATOR.join((StrongEntity.USER, StrongEntity.COMMENT))
+    else:
+        raise ValueError()
+    event_name: EventName = (
+        EventName.DOWNSTREAM_POST_DECREMENT
+        if deleted_entity == StrongEntity.FORUM
+        else EventName.DOWNSTREAM_COMMENT_DECREMENT
+    )
+    event: Event = Event(
+        name=event_name,
+        payload=DownstreamCounterDecrementData(
+            deletion_author_event_id=deletion_author_event_id,
+            affected_column_name=ForeignKeyColumnLiteral.AUTHOR_ID,
+            hashmap_name=hashmap_name,
+            affected_table_name=deleted_entity,
+        ),
+    )  # type: ignore
+    await redis.xadd(
+        name=StreamName.DOWNSTREAM_COUNTER_DECREMENTS, fields=cache_repr(event)
+    )
+
+
+async def emit_downstream_counter_decrement_updates(
+    redis: Redis,
+    deltas: Iterable[tuple[str, int]],
+    hashmap_name: str,
+    hash_key_prefix: StrongEntity,
+) -> None:
+    async with redis.pipeline() as pipeline:
+        for delta in deltas:
+            pipeline.hincrby(
+                hashmap_name,
+                derive_cache_key(hash_key_prefix, delta[0]),
+                -delta[1],
             )
         await pipeline.execute()
