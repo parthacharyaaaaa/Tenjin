@@ -5,6 +5,7 @@ from typing import Literal as typing_literal
 from psycopg.sql import Literal, Identifier, SQL, Composed, Placeholder
 
 from resource_auxillary.datastructures.database import (
+    EventLiteral,
     EventMetadataLiteral,
     DeletionColumnLiteral,
     DeadLetterQueueLiteral,
@@ -89,8 +90,10 @@ def prepare_weak_insertion_sql(
         table=Identifier(table),
         columns=SQL(", ").join(map(Identifier, columns)),
         temp_table=Identifier(temp_table),
-        state_column=state_column,
-        event_seq_column=EventMetadataLiteral.LAST_EVENT_IDENTIFIER_COLUMN_NAME,
+        state_column=Identifier(state_column),
+        event_seq_column=Identifier(
+            EventMetadataLiteral.LAST_EVENT_IDENTIFIER_COLUMN_NAME
+        ),
         conflict_columns=SQL(", ").join(Identifier(c) for c in conflicting_columns),
     )
 
@@ -109,14 +112,14 @@ def format_strong_insertion_sql(table: str, columns: Sequence[str]) -> Composed:
 
 def format_dlq_insertion_sql() -> Composed:
     return STRONG_INSERTION_SQL.format(
-        table=DeadLetterQueueLiteral.TABLE_NAME,
+        table=Identifier(DeadLetterQueueLiteral.TABLE_NAME),
         placeholders=SQL(", ").join(Placeholder() * 2),
     )
 
 
 def format_counters_dlq_insertion_sql() -> Composed:
     return STRONG_INSERTION_SQL.format(
-        table=DeadLetterQueueLiteral.COUNTERS_TABLE_NAME,
+        table=Identifier(DeadLetterQueueLiteral.COUNTERS_TABLE_NAME),
         placeholders=SQL(", ").join(Placeholder() * 4),
     )
 
@@ -137,8 +140,8 @@ def prepare_strong_deletion_sql(
     return STRONG_DELETION_SQL.format(
         table=Identifier(table),
         identifier=Identifier(identifier_column),
-        deletion_column=DeletionColumnLiteral.DELETED_COLUMN_NAME,
-        deleted_at=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME,
+        deletion_column=Identifier(DeletionColumnLiteral.DELETED_COLUMN_NAME),
+        deleted_at=Identifier(DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME),
         values=SQL(", ").join(SQL("({}, true, {})").format(*i) for i in deletion_data),
     )
 
@@ -153,17 +156,17 @@ def prepare_orphan_deletion(
     orphan_table: str, parent_fk_column: str, parent_fk: int, deletion_time: datetime
 ) -> Composed:
     return KILL_ORPHANS_SQL.format(
-        orphan_table=orphan_table,
-        deletion_column=DeletionColumnLiteral.DELETED_COLUMN_NAME,
-        deleted_at=DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME,
+        orphan_table=Identifier(orphan_table),
+        deletion_column=Identifier(DeletionColumnLiteral.DELETED_COLUMN_NAME),
+        deleted_at=Identifier(DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME),
         deletion_time=Literal(deletion_time),
-        parent_fk_column=parent_fk_column,
+        parent_fk_column=Identifier(parent_fk_column),
         parent_values=Literal(parent_fk),
     )
 
 
-SELECT_AUTHORS_SQL: Final[SQL] = SQL(
-    """SELECT {author_idenfitier_column}, COUNT({author_identifier_column}) AS delta
+SELECT_DECREMENT_DELTAS_SQL: Final[SQL] = SQL(
+    """SELECT {idenfitier_column}, COUNT({identifier_column}) AS delta
     FROM {table}
     WHERE {deletion_author_event_id_column} = {deletion_author_event_id}
     LIMIT {limit}
@@ -173,14 +176,14 @@ SELECT_AUTHORS_SQL: Final[SQL] = SQL(
 
 
 def prepare_deltas_selection(
-    author_column: str,
+    foreign_key_column: str,
     table: str,
     deletion_author_event_id: int,
     limit: int,
     offset: int,
 ) -> Composed:
-    return SELECT_AUTHORS_SQL.format(
-        author_identifier_column=Identifier(author_column),
+    return SELECT_DECREMENT_DELTAS_SQL.format(
+        identifier_column=Identifier(foreign_key_column),
         table=Identifier(table),
         deletion_author_event_id_column=Identifier(
             DeletionColumnLiteral.DELETION_AUTHOR_EVENT
@@ -188,4 +191,40 @@ def prepare_deltas_selection(
         deletion_author_event_id=Literal(deletion_author_event_id),
         limit=Literal(limit),
         offset=Literal(offset),
+    )
+
+
+SINGLE_DEDUP_STATEMENT: Final[SQL] = SQL("""INSERT INTO {event_dedup_table}
+    ({event_id_col}, {ack_time_col})
+    VALUES ({event_id}, {acknowledgement_time})""")
+
+
+def prepare_single_dedup_sql(
+    event_id: int, acknowledgement_time: datetime | None = None
+) -> Composed:
+    return SINGLE_DEDUP_STATEMENT.format(
+        event_dedup_table=Identifier(EventLiteral.EVENTS_TABLE_NAME),
+        event_id_col=Identifier(EventLiteral.EVENT_ID_COLUMN_NAME),
+        ack_time_col=Identifier(EventLiteral.EVENT_TIMESTAMP_COLUMN_NAME),
+        event_id=Literal(event_id),
+        acknowledgement_time=Literal(acknowledgement_time or datetime.now()),
+    )
+
+
+BATCH_DEDUP_STATEMENT: Final[SQL] = SQL("""WITH attempted AS (
+        INSERT INTO {event_dedup_table} ({event_id_col}, {ack_time_col})
+        SELECT {event_id_col}, {ack_time_col}
+        FROM {temp_table}
+        ON CONFLICT ({event_id_col}) DO NOTHING
+        RETURNING {event_id_col}
+    )
+    SELECT {event_id_col} FROM attempted;""")
+
+
+def prepare_batch_dedup_sql(temp_table: str) -> Composed:
+    return SINGLE_DEDUP_STATEMENT.format(
+        event_dedup_table=Identifier(EventLiteral.EVENTS_TABLE_NAME),
+        event_id_col=Identifier(EventLiteral.EVENT_ID_COLUMN_NAME),
+        ack_time_col=Identifier(EventLiteral.EVENT_TIMESTAMP_COLUMN_NAME),
+        temp_table=Identifier(temp_table),
     )

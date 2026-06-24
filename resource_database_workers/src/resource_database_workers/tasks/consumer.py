@@ -7,25 +7,28 @@ from typing import Final, Generator
 from psycopg.errors import OperationalError, InternalError
 from psycopg_pool import AsyncConnectionPool
 from psycopg.sql import Composed
-from resource_auxillary.cache import derive_cache_key
 
 from redis.asyncio import Redis
 
-from auxillary.utils import cache_repr, json_repr
-from resource_auxillary.datastructures.database import ORPHAN_MAPPING, StrongEntity
+from auxillary.utils import json_repr
+from resource_auxillary.datastructures.database import StrongEntity
 
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.queues import QueueRegistry
-from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
+from resource_auxillary.strings import StreamName
 from resource_auxillary.events import StreamedEvent
 
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
+from resource_database_workers.utils.coordination import (
+    batch_dedup_insert_events,
+    dedup_insert_event,
+)
 from resource_database_workers.utils.tasks import (
     dispatch_downstream_counter_decrements,
     dispatch_downstream_events,
     emit_downstream_counter_decrement_updates,
 )
-from resource_database_workers.tasks.selections import select_author_deltas
+from resource_database_workers.tasks.selections import select_decrement_deltas
 from resource_database_workers.utils.typing import (
     BatchDeletionFunction,
     BatchDownstreamDeletionFunction,
@@ -138,9 +141,17 @@ async def queue_insertion_consumer(
 
         failed: bool = False
         async with pool.connection() as conn:
+            fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
+                conn, (e.event_id for e in batch)
+            )
+            async with redis.pipeline() as pipeline:
+                for event in batch.copy():
+                    if event.event_id not in fresh_event_ids:
+                        batch.remove(event)
+                        pipeline.xack(stream_name, group_name, event.event_id)
+                await pipeline.execute()
             for attempt in range(config.WORKER.MAX_RETRIES):
                 try:
-                    # TODO: Add logic to insert into dedup table
                     inserted_ids: list[int] = await batch_function(conn, batch, action)
                     await conn.commit()
 
@@ -228,6 +239,16 @@ async def queue_deletion_consumer(
             for event in batch
         )
         async with pool.connection() as conn:
+            fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
+                conn, (e.event_id for e in batch)
+            )
+            async with redis.pipeline() as pipeline:
+                for event in batch.copy():
+                    if event.event_id not in fresh_event_ids:
+                        batch.remove(event)
+                        pipeline.xack(stream_name, group_name, event.event_id)
+                await pipeline.execute()
+
             for attempt in range(config.WORKER.MAX_RETRIES):
                 try:
                     # TODO: Add logic to insert into dedup table
@@ -297,9 +318,12 @@ async def queue_downstream_deletion_consumer(
 
         failed: bool = False
         async with pool.connection() as conn:
+            if not await dedup_insert_event(conn, event.event_id):
+                await redis.xack(stream_name, group_name, event.event_id)
+                continue
+
             for attempt in range(config.WORKER.MAX_RETRIES):
                 try:
-                    # TODO: Add logic to insert into dedup table
                     await batch_function(
                         conn,
                         event_payload["foreign_key"],
@@ -358,13 +382,18 @@ async def queue_downstream_decrement_consumer(
         # Downstream counters may be too big to materialize all at once
         limit, offset = config.WORKER.DOWNSTREAM_COUNTER_BATCH_SIZE, 0
         async with pool.connection() as conn:
+            if not await dedup_insert_event(conn, event.event_id):
+                await redis.xack(stream_name, group_name, event.event_id)
+                continue
+
             for attempt in range(config.WORKER.MAX_RETRIES):
                 try:
                     # temp truthy tuple to enter loop
                     results: list[tuple[str, int]] = [("", 0)]
                     while results:
-                        results: list[tuple[str, int]] = await select_author_deltas(
+                        results: list[tuple[str, int]] = await select_decrement_deltas(
                             conn,
+                            event_payload["affected_column_name"],
                             limit,
                             offset,
                             event_payload["affected_table_name"],
