@@ -22,6 +22,11 @@ class RedisConfig(BaseModel):
     DB: Annotated[int, Field(default=0, ge=0)]
 
 
+class RedisContainer(BaseModel):
+    APP: Annotated[RedisConfig, Field(alias="app")]
+    INTERNAL: Annotated[RedisConfig, Field(alias="internal")]
+
+
 class WorkerConfig(BaseModel):
     MAX_RETRIES: Annotated[int, Field(ge=0)]
     DLQ_NAME: Annotated[str, BeforeValidator(lambda x: x.strip())]

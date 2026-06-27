@@ -17,7 +17,7 @@ class AppConfig(BaseSettings):
     model_config = SettingsConfigDict(toml_file=str(config_filepath))
 
     WORKER: Annotated[sub_config.WorkerConfig, Field(alias="business")]
-    REDIS: Annotated[sub_config.RedisConfig, Field(alias="redis")]
+    REDIS: Annotated[sub_config.RedisContainer, Field(alias="redis")]
     DATABASE: Annotated[sub_config.DatabaseConfig, Field(alias="database")]
 
     @classmethod
