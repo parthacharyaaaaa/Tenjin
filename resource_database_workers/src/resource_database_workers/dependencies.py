@@ -1,5 +1,7 @@
 from functools import lru_cache
+import os
 
+from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
 
 from resource_database_workers.config.config import AppConfig
@@ -32,3 +34,20 @@ def get_internal_redis() -> Redis:
 @lru_cache(maxsize=1)
 def get_queue_registry() -> QueueRegistry:
     return QueueRegistry()
+
+
+@lru_cache(maxsize=1)
+def get_connection_pool() -> AsyncConnectionPool:
+    config = get_config()
+    uri: str = config.DATABASE.SQLALCHEMY.derive_sqlalchemy_uri(
+        os.environ["POSTGRES_USERNAME"],
+        os.environ["POSTGRES_PASSWORD"],
+        str(config.DATABASE.POSTGRES_HOST),
+        config.DATABASE.POSTGRES_PORT,
+        config.DATABASE.POSTGRES_DATABASE,
+    )
+
+    return AsyncConnectionPool(
+        conninfo=uri,
+        **config.DATABASE.emit_connection_pool_constructor_kwargs(),  # type: ignore
+    )
