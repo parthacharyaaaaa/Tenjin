@@ -54,7 +54,7 @@ class QueueRegistry(metaclass=SingletonMetaclass):
 
     # DLQ
     dead_letter: Queue[StreamedEvent] = field(default_factory=Queue)
-    counter_dead_letter: Queue[tuple[DeadCounterBatch]] = field(default_factory=Queue)
+    counter_dead_letter: Queue[DeadCounterBatch] = field(default_factory=Queue)
 
     @cached_property
     def event_queue_mapping(
