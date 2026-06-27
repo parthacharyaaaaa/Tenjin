@@ -36,8 +36,7 @@ class UserResult(AbstractResult):
 class PrivateUserResult(UserResult):
     pw_hash: bytes
     deleted: bool
-    time_deleted: datetime
-    rtbf: bool
+    time_deleted: datetime | None
 
     @classmethod
     def construct_from_cache(cls, mapping: Mapping[str, Any], *args, **kwargs) -> Never:
@@ -52,7 +51,6 @@ class PrivateUserResult(UserResult):
         instance.pw_hash = obj.pw_hash
         instance.deleted = obj.deleted
         instance.time_deleted = obj.time_deleted
-        instance.rtbf = obj.rtbf
 
         return instance
 
@@ -142,19 +140,6 @@ class UserRepository(metaclass=SingletonMetaclass):
                 return None
 
             return UserResult.construct_from_orm(user)
-
-    async def get_rtbf(self, user_id: int) -> bool:
-        async with self.session_maker() as session:
-            return (
-                await session.execute(select(User.rtbf).where(User.id_ == user_id))
-            ).scalar_one()
-
-    async def update_rtbf(self, user_id: int, rtbf: bool) -> None:
-        async with self.session_maker() as session:
-            await session.execute(
-                update(User).where(User.id_ == user_id).values(rtbf=rtbf)
-            )
-            await session.commit()
 
     async def set_password_recovery_token(
         self, user_id: int, url_hash: str, expiry: datetime

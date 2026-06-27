@@ -289,9 +289,6 @@ class User(SoftDeletionMixin, Base):
         nullable=False,
         unique=True,
     )
-    rtbf: Mapped[bool] = mapped_column(
-        BOOLEAN, server_default=text("false"), nullable=False
-    )
 
     # bcrypt password hash
     pw_hash: Mapped[bytes] = mapped_column(
@@ -458,8 +455,6 @@ class Forum(SoftEventDeletionMixin, Base):
         SMALLINT, default=1, server_default=text("1"), nullable=False
     )
 
-    rtbf_hidden: Mapped[bool] = mapped_column(BOOLEAN)
-
     __table_args__ = (
         CheckConstraint(posts >= 0, name="check_posts_value"),
         CheckConstraint(subscribers >= 0, name="check_subs_values"),
@@ -572,8 +567,6 @@ class Post(SoftEventDeletionMixin, Base):
         BOOLEAN, nullable=False, server_default=text("false")
     )
 
-    rtbf_hidden: Mapped[bool] = mapped_column(BOOLEAN, nullable=True)
-
     __table_args__ = (
         CheckConstraint(
             func.length(title) >= database_constants.PostConstants.TITLE_MIN_LENGTH,
@@ -631,8 +624,6 @@ class Comment(SoftEventDeletionMixin, Base):
     reports: Mapped[int] = mapped_column(
         INTEGER, default=0, server_default=text("0"), nullable=False
     )
-
-    rtbf_hidden: Mapped[bool] = mapped_column(BOOLEAN, nullable=True)
 
     __table_args__ = (
         CheckConstraint(reports > 0, "check_reports_value"),

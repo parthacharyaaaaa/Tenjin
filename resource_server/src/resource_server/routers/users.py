@@ -1,7 +1,6 @@
 from datetime import datetime
 from functools import partial
 from typing import Annotated, Final
-from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import JSONResponse
@@ -135,13 +134,11 @@ async def delete_user(
     if latest_intent == IntentFlag.RESOURCE_DELETION_PENDING_FLAG:
         raise HTTPException(409, "Account already queued for deletion")
 
-    rtbf: bool = await user_repo.get_rtbf(user.id_)
-
     await cache_manager.set_negative_mapping(user_cache_key)
     await user_repo.delete_user(user.id_)
     deletion_event: Event = Event(
         name=EventName.USER_CLEANUP,
-        payload={"user_id": user.id_, "username": username, "rtbf": rtbf},
+        payload={"user_id": user.id_, "username": username},
         side_effects=EventSideEffects(),  # type: ignore[reportCallIssue]
     )
 
@@ -151,85 +148,8 @@ async def delete_user(
         {
             "message": "Account marked for deletion",
             "details": {
-                "RTBF": rtbf,
-                "info": f"Your contributions will soon be {'deleted' if rtbf else 'anonymised'}",
+                "info": f"Your contributions will soon be {'deleted'}",
             },
-        },
-        202,
-    )
-
-
-@USERS.patch("/{username}/recovery")
-async def recover_user(
-    username: str,
-    recovery_model: UserPasswordModel,
-    app_config: Annotated[AppConfig, Depends(get_app_config)],
-    cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
-    user_repo: Annotated[UserRepository, Depends(get_user_repository)],
-    event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
-) -> JSONResponse:
-    user_cache_key: Final[str] = derive_cache_key(UserResult.resource_name, username)
-
-    user: PrivateUserResult | None = await user_repo.get_full_user_profile(username)
-    if not user:
-        raise HTTPException(404, f"No such user found {username}")
-
-    if not bcrypt_check_password(recovery_model.password, user.pw_hash):
-        raise HTTPException(403, "Incorrect password")
-
-    if not user.deleted:
-        # Soft deletion is instant
-        raise HTTPException(409, "Account not deleted")
-
-    last_recoverable_date = datetime.date(
-        user.time_deleted + app_config.BUSINESS.ACCOUNT_RECOVERY_PERIOD
-    )
-    if last_recoverable_date < datetime.date(datetime.now()):
-        e: HTTPException = HTTPException(410, "Account deleted and unrecoverable")
-        setattr(
-            e,
-            "kwargs",
-            {"info": f"Last recoverable date: {last_recoverable_date.isoformat()}"},
-        )
-        raise e
-
-    lock, latest_intent = await cache_manager.fetch_indicators(
-        username, username, UserResult.resource_name, Action.DELETE
-    )
-    if lock or latest_intent == IntentFlag.RESOURCE_CREATION_PENDING_FLAG:
-        raise HTTPException(
-            409, "A request for recovering this account is already underway"
-        )
-
-    await user_repo.recover_user(user.id_)
-
-    intent_id: Final[str] = uuid4().hex
-
-    intent_updates: tuple[IntentUpdate, ...] = (
-        IntentUpdate(
-            intent_name=create_intent_flag(
-                UserResult.resource_name, Action.DELETE, username, username
-            ),
-            intent_flag=IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-            intent_id=intent_id,
-        ),
-    )
-    cache_updates: tuple[CacheUpdate, ...] = (
-        CacheUpdate(cache_key=user_cache_key, operation="invalidate"),
-    )
-
-    recovery_event: Event = Event(
-        name=EventName.RECOVERY,
-        payload=({"user_id": user.id_, "username": username, "rtbf": user.rtbf}),
-        side_effects=EventSideEffects(
-            intent_updates=intent_updates, cache_invalidations=cache_updates
-        ),  # type: ignore[reportCallIssue]
-    )
-    await event_streamer.emit_user_event(recovery_event)
-    return JSONResponse(
-        {
-            "message": "Account recovered",
-            "info": "Your contributions will become available soon",
         },
         202,
     )
@@ -486,37 +406,3 @@ async def login(
             "login_time": login_time.isoformat(),
         }
     )
-
-
-@USERS.patch("/{user_id}/enable-rtbf")
-async def enable_rtbf(
-    user_id: int,
-    access_token: Annotated[StandardAccessTokenClaims, Depends(validate_access_token)],
-    user_repo: Annotated[UserRepository, Depends(get_user_repository)],
-) -> JSONResponse:
-    if user_id != access_token["sid"]:
-        raise HTTPException(403, "Cannot edit another user's details")
-
-    user_rtbf: bool = await user_repo.get_rtbf(user_id)
-    if user_rtbf:
-        raise HTTPException(409, "RBTF enabled")
-    await user_repo.update_rtbf(user_id, True)
-
-    return JSONResponse({"message": "RTBF enabled"})
-
-
-@USERS.patch("/{user_id}/disable-rtbf")
-async def disable_rtbf(
-    user_id: int,
-    access_token: Annotated[StandardAccessTokenClaims, Depends(validate_access_token)],
-    user_repo: Annotated[UserRepository, Depends(get_user_repository)],
-) -> JSONResponse:
-    if user_id != access_token["sid"]:
-        raise HTTPException(403, "Cannot edit another user's details")
-
-    user_rtbf: bool = await user_repo.get_rtbf(user_id)
-    if not user_rtbf:
-        raise HTTPException(409, "RBTF already disabled")
-    await user_repo.update_rtbf(user_id, False)
-
-    return JSONResponse({"message": "RTBF disabled"})

@@ -64,11 +64,7 @@ class PostRepository(metaclass=SingletonMetaclass):
                 await session.execute(
                     select(Post, User.username)
                     .join(User, User.id_ == Post.author_id)
-                    .where(
-                        (Post.id_ == post_id)
-                        & (Post.rtbf_hidden.isnot(True))
-                        & (Post.deleted == False)
-                    )
+                    .where((Post.id_ == post_id) & (Post.deleted == False))
                 )
             ).first()
             if not result:
