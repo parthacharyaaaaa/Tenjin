@@ -1,5 +1,5 @@
 from asyncio import Queue
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property
 from types import MappingProxyType
 
@@ -14,37 +14,47 @@ from resource_database_workers.datastructures.dead_counter_batch import DeadCoun
 @dataclass(slots=True, frozen=True)
 class QueueRegistry(metaclass=SingletonMetaclass):
     # Strong entity insertions
-    post_insertions: Queue[tuple[StreamedEvent]]
-    comment_insertions: Queue[tuple[StreamedEvent]]
+    post_insertions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
+    comment_insertions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
 
     # Weak entity insertions
-    post_report_insertions: Queue[tuple[StreamedEvent]]
-    post_save_insertions: Queue[tuple[StreamedEvent]]
-    post_vote_insertions: Queue[tuple[StreamedEvent]]
-    comment_report_insertions: Queue[tuple[StreamedEvent]]
-    comment_vote_insertions: Queue[tuple[StreamedEvent]]
-    forum_subscription_insertions: Queue[tuple[StreamedEvent]]
-    anime_subscription_insertions: Queue[tuple[StreamedEvent]]
+    post_report_insertions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
+    post_save_insertions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
+    post_vote_insertions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
+    comment_report_insertions: Queue[tuple[StreamedEvent]] = field(
+        default_factory=Queue
+    )
+    comment_vote_insertions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
+    forum_subscription_insertions: Queue[tuple[StreamedEvent]] = field(
+        default_factory=Queue
+    )
+    anime_subscription_insertions: Queue[tuple[StreamedEvent]] = field(
+        default_factory=Queue
+    )
 
     # Weak entity deletions
-    post_save_deletions: Queue[tuple[StreamedEvent]]
-    post_vote_deletions: Queue[tuple[StreamedEvent]]
-    comment_vote_deletions: Queue[tuple[StreamedEvent]]
-    forum_subscription_deletions: Queue[tuple[StreamedEvent]]
-    anime_subscription_deletions: Queue[tuple[StreamedEvent]]
+    post_save_deletions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
+    post_vote_deletions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
+    comment_vote_deletions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
+    forum_subscription_deletions: Queue[tuple[StreamedEvent]] = field(
+        default_factory=Queue
+    )
+    anime_subscription_deletions: Queue[tuple[StreamedEvent]] = field(
+        default_factory=Queue
+    )
 
     # Strong entity deletions
-    post_deletions: Queue[tuple[StreamedEvent]]
-    comment_deletions: Queue[tuple[StreamedEvent]]
+    post_deletions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
+    comment_deletions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
 
     # Deletions
-    user_deletions: Queue[tuple[StreamedEvent]]
-    forum_deletions: Queue[tuple[StreamedEvent]]
-    user_recovery: Queue[tuple[StreamedEvent]]
+    user_deletions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
+    forum_deletions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
+    user_recovery: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
 
     # DLQ
-    dead_letter: Queue[StreamedEvent]
-    counter_dead_letter: Queue[tuple[DeadCounterBatch]]
+    dead_letter: Queue[StreamedEvent] = field(default_factory=Queue)
+    counter_dead_letter: Queue[tuple[DeadCounterBatch]] = field(default_factory=Queue)
 
     @cached_property
     def event_queue_mapping(
