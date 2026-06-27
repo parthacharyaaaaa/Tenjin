@@ -61,9 +61,9 @@ async def flush_counter_updates(
 ) -> None:
     table, column = counter_group.split(NAME_SEPERATOR)
     updation_sql: Composed = prepare_updation_sql(table, column, "id_", counters)
-    async with conn.cursor(row_factory=dict_row) as cursor:
+    async with conn.transaction():
         try:
-            await cursor.execute(updation_sql)
+            await conn.execute(updation_sql)
             await conn.commit()
         except (OperationalError, LockNotAvailable, InternalError):
             # Transient, possibly recoverable errors

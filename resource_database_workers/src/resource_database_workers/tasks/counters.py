@@ -4,6 +4,7 @@ from typing import Literal
 from redis.asyncio import Redis
 
 from psycopg import AsyncConnection
+from psycopg_pool import AsyncConnectionPool
 from resource_auxillary.strings import NAME_SEPERATOR
 
 from resource_database_workers.config.config import AppConfig
@@ -34,7 +35,7 @@ async def _dispatch_to_dlq(
 
 async def batch_update_counters(
     config: AppConfig,
-    conn: AsyncConnection,
+    pool: AsyncConnectionPool,
     dead_letter_queue: asyncio.Queue[DeadCounterBatch],
     worker_redis: Redis,
     server_redis: Redis,
@@ -62,22 +63,25 @@ async def batch_update_counters(
             if not res[0]:
                 continue
             counters: dict[int, int] = {int(k): int(v) for k, v in res[0].items()}
-            try:
-                await flush_counter_updates(conn, counter_group, counters)
-            except RecoverableDatabaseException:
-                await conn.rollback()
-                await dispatch_to_retrier(config, worker_redis, counter_group, counters)
-            except UnrecoverableDatabaseException:
-                await conn.rollback()
-                await _dispatch_to_dlq(dead_letter_queue, counter_group, counters)
-            except Exception:
-                await conn.rollback()
-                await _dispatch_to_dlq(dead_letter_queue, counter_group, counters)
+            async with pool.connection() as conn:
+                try:
+                    await flush_counter_updates(conn, counter_group, counters)
+                except RecoverableDatabaseException:
+                    await conn.rollback()
+                    await dispatch_to_retrier(
+                        config, worker_redis, counter_group, counters
+                    )
+                except UnrecoverableDatabaseException:
+                    await conn.rollback()
+                    await _dispatch_to_dlq(dead_letter_queue, counter_group, counters)
+                except Exception:
+                    await conn.rollback()
+                    await _dispatch_to_dlq(dead_letter_queue, counter_group, counters)
 
 
 async def retry_batch_update_counters(
     config: AppConfig,
-    conn: AsyncConnection,
+    pool: AsyncConnectionPool,
     dead_letter_queue: asyncio.Queue[DeadCounterBatch],
     worker_redis: Redis,
     server_redis: Redis,
@@ -108,24 +112,27 @@ async def retry_batch_update_counters(
             # Primary key : delta
             counters: dict[int, int] = {int(k): int(v) for k, v in res[0].items()}
             del res
-            try:
-                await flush_counter_updates(conn, counter_group, counters)
-            except RecoverableDatabaseException:
-                await conn.rollback()
-                version: int = derive_version_from_batch(batch_name)
-                if version >= config.WORKER.MAX_RETRIES:
+            async with pool.connection() as conn:
+                try:
+                    await flush_counter_updates(conn, counter_group, counters)
+                except RecoverableDatabaseException:
+                    await conn.rollback()
+                    version: int = derive_version_from_batch(batch_name)
+                    if version >= config.WORKER.MAX_RETRIES:
+                        await _dispatch_to_dlq(
+                            dead_letter_queue, counter_group, counters
+                        )
+                    else:
+                        await dispatch_to_retrier(
+                            config,
+                            worker_redis,
+                            counter_group,
+                            counters,
+                            current_retry_count=version,
+                        )
+                except UnrecoverableDatabaseException:
+                    await conn.rollback()
                     await _dispatch_to_dlq(dead_letter_queue, counter_group, counters)
-                else:
-                    await dispatch_to_retrier(
-                        config,
-                        worker_redis,
-                        counter_group,
-                        counters,
-                        current_retry_count=version,
-                    )
-            except UnrecoverableDatabaseException:
-                await conn.rollback()
-                await _dispatch_to_dlq(dead_letter_queue, counter_group, counters)
-            except Exception:
-                await conn.rollback()
-                await _dispatch_to_dlq(dead_letter_queue, counter_group, counters)
+                except Exception:
+                    await conn.rollback()
+                    await _dispatch_to_dlq(dead_letter_queue, counter_group, counters)
