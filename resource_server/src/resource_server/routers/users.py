@@ -136,9 +136,10 @@ async def delete_user(
         raise HTTPException(409, "Account already queued for deletion")
 
     await cache_manager.set_negative_mapping(user_cache_key)
-    await user_repo.delete_user(user.id_)
+    deletion_time: datetime = datetime.now()
+    await user_repo.delete_user(user.id_, deletion_time=deletion_time)
 
-    payload: UserCleanup = UserCleanup(user_id=user.id_, username=username)
+    payload: UserCleanup = UserCleanup(user_id=user.id_, time_deleted=deletion_time)
 
     deletion_event: Event = Event(
         name=EventName.USER_CLEANUP,

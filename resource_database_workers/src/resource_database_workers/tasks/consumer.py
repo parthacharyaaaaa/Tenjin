@@ -2,7 +2,7 @@ import asyncio
 from collections import defaultdict
 from datetime import datetime
 import time
-from typing import Final, Generator
+from typing import Final, Generator, Iterable
 
 from psycopg.errors import OperationalError, InternalError
 from psycopg_pool import AsyncConnectionPool
@@ -12,6 +12,7 @@ from redis.asyncio import Redis
 
 from auxillary.utils import json_repr
 from resource_auxillary.datastructures.database import StrongEntity
+from resource_auxillary.datastructures.payloads.standalone import UserCleanup
 
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.queues import QueueRegistry
@@ -45,6 +46,14 @@ from resource_database_workers.datastructures.downstream import (
     reconstruct_downstream_counter_data_from_stream,
     reconstruct_downstream_data_from_stream,
 )
+
+
+def _create_user_cleanup_generator(
+    events: Iterable[StreamedEvent],
+) -> Generator[tuple[int, datetime], None, None]:
+    return (
+        (event.payload["user_id"], event.payload["time_deleted"]) for event in events
+    )
 
 
 async def stream_consumer(
@@ -100,6 +109,85 @@ async def stream_consumer(
             queue.put_nowait(tuple(events))
 
         await asyncio.sleep(config.WORKER.CONSUMER_READ_INTERVAL)
+
+
+async def user_orphan_consumer(
+    config: AppConfig,
+    pool: AsyncConnectionPool,
+    redis: Redis,
+    queue: asyncio.Queue[tuple[StreamedEvent]],
+    dead_letter_queue: asyncio.Queue[StreamedEvent],
+    stream_name: StreamName,
+    group_name: str,
+) -> None:
+    batch: list[StreamedEvent] = []
+    reference_time: float = time.monotonic()
+
+    while True:
+        if not (
+            (len(batch) >= config.WORKER.IQ_CONSUMER_BATCH_SIZE_QUOTA)
+            or time.monotonic() - reference_time
+            > config.WORKER.IQ_CONSUMER_BASE_WAITING_TIME
+        ):
+            try:
+                new_entries: tuple[StreamedEvent] = await asyncio.wait_for(
+                    queue.get(), config.WORKER.IQ_CONSUMER_GET_TIMEOUT
+                )
+                if not batch:
+                    reference_time = time.monotonic()
+                batch.extend(new_entries)
+            except asyncio.TimeoutError:
+                await asyncio.sleep(config.WORKER.IQ_CONSUMER_SLEEP_INTERVAL)
+            continue
+
+        if not batch:
+            await asyncio.sleep(config.WORKER.IQ_CONSUMER_SLEEP_INTERVAL)
+            reference_time = time.monotonic()
+            continue
+
+        failed: bool = False
+        async with pool.connection() as conn:
+            fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
+                conn, (e.event_id for e in batch)
+            )
+            async with redis.pipeline() as pipeline:
+                for event in batch.copy():
+                    if event.event_id not in fresh_event_ids:
+                        batch.remove(event)
+                        pipeline.xack(stream_name, group_name, event.event_id)
+                await pipeline.execute()
+
+            for attempt in range(config.WORKER.MAX_RETRIES):
+                try:
+                    await dispatch_downstream_events(
+                        redis, StrongEntity.USER, _create_user_cleanup_generator(batch)
+                    )
+                    await conn.commit()
+                    failed = False
+                    break
+                except (OperationalError, InternalError):
+                    failed = True
+                    await conn.rollback()
+                except Exception:
+                    # Ideally a subclass of psycopg.errors.Error,
+                    # but Python errors are also non-transient
+                    await conn.rollback()
+                    failed = True
+                    break
+
+            await redis.xack(
+                stream_name,
+                group_name,
+                *(e.event_id for e in batch),
+            )
+
+            if failed:
+                for event in batch:
+                    await dead_letter_queue.put(event)
+                await redis.xack(stream_name, group_name, *(e.event_id for e in batch))
+
+            batch.clear()
+            reference_time = time.monotonic()
 
 
 async def queue_insertion_consumer(

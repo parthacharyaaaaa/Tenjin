@@ -28,4 +28,4 @@ class PostDeletion(TypedDict):
 
 class UserCleanup(TypedDict):
     user_id: int
-    username: str
+    time_deleted: datetime
