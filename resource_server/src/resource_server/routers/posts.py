@@ -15,6 +15,12 @@ from resource_auxillary.cache import (
     derive_cache_key,
     derive_hashmap_name,
 )
+from resource_auxillary.datastructures.payloads.assosciation import (
+    GenericPostAssosciaation,
+    PostReportAssosciation,
+    PostVoteAssosciation,
+)
+from resource_auxillary.datastructures.payloads.standalone import PostDeletion
 from resource_auxillary.events import (
     CounterUpdate,
     Event,
@@ -249,10 +255,10 @@ async def delete_post(
                 intent_id=intent_id,
             ),
         )
-
+        payload: PostDeletion = PostDeletion(post_id=post_id)
         subscription_event: Event = Event(
-            name=EventName.ANIME_UNSUB,
-            payload={"post_id": post_id},
+            name=EventName.POST_DELETE,
+            payload=payload,  # type: ignore
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
             ),  # type: ignore[reportCallIssue]
@@ -292,7 +298,7 @@ async def vote_post(
         access_token["sid"],
         post_id,
         PostResult.resource_name,
-        Action.SAVE,
+        Action.VOTE,
         conflicting_intent=intent,
         intent_conflict_message=conflicting_message,
     ) as latest_intent:
@@ -344,9 +350,13 @@ async def vote_post(
             ),
         )
 
+        payload: PostVoteAssosciation = PostVoteAssosciation(
+            user_id=access_token["sid"], post_id=post_id, vote=delta  # type: ignore
+        )
+
         vote_event: Event = Event(
-            name=EventName.POST_UNSAVE,
-            payload={"post_id": post_id, "user_id": access_token["sid"]},
+            name=EventName.POST_VOTE,
+            payload=payload,  # type: ignore
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
             ),  # type: ignore[reportCallIssue]
@@ -377,7 +387,7 @@ async def unvote_post(
         access_token["sid"],
         post_id,
         PostResult.resource_name,
-        Action.SAVE,
+        Action.VOTE,
         conflicting_intent=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
         intent_conflict_message=conflicting_message,
     ) as latest_intent:
@@ -430,9 +440,12 @@ async def unvote_post(
             ),
         )
 
+        payload: PostVoteAssosciation = PostVoteAssosciation(
+            user_id=access_token["sid"], post_id=post_id, vote=delta  # type: ignore
+        )
         unvote_event: Event = Event(
             name=EventName.POST_UNVOTE,
-            payload={"post_id": post_id, "user_id": access_token["sid"]},
+            payload=payload,  # type: ignore
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
             ),  # type: ignore[reportCallIssue]
@@ -507,9 +520,13 @@ async def save_post(
             ),
         )
 
+        payload: GenericPostAssosciaation = GenericPostAssosciaation(
+            user_id=access_token["sid"], post_id=post_id
+        )
+
         save_event: Event = Event(
             name=EventName.POST_SAVE,
-            payload={"post_id": post_id, "user_id": access_token["sid"]},
+            payload=payload,  # type: ignore
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
             ),  # type: ignore[reportCallIssue]
@@ -584,9 +601,13 @@ async def unsave_post(
             ),
         )
 
+        payload: GenericPostAssosciaation = GenericPostAssosciaation(
+            user_id=access_token["sid"], post_id=post_id
+        )
+
         unsave_event: Event = Event(
             name=EventName.POST_UNSAVE,
-            payload={"post_id": post_id, "user_id": access_token["sid"]},
+            payload=payload,  # type: ignore
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
             ),  # type: ignore[reportCallIssue]
@@ -664,15 +685,17 @@ async def report_post(
         ),
     )
 
+    payload: PostReportAssosciation = PostReportAssosciation(
+        post_id=post_id,
+        user_id=access_token["sid"],
+        report_tag=report_model.tag,
+        report_description=report_model.description,
+        report_time=datetime.now(),
+    )
+
     report_event: Event = Event(
         name=EventName.POST_UNSAVE,
-        payload={
-            "post_id": post_id,
-            "user_id": access_token["sid"],
-            "report_tag": report_model.tag,
-            "report_description": report_model.description,
-            "report_time": datetime.now().isoformat(),
-        },
+        payload=payload,  # type: ignore
         side_effects=EventSideEffects(
             counter_updates=counter_updates, intent_updates=intent_updates
         ),  # type: ignore[reportCallIssue]

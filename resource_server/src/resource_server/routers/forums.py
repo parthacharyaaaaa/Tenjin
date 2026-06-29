@@ -17,6 +17,9 @@ from resource_auxillary.cache import (
     derive_cache_key,
     derive_hashmap_name,
 )
+from resource_auxillary.datastructures.payloads.assosciation import (
+    ForumSubscriptionAssosciation,
+)
 from resource_auxillary.events import (
     CounterUpdate,
     IntentUpdate,
@@ -540,9 +543,15 @@ async def subscribe_forum(
             ),
         )
 
+        payload: ForumSubscriptionAssosciation = ForumSubscriptionAssosciation(
+            user_id=access_token["sid"],
+            forum_id=forum_id,
+            time_subscribed=datetime.now(),
+        )
+
         subscription_event: Event = Event(
             name=EventName.FORUM_SUB,
-            payload={"forum_id": forum_id, "user_id": access_token["sid"]},
+            payload=payload,  # type: ignore
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
             ),  # type: ignore[reportCallIssue]
@@ -636,9 +645,14 @@ async def unsubscribe_forum(
             ),
         )
 
+        payload: ForumSubscriptionAssosciation = ForumSubscriptionAssosciation(
+            user_id=access_token["sid"],
+            forum_id=forum_id,
+            time_subscribed=datetime.now(),
+        )
         unsubscription_event: Event = Event(
             name=EventName.FORUM_UNSUB,
-            payload={"forum_id": forum_id, "user_id": access_token["sid"]},
+            payload=payload,  # type: ignore
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
             ),  # type: ignore[reportCallIssue]

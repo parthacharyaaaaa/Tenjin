@@ -57,6 +57,4 @@ class EventStreamer(metaclass=SingletonMetaclass):
                 )
             self._pipeline_create_event(pipeline, stream, event)
 
-            self._pipeline_create_event(pipeline, stream, event)
-
             await pipeline.execute()

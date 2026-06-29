@@ -20,3 +20,12 @@ class PostCreation(TypedDict):
     title: str
     body_text: str
     time_posted: datetime
+
+
+class PostDeletion(TypedDict):
+    post_id: int
+
+
+class UserCleanup(TypedDict):
+    user_id: int
+    username: str

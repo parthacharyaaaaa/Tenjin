@@ -16,6 +16,7 @@ from resource_auxillary.cache import (
     create_intent_flag,
     derive_cache_key,
 )
+from resource_auxillary.datastructures.payloads.standalone import UserCleanup
 from resource_auxillary.events import (
     CacheUpdate,
     Event,
@@ -136,9 +137,12 @@ async def delete_user(
 
     await cache_manager.set_negative_mapping(user_cache_key)
     await user_repo.delete_user(user.id_)
+
+    payload: UserCleanup = UserCleanup(user_id=user.id_, username=username)
+
     deletion_event: Event = Event(
         name=EventName.USER_CLEANUP,
-        payload={"user_id": user.id_, "username": username},
+        payload=payload,  # type: ignore
         side_effects=EventSideEffects(),  # type: ignore[reportCallIssue]
     )
 

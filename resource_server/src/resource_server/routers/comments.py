@@ -1,6 +1,6 @@
 from datetime import datetime
 from functools import partial
-from typing import Annotated, Any, Final
+from typing import Annotated, Final
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,6 +10,14 @@ from resource_auxillary.cache import (
     create_intent_flag,
     derive_cache_key,
     derive_hashmap_name,
+)
+from resource_auxillary.datastructures.payloads.assosciation import (
+    CommentReportAssosciation,
+    CommentVoteAssosciation,
+)
+from resource_auxillary.datastructures.payloads.standalone import (
+    CommentCreation,
+    CommentDeletion,
 )
 from resource_auxillary.events import (
     CacheUpdate,
@@ -99,16 +107,17 @@ async def comment_on_post(
         ),
     )
 
-    comment_payload: dict[str, Any] = {
-        "author_id": access_token["sid"],
-        "parent_forum": post.forum_id,
-        "parent_post": post.id_,
-        "body": comment_model.body,
-    }
+    comment_payload: CommentCreation = CommentCreation(
+        author_id=access_token["sid"],
+        parent_forum=post.forum_id,
+        parent_post=post.id_,
+        body=comment_model.body,
+        time_created=datetime.now(),
+    )
 
     deletion_event: Event = Event(
         name=EventName.COMMENT_CREATE,
-        payload=comment_payload,
+        payload=comment_payload,  # type: ignore
         side_effects=EventSideEffects(
             counter_updates=counter_updates  # type: ignore[reportCallIssue]
         ),
@@ -202,9 +211,11 @@ async def delete_comment(
                 intent_id=intent_id,
             ),
         )
+
+        payload: CommentDeletion = CommentDeletion(comment_id=comment_id)
         deletion_event: Event = Event(
             name=EventName.COMMENT_DELETE,
-            payload={"comment_id": comment_id},
+            payload=payload,  # type: ignore
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates  # type: ignore[reportCallIssue]
             ),
@@ -298,14 +309,15 @@ async def vote_comment(
                 intent_id=intent_id,
             ),
         )
+        payload: CommentVoteAssosciation = CommentVoteAssosciation(
+            user_id=access_token["sid"],
+            comment_id=comment_id,
+            vote=True if vote_model.vote else False,
+        )
 
         vote_event: Event = Event(
             name=EventName.COMMENT_VOTE,
-            payload={
-                "comment_id": comment_id,
-                "user_id": access_token["sid"],
-                "vote": True if vote_model.vote else False,
-            },
+            payload=payload,  # type: ignore
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
             ),  # type: ignore[reportCallIssue]
@@ -391,13 +403,15 @@ async def unvote_comment(
             ),
         )
 
+        payload: CommentVoteAssosciation = CommentVoteAssosciation(
+            user_id=access_token["sid"],
+            comment_id=comment_id,
+            vote=delta,  # type: ignore
+        )
+
         vote_event: Event = Event(
             name=EventName.COMMENT_UNVOTE,
-            payload={
-                "comment_id": comment_id,
-                "user_id": access_token["sid"],
-                "vote": delta,
-            },
+            payload=payload,  # type: ignore
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
             ),  # type: ignore[reportCallIssue]
@@ -477,15 +491,17 @@ async def report_comment(
             ),
         )
 
+        payload: CommentReportAssosciation = CommentReportAssosciation(
+            comment_id=comment_id,
+            user_id=access_token["sid"],
+            report_tag=report_model.tag,
+            report_description=report_model.description,
+            report_time=datetime.now(),
+        )
+
         report_event: Event = Event(
             name=EventName.POST_UNSAVE,
-            payload={
-                "comment_id": comment_id,
-                "user_id": access_token["sid"],
-                "report_tag": report_model.tag,
-                "report_description": report_model.description,
-                "report_time": datetime.now().isoformat(),
-            },
+            payload=payload,  # type: ignore
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
             ),  # type: ignore[reportCallIssue]

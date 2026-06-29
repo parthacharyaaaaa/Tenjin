@@ -1,3 +1,4 @@
+from datetime import datetime
 from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
@@ -5,6 +6,9 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
+from resource_auxillary.datastructures.payloads.assosciation import (
+    AnimeSubscriptionAssosciation,
+)
 from resource_server.cache_manager import CacheManager
 from resource_server.repositories.anime import AnimeRepository, AnimeResult
 from resource_server.repositories.forum import ForumRepository, ForumResult
@@ -138,9 +142,15 @@ async def sub_anime(
             ),
         )
 
+        payload = AnimeSubscriptionAssosciation(
+            anime_id=anime_id,
+            user_id=access_token["sid"],
+            time_subscribed=datetime.now(),
+        )
+
         subscription_event: Event = Event(
             name=EventName.ANIME_SUB,
-            payload={"anime_id": anime_id, "user_id": access_token["sid"]},
+            payload=payload,  # type: ignore
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
             ),  # type: ignore[reportCallIssue]
@@ -215,9 +225,15 @@ async def unsub_anime(
             ),
         )
 
+        payload = AnimeSubscriptionAssosciation(
+            anime_id=anime_id,
+            user_id=access_token["sid"],
+            time_subscribed=datetime.now(),
+        )
+
         subscription_event: Event = Event(
             name=EventName.ANIME_UNSUB,
-            payload={"anime_id": anime_id, "user_id": access_token["sid"]},
+            payload=payload,  # type: ignore
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
             ),  # type: ignore[reportCallIssue]
