@@ -42,7 +42,7 @@ from resource_auxillary.events import (
     EventSideEffects,
     IntentUpdate,
 )
-from resource_auxillary.strings import Action, EventName, IntentFlag
+from resource_auxillary.strings import Action, EventName, IntentFlag, StreamName
 
 from auxillary.utils import (
     json_repr,
@@ -146,7 +146,7 @@ async def sub_anime(
             ),  # type: ignore[reportCallIssue]
         )
 
-        await event_streamer.emit_user_event(subscription_event)
+        await event_streamer.emit_user_event(StreamName.ANIMES, subscription_event)
 
     return JSONResponse({"message": "subscribed!"}, 202)
 
@@ -223,7 +223,7 @@ async def unsub_anime(
             ),  # type: ignore[reportCallIssue]
         )
 
-        await event_streamer.emit_user_event(subscription_event)
+        await event_streamer.emit_user_event(StreamName.ANIMES, subscription_event)
     return JSONResponse({"message": "unsubscribed!"}, 202)
 
 

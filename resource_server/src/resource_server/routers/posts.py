@@ -22,7 +22,7 @@ from resource_auxillary.events import (
     EventSideEffects,
     EventName,
 )
-from resource_auxillary.strings import EventName, IntentFlag
+from resource_auxillary.strings import EventName, IntentFlag, StreamName
 
 from resource_server.cache_manager import CacheManager
 from resource_server.config.app_config import AppConfig
@@ -118,7 +118,7 @@ async def create_post(
             payload=event_paylaod,
             side_effects=EventSideEffects(counter_updates=counter_updates),  # type: ignore[reportCallIssue]
         )
-        await event_streamer.emit_user_event(post_event)
+        await event_streamer.emit_user_event(StreamName.POSTS, post_event)
     return JSONResponse({"message": "post created"}, 202)
 
 
@@ -258,7 +258,7 @@ async def delete_post(
             ),  # type: ignore[reportCallIssue]
         )
 
-        await event_streamer.emit_user_event(subscription_event)
+        await event_streamer.emit_user_event(StreamName.POSTS, subscription_event)
     return JSONResponse({"message": "post queued for deletion"}, 202)
 
 
@@ -352,7 +352,7 @@ async def vote_post(
             ),  # type: ignore[reportCallIssue]
         )
 
-        await event_streamer.emit_user_event(vote_event)
+        await event_streamer.emit_user_event(StreamName.POSTS, vote_event)
     return JSONResponse({"message": "Voted"}, 202)
 
 
@@ -438,7 +438,7 @@ async def unvote_post(
             ),  # type: ignore[reportCallIssue]
         )
 
-        await event_streamer.emit_user_event(unvote_event)
+        await event_streamer.emit_user_event(StreamName.POSTS, unvote_event)
     return JSONResponse({"message": "Unvoted"}, 202)
 
 
@@ -515,7 +515,7 @@ async def save_post(
             ),  # type: ignore[reportCallIssue]
         )
 
-        await event_streamer.emit_user_event(save_event)
+        await event_streamer.emit_user_event(StreamName.POSTS, save_event)
     return JSONResponse({"message": "post saved"}, 202)
 
 
@@ -592,7 +592,7 @@ async def unsave_post(
             ),  # type: ignore[reportCallIssue]
         )
 
-        await event_streamer.emit_user_event(unsave_event)
+        await event_streamer.emit_user_event(StreamName.POSTS, unsave_event)
     return JSONResponse({"message": "post unsaved"}, 202)
 
 
@@ -678,7 +678,7 @@ async def report_post(
         ),  # type: ignore[reportCallIssue]
     )
 
-    await event_streamer.emit_user_event(report_event)
+    await event_streamer.emit_user_event(StreamName.POSTS, report_event)
     return JSONResponse({"message": "post reported"}, 202)
 
 

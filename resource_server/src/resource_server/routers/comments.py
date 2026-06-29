@@ -19,7 +19,13 @@ from resource_auxillary.events import (
     EventSideEffects,
     EventName,
 )
-from resource_auxillary.strings import NAME_SEPERATOR, EventName, IntentFlag, Action
+from resource_auxillary.strings import (
+    NAME_SEPERATOR,
+    EventName,
+    IntentFlag,
+    Action,
+    StreamName,
+)
 
 from resource_server.cache_manager import CacheManager
 from resource_server.dependencies import (
@@ -108,7 +114,7 @@ async def comment_on_post(
         ),
     )
 
-    await event_streamer.emit_user_event(deletion_event)
+    await event_streamer.emit_user_event(StreamName.COMMENTS, deletion_event)
     return JSONResponse({"message": "Comment created"}, 202)
 
 
@@ -204,7 +210,7 @@ async def delete_comment(
             ),
         )
 
-        await event_streamer.emit_user_event(deletion_event)
+        await event_streamer.emit_user_event(StreamName.COMMENTS, deletion_event)
     return JSONResponse({"message": "Comment queued for deletion"}, 202)
 
 
@@ -305,7 +311,7 @@ async def vote_comment(
             ),  # type: ignore[reportCallIssue]
         )
 
-        await event_streamer.emit_user_event(vote_event)
+        await event_streamer.emit_user_event(StreamName.COMMENTS, vote_event)
     return JSONResponse({"message": "Voted"}, 202)
 
 
@@ -397,7 +403,7 @@ async def unvote_comment(
             ),  # type: ignore[reportCallIssue]
         )
 
-        await event_streamer.emit_user_event(vote_event)
+        await event_streamer.emit_user_event(StreamName.COMMENTS, vote_event)
     return JSONResponse({"message": "Removed vote"}, 202)
 
 
@@ -485,5 +491,5 @@ async def report_comment(
             ),  # type: ignore[reportCallIssue]
         )
 
-        await event_streamer.emit_user_event(report_event)
+        await event_streamer.emit_user_event(StreamName.COMMENTS, report_event)
     return JSONResponse({"message": "post reported"}, 202)

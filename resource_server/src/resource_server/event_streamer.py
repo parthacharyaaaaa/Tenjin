@@ -38,7 +38,7 @@ class EventStreamer(metaclass=SingletonMetaclass):
     ) -> None:
         pipeline.xadd(stream.value, cache_repr(event), nomkstream=False)  # type: ignore
 
-    async def emit_user_event(self, event: Event) -> None:
+    async def emit_user_event(self, stream: StreamName, event: Event) -> None:
         async with self.redis_client.pipeline(transaction=True) as pipeline:
             # Perform event-side effects, apart from cache invalidation
             for counter_update in event.side_effects.counter_updates:
@@ -55,8 +55,8 @@ class EventStreamer(metaclass=SingletonMetaclass):
                     intent_update.intent_value,
                     self.cache_config.TTL_STRONGEST,
                 )
-            self._pipeline_create_event(pipeline, StreamName.USER_INTERACTIONS, event)
+            self._pipeline_create_event(pipeline, stream, event)
 
-            self._pipeline_create_event(pipeline, StreamName.USER_INTERACTIONS, event)
+            self._pipeline_create_event(pipeline, stream, event)
 
             await pipeline.execute()

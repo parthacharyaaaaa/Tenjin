@@ -23,7 +23,7 @@ from resource_auxillary.events import (
     EventSideEffects,
     Event,
 )
-from resource_auxillary.strings import NAME_SEPERATOR, EventName, IntentFlag
+from resource_auxillary.strings import NAME_SEPERATOR, EventName, IntentFlag, StreamName
 
 from resource_server.cache_manager import CacheManager
 from resource_server.config.app_config import AppConfig
@@ -547,7 +547,7 @@ async def subscribe_forum(
                 counter_updates=counter_updates, intent_updates=intent_updates
             ),  # type: ignore[reportCallIssue]
         )
-        await event_streamer.emit_user_event(subscription_event)
+        await event_streamer.emit_user_event(StreamName.FORUMS, subscription_event)
     return JSONResponse({"message": "Forum subscribed!"}, 202)
 
 
@@ -644,7 +644,7 @@ async def unsubscribe_forum(
             ),  # type: ignore[reportCallIssue]
         )
 
-        await event_streamer.emit_user_event(unsubscription_event)
+        await event_streamer.emit_user_event(StreamName.FORUMS, unsubscription_event)
     return JSONResponse({"message": "Forum unsubscribed!"}, 202)
 
 

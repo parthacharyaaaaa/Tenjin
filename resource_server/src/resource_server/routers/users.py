@@ -23,7 +23,7 @@ from resource_auxillary.events import (
     EventSideEffects,
     EventName,
 )
-from resource_auxillary.strings import EventName, IntentFlag, Action
+from resource_auxillary.strings import EventName, IntentFlag, Action, StreamName
 
 from resource_server.config.app_config import AppConfig
 from resource_server.cache_manager import CacheManager
@@ -142,7 +142,7 @@ async def delete_user(
         side_effects=EventSideEffects(),  # type: ignore[reportCallIssue]
     )
 
-    await event_streamer.emit_user_event(deletion_event)
+    await event_streamer.emit_user_event(StreamName.USERS, deletion_event)
     # TODO: Add mail dispatch
     return JSONResponse(
         {

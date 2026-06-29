@@ -180,7 +180,7 @@ async def queue_insertion_consumer(
                     break
 
             await redis.xack(
-                StreamName.USER_INTERACTIONS,
+                stream_name,
                 config.WORKER.CONSUMER_GROUP_NAME,
                 *successful_events,
             )
