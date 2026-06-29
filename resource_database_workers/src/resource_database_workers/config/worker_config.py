@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Self
 
 from pydantic import model_validator
@@ -75,3 +76,13 @@ class WorkerSettings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (TomlConfigSettingsSource(settings_cls),)
+
+    @classmethod
+    def update_toml_file(cls, filepath: str) -> None:
+        config_filepath: Path = Path(filepath)
+        if not config_filepath.is_file():
+            raise FileNotFoundError(f"No such file {filepath}")
+        elif config_filepath.name.split(".")[-1] != "toml":
+            raise ValueError(f"TOML file expected, got {filepath}")
+
+        cls.model_config = SettingsConfigDict(toml_file=str(config_filepath))
