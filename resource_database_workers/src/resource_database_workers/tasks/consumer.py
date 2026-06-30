@@ -1,5 +1,4 @@
 import asyncio
-from collections import defaultdict
 from datetime import datetime
 import time
 from typing import Final, Generator, Iterable
@@ -12,10 +11,8 @@ from redis.asyncio import Redis
 
 from auxillary.utils import json_repr
 from resource_auxillary.datastructures.database import StrongEntity
-from resource_auxillary.datastructures.payloads.standalone import UserCleanup
 
 from resource_database_workers.config.config import AppConfig
-from resource_database_workers.datastructures.queues import QueueRegistry
 from resource_auxillary.strings import StreamName
 from resource_auxillary.events import StreamedEvent
 
@@ -54,61 +51,6 @@ def _create_user_cleanup_generator(
     return (
         (event.payload["user_id"], event.payload["time_deleted"]) for event in events
     )
-
-
-async def stream_consumer(
-    config: AppConfig,
-    redis: Redis,
-    queue_registry: QueueRegistry,
-    stream_name: StreamName,
-    group_name: str,
-    consumer_name: str,
-    read_history: bool = True,
-) -> None:
-    requested_id: str | int = 0 if read_history else ">"
-    while True:
-        # result structure is actually:
-        #                 event ID <-|            |-> payload
-        # list[list[str, list[tuple[str, dict[str, str]]]]]
-        #            |-> 0th element is stream name
-        # Hinted as ResponseT btw, bravo
-        result: list[list[list[tuple[str, dict[str, str]]]]] = await redis.xreadgroup(
-            groupname=group_name,
-            consumername=consumer_name,
-            streams={stream_name.value: requested_id},
-            count=config.WORKER.CONSUMER_READ_SIZE,
-            noack=False,
-            block=config.WORKER.CONSUMER_BLOCK_TIME,
-        )
-
-        if len(result[0][1]) == 0:
-            if requested_id == 0:  # History cleared
-                requested_id = ">"
-            await asyncio.sleep(config.WORKER.CONSUMER_READ_INTERVAL)
-            continue
-
-        event_stream_subset = result[0][1]
-        del result
-
-        event_dict: defaultdict[
-            asyncio.Queue[tuple[StreamedEvent, ...]], list[StreamedEvent]
-        ] = defaultdict(list[StreamedEvent])
-        for event_data in event_stream_subset:
-            try:
-                event: StreamedEvent = StreamedEvent.construct_from_stream_record(
-                    event_data
-                )
-            except ValueError:
-                await queue_registry.dead_letter.put(
-                    StreamedEvent.safe_construct_from_malformed_stream(event_data)
-                )
-                continue
-            event_dict[queue_registry.event_queue_mapping[event.name]].append(event)
-
-        for queue, events in event_dict.items():
-            queue.put_nowait(tuple(events))
-
-        await asyncio.sleep(config.WORKER.CONSUMER_READ_INTERVAL)
 
 
 async def user_orphan_consumer(
