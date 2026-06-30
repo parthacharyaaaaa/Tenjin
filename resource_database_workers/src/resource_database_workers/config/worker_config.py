@@ -12,6 +12,9 @@ class WorkerSettings:
     _counters: int
     _standard_dlq: int
     _counters_dlq: int
+    _upstream_readers: int
+    _downstream_readers: int
+    _downstream_counter_readers: int
 
     @property
     def counters(self) -> int:
@@ -24,6 +27,18 @@ class WorkerSettings:
     @property
     def counters_dlq(self) -> int:
         return self._counters_dlq
+
+    @property
+    def upstream_readers(self) -> int:
+        return self._upstream_readers
+
+    @property
+    def downstream_readers(self) -> int:
+        return self._downstream_readers
+
+    @property
+    def downstream_counter_readers(self) -> int:
+        return self._downstream_counter_readers
 
     @property
     def queue_worker_counts(self) -> Mapping[EventName, int]:
