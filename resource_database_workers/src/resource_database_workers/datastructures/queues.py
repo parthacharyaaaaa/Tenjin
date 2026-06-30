@@ -85,8 +85,29 @@ class QueueRegistry(metaclass=SingletonMetaclass):
                 EventName.ANIME_UNSUB: self.anime_subscription_insertions,
                 # Cleanup
                 EventName.USER_CLEANUP: self.user_cleanup,
-                # Orphaned deletions
-                EventName.ORPHANED_POST_DELETE: self.post_deletions,
-                EventName.ORPHANED_COMMENT_DELETE: self.comment_deletions,
+            }
+        )
+
+    @cached_property
+    def downstream_deletion_event_queue_apping(
+        self,
+    ) -> MappingProxyType[EventName, Queue[StreamedEvent]]:
+        return MappingProxyType(
+            {
+                EventName.ORPHANED_COMMENT_DELETE: self.downstream_comments,
+                EventName.ORPHANED_POST_DELETE: self.downstream_posts,
+            }
+        )
+
+    @cached_property
+    def downstream_decrement_event_queue_mapping(
+        self,
+    ) -> MappingProxyType[EventName, Queue[StreamedEvent]]:
+        return MappingProxyType(
+            {
+                EventName.DOWNSTREAM_FORUM_POST_DECREMENT: self.downstream_forums_posts_counters,
+                EventName.DOWNSTREAM_USER_POST_DECREMENT: self.downstream_user_posts_counters,
+                EventName.DOWNSTREAM_POST_COMMENT_DECREMENT: self.downstream_posts_comments_counters,
+                EventName.DOWNSTREAM_USER_COMMENT_DECREMENT: self.downstream_users_comments_counters,
             }
         )
