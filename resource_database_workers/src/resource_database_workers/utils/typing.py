@@ -26,7 +26,7 @@ class BatchDeletionFunction(Protocol):
         conn: AsyncConnection,
         table: str,
         identifier_column: str,
-        deletion_data: Iterable[tuple[int, datetime]],
+        deletion_data: Iterable[tuple[int, datetime, int]],
         /,
     ) -> None: ...
 

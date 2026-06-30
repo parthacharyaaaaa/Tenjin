@@ -127,6 +127,7 @@ def format_counters_dlq_insertion_sql() -> Composed:
 STRONG_DELETION_SQL: Final[SQL] = SQL("""UPDATE {table}
     SET {deletion_column} = data.{deletion_column},
     {deleted_at} = data.{deleted_at}
+    {deletion_author_column} = {deletion_author_id}
     FROM (
         VALUES
         {values_collection}
@@ -135,14 +136,18 @@ STRONG_DELETION_SQL: Final[SQL] = SQL("""UPDATE {table}
 
 
 def prepare_strong_deletion_sql(
-    table: str, identifier_column: str, deletion_data: Iterable[tuple[int, datetime]]
+    table: str,
+    identifier_column: str,
+    deletion_data: Iterable[tuple[int, datetime, int]],
 ) -> Composed:
     return STRONG_DELETION_SQL.format(
         table=Identifier(table),
         identifier=Identifier(identifier_column),
         deletion_column=Identifier(DeletionColumnLiteral.DELETED_COLUMN_NAME),
         deleted_at=Identifier(DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME),
-        values=SQL(", ").join(SQL("({}, true, {})").format(*i) for i in deletion_data),
+        values_collection=SQL(", ").join(
+            SQL("({}, true, {}, {})").format(*i) for i in deletion_data
+        ),
     )
 
 

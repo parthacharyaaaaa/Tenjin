@@ -288,7 +288,6 @@ async def queue_deletion_consumer(
     pool: AsyncConnectionPool,
     redis: Redis,
     table: StrongEntity,
-    cache_id_field: str,
     identifier_column: str,
     queue: asyncio.Queue[tuple[StreamedEvent]],
     dead_letter_queue: asyncio.Queue[StreamedEvent],
@@ -322,8 +321,12 @@ async def queue_deletion_consumer(
             continue
 
         failed: bool = False
-        deletion_data: Generator[tuple[int, datetime]] = (
-            (event.payload[cache_id_field], event.payload["deleted_at"])
+        deletion_data: Generator[tuple[int, datetime, int]] = (
+            (
+                event.payload[identifier_column],
+                event.payload["deleted_at"],
+                event.event_id,
+            )
             for event in batch
         )
         async with pool.connection() as conn:
@@ -375,7 +378,7 @@ async def queue_deletion_consumer(
                 redis,
                 table,
                 (
-                    (event.payload[cache_id_field], event.payload["deleted_at"])
+                    (event.payload[identifier_column], event.payload["deleted_at"])
                     for event in batch
                 ),
             )
