@@ -19,7 +19,6 @@ from resource_database_workers.dependencies import (
     get_app_redis,
     get_internal_redis,
     get_queue_registry,
-    get_worker_settings,
 )
 from resource_database_workers.datastructures.queues import QueueRegistry
 from resource_database_workers.tasks.deletions import (
