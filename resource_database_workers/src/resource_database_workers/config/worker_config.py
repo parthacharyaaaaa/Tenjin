@@ -1,88 +1,92 @@
-from pathlib import Path
-from typing import Self
+from dataclasses import dataclass
+from typing import Any, Mapping, Self
 
-from pydantic import model_validator
-from pydantic_settings import (
-    BaseSettings,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-    TomlConfigSettingsSource,
-)
+import orjson
 
-from resource_database_workers.config.worker_sub_config import (
-    AnimeWorkerSettings,
-    CommentWorkerSettings,
-    CounterWorkerSettings,
-    DeadLetterWorkerSettings,
-    DownstreamWorkerSettings,
-    ForumWorkerSettings,
-    OrphanedWorkerSettings,
-    PostWorkerSettings,
-    UserWorkerSettings,
-)
+from resource_auxillary.strings import EventName
 
 
-class WorkerSettings(BaseSettings):
-    USER: UserWorkerSettings
-    POSTS: PostWorkerSettings
-    COMMENTS: CommentWorkerSettings
-    ANIMES: AnimeWorkerSettings
-    FORUMS: ForumWorkerSettings
-    COUNTERS: CounterWorkerSettings
-    ORPHANED: OrphanedWorkerSettings
-    DOWNSTREAM: DownstreamWorkerSettings
-    DLQ: DeadLetterWorkerSettings
+@dataclass(slots=True, init=False)
+class WorkerSettings:
+    _queue_worker_counts: Mapping[EventName, int]
+    _counters: int
+    _standard_dlq: int
+    _counters_dlq: int
 
-    model_config = SettingsConfigDict(
-        toml_file="config.toml",
-        extra="forbid",
-    )
+    @property
+    def counters(self) -> int:
+        return self._counters
 
-    @model_validator(mode="after")
-    def check_dormancy(self) -> Self:
-        if all(sub_setting.dormant() for sub_setting in self.model_dump().values()):
-            raise ValueError("All consumer types dormant")
-        return self
+    @property
+    def standard_dlq(self) -> int:
+        return self._standard_dlq
 
-    @model_validator(mode="after")
-    def check_counters_dlq(self) -> Self:
-        if self.COUNTERS.dormant and self.DLQ.COUNTERS_DLQ != 0:
+    @property
+    def counters_dlq(self) -> int:
+        return self._counters_dlq
+
+    @property
+    def queue_worker_counts(self) -> Mapping[EventName, int]:
+        return self._queue_worker_counts
+
+    @staticmethod
+    def check_consumers_integrity(
+        entries: Mapping[EventName, int],
+        counters: int,
+        standard_dlq: int,
+        counters_dlq: int,
+    ) -> None:
+        # DLQ validation
+        if not standard_dlq:
+            raise ValueError("Non-zero DLQ consumers specified")
+        if counters and not counters_dlq:
             raise ValueError(
                 " ".join(
                     (
-                        f"Counters DLQ workers {self.DLQ.COUNTERS_DLQ} specified",
-                        "with 0 counters workers present",
+                        f"Non-zero counter workers {counters}",
+                        "specified with 0 counters DLQ consumers",
                     )
                 )
             )
-        elif not self.COUNTERS.dormant and self.DLQ.COUNTERS_DLQ == 0:
+        if counters_dlq and not counters:
             raise ValueError(
                 " ".join(
                     (
-                        "Non-zero counter workers specified but counters DLQ workers",
-                        "not provided",
+                        f"Non-zero counter DLQ workers {counters_dlq}",
+                        "specified with 0 counter workers",
                     )
                 )
             )
-        return self
 
     @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return (TomlConfigSettingsSource(settings_cls),)
+    def construct_from_json(cls, json_filepath: str) -> Self:
+        instance = cls()
 
-    @classmethod
-    def update_toml_file(cls, filepath: str) -> None:
-        config_filepath: Path = Path(filepath)
-        if not config_filepath.is_file():
-            raise FileNotFoundError(f"No such file {filepath}")
-        elif config_filepath.name.split(".")[-1] != "toml":
-            raise ValueError(f"TOML file expected, got {filepath}")
+        casted_contents: dict[EventName, int] = {}
+        with open(json_filepath, "rb") as config_file:
+            contents: dict[str, Any] = orjson.loads(config_file.read())
 
-        cls.model_config = SettingsConfigDict(toml_file=str(config_filepath))
+        # Read non-stream worker counts (counters, DLQ)
+        counters = int(contents.pop("COUNTERS"))
+        standard_dlq = int(contents.pop("STANDARD_DLQ"))
+        counters_dlq = int(contents.pop("COUNTERS_DLQ"))
+
+        for k, v in contents.items():
+            event: EventName = EventName(k)
+            consumer_count: int = int(v)
+            if consumer_count < 0:
+                raise ValueError(f"Consumer count for event {event} below 0")
+            if consumer_count > 0:
+                dormant = False
+            casted_contents[event] = consumer_count
+
+        cls.check_consumers_integrity(
+            casted_contents, counters, standard_dlq, counters_dlq
+        )
+
+        instance._queue_worker_counts = casted_contents
+        instance._counters = counters
+        instance._counters_dlq = counters_dlq
+        instance._standard_dlq = standard_dlq
+
+        return instance
