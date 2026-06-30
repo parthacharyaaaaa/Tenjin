@@ -38,6 +38,22 @@ class QueueRegistry(metaclass=SingletonMetaclass):
     comment_deletions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
     user_cleanup: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
 
+    # Downstream orphan deletions
+    downstream_posts: Queue[StreamedEvent] = field(default_factory=Queue)
+    downstream_comments: Queue[StreamedEvent] = field(default_factory=Queue)
+
+    # Downstream counter decrements
+    downstream_user_posts_counters: Queue[StreamedEvent] = field(default_factory=Queue)
+    downstream_forums_posts_counters: Queue[StreamedEvent] = field(
+        default_factory=Queue
+    )
+    downstream_users_comments_counters: Queue[StreamedEvent] = field(
+        default_factory=Queue
+    )
+    downstream_posts_comments_counters: Queue[StreamedEvent] = field(
+        default_factory=Queue
+    )
+
     # DLQ
     dead_letter: Queue[StreamedEvent] = field(default_factory=Queue)
     counter_dead_letter: Queue[DeadCounterBatch] = field(default_factory=Queue)
