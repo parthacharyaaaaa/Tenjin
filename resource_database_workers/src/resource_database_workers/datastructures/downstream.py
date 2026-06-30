@@ -105,26 +105,26 @@ DOWNSTREAM_DECREMENT_MAPPING: t_downstream_decrement_mapping = MappingProxyType(
     {
         StrongEntity.USER: (
             (
-                EventName.DOWNSTREAM_POST_DECREMENT,
+                EventName.DOWNSTREAM_USER_POST_DECREMENT,
                 ForeignKeyColumnLiteral.AUTHOR_ID,
                 derive_hashmap_name(StrongEntity.USER, StrongEntity.POST),
             ),
             (
-                EventName.DOWNSTREAM_COMMENT_DECREMENT,
+                EventName.DOWNSTREAM_USER_COMMENT_DECREMENT,
                 ForeignKeyColumnLiteral.AUTHOR_ID,
                 derive_hashmap_name(StrongEntity.USER, StrongEntity.COMMENT),
             ),
         ),
         StrongEntity.POST: (
             (
-                EventName.DOWNSTREAM_COMMENT_DECREMENT,
+                EventName.DOWNSTREAM_POST_COMMENT_DECREMENT,
                 ForeignKeyColumnLiteral.AUTHOR_ID,
                 derive_hashmap_name(StrongEntity.USER, StrongEntity.COMMENT),
             ),
         ),
         StrongEntity.FORUM: (
             (
-                EventName.DOWNSTREAM_POST_DECREMENT,
+                EventName.DOWNSTREAM_FORUM_POST_DECREMENT,
                 ForeignKeyColumnLiteral.AUTHOR_ID,
                 derive_hashmap_name(StrongEntity.USER, StrongEntity.POST),
             ),
