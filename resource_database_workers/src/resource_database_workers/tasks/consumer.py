@@ -53,18 +53,12 @@ def _create_user_cleanup_generator(
     )
 
 
-async def user_orphan_consumer(
+async def populate_events_batch_from_queue(
     config: AppConfig,
-    pool: AsyncConnectionPool,
-    redis: Redis,
-    queue: asyncio.Queue[tuple[StreamedEvent]],
-    dead_letter_queue: asyncio.Queue[StreamedEvent],
-    stream_name: StreamName,
-    group_name: str,
+    queue: asyncio.Queue[tuple[StreamedEvent, ...]],
+    reference_time: float,
+    batch: list[StreamedEvent],
 ) -> None:
-    batch: list[StreamedEvent] = []
-    reference_time: float = time.monotonic()
-
     while True:
         if not (
             (len(batch) >= config.WORKER.IQ_CONSUMER_BATCH_SIZE_QUOTA)
@@ -72,7 +66,7 @@ async def user_orphan_consumer(
             > config.WORKER.IQ_CONSUMER_BASE_WAITING_TIME
         ):
             try:
-                new_entries: tuple[StreamedEvent] = await asyncio.wait_for(
+                new_entries: tuple[StreamedEvent, ...] = await asyncio.wait_for(
                     queue.get(), config.WORKER.IQ_CONSUMER_GET_TIMEOUT
                 )
                 if not batch:
@@ -87,6 +81,21 @@ async def user_orphan_consumer(
             reference_time = time.monotonic()
             continue
 
+
+async def user_orphan_consumer(
+    config: AppConfig,
+    pool: AsyncConnectionPool,
+    redis: Redis,
+    queue: asyncio.Queue[tuple[StreamedEvent]],
+    dead_letter_queue: asyncio.Queue[StreamedEvent],
+    stream_name: StreamName,
+    group_name: str,
+) -> None:
+    batch: list[StreamedEvent] = []
+    reference_time: float = time.monotonic()
+
+    while True:
+        await populate_events_batch_from_queue(config, queue, reference_time, batch)
         failed: bool = False
         async with pool.connection() as conn:
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
@@ -146,29 +155,8 @@ async def queue_insertion_consumer(
     batch: list[StreamedEvent] = []
     successful_events: list[int] = []
     reference_time: float = time.monotonic()
-
     while True:
-        if not (
-            (len(batch) >= config.WORKER.IQ_CONSUMER_BATCH_SIZE_QUOTA)
-            or time.monotonic() - reference_time
-            > config.WORKER.IQ_CONSUMER_BASE_WAITING_TIME
-        ):
-            try:
-                new_entries: tuple[StreamedEvent] = await asyncio.wait_for(
-                    queue.get(), config.WORKER.IQ_CONSUMER_GET_TIMEOUT
-                )
-                if not batch:
-                    reference_time = time.monotonic()
-                batch.extend(new_entries)
-            except asyncio.TimeoutError:
-                await asyncio.sleep(config.WORKER.IQ_CONSUMER_SLEEP_INTERVAL)
-            continue
-
-        if not batch:
-            await asyncio.sleep(config.WORKER.IQ_CONSUMER_SLEEP_INTERVAL)
-            reference_time = time.monotonic()
-            continue
-
+        await populate_events_batch_from_queue(config, queue, reference_time, batch)
         failed: bool = False
         async with pool.connection() as conn:
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
@@ -241,27 +229,7 @@ async def queue_deletion_consumer(
     reference_time: float = time.monotonic()
 
     while True:
-        if not (
-            (len(batch) >= config.WORKER.IQ_CONSUMER_BATCH_SIZE_QUOTA)
-            or time.monotonic() - reference_time
-            > config.WORKER.IQ_CONSUMER_BASE_WAITING_TIME
-        ):
-            try:
-                new_entries: tuple[StreamedEvent] = await asyncio.wait_for(
-                    queue.get(), config.WORKER.IQ_CONSUMER_GET_TIMEOUT
-                )
-                if not batch:
-                    reference_time = time.monotonic()
-                batch.extend(new_entries)
-            except asyncio.TimeoutError:
-                await asyncio.sleep(config.WORKER.IQ_CONSUMER_SLEEP_INTERVAL)
-            continue
-
-        if not batch:
-            await asyncio.sleep(config.WORKER.IQ_CONSUMER_SLEEP_INTERVAL)
-            reference_time = time.monotonic()
-            continue
-
+        await populate_events_batch_from_queue(config, queue, reference_time, batch)
         failed: bool = False
         deletion_data: Generator[tuple[int, datetime, int]] = (
             (
