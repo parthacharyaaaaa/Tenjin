@@ -1,4 +1,4 @@
-from typing import Final
+from typing import Callable, Final
 from types import MappingProxyType
 
 from resource_auxillary.strings import EventName
@@ -10,12 +10,15 @@ from resource_database_workers.tasks.consumer import (
     queue_downstream_deletion_consumer,
 )
 
-EVENT_WORKER_MAPPING: Final[MappingProxyType] = MappingProxyType(
+EVENT_WORKER_MAPPING: Final[MappingProxyType[EventName, Callable]] = MappingProxyType(
     {
-        # Strong entity deletions
-        EventName.POST_DELETE: queue_insertion_consumer,
-        EventName.COMMENT_DELETE: queue_insertion_consumer,
+        EventName.POST_CREATE: queue_insertion_consumer,
+        EventName.COMMENT_CREATE: queue_insertion_consumer,
         EventName.FORUM_DELETE: queue_insertion_consumer,
+        # Strong entity deletions
+        EventName.POST_DELETE: queue_deletion_consumer,
+        EventName.COMMENT_DELETE: queue_deletion_consumer,
+        EventName.FORUM_DELETE: queue_deletion_consumer,
         # Association entity upserts
         EventName.POST_SAVE: queue_insertion_consumer,
         EventName.POST_UNSAVE: queue_insertion_consumer,

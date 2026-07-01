@@ -29,11 +29,16 @@ def resolve_entity_metadata(event: StreamedEvent) -> tuple[str, tuple[str, ...]]
 
 
 async def batch_association_insert_with_isolation(
-    conn: AsyncConnection, events: Sequence[StreamedEvent], action: t_action_literal
+    conn: AsyncConnection,
+    events: Sequence[StreamedEvent],
+    action: t_action_literal | None,
 ) -> list[int]:
     try:
         async with conn.transaction():
-            return await batch_insert_association_entities(conn, events, action)
+            if action:
+                return await batch_insert_association_entities(conn, events, action)
+            else:
+                return await batch_insert_strong_entities(conn, events)
     except IntegrityError:
         await conn.rollback()
         if len(events) == 1:
@@ -87,7 +92,7 @@ async def batch_insert_association_entities(
         await cursor.execute(
             prepare_weak_insertion_sql(table, temp_table, columns, pk_columns, action)
         )
-        return []  # TODO: Add RETURNING/CTE
+        return [i[0] for i in await cursor.fetchall()]
 
 
 async def batch_insert_strong_entities(

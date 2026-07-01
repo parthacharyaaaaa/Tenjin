@@ -150,7 +150,7 @@ async def queue_insertion_consumer(
     batch_function: BatchInsertionFunction,
     stream_name: StreamName,
     group_name: str,
-    action: t_action_literal,
+    action: t_action_literal | None = None,
 ) -> None:
     batch: list[StreamedEvent] = []
     successful_events: list[int] = []

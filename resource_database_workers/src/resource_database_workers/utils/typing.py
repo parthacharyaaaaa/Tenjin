@@ -15,7 +15,7 @@ class BatchInsertionFunction(Protocol):
         self,
         conn: AsyncConnection,
         events: Sequence[StreamedEvent],
-        action: t_action_literal,
+        action: t_action_literal | None,
         /,
     ) -> list[int]: ...
 

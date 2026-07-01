@@ -57,9 +57,9 @@ class UpstreamDeletionInput(BaseInput):
 
 
 @dataclass(slots=True, kw_only=True)
-class AssociationInsertionInput(BaseInput):
+class InsertionInput(BaseInput):
     queue: asyncio.Queue[tuple[StreamedEvent]]
-    action: t_action_literal
+    action: t_action_literal | None
     config: AppConfig = field(default_factory=get_config)
     redis: Redis = field(default_factory=get_app_redis)
     batch_function: BatchInsertionFunction = field(
@@ -123,31 +123,41 @@ UPSTREAM_FORUM_DELETION_INPUT: Final[UpstreamDeletionInput] = UpstreamDeletionIn
 )
 
 
-POST_SAVE_INPUT: Final[AssociationInsertionInput] = AssociationInsertionInput(
+POST_CREATION_INPUT: Final[InsertionInput] = InsertionInput(
+    stream_name=StreamName.POSTS, queue=QUEUE_REGISTRY.post_insertions, action=None
+)
+
+COMMENT_CREATION_INPUT: Final[InsertionInput] = InsertionInput(
+    stream_name=StreamName.COMMENTS,
+    queue=QUEUE_REGISTRY.comment_insertions,
+    action=None,
+)
+
+POST_SAVE_INPUT: Final[InsertionInput] = InsertionInput(
     stream_name=StreamName.POSTS,
     queue=QUEUE_REGISTRY.post_save_insertions,
     action="save",
 )
 
-POST_VOTE_INPUT: Final[AssociationInsertionInput] = AssociationInsertionInput(
+POST_VOTE_INPUT: Final[InsertionInput] = InsertionInput(
     stream_name=StreamName.POSTS,
     queue=QUEUE_REGISTRY.post_vote_insertions,
     action="vote",
 )
 
-COMMENT_VOTE_INPUT: Final[AssociationInsertionInput] = AssociationInsertionInput(
+COMMENT_VOTE_INPUT: Final[InsertionInput] = InsertionInput(
     stream_name=StreamName.COMMENTS,
     queue=QUEUE_REGISTRY.comment_vote_insertions,
     action="vote",
 )
 
-FORUM_SUB_INPUT: Final[AssociationInsertionInput] = AssociationInsertionInput(
+FORUM_SUB_INPUT: Final[InsertionInput] = InsertionInput(
     stream_name=StreamName.FORUMS,
     queue=QUEUE_REGISTRY.forum_subscription_insertions,
     action="subscribe",
 )
 
-ANIME_SUB_INPUT: Final[AssociationInsertionInput] = AssociationInsertionInput(
+ANIME_SUB_INPUT: Final[InsertionInput] = InsertionInput(
     stream_name=StreamName.ANIMES,
     queue=QUEUE_REGISTRY.anime_subscription_insertions,
     action="subscribe",
@@ -194,6 +204,8 @@ DOWNSTREAM_USERS_COMMENTS_COUNTER_DECREMENT: Final[DownstreamCounterDecrementInp
 
 WORKER_INPUT_DATA_MAPPING: Final[MappingProxyType[EventName, Any]] = MappingProxyType(
     {
+        EventName.POST_CREATE: POST_CREATION_INPUT,
+        EventName.COMMENT_CREATE: COMMENT_CREATION_INPUT,
         # Strong entity deletions
         EventName.POST_DELETE: UPSTREAM_COMMENT_DELETION_INPUT,
         EventName.COMMENT_DELETE: UPSTREAM_COMMENT_DELETION_INPUT,
