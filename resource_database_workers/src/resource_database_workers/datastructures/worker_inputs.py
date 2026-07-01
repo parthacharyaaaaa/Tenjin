@@ -1,7 +1,8 @@
 import asyncio
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Final
+from typing import Any, Final, Mapping
+from uuid import uuid4
 
 from psycopg_pool import AsyncConnectionPool
 
@@ -81,6 +82,26 @@ class DownstreamCounterDecrementInput(BaseInput):
     config: AppConfig = field(default_factory=get_config)
     redis: Redis = field(default_factory=get_internal_redis)
     queue: asyncio.Queue[StreamedEvent]
+
+
+@dataclass(slots=True, kw_only=True)
+class UpstreamDispatcherInput(BaseInput):
+    config: AppConfig = field(default_factory=get_config)
+    redis: Redis = field(default_factory=get_internal_redis)
+    queue_mapping: Mapping[EventName, asyncio.Queue[tuple[StreamedEvent]]] = field(
+        default=QUEUE_REGISTRY.event_queue_mapping
+    )
+    read_history: bool = field(default=True)
+    consumer_name: str = field(default_factory=lambda: uuid4().hex)
+
+
+@dataclass(slots=True, kw_only=True)
+class DownstreamDispatcherInput(BaseInput):
+    config: AppConfig = field(default_factory=get_config)
+    redis: Redis = field(default_factory=get_internal_redis)
+    queue_mapping: Mapping[EventName, asyncio.Queue[StreamedEvent]]
+    read_history: bool = field(default=True)
+    consumer_name: str = field(default_factory=lambda: uuid4().hex)
 
 
 UPSTREAM_POST_DELETION_INPUT: Final[UpstreamDeletionInput] = UpstreamDeletionInput(
@@ -169,6 +190,31 @@ DOWNSTREAM_USERS_COMMENTS_COUNTER_DECREMENT: Final[DownstreamCounterDecrementInp
         queue=QUEUE_REGISTRY.downstream_users_comments_counters,
         stream_name=StreamName.DOWNSTREAM_COUNTER_DECREMENTS,
     )
+)
+
+POSTS_UPSTREAM_DISPATCHER_INPUT: Final[UpstreamDispatcherInput] = (
+    UpstreamDispatcherInput(stream_name=StreamName.POSTS)
+)
+
+ANIMES_UPSTREAM_DISPATCHER_INPUT: Final[UpstreamDispatcherInput] = (
+    UpstreamDispatcherInput(stream_name=StreamName.ANIMES)
+)
+
+FORUMS_UPSTREAM_DISPATCHER_INPUT: Final[UpstreamDispatcherInput] = (
+    UpstreamDispatcherInput(stream_name=StreamName.FORUMS)
+)
+
+COMMENTS_UPSTREAM_DISPATCHER_INPUT: Final[UpstreamDispatcherInput] = (
+    UpstreamDispatcherInput(stream_name=StreamName.COMMENTS)
+)
+
+READER_INPUT_DATA_MAPPING: Final[MappingProxyType[StreamName, Any]] = MappingProxyType(
+    {
+        StreamName.ANIMES: ANIMES_UPSTREAM_DISPATCHER_INPUT,
+        StreamName.FORUMS: FORUMS_UPSTREAM_DISPATCHER_INPUT,
+        StreamName.POSTS: POSTS_UPSTREAM_DISPATCHER_INPUT,
+        StreamName.COMMENTS: COMMENTS_UPSTREAM_DISPATCHER_INPUT,
+    }
 )
 
 WORKER_INPUT_DATA_MAPPING: Final[MappingProxyType[EventName, Any]] = MappingProxyType(
