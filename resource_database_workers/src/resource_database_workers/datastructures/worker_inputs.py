@@ -88,9 +88,9 @@ class DownstreamCounterDecrementInput(BaseInput):
 class UpstreamDispatcherInput(BaseInput):
     config: AppConfig = field(default_factory=get_config)
     redis: Redis = field(default_factory=get_internal_redis)
-    queue_mapping: Mapping[EventName, asyncio.Queue[tuple[StreamedEvent]]] = field(
-        default=QUEUE_REGISTRY.event_queue_mapping
-    )
+    queue_mapping: Mapping[
+        EventName, asyncio.Queue[tuple[StreamedEvent]] | asyncio.Queue[StreamedEvent]
+    ]
     read_history: bool = field(default=True)
     consumer_name: str = field(default_factory=lambda: uuid4().hex)
 
@@ -190,31 +190,6 @@ DOWNSTREAM_USERS_COMMENTS_COUNTER_DECREMENT: Final[DownstreamCounterDecrementInp
         queue=QUEUE_REGISTRY.downstream_users_comments_counters,
         stream_name=StreamName.DOWNSTREAM_COUNTER_DECREMENTS,
     )
-)
-
-POSTS_UPSTREAM_DISPATCHER_INPUT: Final[UpstreamDispatcherInput] = (
-    UpstreamDispatcherInput(stream_name=StreamName.POSTS)
-)
-
-ANIMES_UPSTREAM_DISPATCHER_INPUT: Final[UpstreamDispatcherInput] = (
-    UpstreamDispatcherInput(stream_name=StreamName.ANIMES)
-)
-
-FORUMS_UPSTREAM_DISPATCHER_INPUT: Final[UpstreamDispatcherInput] = (
-    UpstreamDispatcherInput(stream_name=StreamName.FORUMS)
-)
-
-COMMENTS_UPSTREAM_DISPATCHER_INPUT: Final[UpstreamDispatcherInput] = (
-    UpstreamDispatcherInput(stream_name=StreamName.COMMENTS)
-)
-
-READER_INPUT_DATA_MAPPING: Final[MappingProxyType[StreamName, Any]] = MappingProxyType(
-    {
-        StreamName.ANIMES: ANIMES_UPSTREAM_DISPATCHER_INPUT,
-        StreamName.FORUMS: FORUMS_UPSTREAM_DISPATCHER_INPUT,
-        StreamName.POSTS: POSTS_UPSTREAM_DISPATCHER_INPUT,
-        StreamName.COMMENTS: COMMENTS_UPSTREAM_DISPATCHER_INPUT,
-    }
 )
 
 WORKER_INPUT_DATA_MAPPING: Final[MappingProxyType[EventName, Any]] = MappingProxyType(
