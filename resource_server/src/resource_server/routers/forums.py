@@ -20,6 +20,7 @@ from resource_auxillary.cache import (
 from resource_auxillary.datastructures.payloads.assosciation import (
     ForumSubscriptionAssosciation,
 )
+from resource_auxillary.datastructures.payloads.standalone import ForumDeletion
 from resource_auxillary.events import (
     CounterUpdate,
     IntentUpdate,
@@ -193,6 +194,7 @@ async def delete_forum(
     forum_id: int,
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
+    event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
 ) -> JSONResponse:
     request_time: float = time.time()
     forum: ForumResult | None = await cache_manager.distributed_get_or_load(
@@ -212,8 +214,19 @@ async def delete_forum(
             403, "You do not have the necessary permissions to delete this forum"
         )
 
-    # Permission valid, and all other checks passed. Attempt to set lock for this action
-    ...
+    async with cache_manager.guard_action(
+        access_token["sid"],
+        forum_id,
+        ForumResult.resource_name,
+        Action.DELETE,
+        conflicting_intent=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+    ):
+        deletion_paylaod: ForumDeletion = ForumDeletion(forum_id=forum_id)
+        event: Event = Event(
+            name=EventName.FORUM_DELETE, payload=deletion_paylaod  # type: ignore
+        )
+
+        await event_streamer.emit_user_event(StreamName.FORUMS, event)
 
     return JSONResponse(
         {

@@ -14,6 +14,10 @@ class CommentDeletion(TypedDict):
     comment_id: int
 
 
+class ForumDeletion(TypedDict):
+    forum_id: int
+
+
 class PostCreation(TypedDict):
     author_id: int
     forum_id: int
