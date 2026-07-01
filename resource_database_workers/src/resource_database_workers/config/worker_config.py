@@ -61,6 +61,7 @@ class CounterConfig(BaseWorkerConfig):
 
 
 class DownstreamDeletionWorkerConfig(BaseWorkerConfig):
+    USER_CLEANUP: Annotated[int, Field(ge=0, default=0)]
     ORPHANED_POST_DELETE: Annotated[int, Field(ge=0, default=0)]
     ORPHANED_COMMENT_DELETE: Annotated[int, Field(ge=0, default=0)]
 

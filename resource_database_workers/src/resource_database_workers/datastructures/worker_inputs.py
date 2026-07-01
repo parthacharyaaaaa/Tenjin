@@ -104,6 +104,19 @@ class DownstreamDispatcherInput(BaseInput):
     consumer_name: str = field(default_factory=lambda: uuid4().hex)
 
 
+@dataclass(slots=True, kw_only=True)
+class UserCleanupInput(BaseInput):
+    config: AppConfig = field(default_factory=get_config)
+    redis: Redis = field(default_factory=get_internal_redis)
+    queue: asyncio.Queue[tuple[StreamedEvent]] = field(
+        default=QUEUE_REGISTRY.user_cleanup
+    )
+
+
+USER_CLEANUP_INPUT: Final[UserCleanupInput] = UserCleanupInput(
+    stream_name=StreamName.USERS
+)
+
 UPSTREAM_POST_DELETION_INPUT: Final[UpstreamDeletionInput] = UpstreamDeletionInput(
     table=StrongEntity.POST,
     stream_name=StreamName.POSTS,
@@ -204,12 +217,14 @@ DOWNSTREAM_USERS_COMMENTS_COUNTER_DECREMENT: Final[DownstreamCounterDecrementInp
 
 WORKER_INPUT_DATA_MAPPING: Final[MappingProxyType[EventName, Any]] = MappingProxyType(
     {
+        # Strong entity creations
         EventName.POST_CREATE: POST_CREATION_INPUT,
         EventName.COMMENT_CREATE: COMMENT_CREATION_INPUT,
         # Strong entity deletions
         EventName.POST_DELETE: UPSTREAM_COMMENT_DELETION_INPUT,
         EventName.COMMENT_DELETE: UPSTREAM_COMMENT_DELETION_INPUT,
         EventName.FORUM_DELETE: UPSTREAM_FORUM_DELETION_INPUT,
+        EventName.USER_CLEANUP: USER_CLEANUP_INPUT,
         # Association entity upserts
         EventName.POST_SAVE: POST_SAVE_INPUT,
         EventName.POST_UNSAVE: POST_SAVE_INPUT,
