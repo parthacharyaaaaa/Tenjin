@@ -1,107 +1,229 @@
-from dataclasses import dataclass
-from typing import Any, Mapping, Self
+from collections import defaultdict
+from functools import cached_property
+from pathlib import Path
+from typing import Annotated, Self, Protocol
 
-import orjson
+from resource_auxillary.strings import EventName, StreamName
 
-from resource_auxillary.strings import EventName
+from pydantic import BaseModel, Field, model_validator
+from pydantic_settings import (
+    BaseSettings,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    TomlConfigSettingsSource,
+)
+
+from resource_database_workers.src.resource_database_workers.datastructures.streams import (
+    STREAM_EVENT_MAPPING,
+)
 
 
-@dataclass(slots=True, init=False)
-class WorkerSettings:
-    _queue_worker_counts: Mapping[EventName, int]
-    _counters: int
-    _standard_dlq: int
-    _counters_dlq: int
-    _upstream_readers: int
-    _downstream_readers: int
-    _downstream_counter_readers: int
+class EventWorkerConfig(Protocol):
+    @cached_property
+    def reader_count_mapping(self) -> dict[StreamName, int]: ...
 
+
+class BaseWorkerConfig(BaseModel):
     @property
-    def counters(self) -> int:
-        return self._counters
+    def dormant(self) -> bool:
+        return any(v for v in self.model_dump().values())
 
-    @property
-    def standard_dlq(self) -> int:
-        return self._standard_dlq
 
-    @property
-    def counters_dlq(self) -> int:
-        return self._counters_dlq
+class StreamReaderConfig(BaseWorkerConfig):
+    POSTS: Annotated[int, Field(ge=0, default=0)]
+    COMMENTS: Annotated[int, Field(ge=0, default=0)]
+    FORUMS: Annotated[int, Field(ge=0, default=0)]
+    ANIMES: Annotated[int, Field(ge=0, default=0)]
+    USERS: Annotated[int, Field(ge=0, default=0)]
+    DOWNSTREAM_DELETIONS: Annotated[int, Field(ge=0, default=0)]
+    DOWNSTREAM_COUNTER_DECREMENTS: Annotated[int, Field(ge=0, default=0)]
 
-    @property
-    def upstream_readers(self) -> int:
-        return self._upstream_readers
+    @cached_property
+    def reader_count_mapping(self) -> dict[StreamName, int]:
+        return {
+            StreamName.POSTS: self.POSTS,
+            StreamName.COMMENTS: self.COMMENTS,
+            StreamName.FORUMS: self.FORUMS,
+            StreamName.ANIMES: self.ANIMES,
+            StreamName.USERS: self.USERS,
+            StreamName.DOWNSTREAM_DELETIONS: self.DOWNSTREAM_DELETIONS,
+            StreamName.DOWNSTREAM_COUNTER_DECREMENTS: self.DOWNSTREAM_COUNTER_DECREMENTS,
+        }
 
-    @property
-    def downstream_readers(self) -> int:
-        return self._downstream_readers
 
-    @property
-    def downstream_counter_readers(self) -> int:
-        return self._downstream_counter_readers
+class DeadLetterWorkerConfig(BaseWorkerConfig):
+    STANDARD: Annotated[int, Field(ge=0, default=0)]
+    COUNTERS: Annotated[int, Field(ge=0, default=0)]
 
-    @property
-    def queue_worker_counts(self) -> Mapping[EventName, int]:
-        return self._queue_worker_counts
 
-    @staticmethod
-    def check_consumers_integrity(
-        entries: Mapping[EventName, int],
-        counters: int,
-        standard_dlq: int,
-        counters_dlq: int,
-    ) -> None:
-        # DLQ validation
-        if not standard_dlq:
-            raise ValueError("Non-zero DLQ consumers specified")
-        if counters and not counters_dlq:
-            raise ValueError(
-                " ".join(
-                    (
-                        f"Non-zero counter workers {counters}",
-                        "specified with 0 counters DLQ consumers",
-                    )
-                )
-            )
-        if counters_dlq and not counters:
-            raise ValueError(
-                " ".join(
-                    (
-                        f"Non-zero counter DLQ workers {counters_dlq}",
-                        "specified with 0 counter workers",
-                    )
-                )
-            )
+class CounterConfig(BaseWorkerConfig):
+    WORKERS: Annotated[int, Field(ge=0, default=0)]
+
+
+class DownstreamDeletionWorkerConfig(BaseWorkerConfig):
+    ORPHANED_POST_DELETE: Annotated[int, Field(ge=0, default=0)]
+    ORPHANED_COMMENT_DELETE: Annotated[int, Field(ge=0, default=0)]
+
+    @cached_property
+    def worker_count_mapping(self) -> dict[EventName, int]:
+        return {
+            EventName.ORPHANED_POST_DELETE: self.ORPHANED_POST_DELETE,
+            EventName.ORPHANED_COMMENT_DELETE: self.ORPHANED_COMMENT_DELETE,
+        }
+
+
+class DownstreamDecrementWorkerConfig(BaseWorkerConfig):
+    DOWNSTREAM_USER_POST_DECREMENT: Annotated[int, Field(ge=0, default=0)]
+    DOWNSTREAM_USER_COMMENT_DECREMENT: Annotated[int, Field(ge=0, default=0)]
+    DOWNSTREAM_FORUM_POST_DECREMENT: Annotated[int, Field(ge=0, default=0)]
+    DOWNSTREAM_POST_COMMENT_DECREMENT: Annotated[int, Field(ge=0, default=0)]
+
+    @cached_property
+    def worker_count_mapping(self) -> dict[EventName, int]:
+        return {
+            EventName.DOWNSTREAM_USER_POST_DECREMENT: self.DOWNSTREAM_USER_POST_DECREMENT,
+            EventName.DOWNSTREAM_USER_COMMENT_DECREMENT: self.DOWNSTREAM_USER_COMMENT_DECREMENT,
+            EventName.DOWNSTREAM_FORUM_POST_DECREMENT: self.DOWNSTREAM_FORUM_POST_DECREMENT,
+            EventName.DOWNSTREAM_POST_COMMENT_DECREMENT: self.DOWNSTREAM_POST_COMMENT_DECREMENT,
+        }
+
+
+class UpstreamWorkerConfig(BaseWorkerConfig):
+    POST_DELETE: Annotated[int, Field(ge=0, default=0)]
+    COMMENT_DELETE: Annotated[int, Field(ge=0, default=0)]
+    FORUM_DELETE: Annotated[int, Field(ge=0, default=0)]
+    POST_SAVE: Annotated[int, Field(ge=0, default=0)]
+    POST_VOTE: Annotated[int, Field(ge=0, default=0)]
+    COMMENT_VOTE: Annotated[int, Field(ge=0, default=0)]
+    FORUM_SUB: Annotated[int, Field(ge=0, default=0)]
+    ANIME_SUB: Annotated[int, Field(ge=0, default=0)]
+
+    @cached_property
+    def worker_count_mapping(self) -> dict[EventName, int]:
+        return {
+            EventName.POST_DELETE: self.POST_DELETE,
+            EventName.COMMENT_DELETE: self.COMMENT_DELETE,
+            EventName.FORUM_DELETE: self.FORUM_DELETE,
+            EventName.POST_SAVE: self.POST_SAVE,
+            EventName.POST_VOTE: self.POST_VOTE,
+            EventName.COMMENT_VOTE: self.COMMENT_VOTE,
+            EventName.FORUM_SUB: self.FORUM_SUB,
+            EventName.ANIME_SUB: self.ANIME_SUB,
+        }
+
+
+class WorkerSettings(BaseSettings):
+    READER: StreamReaderConfig
+    DLQ: DeadLetterWorkerConfig
+    COUNTERS: CounterConfig
+    UPSTREAM: UpstreamWorkerConfig
+    DOWNSTREAM_DELETION: DownstreamDeletionWorkerConfig
+    DOWNSTREAM_DECREMENT: DownstreamDecrementWorkerConfig
 
     @classmethod
-    def construct_from_json(cls, json_filepath: str) -> Self:
-        instance = cls()
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        return (TomlConfigSettingsSource(settings_cls),)
 
-        casted_contents: dict[EventName, int] = {}
-        with open(json_filepath, "rb") as config_file:
-            contents: dict[str, Any] = orjson.loads(config_file.read())
+    @model_validator(mode="after")
+    def dlq_check(self) -> Self:
+        if self.COUNTERS.WORKERS and not self.DLQ.COUNTERS:
+            raise ValueError(
+                " ".join(
+                    (
+                        f"Non-zero ({self.COUNTERS.WORKERS}) specified with",
+                        "no counter DLQ workers present",
+                    )
+                )
+            )
+        elif not (
+            self.DLQ.STANDARD
+            or all(
+                map(
+                    lambda x: x.dormant,
+                    (
+                        self.DOWNSTREAM_DECREMENT,
+                        self.DOWNSTREAM_DECREMENT,
+                        self.READER,
+                        self.UPSTREAM,
+                    ),
+                )
+            )
+        ):
+            raise ValueError(
+                " ".join(
+                    (
+                        f"Non-zero event-processors specified with no",
+                        "standard DLQ consumer",
+                    )
+                )
+            )
 
-        # Read non-stream worker counts (counters, DLQ)
-        counters = int(contents.pop("COUNTERS"))
-        standard_dlq = int(contents.pop("STANDARD_DLQ"))
-        counters_dlq = int(contents.pop("COUNTERS_DLQ"))
+        return self
 
-        for k, v in contents.items():
-            event: EventName = EventName(k)
-            consumer_count: int = int(v)
-            if consumer_count < 0:
-                raise ValueError(f"Consumer count for event {event} below 0")
-            if consumer_count > 0:
-                dormant = False
-            casted_contents[event] = consumer_count
-
-        cls.check_consumers_integrity(
-            casted_contents, counters, standard_dlq, counters_dlq
+    @model_validator(mode="after")
+    def check_consumption_pipeline_integrity(self) -> Self:
+        worker_mapping: dict[EventName, int] = (
+            self.UPSTREAM.worker_count_mapping
+            | self.DOWNSTREAM_DECREMENT.worker_count_mapping
+            | self.DOWNSTREAM_DELETION.worker_count_mapping
         )
 
-        instance._queue_worker_counts = casted_contents
-        instance._counters = counters
-        instance._counters_dlq = counters_dlq
-        instance._standard_dlq = standard_dlq
+        unused_workers: defaultdict[StreamName, list[EventName]] = defaultdict(list)
+        missing_workers: defaultdict[StreamName, list[EventName]] = defaultdict(list)
+        for stream, reader_count in self.READER.reader_count_mapping.items():
+            stream_events: tuple[EventName, ...] = STREAM_EVENT_MAPPING[stream]
+            if reader_count == 0 and any(
+                unused := [i for i in stream_events if worker_mapping[i] != 0]
+            ):
+                unused_workers[stream].extend(unused)
+            if reader_count != 0 and any(
+                missing := [i for i in stream_events if worker_mapping[i] == 0]
+            ):
+                missing_workers[stream].extend(missing)
 
-        return instance
+        err_msgs: list[str] = []
+        if unused_workers:
+            err_msgs.extend(
+                " ".join(
+                    (
+                        f"No stream readers for stream {stream}",
+                        "but workers specified for stream events:",
+                        ",".join(i.value for i in events),
+                    )
+                )
+                for stream, events in unused_workers.items()
+            )
+
+        if missing_workers:
+            err_msgs.extend(
+                " ".join(
+                    (
+                        f"Stream readers specified for stream {stream}",
+                        "but no workers specified for stream events:",
+                        ",".join(i.value for i in events),
+                    )
+                )
+                for stream, events in missing_workers.items()
+            )
+
+        if err_msgs:
+            raise ValueError("\n".join(err_msgs))
+
+        return self
+
+    @classmethod
+    def update_toml_file(cls, filepath: str) -> None:
+        path: Path = Path(filepath)
+        if not path.is_file():
+            raise FileNotFoundError(filepath)
+        if (ext := path.name.split(".")[-1]) != "toml":
+            raise ValueError(f"Expected TOML file, got {ext} instead")
+
+        cls.model_config = SettingsConfigDict(toml_file=str(filepath))
