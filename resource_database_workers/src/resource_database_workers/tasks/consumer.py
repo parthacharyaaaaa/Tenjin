@@ -18,6 +18,7 @@ from resource_auxillary.events import StreamedEvent
 
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
 from resource_database_workers.utils.coordination import (
+    atomic_emit_side_effects,
     batch_dedup_insert_events,
     dedup_insert_event,
 )
@@ -197,6 +198,11 @@ async def queue_insertion_consumer(
                     await conn.rollback()
                     break
 
+            await atomic_emit_side_effects(
+                redis,
+                tuple(event for event in batch if event.event_id in successful_events),
+            )
+
             await redis.xack(
                 stream_name,
                 config.WORKER.CONSUMER_GROUP_NAME,
@@ -284,14 +290,16 @@ async def queue_deletion_consumer(
             elif batch:
                 await redis.xack(stream_name, group_name, *(e.event_id for e in batch))
 
-            await dispatch_downstream_events(
-                redis,
-                table,
-                (
-                    (event.payload[identifier_column], event.payload["deleted_at"])
-                    for event in batch
-                ),
-            )
+                await atomic_emit_side_effects(redis, tuple(batch))
+
+                await dispatch_downstream_events(
+                    redis,
+                    table,
+                    (
+                        (event.payload[identifier_column], event.payload["deleted_at"])
+                        for event in batch
+                    ),
+                )
 
             batch.clear()
             reference_time = time.monotonic()
