@@ -61,6 +61,7 @@ class IntentUpdate(BaseModel):
 class CacheUpdate(BaseModel):
     cache_key: str
     operation: Literal["invalidate", "mark_missing"]
+    resource_type: Literal["string", "mapping"] = Field(default="mapping")
 
     def __cache_repr__(self) -> dict[FieldT, EncodableT]:
         return {
