@@ -377,9 +377,6 @@ class Anime(Base):
         unique=True,
     )
 
-    # NOTE: what
-    rating: Mapped[float] = mapped_column(NUMERIC(3, 2), nullable=False)
-    mal_rating: Mapped[int | None] = mapped_column(INTEGER)
     members: Mapped[int] = mapped_column(
         BIGINT, nullable=False, server_default=text("0")
     )
@@ -388,15 +385,7 @@ class Anime(Base):
         nullable=False,
     )
 
-    __table_args__ = (
-        CheckConstraint(mal_rating >= 0, "check_ranking_positive"),
-        CheckConstraint(members >= 0, "check_members_positive"),
-        CheckConstraint(rating >= 0, "check_rating_positive"),
-        CheckConstraint(
-            rating <= database_constants.AnimeConstants.HIGHEST_MAL_RATING,
-            "check_rating_upperbound",
-        ),
-    )
+    __table_args__ = (CheckConstraint(members >= 0, "check_members_positive"),)
 
 
 @dataclass

@@ -27,7 +27,6 @@ from resource_auxillary.strings import NAME_SEPERATOR
 class AnimeResult(AbstractResult):
     id_: int
     title: str
-    rating: float | None
     members: int
     synopsis: str
 
@@ -62,7 +61,6 @@ class AnimeResult(AbstractResult):
         return {
             "id": self.id_,
             "title": self.title,
-            "rating": float(self.rating) if self.rating else None,
             "members": self.members,
             "synopsis": self.synopsis,
         }
@@ -71,7 +69,6 @@ class AnimeResult(AbstractResult):
         return {
             "id": self.id_,
             "title": self.title,
-            "rating": float(self.rating) if self.rating else "",
             "members": self.members,
             "synopsis": self.synopsis,
         }
