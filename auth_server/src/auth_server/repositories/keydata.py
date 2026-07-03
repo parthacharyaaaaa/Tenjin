@@ -150,7 +150,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
                 (
                     await session.execute(
                         select(KeyData)
-                        .where(KeyData.expired_at.isnot_(None))
+                        .where(KeyData.expired_at.isnot(None))
                         .order_by(KeyData.expired_at)
                     )
                 )
