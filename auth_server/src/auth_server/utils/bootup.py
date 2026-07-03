@@ -30,6 +30,8 @@ from auth_server.repositories.keydata import KeydataRepository
 from auth_server.strings import SyncedStoreStrings
 from auth_server.security.token_manager import TokenManager
 
+# TODO: Remove magic numbers in lifespan and master_bootup (lock and flag TTLs)
+
 
 def register_routers(
     app: FastAPI,
@@ -195,6 +197,14 @@ async def master_bootup(
         initialize_jwks(config.JWKS.JWKS_FILEPATH, keydata)
 
         # Initialize token manager
+        async with synced_store_client.pipeline() as pipe:
+            pipe.delete(SyncedStoreStrings.VALID_KEYS)
+            valid_keys: list[str] = (
+                list(rotated_verifying_keys.keys()) if rotated_verifying_keys else []
+            ) + [active_kid]
+            pipe.lpush(SyncedStoreStrings.VALID_KEYS, *valid_keys)
+            await pipe.execute()
+
         token_manager: Final[TokenManager] = get_token_manager()
         token_manager.set_key_state(active_kid, active_keydata, rotated_verifying_keys)
         print(f"[AUTH {process_id}] Master process bootup complete!")
@@ -207,19 +217,7 @@ async def master_bootup(
         await synced_store_client.set(SyncedStoreStrings.ABORT, 1, ex=120)
         raise RuntimeError("Master bootup failed") from e
     finally:
-        # Finally, initialize valid_keys list and remove the flag from Redis to allow slave workers to continue bootup
-        if not (active_kid and rotated_verifying_keys):
-            return
-
-        if failed:
-            return
-
-        async with synced_store_client.pipeline() as pipe:
-            pipe.delete(SyncedStoreStrings.VALID_KEYS)
-            valid_keys: list[str] = list(rotated_verifying_keys.keys()) + [active_kid]
-            pipe.lpush(SyncedStoreStrings.VALID_KEYS, *valid_keys)
-            pipe.delete(SyncedStoreStrings.AUTH_BOOTUP_MASTER)
-            await pipe.execute()
+        await synced_store_client.delete(SyncedStoreStrings.AUTH_BOOTUP_MASTER)
 
 
 async def slave_bootup(
@@ -293,7 +291,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     is_master: bool = bool(
         await synced_store_client.set(
-            SyncedStoreStrings.AUTH_BOOTUP_MASTER, PID, nx=True
+            SyncedStoreStrings.AUTH_BOOTUP_MASTER, PID, nx=True, ex=300
         )
     )
 
