@@ -111,7 +111,7 @@ async def master_bootup(
         if not keydata:
             # No valid keys in DB, master must create new pair
             print(f"[AUTH {process_id}] Creating new key pair")
-            active_key: KeyData = initialize_active_key(
+            active_key: KeyData = await initialize_active_key(
                 config.JWKS.PRIVATE_PEM_DIRECTORY,
                 config.JWKS.PUBLIC_PEM_DIRECTORY,
                 keydata_repository,
@@ -141,7 +141,7 @@ async def master_bootup(
                 keydata = keydata[: config.JWKS.JWKS_CAP]
 
             if missing_active:
-                active_key: KeyData = initialize_active_key(
+                active_key: KeyData = await initialize_active_key(
                     config.JWKS.PRIVATE_PEM_DIRECTORY,
                     config.JWKS.PUBLIC_PEM_DIRECTORY,
                     keydata_repository,
