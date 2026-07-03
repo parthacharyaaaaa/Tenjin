@@ -317,7 +317,7 @@ class User(SoftDeletionMixin, Base):
         CheckConstraint(
             func.length(email) >= database_constants.UserConstants.EMAIL_MIN_LENGTH
         ),
-        CheckConstraint(email.regexp_match(str(EMAIL_PATTERN)), "check_email_regex"),
+        CheckConstraint(email.regexp_match(EMAIL_PATTERN.pattern), "check_email_regex"),
     )
 
 
