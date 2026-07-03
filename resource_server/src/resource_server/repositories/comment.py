@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from resource_server.models.database import Comment, CommentReport, CommentVote, User
 from resource_server.models.database_enums import ReportTags
 from resource_server.repositories.result_protocol import AbstractResult
-from resource_server.utils.singleton import SingletonMetaclass
+from auxillary.singleton import SingletonMetaclass
 
 type t_comment_result = Row[tuple[Comment, int, str]]
 

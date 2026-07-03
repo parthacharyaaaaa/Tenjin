@@ -15,7 +15,7 @@ from auxillary.utils import from_base64url
 
 from resource_server.config.app_config import AppConfig
 from resource_server.config.constants import RedisConstants
-from resource_server.utils.singleton import SingletonMetaclass
+from auxillary.singleton import SingletonMetaclass
 from resource_server.utils.typing import JWKSEntry
 
 

@@ -5,7 +5,7 @@ from redis.asyncio.client import Redis, Pipeline
 from auxillary.utils import cache_repr
 
 from resource_server.config.sub_config import CacheConfig
-from resource_server.utils.singleton import SingletonMetaclass
+from auxillary.singleton import SingletonMetaclass
 
 from resource_auxillary.events import Event
 from resource_auxillary.strings import StreamName

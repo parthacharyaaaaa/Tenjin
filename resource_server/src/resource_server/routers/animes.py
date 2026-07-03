@@ -276,7 +276,7 @@ async def get_animes(
     )
 
 
-@ANIMES.route("{anime_id}/links")
+@ANIMES.route("/{anime_id}/links")
 async def get_anime_links(
     anime_id: int,
     cache_manager: Annotated[CacheManager, get_cache_manager],

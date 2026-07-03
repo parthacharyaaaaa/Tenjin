@@ -17,7 +17,7 @@ from resource_server.models.database import (
     Genre,
     AnimeGenre,
 )
-from resource_server.utils.singleton import SingletonMetaclass
+from auxillary.singleton import SingletonMetaclass
 from resource_server.repositories.result_protocol import AbstractResult
 
 from resource_auxillary.strings import NAME_SEPERATOR

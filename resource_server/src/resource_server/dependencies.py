@@ -37,8 +37,8 @@ def get_app_redis_client() -> Redis:
         host=str(config.REDIS.APP.HOST),
         port=config.REDIS.APP.PORT,
         db=config.REDIS.APP.DB,
-        username=os.environ["RESOURCE_WORKER_REDIS_USERNAME"],
-        password=os.environ["RESOURCE_WORKER_REDIS_PASSWORD"],
+        # username=os.environ["RESOURCE_WORKER_REDIS_USERNAME"],
+        # password=os.environ["RESOURCE_WORKER_REDIS_PASSWORD"],
     )
 
 
@@ -50,8 +50,8 @@ def get_auth_redis_client() -> Redis:
         host=str(config.REDIS.AUTH.HOST),
         port=config.REDIS.AUTH.PORT,
         db=config.REDIS.AUTH.DB,
-        username=os.environ["RESOURCE_AUTH_WORKER_REDIS_USERNAME"],
-        password=os.environ["RESOURCE_AUTH_WORKER_REDIS_PASSWORD"],
+        # username=os.environ["RESOURCE_AUTH_WORKER_REDIS_USERNAME"],
+        # password=os.environ["RESOURCE_AUTH_WORKER_REDIS_PASSWORD"],
     )
 
 

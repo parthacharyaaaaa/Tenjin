@@ -16,7 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resource_server.repositories.user import UserResult
-from resource_server.utils.singleton import SingletonMetaclass
+from auxillary.singleton import SingletonMetaclass
 from resource_server.repositories.result_protocol import AbstractResult
 from resource_server.models.database import (
     Forum,

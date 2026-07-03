@@ -24,7 +24,7 @@ from auxillary.typing_utils import SupportsAsyncRedis, SupportsCache
 from auxillary.utils import cache_repr
 
 from resource_server.config.sub_config import CacheConfig
-from resource_server.utils.singleton import SingletonMetaclass
+from auxillary.singleton import SingletonMetaclass
 from resource_server.datastructures.exceptions import (
     CacheCoherenceException,
     ConflictingIntentException,

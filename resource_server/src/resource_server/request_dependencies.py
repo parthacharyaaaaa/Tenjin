@@ -14,7 +14,7 @@ from resource_server.dependencies import get_app_config, get_key_manager, get_ge
 from resource_server.key_manager import KeyManager
 from resource_server.models.database import Genre
 from resource_server.utils.typing import StandardAccessTokenClaims
-from resource_server.src.resource_server.datastructures.requests import (
+from resource_server.datastructures.requests import (
     SortOption,
     TIMEFRAMES,
     TimeFrameOption,
