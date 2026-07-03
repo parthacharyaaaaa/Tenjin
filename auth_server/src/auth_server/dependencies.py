@@ -58,7 +58,7 @@ def get_database_session_maker() -> async_sessionmaker[AsyncSession]:
     engine: Final[AsyncEngine] = create_async_engine(URI)
 
     session_maker: Final[async_sessionmaker[AsyncSession]] = async_sessionmaker(
-        bind=engine, autocommit=False, autoflush=False
+        bind=engine, autocommit=False, autoflush=False, expire_on_commit=False
     )
 
     return session_maker
