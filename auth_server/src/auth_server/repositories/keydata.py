@@ -10,7 +10,7 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio.session import AsyncSession, async_sessionmaker
 
 from auth_server.models.database import KeyData
-from auth_server.utils.singleton import SingletonMetaclass
+from auxillary.singleton import SingletonMetaclass
 
 
 @dataclass(frozen=True, slots=True, weakref_slot=True)
