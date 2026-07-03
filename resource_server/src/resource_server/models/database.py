@@ -306,7 +306,7 @@ class User(SoftDeletionMixin, Base):
     time_joined: Mapped[datetime] = mapped_column(
         TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
-    last_login: Mapped[datetime] = mapped_column(TIMESTAMP)
+    last_login: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=True)
 
     __table_args__ = (
         CheckConstraint(
