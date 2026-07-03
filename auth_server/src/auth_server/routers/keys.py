@@ -36,6 +36,7 @@ from auth_server.security.keygen import (
     write_ecdsa_pair,
     update_jwks,
 )
+from auth_server.strings import SyncedStoreStrings
 from auth_server.security.permissions import Permission
 from auth_server.security.token_manager import TokenManager
 from auth_server.utils.auth_auxillary import report_suspicious_activity
@@ -173,7 +174,7 @@ async def invalidate_key(
     token_manager.invalidate_key(kid)
 
     # Update global
-    raw_valid_keys: list[bytes] = synced_store_client.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
+    raw_valid_keys: list[bytes] = synced_store_client.lrange(SyncedStoreStrings.VALID_KEYS, 0, -1)  # type: ignore[reportAssignmentType]
     if not raw_valid_keys or kid.encode("utf-8") not in raw_valid_keys:
         # Should never happen, but in case it does we fall back and regenerate the entire list
         additional_kw["keylist_integrity_warning"] = (
@@ -192,8 +193,8 @@ async def invalidate_key(
     # or by consulting the database in case of any inconsistency
 
     async with synced_store_client.pipeline() as pipe:
-        pipe.delete("VALID_KEYS")
-        pipe.lpush("VALID_KEYS", *valid_keys)
+        pipe.delete(SyncedStoreStrings.VALID_KEYS)
+        pipe.lpush(SyncedStoreStrings.VALID_KEYS, *valid_keys)
         pipe.delete(key_lock)
         await pipe.execute()
 
@@ -334,8 +335,8 @@ async def clean_keystore(
 
     # Update global state, no need to fetch current list of keys anyways since as of this operation only a single active key would be valid throughout
     async with synced_store_client.pipeline() as pipe:
-        pipe.delete("VALID_KEYS")
-        pipe.lpush("VALID_KEYS", active_key.kid)
+        pipe.delete(SyncedStoreStrings.VALID_KEYS)
+        pipe.lpush(SyncedStoreStrings.VALID_KEYS, active_key.kid)
         await pipe.execute()
 
     return JSONResponse(
@@ -523,8 +524,8 @@ async def rotate_keys(
     # Set global cooldown for key rotation, update global state, and release rotation lock
     async with synced_store_client.pipeline() as pipe:
         pipe.set("KEY_ROTATION_COOLDOWN", 1, ex=config.KEYS.KEY_ROTATION_COOLDOWN)
-        pipe.delete("VALID_KEYS")
-        pipe.lpush("VALID_KEYS", *valid_keys)
+        pipe.delete(SyncedStoreStrings.VALID_KEYS)
+        pipe.lpush(SyncedStoreStrings.VALID_KEYS, *valid_keys)
         pipe.delete("KEY_ROTATION_LOCK")
         await pipe.execute()
 
