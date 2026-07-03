@@ -201,7 +201,7 @@ async def master_bootup(
     except Exception as e:
         failed = True
         print(
-            f"[AUTH {process_id}] Master worker has encountered an irrecovarable error, details: "
+            f"[AUTH {process_id}] Master worker has encountered an irrecoverable error, details: "
         )
         print(traceback.format_exc())
         await synced_store_client.set(SyncedStoreStrings.ABORT, 1, ex=120)
@@ -230,10 +230,10 @@ async def slave_bootup(
     master_wait_interval: float = 1.0,
 ) -> None:
     # Wait for master worker to finish managing key synchronization and file I/O, and then proceed on the assumption that the JWKS file has been written into/validated.
-    while synced_store_client.get(SyncedStoreStrings.AUTH_BOOTUP_MASTER):
+    while await synced_store_client.get(SyncedStoreStrings.AUTH_BOOTUP_MASTER):
         time.sleep(master_wait_interval)
 
-    if synced_store_client.get(SyncedStoreStrings.ABORT):
+    if await synced_store_client.get(SyncedStoreStrings.ABORT):
         print(
             f"[AUTH {process_id}] Master failed to setup key configuration, aborting..."
         )
@@ -292,7 +292,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
 
     is_master: bool = bool(
-        synced_store_client.set(SyncedStoreStrings.AUTH_BOOTUP_MASTER, PID, nx=True)
+        await synced_store_client.set(
+            SyncedStoreStrings.AUTH_BOOTUP_MASTER, PID, nx=True
+        )
     )
 
     if is_master:
