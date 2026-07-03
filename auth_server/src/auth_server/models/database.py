@@ -70,16 +70,18 @@ class KeyData(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
     rotated_out_at: Mapped[datetime.datetime] = mapped_column(
-        TIMESTAMP, server_default=text("null")
+        TIMESTAMP, server_default=text("null"), nullable=True
     )
     expired_at: Mapped[datetime.datetime] = mapped_column(
-        TIMESTAMP, server_default=text("null")
+        TIMESTAMP, server_default=text("null"), nullable=True
     )
     private_pem: Mapped[bytes] = mapped_column(BYTEA, nullable=False, unique=True)
     public_pem: Mapped[bytes] = mapped_column(BYTEA, nullable=False, unique=True)
-    manual_rotation: Mapped[bool] = mapped_column(BOOLEAN, server_default=text("false"))
+    manual_rotation: Mapped[bool] = mapped_column(
+        BOOLEAN, server_default=text("null"), nullable=True
+    )
     rotated_by: Mapped[int] = mapped_column(
-        INTEGER, ForeignKey("admins.id_"), index=True
+        INTEGER, ForeignKey("admins.id_"), index=True, nullable=True
     )
 
     def __json_like__(self) -> dict[str, Any]:
