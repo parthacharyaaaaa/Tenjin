@@ -3,8 +3,6 @@ from dataclasses import dataclass, field
 from traceback import format_exc
 from typing import Final
 
-from functools import cached_property
-
 import ecdsa
 import httpx
 
@@ -27,6 +25,12 @@ class KeyManager(metaclass=SingletonMetaclass):
     current_mapping: dict[str, bytes] = field(default_factory=dict)
     _pubsub: PubSub | None = field(default=None)
     _monitoring_task: asyncio.Task | None = field(init=False, default=None)
+    _jwks_endpoint: str = ""
+
+    def __post_init__(self) -> None:
+        self._jwks_endpoint = "http://" + "/".join(
+            (self.app_config.CORE.AUTH_SERVER_NAME, self.app_config.JWKS.JWKS_ENDPOINT)
+        )
 
     @staticmethod
     def parse_keyset(
@@ -77,11 +81,9 @@ class KeyManager(metaclass=SingletonMetaclass):
             pass
         self._monitoring_task = None
 
-    @cached_property
+    @property
     def jwks_endpoint(self) -> str:
-        return "/".join(
-            (self.app_config.CORE.AUTH_SERVER_NAME, self.app_config.JWKS.JWKS_ENDPOINT)
-        )
+        return self._jwks_endpoint
 
     async def get_global_key_mapping(self) -> dict[str, bytes]:
         """Get JWKS cache in Redis"""
