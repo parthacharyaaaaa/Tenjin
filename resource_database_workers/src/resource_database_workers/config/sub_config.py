@@ -1,6 +1,6 @@
 from ipaddress import ip_address
 import multiprocessing
-from typing import Annotated, Self
+from typing import Annotated, ClassVar, Self
 
 from pydantic import (
     BaseModel,
@@ -62,29 +62,11 @@ class WorkerConfig(BaseModel):
     DOWNSTREAM_COUNTER_BATCH_SIZE: Annotated[int, Field(ge=1)]
 
 
-class SQLAlchemyConfig(BaseModel):
-    _SQLALCHEMY_DATABASE_URI_TEMPLATE: str = PrivateAttr(
-        default="postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}"
-    )
-    SQLALCHEMY_POOL_SIZE: Annotated[int, Field(ge=1)]
-    SQLALCHEMY_MAX_OVERFLOW: Annotated[int, Field(ge=0)]
-    SQLALCHEMY_POOL_RECYCLE: Annotated[int, Field(ge=1)]
-    SQLALCHEMY_POOL_TIMEOUT: Annotated[int, Field(ge=1)]
-    SQLALCHEMY_TRACK_MODIFICATIONS: Annotated[bool, Field(default=False)]
-
-    def derive_sqlalchemy_uri(
-        self, username: str, password: str, host: str, port: int, database: str
-    ) -> str:
-        return self._SQLALCHEMY_DATABASE_URI_TEMPLATE.format(
-            username=username,
-            password=password,
-            host=host,
-            port=port,
-            database=database,
-        )
-
-
 class DatabaseConfig(BaseModel):
+    DATABASE_URI_TEMPLATE: ClassVar[str] = (
+        "postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}"
+    )
+
     POSTGRES_HOST: Annotated[str | IPvAnyAddress, BeforeValidator(_verify_hostname)]
     POSTGRES_PORT: Annotated[int, Field(ge=1024, le=65_535)]
     POSTGRES_DATABASE: str
@@ -103,7 +85,26 @@ class DatabaseConfig(BaseModel):
     RECONNECT_TIMEOUT: Annotated[int, Field(ge=1, default=60 * 5)]
     NUM_WORKERS: Annotated[int, Field(ge=1, default=3)]
 
-    SQLALCHEMY: SQLAlchemyConfig
+    @classmethod
+    def construct_sqlalchemy_uri(
+        cls, username: str, password: str, host: str, port: int, database: str
+    ) -> str:
+        return cls.DATABASE_URI_TEMPLATE.format(
+            username=username,
+            password=password,
+            host=host,
+            port=port,
+            database=database,
+        )
+
+    def derive_sqlalchemy_uri(self, username: str, password: str) -> str:
+        return self.construct_sqlalchemy_uri(
+            username=username,
+            password=password,
+            host=str(self.POSTGRES_HOST),
+            port=self.POSTGRES_PORT,
+            database=self.POSTGRES_DATABASE,
+        )
 
     @model_validator(mode="after")
     def check_connection_pool_sizing(self) -> Self:

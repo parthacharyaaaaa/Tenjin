@@ -45,12 +45,9 @@ def get_queue_registry() -> QueueRegistry:
 @lru_cache(maxsize=1)
 def get_connection_pool() -> AsyncConnectionPool:
     config = get_config()
-    uri: str = config.DATABASE.SQLALCHEMY.derive_sqlalchemy_uri(
+    uri: str = config.DATABASE.derive_sqlalchemy_uri(
         os.environ["POSTGRES_USERNAME"],
         os.environ["POSTGRES_PASSWORD"],
-        str(config.DATABASE.POSTGRES_HOST),
-        config.DATABASE.POSTGRES_PORT,
-        config.DATABASE.POSTGRES_DATABASE,
     )
 
     return AsyncConnectionPool(
