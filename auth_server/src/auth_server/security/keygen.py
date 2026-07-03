@@ -113,13 +113,17 @@ def write_ecdsa_pair(
         if isinstance(public_key, ecdsa.VerifyingKey)
         else public_key
     )
-    private_dir.joinpath(
+    private_pem_path: Path = private_dir.joinpath(
         fname_template.format(key_type="private", key_id=key_id)
-    ).write_bytes(private_buffer)
+    )
+    private_pem_path.touch()
+    private_pem_path.write_bytes(private_buffer)
 
-    public_dir.joinpath(
+    public_pem_path: Path = public_dir.joinpath(
         fname_template.format(key_type="public", key_id=key_id)
-    ).write_bytes(public_buffer)
+    )
+    public_pem_path.touch()
+    public_pem_path.write_bytes(public_buffer)
 
 
 async def initialize_active_key(
@@ -128,6 +132,11 @@ async def initialize_active_key(
     keydata_repository: KeydataRepository,
 ) -> KeyData:
     active_kid, sk, vk = generate_ecdsa_pair()
+
+    if not private_directory.exists():
+        private_directory.mkdir(parents=True)
+    if not public_directory.exists():
+        public_directory.mkdir(parents=True)
 
     # Persist to PEM, and DB (JWKS done at end)
     write_ecdsa_pair(

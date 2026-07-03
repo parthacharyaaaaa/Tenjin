@@ -204,7 +204,7 @@ async def master_bootup(
             f"[AUTH {process_id}] Master worker has encountered an irrecovarable error, details: "
         )
         print(traceback.format_exc())
-        synced_store_client.set(SyncedStoreStrings.ABORT, 1, ex=120)
+        await synced_store_client.set(SyncedStoreStrings.ABORT, 1, ex=120)
         raise RuntimeError("Master bootup failed") from e
     finally:
         # Finally, initialize valid_keys list and remove the flag from Redis to allow slave workers to continue bootup
@@ -280,7 +280,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     synced_store_client: Final[Redis] = get_synced_store_client()
 
     # Additional filepaths depending on instance/static directories
-    config.JWKS.resolve_jwks_directory(config.CORE.instance_path)
+    config.JWKS.resolve_jwks_filepath(config.CORE.instance_path)
     config.JWKS.resolve_public_pem_directory(config.CORE.static_path)
     config.JWKS.resolve_private_pem_directory(config.CORE.instance_path)
 
