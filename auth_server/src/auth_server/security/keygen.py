@@ -45,11 +45,7 @@ def initialize_jwks(jwks_filepath: Path, keys: Sequence[KeyData]) -> None:
             }
         )
 
-        jwks_filepath.write_bytes(
-            orjson.dumps({"keys": jwks_contents}, indent=2, ensure_ascii=True).encode(
-                "utf-8"
-            )
-        )
+        jwks_filepath.write_bytes(orjson.dumps({"keys": jwks_contents}))
 
 
 def update_jwks(
@@ -85,7 +81,7 @@ def update_jwks(
             jwks_contents: list[dict[str, str | int]] = jwks_contents[-capacity:]
 
         jwks_json_file.seek(0)
-        jwks_json_file.write(orjson.dumps({"keys": jwks_contents}, indent=2))
+        jwks_json_file.write(orjson.dumps({"keys": jwks_contents}).decode("utf-8"))
         jwks_json_file.truncate()
 
 
@@ -126,7 +122,7 @@ def write_ecdsa_pair(
     ).write_bytes(public_buffer)
 
 
-def initialize_active_key(
+async def initialize_active_key(
     private_directory: Path,
     public_directory: Path,
     keydata_repository: KeydataRepository,
@@ -142,7 +138,7 @@ def initialize_active_key(
         key_id=int(active_kid),
     )
 
-    active_key: KeyData = keydata_repository.insert_keydata(
+    active_key: KeyData = await keydata_repository.insert_keydata(
         active_kid, sk, vk, "ES256", ecdsa.SECP256k1, returning=True
     )
     return active_key
