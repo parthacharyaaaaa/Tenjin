@@ -52,8 +52,6 @@ class AnimeConstants:
     DESCRIPTION_MAX_LENGTH: Final[int] = 256
     DESCRIPTION_MIN_LENGTH: Final[int] = 8
 
-    HIGHEST_MAL_RATING: Final[int] = 10
-
 
 class GenreConstants:
     TITLE_MAX_LENGTH: Final[int] = 16

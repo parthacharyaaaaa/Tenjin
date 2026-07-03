@@ -381,7 +381,7 @@ class Anime(Base):
         BIGINT, nullable=False, server_default=text("0")
     )
     synopsis: Mapped[str] = mapped_column(
-        VARCHAR(database_constants.AnimeConstants.DESCRIPTION_MAX_LENGTH),
+        TEXT,
         nullable=False,
     )
 
