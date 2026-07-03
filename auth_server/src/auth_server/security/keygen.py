@@ -8,7 +8,7 @@ import secrets
 from auth_server.security.key_container import KeyMetadata
 from auth_server.repositories.keydata import KeydataRepository
 from auxillary.utils import to_base64url
-import ujson
+import orjson
 
 from auth_server.models.database import KeyData
 
@@ -46,7 +46,7 @@ def initialize_jwks(jwks_filepath: Path, keys: Sequence[KeyData]) -> None:
         )
 
         jwks_filepath.write_bytes(
-            ujson.dumps({"keys": jwks_contents}, indent=2, ensure_ascii=True).encode(
+            orjson.dumps({"keys": jwks_contents}, indent=2, ensure_ascii=True).encode(
                 "utf-8"
             )
         )
@@ -75,7 +75,7 @@ def update_jwks(
     }
 
     with open(jwks_json_filepath, "r+") as jwks_json_file:
-        jwks_contents: list[dict[str, str | int]] = ujson.loads(jwks_json_file.read())[
+        jwks_contents: list[dict[str, str | int]] = orjson.loads(jwks_json_file.read())[
             "keys"
         ]
         jwks_contents.append(keyMapping)
@@ -85,7 +85,7 @@ def update_jwks(
             jwks_contents: list[dict[str, str | int]] = jwks_contents[-capacity:]
 
         jwks_json_file.seek(0)
-        jwks_json_file.write(ujson.dumps({"keys": jwks_contents}, indent=2))
+        jwks_json_file.write(orjson.dumps({"keys": jwks_contents}, indent=2))
         jwks_json_file.truncate()
 
 
