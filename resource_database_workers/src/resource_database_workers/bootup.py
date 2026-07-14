@@ -21,7 +21,10 @@ from resource_database_workers.datastructures.streams import (
     STREAM_CONSUMER_MAPPING,
     STREAM_EVENT_MAPPING,
 )
-from resource_database_workers.tasks.consumer import dlq_consumer, counters_dlq_consumer
+from resource_database_workers.tasks.dlq_workers import (
+    dlq_consumer,
+    counters_dlq_consumer,
+)
 from resource_database_workers.tasks.counters import (
     batch_update_counters,
     retry_batch_update_counters,
