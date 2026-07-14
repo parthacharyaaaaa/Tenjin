@@ -31,6 +31,14 @@ class CounterUpdate(BaseModel):
             "delta": self.delta,
         }
 
+    def __json_repr__(self) -> dict[str, Any]:
+        return {
+            "counter_group": self.counter_group,
+            "cache_key": self.cache_key,
+            "field_name": self.field_name,
+            "delta": self.delta,
+        }
+
 
 class IntentUpdate(BaseModel):
     model_config = ConfigDict(frozen=True)
