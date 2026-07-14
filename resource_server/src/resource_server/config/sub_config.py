@@ -63,7 +63,7 @@ class SQLAlchemyConfig(BaseModel):
 
 
 class DatabaseConfig(BaseModel):
-    POSTGRES_HOST: Annotated[str | IPvAnyAddress, BeforeValidator(_verify_hostname)]
+    POSTGRES_HOST: str | IPvAnyAddress
     POSTGRES_PORT: Annotated[int, Field(ge=1024, le=65_535)]
     POSTGRES_DATABASE: str
 
@@ -71,7 +71,7 @@ class DatabaseConfig(BaseModel):
 
 
 class BaseRedisConfig(BaseModel):
-    HOST: Annotated[str | IPvAnyAddress, BeforeValidator(_verify_hostname)]
+    HOST: str | IPvAnyAddress
     PORT: Annotated[int, Field(le=65_535, ge=1024)]
     DB: Annotated[int, Field(default=0, ge=0)]
 
