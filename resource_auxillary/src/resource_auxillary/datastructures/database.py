@@ -3,6 +3,14 @@ from types import MappingProxyType
 from typing import Final
 
 
+class SideEffectType(StrEnum):
+    __NAME__ = "SIDE_EFFECTS_TYPES"
+
+    CACHE_INVALIDATION = "CACHE_INVALIDATION"
+    INTENT_INVALIDATION = "INTENT_INVALIDATION"
+    COUNTER_UPDATE = "COUNTER_UPDATE"
+
+
 class EventLiteral(StrEnum):
     """Table and column names for event table"""
 
@@ -21,6 +29,9 @@ class DeadLetterQueueLiteral(StrEnum):
     COUNTERS_FAILURE_TIME_COLUMN_NAME = "failure_time"
     COUNTERS_AFFECTED_RELATION_COLUMN_NAME = "affected_table"
     COUNTERS_AFFECTED_COLUMN_COLUMN_NAME = "affected_column"
+
+    FAILED_SIDE_EFFECTS_TABLE_NAME = "side_effects_dlq"
+    SIDE_EFFECT_TYPE_COLUMN_NAME = "side_effect_type"
 
 
 class EventMetadataLiteral(StrEnum):
