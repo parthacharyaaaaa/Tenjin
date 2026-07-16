@@ -198,7 +198,6 @@ async def queue_deletion_consumer(
     table: StrongEntity,
     identifier_column: str,
     queue: asyncio.Queue[tuple[StreamedEvent]],
-    dead_letter_queue: asyncio.Queue[StreamedEvent],
     batch_function: BatchDeletionFunction,
     stream_name: StreamName,
     group_name: str,
@@ -208,69 +207,54 @@ async def queue_deletion_consumer(
 
     while True:
         await populate_events_batch_from_queue(config, queue, reference_time, batch)
-        failed: bool = False
-        deletion_data: Generator[tuple[int, datetime, int]] = (
-            (
-                event.payload[identifier_column],
-                event.payload["deleted_at"],
-                event.event_id,
-            )
-            for event in batch
-        )
         async with pool.connection() as conn:
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
                 conn, (e.event_id for e in batch)
             )
-            async with redis.pipeline() as pipeline:
-                for event in batch.copy():
-                    if event.event_id not in fresh_event_ids:
-                        batch.remove(event)
-                        pipeline.xack(stream_name, group_name, event.event_id)
-                await pipeline.execute()
+            await trim_duplicate_events(
+                redis, batch, fresh_event_ids, stream_name, group_name
+            )
 
-            for attempt in range(config.WORKER.MAX_RETRIES):
-                try:
-                    await batch_function(
-                        conn, table.value, identifier_column, deletion_data
-                    )
-                    await conn.commit()
-
-                    failed = False
-                    break
-                except (OperationalError, InternalError):
-                    failed = True
-                    await conn.rollback()
-                except Exception:
-                    # Ideally a subclass of psycopg.errors.Error,
-                    # but Python errors are also non-transient
-                    for event in batch:
-                        await dead_letter_queue.put(event)
-                    await redis.xack(
-                        stream_name, group_name, *(e.event_id for e in batch)
-                    )
-                    batch.clear()
-                    await conn.rollback()
-                    break
-
-            if failed:
-                for event in batch:
-                    await dead_letter_queue.put(event)
-                    await redis.xack(
-                        stream_name, group_name, *(e.event_id for e in batch)
-                    )
-            elif batch:
-                await redis.xack(stream_name, group_name, *(e.event_id for e in batch))
-
-                await atomic_emit_side_effects(redis, tuple(batch))
-
-                await dispatch_downstream_events(
-                    redis,
-                    table,
-                    (
-                        (event.payload[identifier_column], event.payload["deleted_at"])
-                        for event in batch
-                    ),
+            deletion_data: Generator[tuple[int, datetime, int]] = (
+                (
+                    event.payload[identifier_column],
+                    event.payload["deleted_at"],
+                    event.event_id,
                 )
+                for event in batch
+            )
+
+            deletion_callable = lambda: batch_function(
+                conn, table.value, identifier_column, deletion_data
+            )
+
+            exception: Exception | None = await retried_event_database_processing(
+                conn, config.WORKER.MAX_RETRIES, deletion_callable
+            )
+            if exception:  # Entire batch failed
+                await declare_dead_with_retries(
+                    redis,
+                    batch,
+                    stream_name,
+                    group_name,
+                    StreamName.DEAD_LETTER_QUEUE,
+                    config.WORKER.MAX_RETRIES,
+                )
+                continue
+
+            # ACK entire batch
+            await ack_with_retries(
+                redis, batch, stream_name, group_name, config.WORKER.MAX_RETRIES
+            )
+            await atomic_emit_side_effects(redis, batch)
+            await dispatch_downstream_events(
+                redis,
+                table,
+                (
+                    (event.payload[identifier_column], event.payload["deleted_at"])
+                    for event in batch
+                ),
+            )
 
             batch.clear()
             reference_time = time.monotonic()
