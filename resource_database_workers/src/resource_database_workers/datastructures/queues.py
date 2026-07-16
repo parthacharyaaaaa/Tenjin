@@ -57,6 +57,7 @@ class QueueRegistry(metaclass=SingletonMetaclass):
     # DLQ
     dead_letter: Queue[StreamedEvent] = field(default_factory=Queue)
     counter_dead_letter: Queue[DeadCounterBatch] = field(default_factory=Queue)
+    side_effects_dead_letter: Queue[StreamedEvent] = field(default_factory=Queue)
 
     @cached_property
     def event_queue_mapping(
@@ -109,5 +110,15 @@ class QueueRegistry(metaclass=SingletonMetaclass):
                 EventName.DOWNSTREAM_USER_POST_DECREMENT: self.downstream_user_posts_counters,
                 EventName.DOWNSTREAM_POST_COMMENT_DECREMENT: self.downstream_posts_comments_counters,
                 EventName.DOWNSTREAM_USER_COMMENT_DECREMENT: self.downstream_users_comments_counters,
+            }
+        )
+
+    @cached_property
+    def dead_letter_queue_mapping(self) -> MappingProxyType[str, Queue]:
+        return MappingProxyType(
+            {
+                EventName.DLQ_STANDARD: self.dead_letter,
+                EventName.DLQ_COUNTER: self.counter_dead_letter,
+                EventName.DLQ_SIDE_EFFECTS: self.side_effects_dead_letter,
             }
         )

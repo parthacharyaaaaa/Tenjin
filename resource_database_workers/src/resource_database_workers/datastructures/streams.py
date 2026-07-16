@@ -16,6 +16,7 @@ STREAM_CONSUMER_MAPPING: Final[MappingProxyType[StreamName, Callable]] = (
             StreamName.POSTS: upstream_dispatcher,
             StreamName.COMMENTS: upstream_dispatcher,
             StreamName.USERS: upstream_dispatcher,
+            StreamName.DEAD_LETTER_QUEUE: upstream_dispatcher,
             StreamName.DOWNSTREAM_DELETIONS: downstream_dispatcher,
             StreamName.DOWNSTREAM_COUNTER_DECREMENTS: downstream_dispatcher,
         }
@@ -60,6 +61,11 @@ STREAM_EVENT_MAPPING: Final[MappingProxyType[StreamName, tuple[EventName, ...]]]
                 EventName.DOWNSTREAM_FORUM_POST_DECREMENT,
                 EventName.DOWNSTREAM_USER_COMMENT_DECREMENT,
                 EventName.DOWNSTREAM_POST_COMMENT_DECREMENT,
+            ),
+            StreamName.DEAD_LETTER_QUEUE: (
+                EventName.DLQ_STANDARD,
+                EventName.DLQ_COUNTER,
+                EventName.DLQ_SIDE_EFFECTS,
             ),
         }
     )
