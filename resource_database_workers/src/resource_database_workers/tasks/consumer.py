@@ -14,6 +14,9 @@ from resource_database_workers.config.config import AppConfig
 from resource_auxillary.strings import StreamName
 from resource_auxillary.events import StreamedEvent
 
+from resource_database_workers.src.resource_database_workers.config.constants import (
+    POTENTIAL_TRANSIENT_ERRORS,
+)
 from resource_database_workers.src.resource_database_workers.utils.worker_db import (
     retried_event_database_processing,
 )
@@ -54,7 +57,6 @@ async def user_orphan_consumer(
     pool: AsyncConnectionPool,
     redis: Redis,
     queue: asyncio.Queue[tuple[StreamedEvent]],
-    dead_letter_queue: asyncio.Queue[StreamedEvent],
     stream_name: StreamName,
     group_name: str,
 ) -> None:
@@ -64,53 +66,54 @@ async def user_orphan_consumer(
     while True:
         await populate_events_batch_from_queue(config, queue, reference_time, batch)
         failed: bool = False
+
+        # Database connection only needed for deduplication
         async with pool.connection() as conn:
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
                 conn, (e.event_id for e in batch)
             )
-            async with redis.pipeline() as pipeline:
-                for event in batch.copy():
-                    if event.event_id not in fresh_event_ids:
-                        batch.remove(event)
-                        pipeline.xack(stream_name, group_name, event.event_id)
-                await pipeline.execute()
 
-            for attempt in range(config.WORKER.MAX_RETRIES):
-                try:
-                    await dispatch_downstream_events(
-                        redis,
-                        StrongEntity.USER,
-                        (
-                            (event.payload["user_id"], event.payload["time_deleted"])
-                            for event in batch
-                        ),
-                    )
-                    await conn.commit()
-                    failed = False
-                    break
-                except (OperationalError, InternalError):
-                    failed = True
-                    await conn.rollback()
-                except Exception:
-                    # Ideally a subclass of psycopg.errors.Error,
-                    # but Python errors are also non-transient
-                    await conn.rollback()
-                    failed = True
-                    break
+        await trim_duplicate_events(
+            redis, batch, fresh_event_ids, stream_name, group_name
+        )
 
-            await redis.xack(
+        exception: Exception | None = None
+        for _attempt in range(config.WORKER.MAX_RETRIES):
+            try:
+                await dispatch_downstream_events(
+                    redis,
+                    StrongEntity.USER,
+                    (
+                        (event.payload["user_id"], event.payload["time_deleted"])
+                        for event in batch
+                    ),
+                )
+                exception = None
+                break
+            except POTENTIAL_TRANSIENT_ERRORS as e:
+                exception = e
+            except Exception as e:
+                exception = e
+                break
+
+        if exception:  # Entire batch failed
+            await declare_dead_with_retries(
+                redis,
+                batch,
                 stream_name,
                 group_name,
-                *(e.event_id for e in batch),
+                StreamName.DEAD_LETTER_QUEUE,
+                config.WORKER.MAX_RETRIES,
             )
+            continue
 
-            if failed:
-                for event in batch:
-                    await dead_letter_queue.put(event)
-                await redis.xack(stream_name, group_name, *(e.event_id for e in batch))
+        # ACK entire batch
+        await ack_with_retries(
+            redis, batch, stream_name, group_name, config.WORKER.MAX_RETRIES
+        )
 
-            batch.clear()
-            reference_time = time.monotonic()
+        batch.clear()
+        reference_time = time.monotonic()
 
 
 async def queue_insertion_consumer(
