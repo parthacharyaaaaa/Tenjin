@@ -3,7 +3,6 @@ from datetime import datetime
 import time
 from typing import Generator
 
-from psycopg.errors import OperationalError, InternalError
 from psycopg_pool import AsyncConnectionPool
 
 from redis.asyncio import Redis
@@ -65,7 +64,6 @@ async def user_orphan_consumer(
 
     while True:
         await populate_events_batch_from_queue(config, queue, reference_time, batch)
-        failed: bool = False
 
         # Database connection only needed for deduplication
         async with pool.connection() as conn:
@@ -350,7 +348,6 @@ async def queue_downstream_decrement_consumer(
             )
             continue
 
-        failed: bool = False
         # Downstream counters may be too big to materialize all at once
         limit, offset = config.WORKER.DOWNSTREAM_COUNTER_BATCH_SIZE, 0
         exception: Exception | None = None
