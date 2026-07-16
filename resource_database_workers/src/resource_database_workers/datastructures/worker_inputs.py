@@ -32,7 +32,7 @@ from resource_database_workers.tasks.deletions import (
     downstream_soft_delete_strong_entity,
 )
 from resource_database_workers.tasks.insertions import (
-    batch_association_insert_with_isolation,
+    batch_insert_with_isolation,
 )
 from resource_database_workers.utils.typing import (
     BatchDownstreamDeletionFunction,
@@ -66,9 +66,7 @@ class InsertionInput(BaseInput):
     action: t_action_literal | None
     config: AppConfig = field(default_factory=get_config)
     redis: Redis = field(default_factory=get_app_redis)
-    batch_function: BatchInsertionFunction = field(
-        default=batch_association_insert_with_isolation
-    )
+    batch_function: BatchInsertionFunction = field(default=batch_insert_with_isolation)
 
 
 @dataclass(slots=True, kw_only=True)

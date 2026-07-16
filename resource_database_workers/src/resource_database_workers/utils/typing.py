@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Iterable, Literal, Protocol, Sequence
+from typing import Iterable, Literal, MutableSequence, Protocol, Sequence
 
 from psycopg import AsyncConnection
 
@@ -15,9 +15,10 @@ class BatchInsertionFunction(Protocol):
         self,
         conn: AsyncConnection,
         events: Sequence[StreamedEvent],
+        successfully_inserted: MutableSequence[int],
         action: t_action_literal | None,
         /,
-    ) -> list[int]: ...
+    ) -> None: ...
 
 
 class BatchDeletionFunction(Protocol):
