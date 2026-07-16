@@ -265,7 +265,6 @@ async def queue_downstream_deletion_consumer(
     pool: AsyncConnectionPool,
     redis: Redis,
     queue: asyncio.Queue[StreamedEvent],
-    dead_letter_queue: asyncio.Queue[StreamedEvent],
     batch_function: BatchDownstreamDeletionFunction,
     stream_name: StreamName,
     group_name: str,
@@ -277,50 +276,53 @@ async def queue_downstream_deletion_consumer(
                 reconstruct_downstream_data_from_stream(event.payload)
             )
         except (KeyError, ValueError):
-            await dead_letter_queue.put(event)
+            await declare_dead_with_retries(
+                redis,
+                (event,),
+                stream_name,
+                group_name,
+                StreamName.DEAD_LETTER_QUEUE,
+                config.WORKER.MAX_RETRIES,
+            )
             continue
 
-        failed: bool = False
         async with pool.connection() as conn:
+            # Deduplication
             if not await dedup_insert_event(conn, event.event_id):
                 await redis.xack(stream_name, group_name, event.event_id)
                 continue
 
-            for attempt in range(config.WORKER.MAX_RETRIES):
-                try:
-                    await batch_function(
-                        conn,
-                        event_payload["foreign_key"],
-                        event_payload["orphan_table"],
-                        event_payload["foreign_key_column"],
-                        event_payload["deleted_at"],
-                    )
-                    await conn.commit()
-                    failed = False
-                    break
-                except (OperationalError, InternalError):
-                    failed = True
-                    await conn.rollback()
-                except Exception:
-                    # Ideally a subclass of psycopg.errors.Error,
-                    # but Python errors are also non-transient
-                    await dead_letter_queue.put(event)
-                    await redis.xack(stream_name, group_name, event.event_id)
-                    await conn.rollback()
-                    break
+            downstream_deletion_callable = lambda: batch_function(
+                conn,
+                event_payload["foreign_key"],
+                event_payload["orphan_table"],
+                event_payload["foreign_key_column"],
+                event_payload["deleted_at"],
+            )
 
-            if failed:  # Non-transient faults exceed max retries
-                await dead_letter_queue.put(event)
-                await redis.xack(stream_name, group_name, event.event_id)
-            else:  # downstream deletion succesful
-                await redis.xack(
+            exception: Exception | None = await retried_event_database_processing(
+                conn, config.WORKER.MAX_RETRIES, downstream_deletion_callable
+            )
+            # Single event tuple used in place of event
+            # for methods that process batches of events
+            if exception:
+                await declare_dead_with_retries(
+                    redis,
+                    (event,),
                     stream_name,
                     group_name,
-                    event.event_id,
+                    StreamName.DEAD_LETTER_QUEUE,
+                    config.WORKER.MAX_RETRIES,
                 )
-                await dispatch_downstream_counter_decrements(
-                    redis, event_payload["orphan_table"], event.event_id
-                )
+                continue
+
+            await ack_with_retries(
+                redis, (event,), stream_name, group_name, config.WORKER.MAX_RETRIES
+            )
+
+            await dispatch_downstream_counter_decrements(
+                redis, event_payload["orphan_table"], event.event_id
+            )
 
 
 async def queue_downstream_decrement_consumer(
