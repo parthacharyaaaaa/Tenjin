@@ -58,6 +58,7 @@ async def user_orphan_consumer(
     queue: asyncio.Queue[tuple[StreamedEvent]],
     stream_name: StreamName,
     group_name: str,
+    dead_letter_stream_name: StreamName,
 ) -> None:
     batch: list[StreamedEvent] = []
     reference_time: float = time.monotonic()
@@ -100,7 +101,7 @@ async def user_orphan_consumer(
                 batch,
                 stream_name,
                 group_name,
-                StreamName.DEAD_LETTER_QUEUE,
+                dead_letter_stream_name,
                 config.WORKER.MAX_RETRIES,
             )
         else:
@@ -121,6 +122,7 @@ async def queue_insertion_consumer(
     batch_function: BatchInsertionFunction,
     stream_name: StreamName,
     group_name: str,
+    dead_letter_stream_name: StreamName,
     action: t_action_literal | None = None,
 ) -> None:
     batch: list[StreamedEvent] = []
@@ -153,7 +155,7 @@ async def queue_insertion_consumer(
                     batch,
                     stream_name,
                     group_name,
-                    StreamName.DEAD_LETTER_QUEUE,
+                    dead_letter_stream_name,
                     config.WORKER.MAX_RETRIES,
                 )
             else:
@@ -174,7 +176,7 @@ async def queue_insertion_consumer(
                     tuple(event for event in batch if event not in successful_events),
                     stream_name,
                     group_name,
-                    StreamName.DEAD_LETTER_QUEUE,
+                    dead_letter_stream_name,
                     config.WORKER.MAX_RETRIES,
                 )
 
@@ -200,6 +202,7 @@ async def queue_deletion_consumer(
     batch_function: BatchDeletionFunction,
     stream_name: StreamName,
     group_name: str,
+    dead_letter_stream_name: StreamName,
 ) -> None:
     batch: list[StreamedEvent] = []
     reference_time: float = time.monotonic()
@@ -236,7 +239,7 @@ async def queue_deletion_consumer(
                     batch,
                     stream_name,
                     group_name,
-                    StreamName.DEAD_LETTER_QUEUE,
+                    dead_letter_stream_name,
                     config.WORKER.MAX_RETRIES,
                 )
             else:
@@ -266,6 +269,7 @@ async def queue_downstream_deletion_consumer(
     batch_function: BatchDownstreamDeletionFunction,
     stream_name: StreamName,
     group_name: str,
+    dead_letter_stream_name: StreamName,
 ) -> None:
     while True:
         event: StreamedEvent = await queue.get()
@@ -279,7 +283,7 @@ async def queue_downstream_deletion_consumer(
                 (event,),
                 stream_name,
                 group_name,
-                StreamName.DEAD_LETTER_QUEUE,
+                dead_letter_stream_name,
                 config.WORKER.MAX_RETRIES,
             )
             continue
@@ -309,7 +313,7 @@ async def queue_downstream_deletion_consumer(
                     (event,),
                     stream_name,
                     group_name,
-                    StreamName.DEAD_LETTER_QUEUE,
+                    dead_letter_stream_name,
                     config.WORKER.MAX_RETRIES,
                 )
                 continue
@@ -330,6 +334,7 @@ async def queue_downstream_decrement_consumer(
     queue: asyncio.Queue[StreamedEvent],
     stream_name: StreamName,
     group_name: str,
+    dead_letter_stream_name: StreamName,
 ) -> None:
     while True:
         event: StreamedEvent = await queue.get()
@@ -343,7 +348,7 @@ async def queue_downstream_decrement_consumer(
                 (event,),
                 stream_name,
                 group_name,
-                StreamName.DEAD_LETTER_QUEUE,
+                dead_letter_stream_name,
                 config.WORKER.MAX_RETRIES,
             )
             continue
@@ -392,7 +397,7 @@ async def queue_downstream_decrement_consumer(
                     (event,),
                     stream_name,
                     group_name,
-                    StreamName.DEAD_LETTER_QUEUE,
+                    dead_letter_stream_name,
                     config.WORKER.MAX_RETRIES,
                 )
             else:
