@@ -105,12 +105,11 @@ async def user_orphan_consumer(
                 StreamName.DEAD_LETTER_QUEUE,
                 config.WORKER.MAX_RETRIES,
             )
-            continue
-
-        # ACK entire batch
-        await ack_with_retries(
-            redis, batch, stream_name, group_name, config.WORKER.MAX_RETRIES
-        )
+        else:
+            # ACK entire batch
+            await ack_with_retries(
+                redis, batch, stream_name, group_name, config.WORKER.MAX_RETRIES
+            )
 
         batch.clear()
         reference_time = time.monotonic()
@@ -159,36 +158,35 @@ async def queue_insertion_consumer(
                     StreamName.DEAD_LETTER_QUEUE,
                     config.WORKER.MAX_RETRIES,
                 )
-                continue
+            else:
+                successful_events: tuple[StreamedEvent, ...] = tuple(
+                    event for event in batch if event.event_id in inserted_ids
+                )
 
-            successful_events: tuple[StreamedEvent, ...] = tuple(
-                event for event in batch if event.event_id in inserted_ids
-            )
+                # ACK processed events and push failed events to DLQ
+                await ack_with_retries(
+                    redis,
+                    successful_events,
+                    stream_name,
+                    group_name,
+                    config.WORKER.MAX_RETRIES,
+                )
+                await declare_dead_with_retries(
+                    redis,
+                    tuple(event for event in batch if event not in successful_events),
+                    stream_name,
+                    group_name,
+                    StreamName.DEAD_LETTER_QUEUE,
+                    config.WORKER.MAX_RETRIES,
+                )
 
-            # ACK processed events and push failed events to DLQ
-            await ack_with_retries(
-                redis,
-                successful_events,
-                stream_name,
-                group_name,
-                config.WORKER.MAX_RETRIES,
-            )
-            await declare_dead_with_retries(
-                redis,
-                tuple(event for event in batch if event not in successful_events),
-                stream_name,
-                group_name,
-                StreamName.DEAD_LETTER_QUEUE,
-                config.WORKER.MAX_RETRIES,
-            )
-
-            await emit_side_effects_with_retries(
-                redis,
-                successful_events,
-                config.WORKER.MAX_RETRIES,
-                stream_name,
-                group_name,
-            )
+                await emit_side_effects_with_retries(
+                    redis,
+                    successful_events,
+                    config.WORKER.MAX_RETRIES,
+                    stream_name,
+                    group_name,
+                )
 
             reference_time = time.monotonic()
             batch.clear()
@@ -243,21 +241,20 @@ async def queue_deletion_consumer(
                     StreamName.DEAD_LETTER_QUEUE,
                     config.WORKER.MAX_RETRIES,
                 )
-                continue
-
-            # ACK entire batch
-            await ack_with_retries(
-                redis, batch, stream_name, group_name, config.WORKER.MAX_RETRIES
-            )
-            await atomic_emit_side_effects(redis, batch)
-            await dispatch_downstream_events(
-                redis,
-                table,
-                (
-                    (event.payload[identifier_column], event.payload["deleted_at"])
-                    for event in batch
-                ),
-            )
+            else:
+                # ACK entire batch
+                await ack_with_retries(
+                    redis, batch, stream_name, group_name, config.WORKER.MAX_RETRIES
+                )
+                await atomic_emit_side_effects(redis, batch)
+                await dispatch_downstream_events(
+                    redis,
+                    table,
+                    (
+                        (event.payload[identifier_column], event.payload["deleted_at"])
+                        for event in batch
+                    ),
+                )
 
             batch.clear()
             reference_time = time.monotonic()
