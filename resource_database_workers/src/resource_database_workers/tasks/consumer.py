@@ -330,7 +330,6 @@ async def queue_downstream_decrement_consumer(
     pool: AsyncConnectionPool,
     redis: Redis,
     queue: asyncio.Queue[StreamedEvent],
-    dead_letter_queue: asyncio.Queue[StreamedEvent],
     stream_name: StreamName,
     group_name: str,
 ) -> None:
@@ -341,21 +340,30 @@ async def queue_downstream_decrement_consumer(
                 reconstruct_downstream_counter_data_from_stream(event.payload)
             )
         except (KeyError, ValueError):
-            await dead_letter_queue.put(event)
+            await declare_dead_with_retries(
+                redis,
+                (event,),
+                stream_name,
+                group_name,
+                StreamName.DEAD_LETTER_QUEUE,
+                config.WORKER.MAX_RETRIES,
+            )
             continue
 
         failed: bool = False
         # Downstream counters may be too big to materialize all at once
         limit, offset = config.WORKER.DOWNSTREAM_COUNTER_BATCH_SIZE, 0
+        exception: Exception | None = None
         async with pool.connection() as conn:
             if not await dedup_insert_event(conn, event.event_id):
                 await redis.xack(stream_name, group_name, event.event_id)
                 continue
 
-            for attempt in range(config.WORKER.MAX_RETRIES):
+            for _attempt in range(config.WORKER.MAX_RETRIES):
                 try:
                     # temp truthy tuple to enter loop
                     results: list[tuple[str, int]] = [("", 0)]
+                    # hehe it kinda looks like a wink
                     while results:
                         results: list[tuple[str, int]] = await select_decrement_deltas(
                             conn,
@@ -372,22 +380,25 @@ async def queue_downstream_decrement_consumer(
                             event_payload["hashmap_name"],
                             event_payload["affected_table_name"],
                         )
-                except (OperationalError, InternalError):
-                    failed = True
+                except POTENTIAL_TRANSIENT_ERRORS as e:
+                    exception = e
                     await conn.rollback()
                     continue
-                except Exception:
-                    await dead_letter_queue.put(event)
-                    await redis.xack(stream_name, group_name, event.event_id)
+                except Exception as e:
+                    exception = e
                     await conn.rollback()
                     break
 
-            if failed:  # Non-transient faults exceed max retries
-                await dead_letter_queue.put(event)
-                await redis.xack(stream_name, group_name, event.event_id)
-            else:
-                await redis.xack(
+            if exception:
+                await declare_dead_with_retries(
+                    redis,
+                    (event,),
                     stream_name,
                     group_name,
-                    event.event_id,
+                    StreamName.DEAD_LETTER_QUEUE,
+                    config.WORKER.MAX_RETRIES,
+                )
+            else:
+                await ack_with_retries(
+                    redis, (event,), stream_name, group_name, config.WORKER.MAX_RETRIES
                 )
