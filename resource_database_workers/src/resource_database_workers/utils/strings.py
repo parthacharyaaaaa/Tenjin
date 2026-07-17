@@ -22,7 +22,7 @@ def _generate_batch_identifier(
     return "".join(
         (
             str(int(timestamp or time.time())),
-            str(random.randbytes(random_suffix_length)),
+            random.randbytes(random_suffix_length).hex(),
         )
     )
 
