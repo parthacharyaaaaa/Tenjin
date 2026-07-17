@@ -1,11 +1,15 @@
 import time
+from typing import Final, LiteralString
 
 from resource_auxillary.strings import NAME_SEPERATOR
 import random
 
+INTERNAL_NAME_SEPERATOR: Final[LiteralString] = "-"
+assert INTERNAL_NAME_SEPERATOR != NAME_SEPERATOR
+
 
 def derive_lock_key(name: str) -> str:
-    return NAME_SEPERATOR.join(("lock", name))
+    return INTERNAL_NAME_SEPERATOR.join(("lock", name))
 
 
 # Assuming NAME_SEPARATOR=':',
@@ -33,7 +37,7 @@ def generate_retry_batch_name(
     """
     Create a counter retry batch's name
     """
-    return NAME_SEPERATOR.join(
+    return INTERNAL_NAME_SEPERATOR.join(
         (counter_name, identifier or _generate_batch_identifier(), str(version))
     )
 
@@ -42,7 +46,7 @@ def extract_batch_metadata(batch: str) -> tuple[str, str | None, int]:
     """
     Extract group name, identifier, and version from a counter batch's name
     """
-    if len(split := NAME_SEPERATOR.split(batch)) != 3:
+    if len(split := INTERNAL_NAME_SEPERATOR.split(batch)) != 3:
         return split[0], None, 0
     return split[0], split[1], int(split[2])
 
@@ -51,5 +55,7 @@ def bump_retry_counter(retry_batch: str) -> str:
     """
     Increment the 'retry' part of a counter batch's name
     """
-    counter_name, identifier, version = retry_batch.split(NAME_SEPERATOR)
-    return NAME_SEPERATOR.join((counter_name, identifier, str(int(version) + 1)))
+    counter_name, identifier, version = retry_batch.split(INTERNAL_NAME_SEPERATOR)
+    return INTERNAL_NAME_SEPERATOR.join(
+        (counter_name, identifier, str(int(version) + 1))
+    )
