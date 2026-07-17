@@ -60,7 +60,7 @@ async def flush_counter_updates(
     counter_group: str,
     counters: dict[int, int],
 ) -> None:
-    table, column = counter_group.split(NAME_SEPERATOR)
+    table, column = counter_group.split(NAME_SEPERATOR)[:2]
     updation_sql: Composed = prepare_updation_sql(
         table, column, GenericLiterals.ID, counters
     )
