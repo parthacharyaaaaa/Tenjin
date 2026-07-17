@@ -1,28 +1,55 @@
 import time
 
 from resource_auxillary.strings import NAME_SEPERATOR
+import random
 
 
 def derive_lock_key(name: str) -> str:
     return NAME_SEPERATOR.join(("lock", name))
 
 
-def derive_retry_batch_name(
-    counter_name: str, version: int = 0, timestamp: float | None = None
+# Assuming NAME_SEPARATOR=':',
+# counter batch names follow the convention
+# counter_name:identifier:version,
+# where version and identifier are optional.
+# Example: post_votes, and it's next retry counterpart
+# being post_votes:T:1, where T is unique identifier
+
+
+def _generate_batch_identifier(
+    *, timestamp: float | None = None, random_suffix_length: int = 8
 ) -> str:
-    return NAME_SEPERATOR.join(
-        (counter_name, str(timestamp or time.time()), str(version))
+    return "".join(
+        (
+            str(int(timestamp or time.time())),
+            str(random.randbytes(random_suffix_length)),
+        )
     )
 
 
-def derive_counter_group_from_batch(retry_batch: str) -> str:
-    return NAME_SEPERATOR.join(NAME_SEPERATOR.split(retry_batch)[:2])
+def generate_retry_batch_name(
+    counter_name: str, version: int = 0, identifier: str | None = None
+) -> str:
+    """
+    Create a counter retry batch's name
+    """
+    return NAME_SEPERATOR.join(
+        (counter_name, identifier or _generate_batch_identifier(), str(version))
+    )
 
 
-def derive_version_from_batch(retry_batch: str) -> int:
-    return int(NAME_SEPERATOR.split(retry_batch)[-2])
+def extract_batch_metadata(batch: str) -> tuple[str, str | None, int]:
+    """
+    Extract group name, identifier, and version from a counter batch's name
+    """
+    if len(split := NAME_SEPERATOR.split(batch)) != 3:
+        return split[0], None, 0
+    return split[0], split[1], int(split[2])
 
 
 def bump_retry_counter(retry_batch: str) -> str:
-    counter_name, timestamp, version = retry_batch.split(NAME_SEPERATOR)
-    return NAME_SEPERATOR.join((counter_name, timestamp, str(int(version) + 1)))
+    """
+    Increment the 'retry' part of a counter batch's name
+    """
+    counter_name, identifier, version = retry_batch.split(NAME_SEPERATOR)
+    return NAME_SEPERATOR.join((counter_name, identifier, str(int(version) + 1)))

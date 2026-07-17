@@ -2,14 +2,17 @@ import asyncio
 import time
 from typing import Sequence
 
-from auxillary.utils import cache_repr
 from redis.asyncio import Redis
 from redis.exceptions import RedisError, ExceptionType
-from resource_auxillary.events import StreamedEvent
-from resource_auxillary.strings import EventName, StreamName
+
+from auxillary.utils import cache_repr, json_repr
+
+from resource_auxillary.events import Event, StreamedEvent
+from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
 
 from resource_database_workers.config.config import AppConfig
-from resource_database_workers.src.resource_database_workers.utils.coordination import (
+from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
+from resource_database_workers.utils.coordination import (
     atomic_emit_side_effects,
 )
 
@@ -159,3 +162,48 @@ async def trim_duplicate_events(
                 batch.remove(event)
                 pipeline.xack(stream_name, group_name, event.event_id)
         await pipeline.execute()
+
+
+async def declare_counters_event_dead(
+    redis: Redis,
+    dlq_stream_name: StreamName,
+    counter_group: str,
+    batch: dict[int, int],
+    attempts: int,
+) -> None:
+    table, column = counter_group.split(NAME_SEPERATOR)
+    dlq_counters_batch: DeadCounterBatch = DeadCounterBatch.construct_from_failed_batch(
+        table, column, batch
+    )
+    failure_event: Event = Event(
+        name=EventName.DLQ_COUNTER,
+        payload=json_repr(dlq_counters_batch),
+        side_effects=EventSideEffects(),  # type: ignore
+    )
+
+    exception: Exception | None = None
+    for _attempt in range(attempts):
+        try:
+            await redis.xadd(dlq_stream_name, cache_repr(failure_event))
+            exception = None
+            break
+        except RedisError as e:
+            exception = e
+            if e.error_type == ExceptionType.NETWORK:
+                continue
+            break
+        except Exception as e:
+            exception = e
+            break
+
+    if exception:
+        raise exception
+
+
+async def retrieve_counter_group_names(redis: Redis, registry_name: str) -> set[str]:
+    return {
+        str(i)
+        for i in (
+            await redis.smembers(registry_name)  # type: ignore[reportGeneralTypeIssues]
+        )
+    }
