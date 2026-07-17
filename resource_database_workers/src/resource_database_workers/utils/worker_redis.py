@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError, ExceptionType
@@ -12,6 +12,9 @@ from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
 
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
+from resource_database_workers.src.resource_database_workers.utils.lua_commands import (
+    CONDITIONAL_COUNTER_DECREMENT_TEMPLATE,
+)
 from resource_database_workers.utils.coordination import (
     atomic_emit_side_effects,
 )
@@ -207,3 +210,14 @@ async def retrieve_counter_group_names(redis: Redis, registry_name: str) -> set[
             await redis.smembers(registry_name)  # type: ignore[reportGeneralTypeIssues]
         )
     }
+
+
+async def reflect_processed_counters(
+    server_redis: Redis, counter_group: str, counters: Mapping[str, int]
+) -> None:
+    async with server_redis.pipeline(transaction=True) as pipeline:
+        for k, v in counters.items():
+            pipeline.eval(
+                CONDITIONAL_COUNTER_DECREMENT_TEMPLATE, 2, counter_group, k, v
+            )
+        await pipeline.execute()

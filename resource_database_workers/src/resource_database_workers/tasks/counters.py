@@ -1,11 +1,11 @@
 import asyncio
 import itertools
-from typing import Literal
+from typing import Literal, MutableMapping
 
 from redis.asyncio import Redis
 
 from psycopg_pool import AsyncConnectionPool
-from resource_auxillary.strings import StreamName
+from resource_auxillary.strings import NAME_SEPERATOR, StreamName
 
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.exceptions import (
@@ -13,6 +13,7 @@ from resource_database_workers.datastructures.exceptions import (
 )
 from resource_database_workers.utils.worker_redis import (
     declare_counters_event_dead,
+    reflect_processed_counters,
     retrieve_counter_group_names,
 )
 from resource_database_workers.utils.coordination import locked_operation
@@ -24,8 +25,6 @@ from resource_database_workers.utils.tasks import (
     flush_counter_updates,
     dispatch_to_retrier,
 )
-
-# TODO: Add server redis namespace update after succesful processing of counter deltas
 
 
 async def batch_update_retry_counters(
@@ -40,8 +39,14 @@ async def batch_update_retry_counters(
         if not batch_name:
             await asyncio.sleep(config.WORKER.COUNTER_FLUSH_INTERVAL)
             continue
-        await batch_update_counter_group(
+        counter_data: dict[str, int] | None = await batch_update_counter_group(
             config, pool, batch_name, dlq_stream_name, worker_redis
+        )
+        if not counter_data:
+            continue
+
+        await reflect_processed_counters(
+            server_redis, extract_batch_metadata(batch_name)[0], counter_data
         )
 
 
@@ -64,11 +69,28 @@ async def batch_update_counters(
                 worker_redis, config.WORKER.COUNTER_REGISTRY_NAME
             )
             refresh_counter = 100
-        await batch_update_counter_group(
+
+        counter_data: dict[str, int] | None = await batch_update_counter_group(
             config, pool, counter_group, dlq_stream_name, worker_redis
         )
+        if not counter_data:
+            continue
 
         refresh_counter -= 1
+
+        await reflect_processed_counters(server_redis, counter_group, counter_data)
+
+
+def _cache_normalize_raw_counter_data(
+    raw_counters: MutableMapping[str, str],
+) -> dict[str, int]:
+    return {k: int(v) for k, v in raw_counters}
+
+
+def _database_normalize_cache_normalized_counter_data(
+    raw_counters: MutableMapping[str, int],
+) -> dict[int, int]:
+    return {int(k.split(NAME_SEPERATOR)[1]): v for k, v in raw_counters.items()}
 
 
 async def batch_update_counter_group(
@@ -77,15 +99,14 @@ async def batch_update_counter_group(
     batch_name: str,
     dlq_stream_name: StreamName,
     worker_redis: Redis,
-) -> None:
+) -> dict[str, int] | None:
     # Acquire lock for processing this counter group
     lock_name: str = derive_lock_key(batch_name)
     lock_set: None | Literal[True] = await worker_redis.set(
         lock_name, 1, ex=config.WORKER.COUNTER_FLUSH_LOCK_TTL, nx=True
     )
     if not lock_set:
-        await asyncio.sleep(config.WORKER.IQ_CONSUMER_GET_TIMEOUT)
-        return
+        return None
 
     async with locked_operation(worker_redis, lock_name):
         async with worker_redis.pipeline(transaction=True) as pipeline:
@@ -94,15 +115,19 @@ async def batch_update_counter_group(
             res = await pipeline.execute()
 
         if not res[0]:  # hgetall result
-            return
+            return None
 
-        # Cast back to PK:delta key-value pairs
-        counters: dict[int, int] = {int(k): int(v) for k, v in res[0].items()}
+        # Cast back to cache_key:delta key-value pairs
+        counters: dict[str, int] = _cache_normalize_raw_counter_data(res[0])
         del res
 
         async with pool.connection() as conn:
+            db_normalized_counters: dict[int, int] = (
+                _database_normalize_cache_normalized_counter_data(counters)
+            )
             try:
-                await flush_counter_updates(conn, batch_name, counters)
+                await flush_counter_updates(conn, batch_name, db_normalized_counters)
+                return counters
             except RecoverableDatabaseException:
                 group_name, identifier, group_version = extract_batch_metadata(
                     batch_name
@@ -112,7 +137,7 @@ async def batch_update_counter_group(
                         worker_redis,
                         dlq_stream_name,
                         batch_name,
-                        counters,
+                        db_normalized_counters,
                         config.WORKER.MAX_RETRIES,
                     )
                 else:
@@ -124,11 +149,13 @@ async def batch_update_counter_group(
                         current_retry_count=group_version,
                         identifier=identifier,
                     )
+                return None
             except Exception:
                 await declare_counters_event_dead(
                     worker_redis,
                     dlq_stream_name,
                     batch_name,
-                    counters,
+                    db_normalized_counters,
                     config.WORKER.MAX_RETRIES,
                 )
+                return None

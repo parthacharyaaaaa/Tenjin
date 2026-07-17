@@ -41,7 +41,7 @@ async def dispatch_to_retrier(
     config: AppConfig,
     worker_redis: Redis,
     counter_group: str,
-    counter_data: dict[int, int],
+    counter_data: dict[str, int],
     *,
     current_retry_count: int = 0,
     identifier: str | None = None,
