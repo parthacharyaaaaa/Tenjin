@@ -61,6 +61,25 @@ class WorkerConfig(BaseModel):
     # Downstream counter consumers
     DOWNSTREAM_COUNTER_BATCH_SIZE: Annotated[int, Field(ge=1)]
 
+    # Reclaimation
+    RECLAIM_THRESHOLD: Annotated[int, Field(ge=1)]
+    RECLAIMATION_CHECK_INTERVAL: Annotated[int, Field(ge=1)]
+    MAX_DELIVERIES: Annotated[int, Field(ge=1)]
+
+    @model_validator(mode="after")
+    def validate_reclamation_interval(self) -> Self:
+        if self.RECLAIMATION_CHECK_INTERVAL > self.RECLAIM_THRESHOLD:
+            raise ValueError(
+                " ".join(
+                    (
+                        f"Reclaim threshold {self.RECLAIM_THRESHOLD}",
+                        "cannot be lesser than reclaimation check interval",
+                        str(self.RECLAIMATION_CHECK_INTERVAL),
+                    )
+                )
+            )
+        return self
+
 
 class DatabaseConfig(BaseModel):
     DATABASE_URI_TEMPLATE: ClassVar[str] = (
