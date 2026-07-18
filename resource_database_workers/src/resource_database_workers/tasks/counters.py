@@ -1,5 +1,6 @@
 import asyncio
 import itertools
+import time
 from typing import Literal, MutableMapping
 
 from redis.asyncio import Redis
@@ -60,23 +61,24 @@ async def batch_update_counters(
     counter_groups: set[str] = await retrieve_counter_group_names(
         worker_redis, config.WORKER.COUNTER_REGISTRY_NAME
     )
-    refresh_counter: int = 100  # TODO: Update AppConfig to hold refresh value
+    refresh_time: int = int(time.monotonic())
     for counter_group in itertools.cycle(counter_groups):
         # Periodically refresh counter group names
         # in the extremely rare case of a schema change
-        if refresh_counter <= 0:
+        if (
+            int(time.monotonic()) - refresh_time
+            >= config.WORKER.COUNTER_REGISTRY_REFRESH_INTERVAL
+        ):
             counter_groups: set[str] = await retrieve_counter_group_names(
                 worker_redis, config.WORKER.COUNTER_REGISTRY_NAME
             )
-            refresh_counter = 100
+            refresh_time = int(time.monotonic())
 
         counter_data: dict[str, int] | None = await batch_update_counter_group(
             config, pool, counter_group, dlq_stream_name, worker_redis
         )
         if not counter_data:
             continue
-
-        refresh_counter -= 1
 
         await reflect_processed_counters(server_redis, counter_group, counter_data)
 
