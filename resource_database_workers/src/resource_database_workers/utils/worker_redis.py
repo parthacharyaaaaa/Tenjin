@@ -127,6 +127,15 @@ async def acknowledge_event(
         await pipeline.execute()
 
 
+async def stream_events(
+    redis: Redis, events: Iterable[Event], stream_name: StreamName
+) -> None:
+    async with redis.pipeline(transaction=True) as pipeline:
+        for event in events:
+            await pipeline.xadd(stream_name, cache_repr(event))
+        await pipeline.execute()
+
+
 async def trim_duplicate_events(
     redis: Redis,
     batch: list[StreamedEvent],
@@ -274,3 +283,44 @@ async def ack_with_retries(
     await dlq_aware_process_events(
         redis, batch, coro, attempts, stream_name, group_name, dead_letter_stream_name
     )
+
+
+async def declare_side_effects_event_dead(
+    redis: Redis,
+    batch: Sequence[StreamedEvent],
+    dlq_stream_name: StreamName,
+    attempts: int,
+) -> None:
+    failure_events: tuple[Event] = tuple(
+        Event(
+            name=EventName.DLQ_SIDE_EFFECTS,
+            payload=json_repr(event),
+            side_effects=EventSideEffects(),  # type: ignore
+        )
+        for event in batch
+    )
+
+    dlq_coroutine = lambda: stream_events(redis, failure_events, dlq_stream_name)
+    await execute_with_redis_retries(dlq_coroutine, attempts)
+
+
+async def dlq_aware_emit_side_effects(
+    redis: Redis,
+    batch: Sequence[StreamedEvent],
+    dead_letter_stream_name: StreamName,
+    attempts: int,
+) -> None:
+    """
+    Thin wrapper over sibling utility functions to emit event side-effects
+    """
+    coro = lambda: atomic_emit_side_effects(redis, batch)
+
+    try:
+        await execute_with_redis_retries(coro, attempts)
+    except Exception as e:
+        dlq_attempts: int = (
+            1 if getattr(e, "error_type", None) == ExceptionType.NETWORK else attempts
+        )
+        await declare_side_effects_event_dead(
+            redis, batch, dead_letter_stream_name, dlq_attempts
+        )

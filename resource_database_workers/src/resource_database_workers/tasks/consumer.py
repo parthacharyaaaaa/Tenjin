@@ -45,10 +45,10 @@ from resource_database_workers.utils.worker_redis import (
     ack_with_retries,
     atomic_emit_side_effects,
     declare_dead_with_retries,
+    dlq_aware_emit_side_effects,
     dlq_aware_process_events,
     populate_events_batch_from_queue,
     trim_duplicate_events,
-    atomic_emit_side_effects,
 )
 
 
@@ -186,16 +186,8 @@ async def queue_insertion_consumer(
                     dead_letter_stream_name,
                     config.WORKER.MAX_RETRIES,
                 )
-
-                coro = lambda: atomic_emit_side_effects(redis, successful_events)
-                await dlq_aware_process_events(
-                    redis,
-                    successful_events,
-                    coro,
-                    config.WORKER.MAX_RETRIES,
-                    stream_name,
-                    group_name,
-                    dead_letter_stream_name,
+                await dlq_aware_emit_side_effects(
+                    redis, batch, dead_letter_stream_name, config.WORKER.MAX_RETRIES
                 )
 
             reference_time = time.monotonic()
@@ -262,7 +254,9 @@ async def queue_deletion_consumer(
                     dead_letter_stream_name,
                     config.WORKER.MAX_RETRIES,
                 )
-                await atomic_emit_side_effects(redis, batch)
+                await dlq_aware_emit_side_effects(
+                    redis, batch, dead_letter_stream_name, config.WORKER.MAX_RETRIES
+                )
                 await dispatch_downstream_events(
                     redis,
                     table,
