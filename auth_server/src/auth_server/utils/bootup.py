@@ -30,6 +30,8 @@ from auth_server.repositories.keydata import KeydataRepository
 from auth_server.strings import SyncedStoreStrings
 from auth_server.security.token_manager import TokenManager
 
+# TODO: Remove magic numbers in lifespan and master_bootup (lock and flag TTLs)
+
 
 def register_routers(
     app: FastAPI,
@@ -111,7 +113,7 @@ async def master_bootup(
         if not keydata:
             # No valid keys in DB, master must create new pair
             print(f"[AUTH {process_id}] Creating new key pair")
-            active_key: KeyData = initialize_active_key(
+            active_key: KeyData = await initialize_active_key(
                 config.JWKS.PRIVATE_PEM_DIRECTORY,
                 config.JWKS.PUBLIC_PEM_DIRECTORY,
                 keydata_repository,
@@ -141,7 +143,7 @@ async def master_bootup(
                 keydata = keydata[: config.JWKS.JWKS_CAP]
 
             if missing_active:
-                active_key: KeyData = initialize_active_key(
+                active_key: KeyData = await initialize_active_key(
                     config.JWKS.PRIVATE_PEM_DIRECTORY,
                     config.JWKS.PUBLIC_PEM_DIRECTORY,
                     keydata_repository,
@@ -195,31 +197,27 @@ async def master_bootup(
         initialize_jwks(config.JWKS.JWKS_FILEPATH, keydata)
 
         # Initialize token manager
+        async with synced_store_client.pipeline() as pipe:
+            pipe.delete(SyncedStoreStrings.VALID_KEYS)
+            valid_keys: list[str] = (
+                list(rotated_verifying_keys.keys()) if rotated_verifying_keys else []
+            ) + [active_kid]
+            pipe.lpush(SyncedStoreStrings.VALID_KEYS, *valid_keys)
+            await pipe.execute()
+
         token_manager: Final[TokenManager] = get_token_manager()
         token_manager.set_key_state(active_kid, active_keydata, rotated_verifying_keys)
         print(f"[AUTH {process_id}] Master process bootup complete!")
     except Exception as e:
         failed = True
         print(
-            f"[AUTH {process_id}] Master worker has encountered an irrecovarable error, details: "
+            f"[AUTH {process_id}] Master worker has encountered an irrecoverable error, details: "
         )
         print(traceback.format_exc())
-        synced_store_client.set(SyncedStoreStrings.ABORT, 1, ex=120)
+        await synced_store_client.set(SyncedStoreStrings.ABORT, 1, ex=120)
         raise RuntimeError("Master bootup failed") from e
     finally:
-        # Finally, initialize valid_keys list and remove the flag from Redis to allow slave workers to continue bootup
-        if not (active_kid and rotated_verifying_keys):
-            return
-
-        if failed:
-            return
-
-        async with synced_store_client.pipeline() as pipe:
-            pipe.delete(SyncedStoreStrings.VALID_KEYS)
-            valid_keys: list[str] = list(rotated_verifying_keys.keys()) + [active_kid]
-            pipe.lpush(SyncedStoreStrings.VALID_KEYS, *valid_keys)
-            pipe.delete(SyncedStoreStrings.AUTH_BOOTUP_MASTER)
-            await pipe.execute()
+        await synced_store_client.delete(SyncedStoreStrings.AUTH_BOOTUP_MASTER)
 
 
 async def slave_bootup(
@@ -230,10 +228,10 @@ async def slave_bootup(
     master_wait_interval: float = 1.0,
 ) -> None:
     # Wait for master worker to finish managing key synchronization and file I/O, and then proceed on the assumption that the JWKS file has been written into/validated.
-    while synced_store_client.get(SyncedStoreStrings.AUTH_BOOTUP_MASTER):
+    while await synced_store_client.get(SyncedStoreStrings.AUTH_BOOTUP_MASTER):
         time.sleep(master_wait_interval)
 
-    if synced_store_client.get(SyncedStoreStrings.ABORT):
+    if await synced_store_client.get(SyncedStoreStrings.ABORT):
         print(
             f"[AUTH {process_id}] Master failed to setup key configuration, aborting..."
         )
@@ -280,7 +278,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     synced_store_client: Final[Redis] = get_synced_store_client()
 
     # Additional filepaths depending on instance/static directories
-    config.JWKS.resolve_jwks_directory(config.CORE.instance_path)
+    config.JWKS.resolve_jwks_filepath(config.CORE.instance_path)
     config.JWKS.resolve_public_pem_directory(config.CORE.static_path)
     config.JWKS.resolve_private_pem_directory(config.CORE.instance_path)
 
@@ -292,7 +290,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
 
     is_master: bool = bool(
-        synced_store_client.set(SyncedStoreStrings.AUTH_BOOTUP_MASTER, PID, nx=True)
+        await synced_store_client.set(
+            SyncedStoreStrings.AUTH_BOOTUP_MASTER, PID, nx=True, ex=300
+        )
     )
 
     if is_master:

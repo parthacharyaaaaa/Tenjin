@@ -10,7 +10,7 @@ from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio.session import AsyncSession, async_sessionmaker
 
 from auth_server.models.database import KeyData
-from auth_server.utils.singleton import SingletonMetaclass
+from auxillary.singleton import SingletonMetaclass
 
 
 @dataclass(frozen=True, slots=True, weakref_slot=True)
@@ -150,7 +150,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
                 (
                     await session.execute(
                         select(KeyData)
-                        .where(KeyData.expired_at.isnot_(None))
+                        .where(KeyData.expired_at.isnot(None))
                         .order_by(KeyData.expired_at)
                     )
                 )

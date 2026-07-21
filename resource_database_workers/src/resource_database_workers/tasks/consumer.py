@@ -1,24 +1,25 @@
 import asyncio
 from datetime import datetime
 import time
-from typing import Final, Generator, Iterable
+from typing import Generator
 
-from psycopg.errors import OperationalError, InternalError
 from psycopg_pool import AsyncConnectionPool
-from psycopg.sql import Composed
 
 from redis.asyncio import Redis
 
-from auxillary.utils import json_repr
 from resource_auxillary.datastructures.database import StrongEntity
 
 from resource_database_workers.config.config import AppConfig
 from resource_auxillary.strings import StreamName
 from resource_auxillary.events import StreamedEvent
 
-from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
+from resource_database_workers.config.constants import (
+    POTENTIAL_TRANSIENT_ERRORS,
+)
+from resource_database_workers.utils.worker_db import (
+    retried_event_database_processing,
+)
 from resource_database_workers.utils.coordination import (
-    atomic_emit_side_effects,
     batch_dedup_insert_events,
     dedup_insert_event,
 )
@@ -34,53 +35,21 @@ from resource_database_workers.utils.typing import (
     BatchInsertionFunction,
     t_action_literal,
 )
-from resource_database_workers.utils.sql_templates import (
-    format_dlq_insertion_sql,
-    format_counters_dlq_insertion_sql,
-)
 from resource_database_workers.datastructures.downstream import (
     DownstreamCounterDecrementData,
     DownstreamDeletionData,
     reconstruct_downstream_counter_data_from_stream,
     reconstruct_downstream_data_from_stream,
 )
-
-
-def _create_user_cleanup_generator(
-    events: Iterable[StreamedEvent],
-) -> Generator[tuple[int, datetime], None, None]:
-    return (
-        (event.payload["user_id"], event.payload["time_deleted"]) for event in events
-    )
-
-
-async def populate_events_batch_from_queue(
-    config: AppConfig,
-    queue: asyncio.Queue[tuple[StreamedEvent, ...]],
-    reference_time: float,
-    batch: list[StreamedEvent],
-) -> None:
-    while True:
-        if not (
-            (len(batch) >= config.WORKER.IQ_CONSUMER_BATCH_SIZE_QUOTA)
-            or time.monotonic() - reference_time
-            > config.WORKER.IQ_CONSUMER_BASE_WAITING_TIME
-        ):
-            try:
-                new_entries: tuple[StreamedEvent, ...] = await asyncio.wait_for(
-                    queue.get(), config.WORKER.IQ_CONSUMER_GET_TIMEOUT
-                )
-                if not batch:
-                    reference_time = time.monotonic()
-                batch.extend(new_entries)
-            except asyncio.TimeoutError:
-                await asyncio.sleep(config.WORKER.IQ_CONSUMER_SLEEP_INTERVAL)
-            continue
-
-        if not batch:
-            await asyncio.sleep(config.WORKER.IQ_CONSUMER_SLEEP_INTERVAL)
-            reference_time = time.monotonic()
-            continue
+from resource_database_workers.utils.worker_redis import (
+    ack_with_retries,
+    atomic_emit_side_effects,
+    declare_dead_with_retries,
+    dlq_aware_process_events,
+    populate_events_batch_from_queue,
+    trim_duplicate_events,
+    atomic_emit_side_effects,
+)
 
 
 async def user_orphan_consumer(
@@ -88,58 +57,67 @@ async def user_orphan_consumer(
     pool: AsyncConnectionPool,
     redis: Redis,
     queue: asyncio.Queue[tuple[StreamedEvent]],
-    dead_letter_queue: asyncio.Queue[StreamedEvent],
     stream_name: StreamName,
     group_name: str,
+    dead_letter_stream_name: StreamName,
 ) -> None:
     batch: list[StreamedEvent] = []
     reference_time: float = time.monotonic()
 
     while True:
         await populate_events_batch_from_queue(config, queue, reference_time, batch)
-        failed: bool = False
+
+        # Database connection only needed for deduplication
         async with pool.connection() as conn:
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
                 conn, (e.event_id for e in batch)
             )
-            async with redis.pipeline() as pipeline:
-                for event in batch.copy():
-                    if event.event_id not in fresh_event_ids:
-                        batch.remove(event)
-                        pipeline.xack(stream_name, group_name, event.event_id)
-                await pipeline.execute()
 
-            for attempt in range(config.WORKER.MAX_RETRIES):
-                try:
-                    await dispatch_downstream_events(
-                        redis, StrongEntity.USER, _create_user_cleanup_generator(batch)
-                    )
-                    await conn.commit()
-                    failed = False
-                    break
-                except (OperationalError, InternalError):
-                    failed = True
-                    await conn.rollback()
-                except Exception:
-                    # Ideally a subclass of psycopg.errors.Error,
-                    # but Python errors are also non-transient
-                    await conn.rollback()
-                    failed = True
-                    break
+        await trim_duplicate_events(
+            redis, batch, fresh_event_ids, stream_name, group_name
+        )
 
-            await redis.xack(
+        exception: Exception | None = None
+        for _attempt in range(config.WORKER.MAX_RETRIES):
+            try:
+                await dispatch_downstream_events(
+                    redis,
+                    StrongEntity.USER,
+                    (
+                        (event.payload["user_id"], event.payload["time_deleted"])
+                        for event in batch
+                    ),
+                )
+                exception = None
+                break
+            except POTENTIAL_TRANSIENT_ERRORS as e:
+                exception = e
+            except Exception as e:
+                exception = e
+                break
+
+        if exception:  # Entire batch failed
+            await declare_dead_with_retries(
+                redis,
+                batch,
                 stream_name,
                 group_name,
-                *(e.event_id for e in batch),
+                dead_letter_stream_name,
+                config.WORKER.MAX_RETRIES,
+            )
+        else:
+            # ACK entire batch
+            await ack_with_retries(
+                redis,
+                batch,
+                stream_name,
+                group_name,
+                dead_letter_stream_name,
+                config.WORKER.MAX_RETRIES,
             )
 
-            if failed:
-                for event in batch:
-                    await dead_letter_queue.put(event)
-                await redis.xack(stream_name, group_name, *(e.event_id for e in batch))
-
-            batch.clear()
-            reference_time = time.monotonic()
+        batch.clear()
+        reference_time = time.monotonic()
 
 
 async def queue_insertion_consumer(
@@ -147,76 +125,81 @@ async def queue_insertion_consumer(
     pool: AsyncConnectionPool,
     redis: Redis,
     queue: asyncio.Queue[tuple[StreamedEvent]],
-    dead_letter_queue: asyncio.Queue[StreamedEvent],
     batch_function: BatchInsertionFunction,
     stream_name: StreamName,
     group_name: str,
+    dead_letter_stream_name: StreamName,
     action: t_action_literal | None = None,
 ) -> None:
     batch: list[StreamedEvent] = []
-    successful_events: list[int] = []
     reference_time: float = time.monotonic()
+
     while True:
         await populate_events_batch_from_queue(config, queue, reference_time, batch)
-        failed: bool = False
         async with pool.connection() as conn:
+            # Perform deduplication
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
                 conn, (e.event_id for e in batch)
             )
-            async with redis.pipeline() as pipeline:
-                for event in batch.copy():
-                    if event.event_id not in fresh_event_ids:
-                        batch.remove(event)
-                        pipeline.xack(stream_name, group_name, event.event_id)
-                await pipeline.execute()
-            for attempt in range(config.WORKER.MAX_RETRIES):
-                try:
-                    inserted_ids: list[int] = await batch_function(conn, batch, action)
-                    await conn.commit()
+            await trim_duplicate_events(
+                redis, batch, fresh_event_ids, stream_name, group_name
+            )
+            if not batch:
+                continue
 
-                    successful_events.extend(inserted_ids)
-                    del inserted_ids
-                    failed = False
-                    break
-                except (OperationalError, InternalError):
-                    failed = True
-                    await conn.rollback()
-                except Exception:
-                    # Ideally a subclass of psycopg.errors.Error,
-                    # but Python errors are also non-transient
-                    failed_events: list[StreamedEvent] = [
-                        event
-                        for event in batch
-                        if event.event_id not in successful_events
-                    ]
-                    for event in failed_events:
-                        await dead_letter_queue.put(event)
-                    await redis.xack(
-                        stream_name, group_name, *(e.event_id for e in failed_events)
-                    )
-                    failed_events.clear()
-                    await conn.rollback()
-                    break
-
-            await atomic_emit_side_effects(
-                redis,
-                tuple(event for event in batch if event.event_id in successful_events),
+            inserted_ids: list[int] = []  # Populated in-place by batch_function
+            insertion_callable = lambda: batch_function(
+                conn, batch, inserted_ids, action
             )
 
-            await redis.xack(
-                stream_name,
-                config.WORKER.CONSUMER_GROUP_NAME,
-                *successful_events,
+            exception = await retried_event_database_processing(
+                conn, config.WORKER.MAX_RETRIES, insertion_callable
             )
-            successful_events.clear()
+            if exception:  # Entire batch failed
+                await declare_dead_with_retries(
+                    redis,
+                    batch,
+                    stream_name,
+                    group_name,
+                    dead_letter_stream_name,
+                    config.WORKER.MAX_RETRIES,
+                )
+            else:
+                successful_events: tuple[StreamedEvent, ...] = tuple(
+                    event for event in batch if event.event_id in inserted_ids
+                )
 
-            if failed:
-                for event in batch:
-                    await dead_letter_queue.put(event)
-                await redis.xack(stream_name, group_name, *(e.event_id for e in batch))
+                # ACK processed events and push failed events to DLQ
+                await ack_with_retries(
+                    redis,
+                    successful_events,
+                    stream_name,
+                    group_name,
+                    dead_letter_stream_name,
+                    config.WORKER.MAX_RETRIES,
+                )
+                await declare_dead_with_retries(
+                    redis,
+                    tuple(event for event in batch if event not in successful_events),
+                    stream_name,
+                    group_name,
+                    dead_letter_stream_name,
+                    config.WORKER.MAX_RETRIES,
+                )
 
-            batch.clear()
+                coro = lambda: atomic_emit_side_effects(redis, successful_events)
+                await dlq_aware_process_events(
+                    redis,
+                    successful_events,
+                    coro,
+                    config.WORKER.MAX_RETRIES,
+                    stream_name,
+                    group_name,
+                    dead_letter_stream_name,
+                )
+
             reference_time = time.monotonic()
+            batch.clear()
 
 
 async def queue_deletion_consumer(
@@ -226,72 +209,60 @@ async def queue_deletion_consumer(
     table: StrongEntity,
     identifier_column: str,
     queue: asyncio.Queue[tuple[StreamedEvent]],
-    dead_letter_queue: asyncio.Queue[StreamedEvent],
     batch_function: BatchDeletionFunction,
     stream_name: StreamName,
     group_name: str,
+    dead_letter_stream_name: StreamName,
 ) -> None:
     batch: list[StreamedEvent] = []
     reference_time: float = time.monotonic()
 
     while True:
         await populate_events_batch_from_queue(config, queue, reference_time, batch)
-        failed: bool = False
-        deletion_data: Generator[tuple[int, datetime, int]] = (
-            (
-                event.payload[identifier_column],
-                event.payload["deleted_at"],
-                event.event_id,
-            )
-            for event in batch
-        )
         async with pool.connection() as conn:
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
                 conn, (e.event_id for e in batch)
             )
-            async with redis.pipeline() as pipeline:
-                for event in batch.copy():
-                    if event.event_id not in fresh_event_ids:
-                        batch.remove(event)
-                        pipeline.xack(stream_name, group_name, event.event_id)
-                await pipeline.execute()
+            await trim_duplicate_events(
+                redis, batch, fresh_event_ids, stream_name, group_name
+            )
 
-            for attempt in range(config.WORKER.MAX_RETRIES):
-                try:
-                    # TODO: Add logic to insert into dedup table
-                    await batch_function(
-                        conn, table.value, identifier_column, deletion_data
-                    )
-                    await conn.commit()
+            deletion_data: Generator[tuple[int, datetime, int]] = (
+                (
+                    event.payload[identifier_column],
+                    event.payload["deleted_at"],
+                    event.event_id,
+                )
+                for event in batch
+            )
 
-                    failed = False
-                    break
-                except (OperationalError, InternalError):
-                    failed = True
-                    await conn.rollback()
-                except Exception:
-                    # Ideally a subclass of psycopg.errors.Error,
-                    # but Python errors are also non-transient
-                    for event in batch:
-                        await dead_letter_queue.put(event)
-                    await redis.xack(
-                        stream_name, group_name, *(e.event_id for e in batch)
-                    )
-                    batch.clear()
-                    await conn.rollback()
-                    break
+            deletion_callable = lambda: batch_function(
+                conn, table.value, identifier_column, deletion_data
+            )
 
-            if failed:
-                for event in batch:
-                    await dead_letter_queue.put(event)
-                    await redis.xack(
-                        stream_name, group_name, *(e.event_id for e in batch)
-                    )
-            elif batch:
-                await redis.xack(stream_name, group_name, *(e.event_id for e in batch))
-
-                await atomic_emit_side_effects(redis, tuple(batch))
-
+            exception: Exception | None = await retried_event_database_processing(
+                conn, config.WORKER.MAX_RETRIES, deletion_callable
+            )
+            if exception:  # Entire batch failed
+                await declare_dead_with_retries(
+                    redis,
+                    batch,
+                    stream_name,
+                    group_name,
+                    dead_letter_stream_name,
+                    config.WORKER.MAX_RETRIES,
+                )
+            else:
+                # ACK entire batch
+                await ack_with_retries(
+                    redis,
+                    batch,
+                    stream_name,
+                    group_name,
+                    dead_letter_stream_name,
+                    config.WORKER.MAX_RETRIES,
+                )
+                await atomic_emit_side_effects(redis, batch)
                 await dispatch_downstream_events(
                     redis,
                     table,
@@ -310,10 +281,10 @@ async def queue_downstream_deletion_consumer(
     pool: AsyncConnectionPool,
     redis: Redis,
     queue: asyncio.Queue[StreamedEvent],
-    dead_letter_queue: asyncio.Queue[StreamedEvent],
     batch_function: BatchDownstreamDeletionFunction,
     stream_name: StreamName,
     group_name: str,
+    dead_letter_stream_name: StreamName,
 ) -> None:
     while True:
         event: StreamedEvent = await queue.get()
@@ -322,50 +293,58 @@ async def queue_downstream_deletion_consumer(
                 reconstruct_downstream_data_from_stream(event.payload)
             )
         except (KeyError, ValueError):
-            await dead_letter_queue.put(event)
+            await declare_dead_with_retries(
+                redis,
+                (event,),
+                stream_name,
+                group_name,
+                dead_letter_stream_name,
+                config.WORKER.MAX_RETRIES,
+            )
             continue
 
-        failed: bool = False
         async with pool.connection() as conn:
+            # Deduplication
             if not await dedup_insert_event(conn, event.event_id):
                 await redis.xack(stream_name, group_name, event.event_id)
                 continue
 
-            for attempt in range(config.WORKER.MAX_RETRIES):
-                try:
-                    await batch_function(
-                        conn,
-                        event_payload["foreign_key"],
-                        event_payload["orphan_table"],
-                        event_payload["foreign_key_column"],
-                        event_payload["deleted_at"],
-                    )
-                    await conn.commit()
-                    failed = False
-                    break
-                except (OperationalError, InternalError):
-                    failed = True
-                    await conn.rollback()
-                except Exception:
-                    # Ideally a subclass of psycopg.errors.Error,
-                    # but Python errors are also non-transient
-                    await dead_letter_queue.put(event)
-                    await redis.xack(stream_name, group_name, event.event_id)
-                    await conn.rollback()
-                    break
+            downstream_deletion_callable = lambda: batch_function(
+                conn,
+                event_payload["foreign_key"],
+                event_payload["orphan_table"],
+                event_payload["foreign_key_column"],
+                event_payload["deleted_at"],
+            )
 
-            if failed:  # Non-transient faults exceed max retries
-                await dead_letter_queue.put(event)
-                await redis.xack(stream_name, group_name, event.event_id)
-            else:  # downstream deletion succesful
-                await redis.xack(
+            exception: Exception | None = await retried_event_database_processing(
+                conn, config.WORKER.MAX_RETRIES, downstream_deletion_callable
+            )
+            # Single event tuple used in place of event
+            # for methods that process batches of events
+            if exception:
+                await declare_dead_with_retries(
+                    redis,
+                    (event,),
                     stream_name,
                     group_name,
-                    event.event_id,
+                    dead_letter_stream_name,
+                    config.WORKER.MAX_RETRIES,
                 )
-                await dispatch_downstream_counter_decrements(
-                    redis, event_payload["orphan_table"], event.event_id
-                )
+                continue
+
+            await ack_with_retries(
+                redis,
+                (event,),
+                stream_name,
+                group_name,
+                dead_letter_stream_name,
+                config.WORKER.MAX_RETRIES,
+            )
+
+            await dispatch_downstream_counter_decrements(
+                redis, event_payload["orphan_table"], event.event_id
+            )
 
 
 async def queue_downstream_decrement_consumer(
@@ -373,9 +352,9 @@ async def queue_downstream_decrement_consumer(
     pool: AsyncConnectionPool,
     redis: Redis,
     queue: asyncio.Queue[StreamedEvent],
-    dead_letter_queue: asyncio.Queue[StreamedEvent],
     stream_name: StreamName,
     group_name: str,
+    dead_letter_stream_name: StreamName,
 ) -> None:
     while True:
         event: StreamedEvent = await queue.get()
@@ -384,21 +363,29 @@ async def queue_downstream_decrement_consumer(
                 reconstruct_downstream_counter_data_from_stream(event.payload)
             )
         except (KeyError, ValueError):
-            await dead_letter_queue.put(event)
+            await declare_dead_with_retries(
+                redis,
+                (event,),
+                stream_name,
+                group_name,
+                dead_letter_stream_name,
+                config.WORKER.MAX_RETRIES,
+            )
             continue
 
-        failed: bool = False
         # Downstream counters may be too big to materialize all at once
         limit, offset = config.WORKER.DOWNSTREAM_COUNTER_BATCH_SIZE, 0
+        exception: Exception | None = None
         async with pool.connection() as conn:
             if not await dedup_insert_event(conn, event.event_id):
                 await redis.xack(stream_name, group_name, event.event_id)
                 continue
 
-            for attempt in range(config.WORKER.MAX_RETRIES):
+            for _attempt in range(config.WORKER.MAX_RETRIES):
                 try:
                     # temp truthy tuple to enter loop
                     results: list[tuple[str, int]] = [("", 0)]
+                    # hehe it kinda looks like a wink
                     while results:
                         results: list[tuple[str, int]] = await select_decrement_deltas(
                             conn,
@@ -415,49 +402,30 @@ async def queue_downstream_decrement_consumer(
                             event_payload["hashmap_name"],
                             event_payload["affected_table_name"],
                         )
-                except (OperationalError, InternalError):
-                    failed = True
+                except POTENTIAL_TRANSIENT_ERRORS as e:
+                    exception = e
                     await conn.rollback()
                     continue
-                except Exception:
-                    await dead_letter_queue.put(event)
-                    await redis.xack(stream_name, group_name, event.event_id)
+                except Exception as e:
+                    exception = e
                     await conn.rollback()
                     break
 
-            if failed:  # Non-transient faults exceed max retries
-                await dead_letter_queue.put(event)
-                await redis.xack(stream_name, group_name, event.event_id)
-            else:
-                await redis.xack(
+            if exception:
+                await declare_dead_with_retries(
+                    redis,
+                    (event,),
                     stream_name,
                     group_name,
-                    event.event_id,
+                    dead_letter_stream_name,
+                    config.WORKER.MAX_RETRIES,
                 )
-
-
-async def dlq_consumer(
-    pool: AsyncConnectionPool, queue: asyncio.Queue[StreamedEvent]
-) -> None:
-    insertion_sql: Final[Composed] = format_dlq_insertion_sql()
-    while True:
-        dlq_event: StreamedEvent = await queue.get()
-        async with pool.connection() as conn:
-            await conn.execute(
-                insertion_sql, (dlq_event.event_id, json_repr(dlq_event))
-            )
-            await conn.commit()
-
-
-async def counters_dlq_consumer(
-    pool: AsyncConnectionPool, queue: asyncio.Queue[DeadCounterBatch]
-) -> None:
-    insertion_sql: Final[Composed] = format_counters_dlq_insertion_sql()
-    while True:
-        batch: DeadCounterBatch = await queue.get()
-        async with pool.connection() as conn:
-            await conn.execute(
-                insertion_sql,
-                (batch.table, batch.column, batch.failure_time, batch.counters),
-            )
-            await conn.commit()
+            else:
+                await ack_with_retries(
+                    redis,
+                    (event,),
+                    stream_name,
+                    group_name,
+                    dead_letter_stream_name,
+                    config.WORKER.MAX_RETRIES,
+                )

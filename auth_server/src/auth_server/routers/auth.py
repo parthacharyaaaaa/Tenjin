@@ -10,8 +10,6 @@ from fastapi.responses import Response, JSONResponse
 
 import httpx
 
-from auxillary.decorators import enforce_json
-
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import get_app_config, get_token_manager
 from auth_server.models.auth_requests import AuthenticationModel, RegistrationModel
@@ -33,7 +31,6 @@ async def jwks() -> Response:
 
 
 @AUTH.post("/login")
-@enforce_json
 async def login(
     request: Request,
     auth_model: AuthenticationModel,
@@ -88,7 +85,6 @@ async def login(
 
 
 @AUTH.post("/register")
-@enforce_json
 async def register(
     request: Request,
     registration_model: RegistrationModel,

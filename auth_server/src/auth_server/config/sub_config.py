@@ -1,7 +1,7 @@
 import hashlib
 from pathlib import Path
 import re
-from typing import Annotated, Any, Callable, Self
+from typing import Annotated, Any, Callable, Literal, Self
 from functools import cached_property
 from pydantic import (
     BaseModel,
@@ -121,13 +121,19 @@ class JWKSConfigModel(BaseModel):
 
     TOKEN_MANAGER: Annotated[TokenManagerConfigModel, Field(alias="token_manager")]
 
-    def _resolve_path_attr(self, attr_name: str, rootpath: Path) -> None:
+    def _resolve_path_attr(
+        self, attr_name: str, rootpath: Path, path_type: Literal["file", "dir"] = "dir"
+    ) -> None:
         path: Path = rootpath / getattr(self, attr_name)
 
         if not path.is_absolute():
             raise ValueError(f"Resolved path {path} is not absolute")
-        if not path.exists():
-            path.mkdir()
+
+        if path_type == "dir":
+            path.mkdir(parents=True, exist_ok=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch(exist_ok=True)
 
         setattr(self, attr_name, path)
 
@@ -137,8 +143,8 @@ class JWKSConfigModel(BaseModel):
     def resolve_private_pem_directory(self, rootpath: Path) -> None:
         self._resolve_path_attr("PRIVATE_PEM_DIRECTORY", rootpath)
 
-    def resolve_jwks_directory(self, rootpath: Path) -> None:
-        self._resolve_path_attr("JWKS_FILEPATH", rootpath)
+    def resolve_jwks_filepath(self, rootpath: Path) -> None:
+        self._resolve_path_attr("JWKS_FILEPATH", rootpath, "file")
 
 
 class KeyConfigModel(BaseModel):

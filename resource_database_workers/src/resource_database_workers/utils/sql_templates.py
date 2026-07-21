@@ -124,6 +124,13 @@ def format_counters_dlq_insertion_sql() -> Composed:
     )
 
 
+def format_failed_side_effects_sql() -> Composed:
+    return STRONG_INSERTION_SQL.format(
+        table=Identifier(DeadLetterQueueLiteral.FAILED_SIDE_EFFECTS_TABLE_NAME),
+        placeholder=SQL(", ").join(Placeholder() * 3),
+    )
+
+
 STRONG_DELETION_SQL: Final[SQL] = SQL("""UPDATE {table}
     SET {deletion_column} = data.{deletion_column},
     {deleted_at} = data.{deleted_at}
@@ -233,3 +240,6 @@ def prepare_batch_dedup_sql(temp_table: str) -> Composed:
         ack_time_col=Identifier(EventLiteral.EVENT_TIMESTAMP_COLUMN_NAME),
         temp_table=Identifier(temp_table),
     )
+
+
+FAILED_SIDE_EFFECT_STATEMENT: Final[SQL] = SQL("""INSERT INTO""")

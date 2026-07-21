@@ -5,6 +5,7 @@ from typing import Any, Final, Mapping
 from uuid import uuid4
 
 from psycopg_pool import AsyncConnectionPool
+from psycopg.sql import Composed
 
 from redis.asyncio import Redis
 
@@ -22,11 +23,16 @@ from resource_database_workers.dependencies import (
     get_queue_registry,
 )
 from resource_database_workers.datastructures.queues import QueueRegistry
+from resource_database_workers.utils.sql_templates import (
+    format_dlq_insertion_sql,
+    format_counters_dlq_insertion_sql,
+    format_failed_side_effects_sql,
+)
 from resource_database_workers.tasks.deletions import (
     downstream_soft_delete_strong_entity,
 )
 from resource_database_workers.tasks.insertions import (
-    batch_association_insert_with_isolation,
+    batch_insert_with_isolation,
 )
 from resource_database_workers.utils.typing import (
     BatchDownstreamDeletionFunction,
@@ -42,9 +48,7 @@ class BaseInput:
     stream_name: StreamName
     pool: AsyncConnectionPool = field(default_factory=get_connection_pool)
     group_name: str = field(default=get_config().WORKER.CONSUMER_GROUP_NAME)
-    dead_letter_queue: asyncio.Queue[StreamedEvent] = field(
-        default=QUEUE_REGISTRY.dead_letter
-    )
+    dead_letter_stream_name: StreamName = field(default=StreamName.DEAD_LETTER_QUEUE)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -62,9 +66,7 @@ class InsertionInput(BaseInput):
     action: t_action_literal | None
     config: AppConfig = field(default_factory=get_config)
     redis: Redis = field(default_factory=get_app_redis)
-    batch_function: BatchInsertionFunction = field(
-        default=batch_association_insert_with_isolation
-    )
+    batch_function: BatchInsertionFunction = field(default=batch_insert_with_isolation)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -215,6 +217,38 @@ DOWNSTREAM_USERS_COMMENTS_COUNTER_DECREMENT: Final[DownstreamCounterDecrementInp
     )
 )
 
+
+@dataclass(slots=True, kw_only=True)
+class DeadLetterQueueWorkerInput:
+    config: AppConfig = field(default_factory=get_config)
+    pool: AsyncConnectionPool = field(default_factory=get_connection_pool)
+    redis: Redis = field(default_factory=get_internal_redis)
+    group_name: str = field(default=get_config().WORKER.CONSUMER_GROUP_NAME)
+    stream_name: StreamName = field(default=StreamName.DEAD_LETTER_QUEUE)
+    queue: asyncio.Queue[StreamedEvent]
+    composed_statement: Composed
+
+
+STANDARD_DLQ_WORKER_INPUT: Final[DeadLetterQueueWorkerInput] = (
+    DeadLetterQueueWorkerInput(
+        queue=QUEUE_REGISTRY.dead_letter, composed_statement=format_dlq_insertion_sql()
+    )
+)
+
+COUNTERS_DLQ_WORKER_INPUT: Final[DeadLetterQueueWorkerInput] = (
+    DeadLetterQueueWorkerInput(
+        queue=QUEUE_REGISTRY.dead_letter,
+        composed_statement=format_counters_dlq_insertion_sql(),
+    )
+)
+
+SIDE_EFFECTS_DLQ_WORKER_INPUT: Final[DeadLetterQueueWorkerInput] = (
+    DeadLetterQueueWorkerInput(
+        queue=QUEUE_REGISTRY.dead_letter,
+        composed_statement=format_failed_side_effects_sql(),
+    )
+)
+
 WORKER_INPUT_DATA_MAPPING: Final[MappingProxyType[EventName, Any]] = MappingProxyType(
     {
         # Strong entity creations
@@ -244,5 +278,9 @@ WORKER_INPUT_DATA_MAPPING: Final[MappingProxyType[EventName, Any]] = MappingProx
         EventName.DOWNSTREAM_USER_COMMENT_DECREMENT: DOWNSTREAM_USERS_COMMENTS_COUNTER_DECREMENT,
         EventName.DOWNSTREAM_FORUM_POST_DECREMENT: DOWNSTREAM_FORUMS_POSTS_COUNTER_DECREMENT,
         EventName.DOWNSTREAM_POST_COMMENT_DECREMENT: DOWNSTREAM_POSTS_COMMENTS_COUNTER_DECREMENT,
+        # Dead Letter Queues
+        EventName.DLQ_STANDARD: STANDARD_DLQ_WORKER_INPUT,
+        EventName.DLQ_COUNTER: COUNTERS_DLQ_WORKER_INPUT,
+        EventName.DLQ_SIDE_EFFECTS: SIDE_EFFECTS_DLQ_WORKER_INPUT,
     }
 )

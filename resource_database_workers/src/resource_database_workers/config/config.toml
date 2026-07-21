@@ -1,5 +1,5 @@
 [database]
-POSTGRES_HOST="127.0.0.1"
+POSTGRES_HOST="resource_server_database"
 POSTGRES_PORT=5432
 POSTGRES_DATABASE="resource_db"
 
@@ -13,15 +13,15 @@ SQLALCHEMY_TRACK_MODIFICATIONS=false
 
 [redis]
 [redis.app]
-HOST="127.0.0.1"
+HOST="resource_server_redis"
 PORT=6379
 DB=0
 
 
 [redis.internal]
-HOST="127.0.0.1"
-PORT=6390
-DB=0
+HOST="resource_server_redis"
+PORT=6379
+DB=1
 
 [cache]
 # All units in seconds, unless specified otherwise
@@ -56,3 +56,7 @@ IQ_CONSUMER_GET_TIMEOUT=0.1                         # seconds
 IQ_CONSUMER_SLEEP_INTERVAL=0.01                     # seconds
 
 DOWNSTREAM_COUNTER_BATCH_SIZE=10000
+
+RECLAIM_THRESHOLD=120_000                           # milliseconds
+RECLAIMATION_CHECK_INTERVAL=30_000                  # milliseconds
+MAX_DELIVERIES=3

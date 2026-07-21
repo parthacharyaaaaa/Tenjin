@@ -54,6 +54,21 @@ class StreamReaderConfig(BaseWorkerConfig):
 class DeadLetterWorkerConfig(BaseWorkerConfig):
     STANDARD: Annotated[int, Field(ge=0, default=0)]
     COUNTERS: Annotated[int, Field(ge=0, default=0)]
+    SIDE_EFFECTS: Annotated[int, Field(ge=0, default=0)]
+
+    @model_validator(mode="after")
+    def validate_worker_split(self) -> Self:
+        worker_counts: tuple[int, ...] = tuple(self.model_dump().values())
+        if any(worker_counts) != all(worker_counts):
+            raise ValueError(
+                " ".join(
+                    (
+                        "DLQ workers must either be all dormant",
+                        "or all at least 1 in quantity",
+                    )
+                )
+            )
+        return self
 
 
 class CounterConfig(BaseWorkerConfig):

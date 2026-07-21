@@ -8,7 +8,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import text, func
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, BYTEA, ENUM
-from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, NUMERIC, TEXT
+from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, TEXT
 
 from datetime import datetime
 from typing import Any
@@ -22,6 +22,7 @@ from resource_auxillary.datastructures.database import (
     ForeignKeyColumnLiteral,
     AssociationColumnLiteral,
     GenericLiterals,
+    SideEffectType,
 )
 
 from resource_server.config import database_constants
@@ -73,6 +74,10 @@ REPORT_TAGS = ENUM(
     *(i.value for i in ReportTags),
     name="REPORT_TAGS",
     create_type=True,
+)
+
+SIDE_EFFECT_TYPES = ENUM(
+    *(i.value for i in SideEffectType), name=SideEffectType.__NAME__, create_type=True
 )
 
 
@@ -684,5 +689,23 @@ class CounterDeadLetterQueue(Base):
     )
 
     counter_data: Mapped[Any] = mapped_column(
+        JSONB, nullable=False, name=DeadLetterQueueLiteral.PAYLOAD_COLUMN_NAME
+    )
+
+
+class FailedSideEffects(Base):
+    __tablename__ = DeadLetterQueueLiteral.FAILED_SIDE_EFFECTS_TABLE_NAME
+
+    id_: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
+    event_id: Mapped[int] = mapped_column(
+        BIGINT, nullable=False, index=True, name=EventLiteral.EVENT_ID_COLUMN_NAME
+    )
+    effect_type: Mapped[int] = mapped_column(
+        SIDE_EFFECT_TYPES,
+        nullable=False,
+        index=True,
+        name=DeadLetterQueueLiteral.SIDE_EFFECT_TYPE_COLUMN_NAME,
+    )
+    payload: Mapped[int] = mapped_column(
         JSONB, nullable=False, name=DeadLetterQueueLiteral.PAYLOAD_COLUMN_NAME
     )

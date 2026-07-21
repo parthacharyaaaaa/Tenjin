@@ -23,4 +23,4 @@ class SingletonMetaclass(type):
             weakref.ref(temp_instance, lambda _: setattr(cls, "_instance", None)),
         )
 
-        return getattr(cls, "_instance")
+        return getattr(cls, "_instance")()

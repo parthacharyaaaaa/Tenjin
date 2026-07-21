@@ -1,4 +1,4 @@
-from typing import Any, Final, Literal, Sequence, get_type_hints
+from typing import Any, Final, Literal, MutableSequence, Sequence, get_type_hints
 from uuid import uuid4
 
 from psycopg import AsyncConnection
@@ -28,29 +28,32 @@ def resolve_entity_metadata(event: StreamedEvent) -> tuple[str, tuple[str, ...]]
     return ASSOCIATION_DB_METADATA[event.name]
 
 
-async def batch_association_insert_with_isolation(
+async def batch_insert_with_isolation(
     conn: AsyncConnection,
     events: Sequence[StreamedEvent],
+    successfully_inserted: MutableSequence[int],
     action: t_action_literal | None,
-) -> list[int]:
+) -> None:
     try:
         async with conn.transaction():
             if action:
-                return await batch_insert_association_entities(conn, events, action)
+                successfully_inserted.extend(
+                    await batch_insert_association_entities(conn, events, action)
+                )
             else:
-                return await batch_insert_strong_entities(conn, events)
+                successfully_inserted.extend(
+                    await batch_insert_strong_entities(conn, events)
+                )
     except IntegrityError:
-        await conn.rollback()
         if len(events) == 1:
-            return []
+            return
         bisected_length: int = len(events) // 2
-        left = await batch_association_insert_with_isolation(
-            conn, events[:bisected_length], action
+        await batch_insert_with_isolation(
+            conn, events[:bisected_length], successfully_inserted, action
         )
-        right = await batch_association_insert_with_isolation(
-            conn, events[bisected_length:], action
+        await batch_insert_with_isolation(
+            conn, events[bisected_length:], successfully_inserted, action
         )
-        return left + right
 
 
 async def batch_insert_association_entities(

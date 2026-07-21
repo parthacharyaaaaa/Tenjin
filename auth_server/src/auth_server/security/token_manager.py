@@ -17,6 +17,7 @@ from auth_server.security.tokens import (
     StandardRefreshTokenClaims,
     TokenType,
 )
+from auth_server.strings import SyncedStoreStrings
 
 # Type aliases
 tokenPair: TypeAlias = tuple[str, str]
@@ -299,7 +300,7 @@ class TokenManager:
         """Check synced store to keep local keys updated with global keys. Intended to be run as a non-blocking, background task upon instantiation"""
         while True:
             try:
-                valid_keys: list[bytes] | None = await self.synced_store_client.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
+                valid_keys: list[bytes] | None = await self.synced_store_client.lrange(SyncedStoreStrings.VALID_KEYS, 0, -1)  # type: ignore[reportAssignmentType]
 
                 if not valid_keys:
                     raise RuntimeError("Valid keys list empty or not found")

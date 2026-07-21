@@ -40,7 +40,7 @@ from auth_server.models.session import AdminSession
 from auth_server.security.admin_roles import AdminRole
 from auth_server.security.keygen import generate_ecdsa_pair
 from auth_server.security.permissions import Permission
-from auth_server.src.auth_server.strings import AdminStrings
+from auth_server.strings import AdminStrings
 from auth_server.utils.auth_auxillary import (
     report_suspicious_activity,
     create_admin_session,

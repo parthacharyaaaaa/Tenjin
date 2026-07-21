@@ -26,8 +26,8 @@ def get_synced_store_client() -> Redis:
     config: Final[AppConfig] = get_app_config()
 
     return Redis(
-        username=os.environ["AUTH_WORKER_REDIS_USERNAME"],
-        password=os.environ["AUTH_WORKER_REDIS_PASSWORD"],
+        # username=os.environ["AUTH_WORKER_REDIS_USERNAME"],
+        # password=os.environ["AUTH_WORKER_REDIS_PASSWORD"],
         **config.REDIS.SYNCED_STORE.to_constructor_kwargs(),
     )
 
@@ -37,8 +37,8 @@ def get_token_store_client() -> Redis:
     config: Final[AppConfig] = get_app_config()
 
     return Redis(
-        username=os.environ["AUTH_WORKER_REDIS_USERNAME"],
-        password=os.environ["AUTH_WORKER_REDIS_PASSWORD"],
+        # username=os.environ["AUTH_WORKER_REDIS_USERNAME"],
+        # password=os.environ["AUTH_WORKER_REDIS_PASSWORD"],
         **config.REDIS.TOKEN_STORE.to_constructor_kwargs(),
     )
 
@@ -58,7 +58,7 @@ def get_database_session_maker() -> async_sessionmaker[AsyncSession]:
     engine: Final[AsyncEngine] = create_async_engine(URI)
 
     session_maker: Final[async_sessionmaker[AsyncSession]] = async_sessionmaker(
-        bind=engine, autocommit=False, autoflush=False
+        bind=engine, autocommit=False, autoflush=False, expire_on_commit=False
     )
 
     return session_maker

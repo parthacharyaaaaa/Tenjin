@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
 from resource_server.datastructures.requests import SortOption
-from resource_server.utils.singleton import SingletonMetaclass
+from auxillary.singleton import SingletonMetaclass
 from resource_server.repositories.result_protocol import AbstractResult
 from resource_server.models.database import Post, PostReport, PostSave, PostVote, User
 from resource_server.models.database_enums import ReportTags

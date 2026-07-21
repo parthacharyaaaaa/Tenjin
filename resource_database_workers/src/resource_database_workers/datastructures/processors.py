@@ -9,6 +9,7 @@ from resource_database_workers.tasks.consumer import (
     queue_downstream_decrement_consumer,
     queue_downstream_deletion_consumer,
 )
+from resource_database_workers.tasks.dlq_workers import dlq_consumer
 
 EVENT_WORKER_MAPPING: Final[MappingProxyType[EventName, Callable]] = MappingProxyType(
     {
@@ -38,5 +39,9 @@ EVENT_WORKER_MAPPING: Final[MappingProxyType[EventName, Callable]] = MappingProx
         EventName.DOWNSTREAM_USER_COMMENT_DECREMENT: queue_downstream_decrement_consumer,
         EventName.DOWNSTREAM_FORUM_POST_DECREMENT: queue_downstream_decrement_consumer,
         EventName.DOWNSTREAM_POST_COMMENT_DECREMENT: queue_downstream_decrement_consumer,
+        # Dead letter queue events
+        EventName.DLQ_STANDARD: dlq_consumer,
+        EventName.DLQ_COUNTER: dlq_consumer,
+        EventName.DLQ_SIDE_EFFECTS: dlq_consumer,
     }
 )

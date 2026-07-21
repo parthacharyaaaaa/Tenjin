@@ -8,7 +8,7 @@ import secrets
 from auth_server.security.key_container import KeyMetadata
 from auth_server.repositories.keydata import KeydataRepository
 from auxillary.utils import to_base64url
-import ujson
+import orjson
 
 from auth_server.models.database import KeyData
 
@@ -45,11 +45,7 @@ def initialize_jwks(jwks_filepath: Path, keys: Sequence[KeyData]) -> None:
             }
         )
 
-        jwks_filepath.write_bytes(
-            ujson.dumps({"keys": jwks_contents}, indent=2, ensure_ascii=True).encode(
-                "utf-8"
-            )
-        )
+        jwks_filepath.write_bytes(orjson.dumps({"keys": jwks_contents}))
 
 
 def update_jwks(
@@ -75,7 +71,7 @@ def update_jwks(
     }
 
     with open(jwks_json_filepath, "r+") as jwks_json_file:
-        jwks_contents: list[dict[str, str | int]] = ujson.loads(jwks_json_file.read())[
+        jwks_contents: list[dict[str, str | int]] = orjson.loads(jwks_json_file.read())[
             "keys"
         ]
         jwks_contents.append(keyMapping)
@@ -85,7 +81,7 @@ def update_jwks(
             jwks_contents: list[dict[str, str | int]] = jwks_contents[-capacity:]
 
         jwks_json_file.seek(0)
-        jwks_json_file.write(ujson.dumps({"keys": jwks_contents}, indent=2))
+        jwks_json_file.write(orjson.dumps({"keys": jwks_contents}).decode("utf-8"))
         jwks_json_file.truncate()
 
 
@@ -117,21 +113,30 @@ def write_ecdsa_pair(
         if isinstance(public_key, ecdsa.VerifyingKey)
         else public_key
     )
-    private_dir.joinpath(
+    private_pem_path: Path = private_dir.joinpath(
         fname_template.format(key_type="private", key_id=key_id)
-    ).write_bytes(private_buffer)
+    )
+    private_pem_path.touch()
+    private_pem_path.write_bytes(private_buffer)
 
-    public_dir.joinpath(
+    public_pem_path: Path = public_dir.joinpath(
         fname_template.format(key_type="public", key_id=key_id)
-    ).write_bytes(public_buffer)
+    )
+    public_pem_path.touch()
+    public_pem_path.write_bytes(public_buffer)
 
 
-def initialize_active_key(
+async def initialize_active_key(
     private_directory: Path,
     public_directory: Path,
     keydata_repository: KeydataRepository,
 ) -> KeyData:
     active_kid, sk, vk = generate_ecdsa_pair()
+
+    if not private_directory.exists():
+        private_directory.mkdir(parents=True)
+    if not public_directory.exists():
+        public_directory.mkdir(parents=True)
 
     # Persist to PEM, and DB (JWKS done at end)
     write_ecdsa_pair(
@@ -142,7 +147,7 @@ def initialize_active_key(
         key_id=int(active_kid),
     )
 
-    active_key: KeyData = keydata_repository.insert_keydata(
+    active_key: KeyData = await keydata_repository.insert_keydata(
         active_kid, sk, vk, "ES256", ecdsa.SECP256k1, returning=True
     )
     return active_key
