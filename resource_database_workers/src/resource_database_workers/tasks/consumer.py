@@ -43,19 +43,13 @@ from resource_database_workers.datastructures.downstream import (
 )
 from resource_database_workers.utils.worker_redis import (
     ack_with_retries,
+    atomic_emit_side_effects,
     declare_dead_with_retries,
-    emit_side_effects_with_retries,
+    dlq_aware_process_events,
     populate_events_batch_from_queue,
     trim_duplicate_events,
     atomic_emit_side_effects,
 )
-
-
-async def event_reclaimer(
-    config: AppConfig, redis: Redis, stream_name: StreamName, group_name: str
-) -> None:
-    while True:
-        ...
 
 
 async def user_orphan_consumer(
@@ -114,7 +108,12 @@ async def user_orphan_consumer(
         else:
             # ACK entire batch
             await ack_with_retries(
-                redis, batch, stream_name, group_name, config.WORKER.MAX_RETRIES
+                redis,
+                batch,
+                stream_name,
+                group_name,
+                dead_letter_stream_name,
+                config.WORKER.MAX_RETRIES,
             )
 
         batch.clear()
@@ -176,6 +175,7 @@ async def queue_insertion_consumer(
                     successful_events,
                     stream_name,
                     group_name,
+                    dead_letter_stream_name,
                     config.WORKER.MAX_RETRIES,
                 )
                 await declare_dead_with_retries(
@@ -187,12 +187,15 @@ async def queue_insertion_consumer(
                     config.WORKER.MAX_RETRIES,
                 )
 
-                await emit_side_effects_with_retries(
+                coro = lambda: atomic_emit_side_effects(redis, successful_events)
+                await dlq_aware_process_events(
                     redis,
                     successful_events,
+                    coro,
                     config.WORKER.MAX_RETRIES,
                     stream_name,
                     group_name,
+                    dead_letter_stream_name,
                 )
 
             reference_time = time.monotonic()
@@ -252,7 +255,12 @@ async def queue_deletion_consumer(
             else:
                 # ACK entire batch
                 await ack_with_retries(
-                    redis, batch, stream_name, group_name, config.WORKER.MAX_RETRIES
+                    redis,
+                    batch,
+                    stream_name,
+                    group_name,
+                    dead_letter_stream_name,
+                    config.WORKER.MAX_RETRIES,
                 )
                 await atomic_emit_side_effects(redis, batch)
                 await dispatch_downstream_events(
@@ -326,7 +334,12 @@ async def queue_downstream_deletion_consumer(
                 continue
 
             await ack_with_retries(
-                redis, (event,), stream_name, group_name, config.WORKER.MAX_RETRIES
+                redis,
+                (event,),
+                stream_name,
+                group_name,
+                dead_letter_stream_name,
+                config.WORKER.MAX_RETRIES,
             )
 
             await dispatch_downstream_counter_decrements(
@@ -409,5 +422,10 @@ async def queue_downstream_decrement_consumer(
                 )
             else:
                 await ack_with_retries(
-                    redis, (event,), stream_name, group_name, config.WORKER.MAX_RETRIES
+                    redis,
+                    (event,),
+                    stream_name,
+                    group_name,
+                    dead_letter_stream_name,
+                    config.WORKER.MAX_RETRIES,
                 )

@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import Iterable, Mapping, Sequence
+from typing import Any, Callable, Coroutine, Iterable, Mapping, Sequence
 
 import orjson
 
@@ -57,107 +57,74 @@ async def populate_events_batch_from_queue(
             continue
 
 
-async def declare_dead_with_retries(
+async def execute_with_redis_retries(
+    redis_coroutine: Callable[[], Coroutine[Any, Any, Any]], attempts: int
+) -> Any:
+    # TODO: Add jitter/random, exponential backoff for network failures
+    exception: Exception | None = None
+    for _attempt in range(attempts):
+        try:
+            return await redis_coroutine()
+        except RedisError as redis_error:
+            exception = redis_error
+            if redis_error.error_type == ExceptionType.NETWORK:
+                continue
+            break
+        except Exception as e:
+            exception = e
+            break
+
+    if exception:
+        raise exception
+
+
+async def dlq_aware_process_events(
+    redis: Redis,
+    events: Sequence[StreamedEvent],
+    redis_coroutine: Callable[[], Coroutine[Any, Any, Any]],
+    attempts: int,
+    event_stream_name: StreamName,
+    group_name: str,
+    dlq_stream_name: StreamName,
+) -> Any:
+    """
+    DLQ-aware event processing helper with retries
+    """
+    try:
+        await execute_with_redis_retries(redis_coroutine, attempts)
+    except Exception as e:
+        dlq_attempts: int = (
+            1 if getattr(e, "error_type", None) == ExceptionType.NETWORK else attempts
+        )
+        await declare_dead_with_retries(
+            redis, events, event_stream_name, group_name, dlq_stream_name, dlq_attempts
+        )
+
+
+async def amortize_event(
     redis: Redis,
     events: Sequence[StreamedEvent],
     event_stream_name: StreamName,
     group_name: str,
     dlq_stream_name: StreamName,
-    attempts: int,
 ) -> None:
-    exception: Exception | None = None
-    for _attempt in range(attempts):
-        try:
-            async with redis.pipeline(transaction=True) as pipeline:
-                for event in events:
-                    pipeline.xack(event_stream_name, group_name, event.event_id)
-                    pipeline.xadd(dlq_stream_name, cache_repr(event), id=event.event_id)
-                await pipeline.execute()
-            exception = None
-            break
-        except RedisError as redis_error:
-            exception = redis_error
-            if redis_error.error_type == ExceptionType.NETWORK:
-                continue
-            break
-        except Exception as e:
-            exception = e
-            break
-
-    if exception:
-        raise exception
+    async with redis.pipeline(transaction=True) as pipeline:
+        for event in events:
+            pipeline.xack(event_stream_name, group_name, event.event_id)
+            pipeline.xadd(dlq_stream_name, cache_repr(event), id=event.event_id)
+        await pipeline.execute()
 
 
-async def ack_with_retries(
+async def acknowledge_event(
     redis: Redis,
     events: Sequence[StreamedEvent],
     event_stream_name: StreamName,
     group_name: str,
-    attempts: int,
 ) -> None:
-    exception: Exception | None = None
-    for _attempt in range(attempts):
-        try:
-            async with redis.pipeline(transaction=True) as pipeline:
-                for event in events:
-                    pipeline.xack(event_stream_name, group_name, event.event_id)
-                await pipeline.execute()
-            exception = None
-            break
-        except RedisError as redis_error:
-            exception = redis_error
-            if redis_error.error_type == ExceptionType.NETWORK:
-                continue
-            break
-        except Exception as e:
-            exception = e
-            break
-
-    if exception:
-        raise exception
-
-
-async def emit_side_effects_with_retries(
-    redis: Redis,
-    events: Sequence[StreamedEvent],
-    attempts: int,
-    stream_name: StreamName,
-    group_name: str,
-) -> None:
-    exception: Exception | None = None
-    for _attempt in range(attempts):
-        try:
-            await atomic_emit_side_effects(redis, events)
-        except RedisError as redis_error:
-            exception = redis_error
-            if redis_error.error_type == ExceptionType.NETWORK:
-                continue
-            break
-        except Exception as e:
-            exception = e
-            break
-
-    if not exception:
-        return
-    for event in events:
-        event.name = EventName.DLQ_SIDE_EFFECTS
-
-    dlq_declaration_attempts: int = (
-        1
-        if (
-            isinstance(exception, RedisError)
-            and exception.error_type == ExceptionType.NETWORK
-        )
-        else attempts
-    )
-    await declare_dead_with_retries(
-        redis,
-        events,
-        stream_name,
-        group_name,
-        StreamName.DEAD_LETTER_QUEUE,
-        dlq_declaration_attempts,
-    )
+    async with redis.pipeline(transaction=True) as pipeline:
+        for event in events:
+            pipeline.xack(event_stream_name, group_name, event.event_id)
+        await pipeline.execute()
 
 
 async def trim_duplicate_events(
@@ -288,3 +255,37 @@ def _emit_counter_side_effects(
             pipeline.hincrby(
                 side_effect.counter_group, side_effect.cache_key, side_effect.delta
             )
+
+
+async def declare_dead_with_retries(
+    redis: Redis,
+    batch: Sequence[StreamedEvent],
+    stream_name: StreamName,
+    group_name: str,
+    dead_letter_stream_name: StreamName,
+    attempts: int,
+) -> None:
+    """
+    Thin wrapper over sibling utility functions to declare an event as dead
+    """
+    coro = lambda: amortize_event(
+        redis, batch, stream_name, group_name, dead_letter_stream_name
+    )
+    await execute_with_redis_retries(coro, attempts)
+
+
+async def ack_with_retries(
+    redis: Redis,
+    batch: Sequence[StreamedEvent],
+    stream_name: StreamName,
+    group_name: str,
+    dead_letter_stream_name: StreamName,
+    attempts: int,
+) -> None:
+    """
+    Thin wrapper over sibling utility functions to acknowledge an event
+    """
+    coro = lambda: acknowledge_event(redis, batch, stream_name, group_name)
+    await dlq_aware_process_events(
+        redis, batch, coro, attempts, stream_name, group_name, dead_letter_stream_name
+    )
