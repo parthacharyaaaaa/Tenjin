@@ -159,23 +159,8 @@ async def declare_counters_event_dead(
         side_effects=EventSideEffects(),  # type: ignore
     )
 
-    exception: Exception | None = None
-    for _attempt in range(attempts):
-        try:
-            await redis.xadd(dlq_stream_name, cache_repr(failure_event))
-            exception = None
-            break
-        except RedisError as e:
-            exception = e
-            if e.error_type == ExceptionType.NETWORK:
-                continue
-            break
-        except Exception as e:
-            exception = e
-            break
-
-    if exception:
-        raise exception
+    xack_coroutine = lambda: redis.xadd(dlq_stream_name, cache_repr(failure_event))
+    await execute_with_redis_retries(xack_coroutine, attempts)  # type: ignore[reportArgumentType]
 
 
 async def retrieve_counter_group_names(redis: Redis, registry_name: str) -> set[str]:
