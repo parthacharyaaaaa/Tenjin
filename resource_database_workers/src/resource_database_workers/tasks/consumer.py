@@ -13,14 +13,13 @@ from resource_database_workers.config.config import AppConfig
 from resource_auxillary.strings import StreamName
 from resource_auxillary.events import StreamedEvent
 
-from resource_database_workers.src.resource_database_workers.config.constants import (
+from resource_database_workers.config.constants import (
     POTENTIAL_TRANSIENT_ERRORS,
 )
-from resource_database_workers.src.resource_database_workers.utils.worker_db import (
+from resource_database_workers.utils.worker_db import (
     retried_event_database_processing,
 )
 from resource_database_workers.utils.coordination import (
-    atomic_emit_side_effects,
     batch_dedup_insert_events,
     dedup_insert_event,
 )
@@ -48,7 +47,15 @@ from resource_database_workers.utils.worker_redis import (
     emit_side_effects_with_retries,
     populate_events_batch_from_queue,
     trim_duplicate_events,
+    atomic_emit_side_effects,
 )
+
+
+async def event_reclaimer(
+    config: AppConfig, redis: Redis, stream_name: StreamName, group_name: str
+) -> None:
+    while True:
+        ...
 
 
 async def user_orphan_consumer(
