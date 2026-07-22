@@ -205,7 +205,7 @@ async def queue_insertion_consumer(
                 await dlq_aware_emit_side_effects(
                     redis,
                     config.WORKER,
-                    batch,
+                    successful_events,
                     dead_letter_stream_name,
                     config.WORKER.MAX_RETRIES,
                 )
