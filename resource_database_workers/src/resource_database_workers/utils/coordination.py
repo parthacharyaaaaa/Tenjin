@@ -1,5 +1,7 @@
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
+import random
 from typing import Iterable
 from uuid import uuid4
 
@@ -64,3 +66,22 @@ async def batch_dedup_insert_events(
                 await copy.write_row((event_id, acknowledgement_time))
         await cursor.execute(prepare_batch_dedup_sql(temp_table_name))
         return tuple(i[0] for i in await cursor.fetchall())
+
+
+def calculate_exponential_backoff_time(
+    cap: float, base: float, attempt: int, *, exponential: int = 2
+) -> float:
+    return min(cap, base * exponential**attempt)
+
+
+async def exponential_jittered_backoff(
+    cap: float, base: float, attempt: int, *, exponential: int = 2
+) -> None:
+    await asyncio.sleep(
+        random.uniform(
+            0,
+            calculate_exponential_backoff_time(
+                cap, base, attempt, exponential=exponential
+            ),
+        )
+    )

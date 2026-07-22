@@ -6,6 +6,7 @@ from typing import Generator
 from psycopg_pool import AsyncConnectionPool
 
 from redis.asyncio import Redis
+from redis.exceptions import RedisError, ExceptionType
 
 from resource_auxillary.datastructures.database import StrongEntity
 
@@ -22,6 +23,7 @@ from resource_database_workers.utils.worker_db import (
 from resource_database_workers.utils.coordination import (
     batch_dedup_insert_events,
     dedup_insert_event,
+    exponential_jittered_backoff,
 )
 from resource_database_workers.utils.tasks import (
     dispatch_downstream_counter_decrements,
@@ -78,7 +80,7 @@ async def user_orphan_consumer(
         )
 
         exception: Exception | None = None
-        for _attempt in range(config.WORKER.MAX_RETRIES):
+        for _attempt in range(1, config.WORKER.MAX_RETRIES + 1):
             try:
                 await dispatch_downstream_events(
                     redis,
@@ -90,8 +92,17 @@ async def user_orphan_consumer(
                 )
                 exception = None
                 break
-            except POTENTIAL_TRANSIENT_ERRORS as e:
-                exception = e
+            except RedisError as redis_error:
+                exception = redis_error
+                if redis_error.error_type == ExceptionType.NETWORK:
+                    await exponential_jittered_backoff(
+                        config.WORKER.MAXIMUM_BACKOFF_INTERVAL,
+                        config.WORKER.BASE_BACKOFF_INTERVAL,
+                        _attempt,
+                        exponential=config.WORKER.BACKOFF_EXPONENTIAL,
+                    )
+                    continue
+                break
             except Exception as e:
                 exception = e
                 break
@@ -99,6 +110,7 @@ async def user_orphan_consumer(
         if exception:  # Entire batch failed
             await declare_dead_with_retries(
                 redis,
+                config.WORKER,
                 batch,
                 stream_name,
                 group_name,
@@ -109,6 +121,7 @@ async def user_orphan_consumer(
             # ACK entire batch
             await ack_with_retries(
                 redis,
+                config.WORKER,
                 batch,
                 stream_name,
                 group_name,
@@ -158,6 +171,7 @@ async def queue_insertion_consumer(
             if exception:  # Entire batch failed
                 await declare_dead_with_retries(
                     redis,
+                    config.WORKER,
                     batch,
                     stream_name,
                     group_name,
@@ -172,6 +186,7 @@ async def queue_insertion_consumer(
                 # ACK processed events and push failed events to DLQ
                 await ack_with_retries(
                     redis,
+                    config.WORKER,
                     successful_events,
                     stream_name,
                     group_name,
@@ -180,6 +195,7 @@ async def queue_insertion_consumer(
                 )
                 await declare_dead_with_retries(
                     redis,
+                    config.WORKER,
                     tuple(event for event in batch if event not in successful_events),
                     stream_name,
                     group_name,
@@ -187,7 +203,11 @@ async def queue_insertion_consumer(
                     config.WORKER.MAX_RETRIES,
                 )
                 await dlq_aware_emit_side_effects(
-                    redis, batch, dead_letter_stream_name, config.WORKER.MAX_RETRIES
+                    redis,
+                    config.WORKER,
+                    batch,
+                    dead_letter_stream_name,
+                    config.WORKER.MAX_RETRIES,
                 )
 
             reference_time = time.monotonic()
@@ -238,6 +258,7 @@ async def queue_deletion_consumer(
             if exception:  # Entire batch failed
                 await declare_dead_with_retries(
                     redis,
+                    config.WORKER,
                     batch,
                     stream_name,
                     group_name,
@@ -248,6 +269,7 @@ async def queue_deletion_consumer(
                 # ACK entire batch
                 await ack_with_retries(
                     redis,
+                    config.WORKER,
                     batch,
                     stream_name,
                     group_name,
@@ -255,7 +277,11 @@ async def queue_deletion_consumer(
                     config.WORKER.MAX_RETRIES,
                 )
                 await dlq_aware_emit_side_effects(
-                    redis, batch, dead_letter_stream_name, config.WORKER.MAX_RETRIES
+                    redis,
+                    config.WORKER,
+                    batch,
+                    dead_letter_stream_name,
+                    config.WORKER.MAX_RETRIES,
                 )
                 await dispatch_downstream_events(
                     redis,
@@ -289,6 +315,7 @@ async def queue_downstream_deletion_consumer(
         except (KeyError, ValueError):
             await declare_dead_with_retries(
                 redis,
+                config.WORKER,
                 (event,),
                 stream_name,
                 group_name,
@@ -319,6 +346,7 @@ async def queue_downstream_deletion_consumer(
             if exception:
                 await declare_dead_with_retries(
                     redis,
+                    config.WORKER,
                     (event,),
                     stream_name,
                     group_name,
@@ -329,6 +357,7 @@ async def queue_downstream_deletion_consumer(
 
             await ack_with_retries(
                 redis,
+                config.WORKER,
                 (event,),
                 stream_name,
                 group_name,
@@ -359,6 +388,7 @@ async def queue_downstream_decrement_consumer(
         except (KeyError, ValueError):
             await declare_dead_with_retries(
                 redis,
+                config.WORKER,
                 (event,),
                 stream_name,
                 group_name,
@@ -375,7 +405,7 @@ async def queue_downstream_decrement_consumer(
                 await redis.xack(stream_name, group_name, event.event_id)
                 continue
 
-            for _attempt in range(config.WORKER.MAX_RETRIES):
+            for _attempt in range(1, config.WORKER.MAX_RETRIES + 1):
                 try:
                     # temp truthy tuple to enter loop
                     results: list[tuple[str, int]] = [("", 0)]
@@ -399,6 +429,12 @@ async def queue_downstream_decrement_consumer(
                 except POTENTIAL_TRANSIENT_ERRORS as e:
                     exception = e
                     await conn.rollback()
+                    await exponential_jittered_backoff(
+                        config.WORKER.MAXIMUM_BACKOFF_INTERVAL,
+                        config.WORKER.BASE_BACKOFF_INTERVAL,
+                        _attempt,
+                        exponential=config.WORKER.BACKOFF_EXPONENTIAL,
+                    )
                     continue
                 except Exception as e:
                     exception = e
@@ -408,6 +444,7 @@ async def queue_downstream_decrement_consumer(
             if exception:
                 await declare_dead_with_retries(
                     redis,
+                    config.WORKER,
                     (event,),
                     stream_name,
                     group_name,
@@ -417,6 +454,7 @@ async def queue_downstream_decrement_consumer(
             else:
                 await ack_with_retries(
                     redis,
+                    config.WORKER,
                     (event,),
                     stream_name,
                     group_name,

@@ -60,3 +60,7 @@ DOWNSTREAM_COUNTER_BATCH_SIZE=10000
 RECLAIM_THRESHOLD=120_000                           # milliseconds
 RECLAIMATION_CHECK_INTERVAL=30_000                  # milliseconds
 MAX_DELIVERIES=3
+
+MAXIMUM_BACKOFF_INTERVAL=0.08                       # seconds
+BASE_BACKOFF_INTERVAL=0.005                         # seconds
+BACKOFF_EXPONENTIAL=2

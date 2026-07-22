@@ -22,6 +22,12 @@ from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
 
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
+from resource_database_workers.src.resource_database_workers.config.sub_config import (
+    WorkerConfig,
+)
+from resource_database_workers.src.resource_database_workers.utils.coordination import (
+    exponential_jittered_backoff,
+)
 from resource_database_workers.src.resource_database_workers.utils.lua_commands import (
     CONDITIIONAL_DELETE_TARGET_INTENT_TEMPLATE,
     CONDITIONAL_COUNTER_DECREMENT_TEMPLATE,
@@ -58,17 +64,25 @@ async def populate_events_batch_from_queue(
 
 
 async def execute_with_redis_retries(
-    redis_coroutine: Callable[[], Coroutine[Any, Any, Any]], attempts: int
+    worker_config: WorkerConfig,
+    redis_coroutine: Callable[[], Coroutine[Any, Any, Any]],
+    attempts: int,
 ) -> Any:
-    # TODO: Add jitter/random, exponential backoff for network failures
     exception: Exception | None = None
-    for _attempt in range(attempts):
+    for _attempt in range(1, attempts + 1):
         try:
             return await redis_coroutine()
         except RedisError as redis_error:
             exception = redis_error
             if redis_error.error_type == ExceptionType.NETWORK:
+                await exponential_jittered_backoff(
+                    worker_config.MAXIMUM_BACKOFF_INTERVAL,
+                    worker_config.BASE_BACKOFF_INTERVAL,
+                    _attempt,
+                    exponential=worker_config.BACKOFF_EXPONENTIAL,
+                )
                 continue
+
             break
         except Exception as e:
             exception = e
@@ -80,6 +94,7 @@ async def execute_with_redis_retries(
 
 async def dlq_aware_process_events(
     redis: Redis,
+    worker_config: WorkerConfig,
     events: Sequence[StreamedEvent],
     redis_coroutine: Callable[[], Coroutine[Any, Any, Any]],
     attempts: int,
@@ -91,13 +106,19 @@ async def dlq_aware_process_events(
     DLQ-aware event processing helper with retries
     """
     try:
-        await execute_with_redis_retries(redis_coroutine, attempts)
+        await execute_with_redis_retries(worker_config, redis_coroutine, attempts)
     except Exception as e:
         dlq_attempts: int = (
             1 if getattr(e, "error_type", None) == ExceptionType.NETWORK else attempts
         )
         await declare_dead_with_retries(
-            redis, events, event_stream_name, group_name, dlq_stream_name, dlq_attempts
+            redis,
+            worker_config,
+            events,
+            event_stream_name,
+            group_name,
+            dlq_stream_name,
+            dlq_attempts,
         )
 
 
@@ -253,6 +274,7 @@ def _emit_counter_side_effects(
 
 async def declare_dead_with_retries(
     redis: Redis,
+    worker_config: WorkerConfig,
     batch: Sequence[StreamedEvent],
     stream_name: StreamName,
     group_name: str,
@@ -265,11 +287,12 @@ async def declare_dead_with_retries(
     coro = lambda: amortize_event(
         redis, batch, stream_name, group_name, dead_letter_stream_name
     )
-    await execute_with_redis_retries(coro, attempts)
+    await execute_with_redis_retries(worker_config, coro, attempts)
 
 
 async def ack_with_retries(
     redis: Redis,
+    worker_config: WorkerConfig,
     batch: Sequence[StreamedEvent],
     stream_name: StreamName,
     group_name: str,
@@ -281,12 +304,20 @@ async def ack_with_retries(
     """
     coro = lambda: acknowledge_event(redis, batch, stream_name, group_name)
     await dlq_aware_process_events(
-        redis, batch, coro, attempts, stream_name, group_name, dead_letter_stream_name
+        redis,
+        worker_config,
+        batch,
+        coro,
+        attempts,
+        stream_name,
+        group_name,
+        dead_letter_stream_name,
     )
 
 
 async def declare_side_effects_event_dead(
     redis: Redis,
+    worker_config: WorkerConfig,
     batch: Sequence[StreamedEvent],
     dlq_stream_name: StreamName,
     attempts: int,
@@ -301,11 +332,12 @@ async def declare_side_effects_event_dead(
     )
 
     dlq_coroutine = lambda: stream_events(redis, failure_events, dlq_stream_name)
-    await execute_with_redis_retries(dlq_coroutine, attempts)
+    await execute_with_redis_retries(worker_config, dlq_coroutine, attempts)
 
 
 async def dlq_aware_emit_side_effects(
     redis: Redis,
+    worker_config: WorkerConfig,
     batch: Sequence[StreamedEvent],
     dead_letter_stream_name: StreamName,
     attempts: int,
@@ -316,11 +348,11 @@ async def dlq_aware_emit_side_effects(
     coro = lambda: atomic_emit_side_effects(redis, batch)
 
     try:
-        await execute_with_redis_retries(coro, attempts)
+        await execute_with_redis_retries(worker_config, coro, attempts)
     except Exception as e:
         dlq_attempts: int = (
             1 if getattr(e, "error_type", None) == ExceptionType.NETWORK else attempts
         )
         await declare_side_effects_event_dead(
-            redis, batch, dead_letter_stream_name, dlq_attempts
+            redis, worker_config, batch, dead_letter_stream_name, dlq_attempts
         )
