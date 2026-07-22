@@ -8,6 +8,7 @@ dependencies = [
     "autoflake>=2.3.3",
     "bandit[baseline,toml]>=1.9.4",
     "black>=26.3.1",
+    "orjson>=3.11.9",
     "pre-commit>=4.6.0",
 ]
 
@@ -29,4 +30,7 @@ skips=[
     "B614",
     "B615",
     "B703",
+]
+exclude_dirs=[
+    ".venv"
 ]

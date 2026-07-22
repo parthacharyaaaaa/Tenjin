@@ -1423,6 +1423,7 @@ dependencies = [
     { name = "autoflake" },
     { name = "bandit", extra = ["baseline"] },
     { name = "black" },
+    { name = "orjson" },
     { name = "pre-commit" },
 ]
 
@@ -1431,6 +1432,7 @@ requires-dist = [
     { name = "autoflake", specifier = ">=2.3.3" },
     { name = "bandit", extras = ["baseline", "toml"], specifier = ">=1.9.4" },
     { name = "black", specifier = ">=26.3.1" },
+    { name = "orjson", specifier = ">=3.11.9" },
     { name = "pre-commit", specifier = ">=4.6.0" },
 ]
 

@@ -13,7 +13,7 @@ repos:
     hooks:
       - id: autoflake
         name: autoflake
-        language: script
+        language: python
         types_or: [python, pyi]
         entry: .pre-commit/autoflake_runner.bash
 
@@ -35,12 +35,13 @@ repos:
     hooks:
       - id: gitleaks
 
-  - repo: https://github.com/PyCQA/bandit
-    rev: 1.9.4
+  - repo: local
     hooks:
-      - id: bandit
+      - id: bandit_wrapper
+        name: bandit_wrapper
         language: python
         language_version: python3.13
-        args: ["-c", "pyproject.toml"]
+        entry: .pre-commit/bandit_wrapper.bash
+        pass_filenames: false
         additional_dependencies:
           - "bandit[toml, baseline]"
