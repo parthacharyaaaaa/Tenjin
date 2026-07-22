@@ -17,6 +17,8 @@ fi
 autoflake \
     --ignore-init-module-imports \
     --in-place \
+    --remove-all-unused-imports \
+    -vv \
     "${FILES[@]}"
 
 git add "${FILES[@]}"
