@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "autoflake>=2.3.3",
+    "bandit[baseline,toml]>=1.9.4",
     "black>=26.3.1",
     "pre-commit>=4.6.0",
 ]
@@ -17,4 +18,15 @@ members = [
     "resource_auxillary",
     "resource_database_workers",
     "resource_server"
+]
+
+[tool.bandit]
+skips=[
+    "B201",
+    "B507",
+    "B610",
+    "B611",
+    "B614",
+    "B615",
+    "B703",
 ]
