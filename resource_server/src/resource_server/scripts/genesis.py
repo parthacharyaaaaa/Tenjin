@@ -221,7 +221,7 @@ def main(
 
                     # Make corresponding forum
                     cursor.execute(
-                        f"""INSERT INTO forums (name_, parent_anime, description, created_at)
+                        """INSERT INTO forums (name_, parent_anime, description, created_at)
                                    VALUES (%s, %s, %s, %s) RETURNING id_;""",
                         (
                             ANIME_INFO["title"],

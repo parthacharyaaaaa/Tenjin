@@ -33,7 +33,7 @@ from resource_server.datastructures.exceptions import (
 from resource_server.repositories.result_protocol import AbstractResult
 
 from resource_auxillary.strings import Action, IntentFlag, NAME_SEPERATOR
-from resource_auxillary.cache import derive_cache_key, create_intent_flag
+from resource_auxillary.cache import create_intent_flag
 
 DTO_T = TypeVar("DTO_T", bound=AbstractResult)
 
@@ -313,7 +313,9 @@ class CacheManager(metaclass=SingletonMetaclass):
                     if await self.redis_client.get(lock_name):
                         await asyncio.sleep(
                             self.cache_config.FETCH_WAITING_INITIAL_INTERVAL
-                            * randint(1, self.cache_config.FETCH_WAITING_JITTER)
+                            * randint(
+                                1, self.cache_config.FETCH_WAITING_JITTER
+                            )  # nosec
                             ** self.cache_config.FETCH_WAITING_EXPONENT
                         )
                         continue
@@ -499,7 +501,9 @@ class CacheManager(metaclass=SingletonMetaclass):
                     if await self.redis_client.get(lock_name):
                         await asyncio.sleep(
                             self.cache_config.FETCH_WAITING_INITIAL_INTERVAL
-                            * randint(1, self.cache_config.FETCH_WAITING_JITTER)
+                            * randint(
+                                1, self.cache_config.FETCH_WAITING_JITTER
+                            )  # nosec
                             ** self.cache_config.FETCH_WAITING_EXPONENT
                         )
                         continue

@@ -5,7 +5,7 @@ from resource_auxillary.strings import NAME_SEPERATOR
 import random
 
 INTERNAL_NAME_SEPERATOR: Final[LiteralString] = "-"
-assert INTERNAL_NAME_SEPERATOR != NAME_SEPERATOR
+assert INTERNAL_NAME_SEPERATOR != NAME_SEPERATOR  # nosec
 
 
 def derive_lock_key(name: str) -> str:
@@ -26,7 +26,7 @@ def _generate_batch_identifier(
     return "".join(
         (
             str(int(timestamp or time.time())),
-            random.randbytes(random_suffix_length).hex(),
+            random.randbytes(random_suffix_length).hex(),  # nosec
         )
     )
 

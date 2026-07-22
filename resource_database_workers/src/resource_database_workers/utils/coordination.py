@@ -83,5 +83,5 @@ async def exponential_jittered_backoff(
             calculate_exponential_backoff_time(
                 cap, base, attempt, exponential=exponential
             ),
-        )
+        )  # nosec
     )

@@ -2,7 +2,7 @@ from enum import StrEnum
 
 
 class AdminStrings(StrEnum):
-    SESSION_TOKEN_HEADER = "X-SESSION-TOKEN"
+    SESSION_TOKEN_HEADER = "X-SESSION-TOKEN"  # nosec
     ADMIN_KEY_CACHE = "ADMIN_KEY_CACHE"
     NO_REFRESH_SENTINEL = "__NONE__"
 
