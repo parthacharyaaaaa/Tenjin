@@ -15,11 +15,12 @@ dependencies = [
     "pyjwt>=2.12.0,<3",
     "python-dotenv>=1.2.2,<2",
     "redis>=7.0.0, <8",
-    "urllib3>=2.7.0,<3",
     "auxillary",
     "fastapi[standard]>=0.136.3",
     "aiofiles>=25.1.0",
     "psycopg>=3.3.4",
+    "sqlalchemy>=2.0.51",
+    "httpx>=0.28.1",
 ]
 
 [tool.setuptools.packages.find]
@@ -27,3 +28,17 @@ where = ["src"]
 
 [tool.uv.sources]
 auxillary = {workspace = true}
+
+
+[tool.deptry]
+known_first_party=[
+    "auth_server",
+    "auxillary"
+]
+
+[tool.deptry.package_module_name_map]
+python-dotenv = "dotenv"
+pyjwt = "jwt"
+
+[tool.deptry.per_rule_ignores]
+DEP002 = ["psycopg", "mako", "cryptography"]

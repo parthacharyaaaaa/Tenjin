@@ -7,4 +7,14 @@ requires-python = ">=3.10"
 dependencies = [
     "orjson>=3.11.9",
     "pydantic>=2.13.4",
+    "redis>=7.0.0, <8",
+]
+
+[tool.deptry]
+known_first_party=[
+    "auth_server",
+    "auxillary",
+    "resource_auxillary",
+    "resource_database_workers",
+    "resource_server"
 ]

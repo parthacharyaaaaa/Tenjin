@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "orjson>=3.11.9",
     "psycopg>=3.3.4",
     "psycopg-pool>=3.3.1",
     "pydantic>=2.13.4",
@@ -18,3 +19,12 @@ where = ["src"]
 
 [tool.uv.sources]
 resource_auxillary = { workspace = true}
+
+[tool.deptry]
+known_first_party=[
+    "auth_server",
+    "auxillary",
+    "resource_auxillary",
+    "resource_database_workers",
+    "resource_server"
+]
