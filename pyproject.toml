@@ -3,14 +3,7 @@ name = "tenjin"
 version = "1.0.0"
 description = "Tenjin"
 readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [
-    "autoflake>=2.3.3",
-    "bandit[baseline,toml]>=1.9.4",
-    "black>=26.3.1",
-    "orjson>=3.11.9",
-    "pre-commit>=4.6.0",
-]
+requires-python = ">=3.13, <3.14"
 
 [tool.uv.workspace]
 members = [
@@ -19,6 +12,16 @@ members = [
     "resource_auxillary",
     "resource_database_workers",
     "resource_server"
+]
+
+[dependency-groups]
+dev = [
+    "autoflake>=2.3.3",
+    "bandit[baseline,toml]>=1.9.4",
+    "black>=26.3.1",
+    "deptry>=0.25.1",
+    "orjson>=3.11.9",
+    "pre-commit>=4.6.0",
 ]
 
 [tool.bandit]
@@ -33,4 +36,14 @@ skips=[
 ]
 exclude_dirs=[
     ".venv"
+]
+
+
+[tool.deptry]
+known_first_party=[
+    "auth_server",
+    "auxillary",
+    "resource_auxillary",
+    "resource_database_workers",
+    "resource_server"
 ]

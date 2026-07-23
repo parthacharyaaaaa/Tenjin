@@ -45,3 +45,14 @@ repos:
         pass_filenames: false
         additional_dependencies:
           - "bandit[toml, baseline]"
+
+  - repo: local
+    hooks:
+      - id: deptry_wrapper
+        name: deptry_wrapper
+        language: python
+        language_version: python3.13
+        entry: .pre-commit/deptry_wrapper.bash
+        pass_filenames: false
+        additional_dependencies:
+          - "deptry"
