@@ -35,7 +35,8 @@ skips=[
     "B703",
 ]
 exclude_dirs=[
-    ".venv"
+    ".venv",
+    ".pre-commit/utilities"
 ]
 
 
