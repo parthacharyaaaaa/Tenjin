@@ -16,17 +16,5 @@ fi
 
 OUTPUT_FILE="bandit_output.json"
 
-
-bandit \
-    -c pyproject.toml \
-    -r \
-    -f json \
-    -o "${OUTPUT_FILE}" \
-    --exit-zero \
-    "${FILES[@]}"
-
-
 # Clean up output file
-.venv/bin/python .pre-commit/utilities/bandit_output_cleaner.py "${OUTPUT_FILE}"
-
-git add "${FILES[@]}"
+.venv/bin/python .pre-commit/utilities/bandit_wrapper.py "${OUTPUT_FILE}" "${FILES[@]}"
