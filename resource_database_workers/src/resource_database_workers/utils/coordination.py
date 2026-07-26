@@ -145,24 +145,25 @@ async def reclaim_pending_events(
     )
     if not pending_event_data:
         return
-    reclaimation_ids: list[str] = []
-    async with redis.pipeline(transaction=True) as pipeline:
-        for pending_event in pending_event_data:
-            if (
-                pending_event["times_delivered"] < max_deliveries
-                and pending_event["time_since_delivered"] > idle_time_threshold
-            ):
-                reclaimation_ids.append(pending_event["message_id"])
 
-        pipeline.xclaim(
-            stream_name,
-            group_name,
-            reclaim_consumer_name,
-            idle_time_threshold,
-            reclaimation_ids,  # type: ignore
-            justid=True,
-        )
-    await pipeline.execute()
+    reclaimation_ids: list[str] = []
+    for pending_event in pending_event_data:
+        if (
+            pending_event["times_delivered"] < max_deliveries
+            and pending_event["time_since_delivered"] > idle_time_threshold
+        ):
+            reclaimation_ids.append(pending_event["message_id"])
+    if not reclaimation_ids:
+        return
+
+    await redis.xclaim(
+        stream_name,
+        group_name,
+        reclaim_consumer_name,
+        idle_time_threshold,
+        reclaimation_ids,  # type: ignore
+        justid=True,
+    )
 
 
 async def reclaim_dead_events(
