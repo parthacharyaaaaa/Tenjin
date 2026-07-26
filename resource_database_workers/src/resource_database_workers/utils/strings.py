@@ -1,7 +1,7 @@
 import time
 from typing import Final, LiteralString
 
-from resource_auxillary.strings import NAME_SEPERATOR
+from resource_auxillary.strings import NAME_SEPERATOR, StreamName
 import random
 
 INTERNAL_NAME_SEPERATOR: Final[LiteralString] = "-"
@@ -26,7 +26,7 @@ def _generate_batch_identifier(
     return "".join(
         (
             str(int(timestamp or time.time())),
-            random.randbytes(random_suffix_length).hex(),  # nosec
+            random.randbytes(random_suffix_length // 2).hex(),  # nosec
         )
     )
 
@@ -58,4 +58,16 @@ def bump_retry_counter(retry_batch: str) -> str:
     counter_name, identifier, version = retry_batch.split(INTERNAL_NAME_SEPERATOR)
     return INTERNAL_NAME_SEPERATOR.join(
         (counter_name, identifier, str(int(version) + 1))
+    )
+
+
+def generate_stream_group_registry_name(
+    stream_name: StreamName, consumer_group_name: str
+) -> str:
+    return INTERNAL_NAME_SEPERATOR.join((stream_name, consumer_group_name))
+
+
+def generate_consumer_name(base_name: str, identifier_length: int = 8) -> str:
+    return INTERNAL_NAME_SEPERATOR.join(
+        (base_name, random.randbytes(identifier_length // 2).hex())  # nosec
     )

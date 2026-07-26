@@ -5,6 +5,7 @@ from typing import Any, Callable
 from psycopg_pool import AsyncConnectionPool
 
 from redis.asyncio import Redis
+
 from resource_auxillary.strings import StreamName
 
 from resource_database_workers.config.config import AppConfig
@@ -19,15 +20,10 @@ from resource_database_workers.datastructures.processors import (
 )
 from resource_database_workers.datastructures.streams import (
     STREAM_CONSUMER_MAPPING,
-    STREAM_EVENT_MAPPING,
 )
-from resource_database_workers.tasks.dlq_workers import (
-    dlq_consumer,
-    counters_dlq_consumer,
-)
+from resource_database_workers.tasks.dlq_workers import dlq_consumer
 from resource_database_workers.tasks.counters import (
     batch_update_counters,
-    retry_batch_update_counters,
 )
 
 

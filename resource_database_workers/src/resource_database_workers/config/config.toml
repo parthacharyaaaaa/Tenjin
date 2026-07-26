@@ -64,3 +64,6 @@ MAX_DELIVERIES=3
 MAXIMUM_BACKOFF_INTERVAL=0.08                       # seconds
 BASE_BACKOFF_INTERVAL=0.005                         # seconds
 BACKOFF_EXPONENTIAL=2
+
+CONSUMER_GROUP_ENTRY_MAX_TTL=45                     # seconds
+CONSUMER_GROUP_ENTRY_TTL_INCREMENT=10               # seconds
