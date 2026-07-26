@@ -6,7 +6,7 @@ AUTH_SERVER_NAME="auth_server"
 
 
 [database]
-POSTGRES_HOST="127.0.0.1"
+POSTGRES_HOST="resource_server_database"
 POSTGRES_PORT=5432
 POSTGRES_DATABASE="resource_db"
 
@@ -20,14 +20,14 @@ SQLALCHEMY_TRACK_MODIFICATIONS=false
 
 
 [redis.app]
-HOST="127.0.0.1"
+HOST="resource_server_redis"
 PORT=6379
 DB=0
 
 
 [redis.auth]
-HOST="127.0.0.1"
-PORT=6390
+HOST="auth_server_redis"
+PORT=6380
 DB=0
 
 [cache]

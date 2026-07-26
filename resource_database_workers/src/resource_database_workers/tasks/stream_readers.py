@@ -5,7 +5,6 @@ from typing import Literal, Mapping
 from redis.asyncio import Redis
 
 from resource_database_workers.config.config import AppConfig
-from resource_database_workers.datastructures.queues import QueueRegistry
 from resource_auxillary.strings import EventName, StreamName
 from resource_auxillary.events import StreamedEvent
 

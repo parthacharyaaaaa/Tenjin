@@ -2,7 +2,6 @@ import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime
 import random
-import time
 from typing import Iterable, Mapping, Sequence
 from uuid import uuid4
 
@@ -15,9 +14,6 @@ from resource_auxillary.datastructures.database import EventLiteral
 
 from resource_auxillary.strings import StreamName
 from resource_database_workers.datastructures.redis import XInfoGroupResponse
-from resource_database_workers.src.resource_database_workers.utils.strings import (
-    generate_stream_group_registry_name,
-)
 from resource_database_workers.utils.sql_templates import (
     prepare_batch_dedup_sql,
     prepare_single_dedup_sql,
@@ -112,18 +108,13 @@ async def establish_consumer_groups(
     redis: Redis,
     stream_consumer_mapping: Mapping[StreamName, Sequence[str]],
     consumer_group_name: str,
-    initial_ttl: int,
 ) -> None:
     existing_group: set[StreamName] = await get_existing_worker_groups(
         redis, list(stream_consumer_mapping.keys()), consumer_group_name
     )
 
-    creation_time: str = str(int(time.monotonic()))
     async with redis.pipeline(transaction=True) as pipeline:
         for stream_name, consumer_names in stream_consumer_mapping.items():
-            registry_name: str = generate_stream_group_registry_name(
-                stream_name, consumer_group_name
-            )
             if stream_name not in existing_group:
                 # Consumer group does not exist
                 pipeline.xgroup_create(stream_name, consumer_group_name, mkstream=True)
@@ -131,14 +122,4 @@ async def establish_consumer_groups(
                 pipeline.xgroup_createconsumer(
                     stream_name, consumer_name, consumer_group_name
                 )
-                # Register consumer in stream registry
-                pipeline.hsetex(
-                    registry_name, consumer_name, creation_time, ex=initial_ttl
-                )
         await pipeline.execute()
-
-
-async def send_consumer_health_ping(
-    redis: Redis, registry_name: str, consumer_name: str, ttl: int
-) -> None:
-    await redis.hexpire(registry_name, ttl, consumer_name)
