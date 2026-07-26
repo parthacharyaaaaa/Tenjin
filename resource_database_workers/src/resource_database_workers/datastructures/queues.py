@@ -117,7 +117,6 @@ class QueueRegistry(metaclass=SingletonMetaclass):
     def dead_letter_queue_mapping(self) -> MappingProxyType[str, Queue]:
         return MappingProxyType(
             {
-                EventName.DLQ_STANDARD: self.dead_letter,
                 EventName.DLQ_COUNTER: self.counter_dead_letter,
                 EventName.DLQ_SIDE_EFFECTS: self.side_effects_dead_letter,
             }

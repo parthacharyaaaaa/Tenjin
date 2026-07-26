@@ -40,7 +40,6 @@ EVENT_WORKER_MAPPING: Final[MappingProxyType[EventName, Callable]] = MappingProx
         EventName.DOWNSTREAM_FORUM_POST_DECREMENT: queue_downstream_decrement_consumer,
         EventName.DOWNSTREAM_POST_COMMENT_DECREMENT: queue_downstream_decrement_consumer,
         # Dead letter queue events
-        EventName.DLQ_STANDARD: dlq_consumer,
         EventName.DLQ_COUNTER: dlq_consumer,
         EventName.DLQ_SIDE_EFFECTS: dlq_consumer,
     }

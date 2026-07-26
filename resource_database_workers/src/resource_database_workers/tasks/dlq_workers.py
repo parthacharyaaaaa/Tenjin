@@ -25,9 +25,7 @@ from resource_database_workers.utils.coordination import dedup_insert_event
 
 
 def get_dlq_insertion_parameters(event: StreamedEvent) -> tuple[Any, ...]:
-    if event.name == EventName.DLQ_STANDARD:
-        return (event.event_id, json_repr(event))
-    elif event.name == EventName.DLQ_COUNTER:
+    if event.name == EventName.DLQ_COUNTER:
         dead_counter_batch: DeadCounterBatch = (
             DeadCounterBatch.construct_from_event_payload(event.payload)
         )
@@ -37,7 +35,7 @@ def get_dlq_insertion_parameters(event: StreamedEvent) -> tuple[Any, ...]:
             dead_counter_batch.failure_time,
             dead_counter_batch.counters,
         )
-    else:
+    elif event.name == EventName.DLQ_SIDE_EFFECTS:
         side_effect_groups: tuple[
             tuple[
                 SideEffectType, tuple[CounterUpdate | IntentUpdate | CacheUpdate, ...]
@@ -62,6 +60,8 @@ def get_dlq_insertion_parameters(event: StreamedEvent) -> tuple[Any, ...]:
             for (side_effect_type, side_effects) in side_effect_groups
             for side_effect in side_effects
         )
+    else:  # Standard failed StreamedEvent
+        return (event.event_id, json_repr(event))
 
 
 async def _retried_insert_db_dlq_event(

@@ -63,7 +63,6 @@ STREAM_EVENT_MAPPING: Final[MappingProxyType[StreamName, tuple[EventName, ...]]]
                 EventName.DOWNSTREAM_POST_COMMENT_DECREMENT,
             ),
             StreamName.DEAD_LETTER_QUEUE: (
-                EventName.DLQ_STANDARD,
                 EventName.DLQ_COUNTER,
                 EventName.DLQ_SIDE_EFFECTS,
             ),
