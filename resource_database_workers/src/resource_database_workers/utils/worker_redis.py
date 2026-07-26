@@ -46,7 +46,7 @@ def get_min_max_from_xread(xread_ids: set[str]) -> tuple[str, str]:
             id_tuple[0] == max_tuple[0] and id_tuple[1] > max_tuple[1]
         ):
             max_tuple = id_tuple
-    return "-".join(str(i for i in max_tuple)), "-".join(str(i for i in min_tuple))
+    return "-".join(str(i for i in min_tuple)), "-".join(str(i for i in max_tuple))
 
 
 async def populate_events_batch_from_queue(
