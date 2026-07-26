@@ -11,3 +11,10 @@ XInfoGroupResponse = TypedDict(
         "lag": int | None,
     },
 )
+
+
+class XPendingRangeResponse(TypedDict):
+    message_id: str
+    consumer: str
+    time_since_delivered: int
+    times_delivered: int
