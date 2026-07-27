@@ -19,7 +19,9 @@ from resource_auxillary.events import (
 )
 
 from resource_database_workers.config.sub_config import WorkerConfig
-from resource_database_workers.utils.workers.redis.qos import dlq_aware_process_events
+from resource_database_workers.src.resource_database_workers.workers.redis.qos import (
+    dlq_aware_process_events,
+)
 from resource_database_workers.utils.lua_commands import (
     CONDITIIONAL_DELETE_TARGET_INTENT_TEMPLATE,
 )

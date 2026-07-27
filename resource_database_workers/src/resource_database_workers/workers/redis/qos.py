@@ -11,7 +11,9 @@ from resource_auxillary.strings import StreamName
 
 from resource_database_workers.config.sub_config import WorkerConfig
 from resource_database_workers.utils.coordination import exponential_jittered_backoff
-from resource_database_workers.utils.workers.redis.post_processing import amortize_event
+from resource_database_workers.src.resource_database_workers.workers.redis.post_processing import (
+    amortize_event,
+)
 
 
 async def execute_with_redis_retries(

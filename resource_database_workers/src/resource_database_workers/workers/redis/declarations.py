@@ -11,8 +11,12 @@ from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
 
 from resource_database_workers.config.sub_config import WorkerConfig
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
-from resource_database_workers.utils.workers.redis.post_processing import stream_events
-from resource_database_workers.utils.workers.redis.qos import execute_with_redis_retries
+from resource_database_workers.src.resource_database_workers.workers.redis.post_processing import (
+    stream_events,
+)
+from resource_database_workers.src.resource_database_workers.workers.redis.qos import (
+    execute_with_redis_retries,
+)
 
 
 async def declare_counters_event_dead(

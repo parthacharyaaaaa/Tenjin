@@ -20,14 +20,14 @@ from resource_database_workers.config.constants import (
 from resource_database_workers.utils.worker_db import (
     retried_event_database_processing,
 )
-from resource_database_workers.utils.workers.database.qos import (
+from resource_database_workers.src.resource_database_workers.workers.database.qos import (
     batch_dedup_insert_events,
     dedup_insert_event,
 )
 
 from resource_database_workers.utils.coordination import exponential_jittered_backoff
 
-from resource_database_workers.utils.workers.redis.downstream_post_processing import (
+from resource_database_workers.src.resource_database_workers.workers.redis.downstream_post_processing import (
     dispatch_downstream_counter_decrements,
     dispatch_downstream_events,
     emit_downstream_counter_decrement_updates,
@@ -45,14 +45,14 @@ from resource_database_workers.datastructures.downstream import (
     reconstruct_downstream_counter_data_from_stream,
     reconstruct_downstream_data_from_stream,
 )
-from resource_database_workers.utils.workers.redis.wrappers import (
+from resource_database_workers.src.resource_database_workers.workers.redis.wrappers import (
     ack_with_retries,
     declare_dead_with_retries,
 )
-from resource_database_workers.utils.workers.redis.post_processing import (
+from resource_database_workers.src.resource_database_workers.workers.redis.post_processing import (
     atomic_ack_and_emit_side_effects,
 )
-from resource_database_workers.utils.workers.redis.pre_processing import (
+from resource_database_workers.src.resource_database_workers.workers.redis.pre_processing import (
     trim_duplicate_events,
     populate_events_batch_from_queue,
 )
