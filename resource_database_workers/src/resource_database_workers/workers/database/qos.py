@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Iterable
+from typing import Any, Callable, Coroutine, Iterable
 from uuid import uuid4
 
 from psycopg import AsyncConnection
@@ -7,12 +7,45 @@ from psycopg import sql
 from psycopg.errors import IntegrityError
 from resource_auxillary.datastructures.database import EventLiteral
 
+from resource_database_workers.config.constants import POTENTIAL_TRANSIENT_ERRORS
+
+from resource_database_workers.config.sub_config import WorkerConfig
+from resource_database_workers.utils.coordination import exponential_jittered_backoff
 from resource_database_workers.utils.sql_templates import (
     prepare_batch_dedup_sql,
     prepare_single_dedup_sql,
     prepare_temp_table_sql,
     prepare_weak_insertion_copy_sql,
 )
+
+
+async def db_execute_with_retries(
+    worker_config: WorkerConfig,
+    connection: AsyncConnection,
+    db_coroutine: Callable[[], Coroutine[Any, Any, Any]],
+    attempts: int | None = None,
+) -> Any:
+    attempts = attempts or worker_config.MAX_RETRIES
+    exception: Exception | None = None
+    for _attempt in range(1, attempts + 1):
+        try:
+            return await db_coroutine()
+        except POTENTIAL_TRANSIENT_ERRORS as pt_err:
+            await connection.rollback()
+            exception = pt_err
+            await exponential_jittered_backoff(
+                worker_config.MAXIMUM_BACKOFF_INTERVAL,
+                worker_config.BASE_BACKOFF_INTERVAL,
+                _attempt,
+                exponential=worker_config.BACKOFF_EXPONENTIAL,
+            )
+        except Exception as e:
+            await connection.rollback()
+            exception = e
+            break
+
+    if exception:
+        raise exception
 
 
 async def dedup_insert_event(
