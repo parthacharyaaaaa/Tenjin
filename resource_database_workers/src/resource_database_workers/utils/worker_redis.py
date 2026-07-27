@@ -350,24 +350,52 @@ async def declare_side_effects_event_dead(
     await execute_with_redis_retries(worker_config, dlq_coroutine, attempts)
 
 
-async def dlq_aware_emit_side_effects(
+async def _atomic_ack_and_emit_side_effects(
+    redis: Redis,
+    events: Sequence[StreamedEvent],
+    stream_name: StreamName,
+    group_name: str,
+) -> None:
+    async with redis.pipeline(transaction=True) as pipeline:
+        # Acknowledge
+        for event in events:
+            pipeline.xack(stream_name, group_name, event.event_id)
+
+        # Emit side effects
+        _emit_intent_invalidations(
+            pipeline, (i.side_effects.intent_updates for i in events)
+        )
+        _emit_counter_side_effects(
+            pipeline, (i.side_effects.counter_updates for i in events)
+        )
+        _emit_cache_invalidation_side_effects(
+            pipeline, (i.side_effects.cache_invalidations for i in events)
+        )
+        await pipeline.execute()
+
+
+async def atomic_ack_and_emit_side_effects(
     redis: Redis,
     worker_config: WorkerConfig,
-    batch: Sequence[StreamedEvent],
-    dead_letter_stream_name: StreamName,
-    attempts: int,
+    events: Sequence[StreamedEvent],
+    group_name: str,
+    stream_name: StreamName,
+    dlq_stream_name: StreamName,
 ) -> None:
     """
-    Thin wrapper over sibling utility functions to emit event side-effects
+    Thin wrapper to atomically acknowledge a collection of events and
+    emit their side-effects
     """
-    coro = lambda: atomic_emit_side_effects(redis, batch)
-
-    try:
-        await execute_with_redis_retries(worker_config, coro, attempts)
-    except Exception as e:
-        dlq_attempts: int = (
-            1 if getattr(e, "error_type", None) == ExceptionType.NETWORK else attempts
-        )
-        await declare_side_effects_event_dead(
-            redis, worker_config, batch, dead_letter_stream_name, dlq_attempts
-        )
+    coro = lambda: _atomic_ack_and_emit_side_effects(
+        redis, events, stream_name, group_name
+    )
+    await dlq_aware_process_events(
+        redis,
+        worker_config,
+        events,
+        coro,
+        worker_config.MAX_RETRIES,
+        stream_name,
+        group_name,
+        dlq_stream_name,
+    )

@@ -45,10 +45,8 @@ from resource_database_workers.datastructures.downstream import (
 )
 from resource_database_workers.utils.worker_redis import (
     ack_with_retries,
-    atomic_emit_side_effects,
+    atomic_ack_and_emit_side_effects,
     declare_dead_with_retries,
-    dlq_aware_emit_side_effects,
-    dlq_aware_process_events,
     populate_events_batch_from_queue,
     trim_duplicate_events,
 )
@@ -183,15 +181,14 @@ async def queue_insertion_consumer(
                     event for event in batch if event.event_id in inserted_ids
                 )
 
-                # ACK processed events and push failed events to DLQ
-                await ack_with_retries(
+                # post-process successful events and push failed events to DLQ
+                await atomic_ack_and_emit_side_effects(
                     redis,
                     config.WORKER,
-                    successful_events,
-                    stream_name,
+                    batch,
                     group_name,
+                    stream_name,
                     dead_letter_stream_name,
-                    config.WORKER.MAX_RETRIES,
                 )
                 await declare_dead_with_retries(
                     redis,
@@ -199,13 +196,6 @@ async def queue_insertion_consumer(
                     tuple(event for event in batch if event not in successful_events),
                     stream_name,
                     group_name,
-                    dead_letter_stream_name,
-                    config.WORKER.MAX_RETRIES,
-                )
-                await dlq_aware_emit_side_effects(
-                    redis,
-                    config.WORKER,
-                    successful_events,
                     dead_letter_stream_name,
                     config.WORKER.MAX_RETRIES,
                 )
@@ -266,22 +256,14 @@ async def queue_deletion_consumer(
                     config.WORKER.MAX_RETRIES,
                 )
             else:
-                # ACK entire batch
-                await ack_with_retries(
+                # ACK entire batch and emit side-effects
+                await atomic_ack_and_emit_side_effects(
                     redis,
                     config.WORKER,
                     batch,
-                    stream_name,
                     group_name,
+                    stream_name,
                     dead_letter_stream_name,
-                    config.WORKER.MAX_RETRIES,
-                )
-                await dlq_aware_emit_side_effects(
-                    redis,
-                    config.WORKER,
-                    batch,
-                    dead_letter_stream_name,
-                    config.WORKER.MAX_RETRIES,
                 )
                 await dispatch_downstream_events(
                     redis,
