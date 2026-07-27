@@ -19,8 +19,9 @@ from resource_database_workers.src.resource_database_workers.workers.redis.post_
 async def execute_with_redis_retries(
     worker_config: WorkerConfig,
     redis_coroutine: Callable[[], Coroutine[Any, Any, Any]],
-    attempts: int,
+    attempts: int | None = None,
 ) -> Any:
+    attempts = attempts or worker_config.MAX_RETRIES
     exception: Exception | None = None
     for _attempt in range(1, attempts + 1):
         try:
