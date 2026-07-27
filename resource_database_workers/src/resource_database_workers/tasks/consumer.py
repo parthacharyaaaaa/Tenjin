@@ -43,12 +43,16 @@ from resource_database_workers.datastructures.downstream import (
     reconstruct_downstream_counter_data_from_stream,
     reconstruct_downstream_data_from_stream,
 )
-from resource_database_workers.utils.worker_redis import (
+from resource_database_workers.utils.workers.redis.wrappers import (
     ack_with_retries,
-    atomic_ack_and_emit_side_effects,
     declare_dead_with_retries,
-    populate_events_batch_from_queue,
+)
+from resource_database_workers.utils.workers.redis.post_processing import (
+    atomic_ack_and_emit_side_effects,
+)
+from resource_database_workers.utils.workers.redis.pre_processing import (
     trim_duplicate_events,
+    populate_events_batch_from_queue,
 )
 
 
