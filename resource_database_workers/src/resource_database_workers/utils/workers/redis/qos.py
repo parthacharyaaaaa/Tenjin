@@ -1,5 +1,6 @@
 """Quality-of-Service utility functions"""
 
+from contextlib import asynccontextmanager
 from typing import Any, Callable, Coroutine, Sequence
 
 from redis.asyncio import Redis
@@ -65,3 +66,11 @@ async def dlq_aware_process_events(
             redis, events, event_stream_name, group_name, dlq_stream_name
         )
         await execute_with_redis_retries(worker_config, coro, dlq_attempts)
+
+
+@asynccontextmanager
+async def locked_operation(redis: Redis, lock_name: str):
+    try:
+        yield
+    finally:
+        await redis.delete(lock_name)

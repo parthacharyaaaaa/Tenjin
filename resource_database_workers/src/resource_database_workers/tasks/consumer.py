@@ -20,12 +20,14 @@ from resource_database_workers.config.constants import (
 from resource_database_workers.utils.worker_db import (
     retried_event_database_processing,
 )
-from resource_database_workers.utils.coordination import (
+from resource_database_workers.utils.workers.database.qos import (
     batch_dedup_insert_events,
     dedup_insert_event,
-    exponential_jittered_backoff,
 )
-from resource_database_workers.utils.tasks import (
+
+from resource_database_workers.utils.coordination import exponential_jittered_backoff
+
+from resource_database_workers.utils.workers.redis.downstream_post_processing import (
     dispatch_downstream_counter_decrements,
     dispatch_downstream_events,
     emit_downstream_counter_decrement_updates,

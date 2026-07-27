@@ -12,19 +12,25 @@ from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.exceptions import (
     RecoverableDatabaseException,
 )
-from resource_database_workers.utils.worker_redis import (
+from resource_database_workers.utils.workers.redis.declarations import (
     declare_counters_event_dead,
-    reflect_processed_counters,
-    retrieve_counter_group_names,
 )
-from resource_database_workers.utils.coordination import locked_operation
+
+from resource_database_workers.utils.workers.redis.cache import (
+    reflect_processed_counters,
+)
+from resource_database_workers.utils.workers.redis.counters import (
+    retrieve_counter_group_names,
+    dispatch_to_retrier,
+)
+from resource_database_workers.utils.workers.database.counters import (
+    flush_counter_updates,
+)
+
+from resource_database_workers.utils.workers.redis.qos import locked_operation
 from resource_database_workers.utils.strings import (
     derive_lock_key,
     extract_batch_metadata,
-)
-from resource_database_workers.utils.tasks import (
-    flush_counter_updates,
-    dispatch_to_retrier,
 )
 
 
