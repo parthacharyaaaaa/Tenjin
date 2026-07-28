@@ -55,6 +55,7 @@ from resource_database_workers.workers.redis.pre_processing import (
     trim_duplicate_events,
     populate_events_batch_from_queue,
 )
+from resource_database_workers.workers.redis.qos import execute_with_redis_retries
 
 
 async def user_orphan_consumer(
@@ -87,11 +88,13 @@ async def user_orphan_consumer(
             try:
                 await dispatch_downstream_events(
                     redis,
+                    config.WORKER,
                     StrongEntity.USER,
                     (
                         (event.payload["user_id"], event.payload["time_deleted"])
                         for event in batch
                     ),
+                    dead_letter_stream_name,
                 )
                 exception = None
                 break
@@ -268,11 +271,13 @@ async def queue_deletion_consumer(
                 )
                 await dispatch_downstream_events(
                     redis,
+                    config.WORKER,
                     table,
                     (
                         (event.payload[identifier_column], event.payload["deleted_at"])
                         for event in batch
                     ),
+                    dead_letter_stream_name,
                 )
 
             batch.clear()
@@ -350,7 +355,11 @@ async def queue_downstream_deletion_consumer(
             )
 
             await dispatch_downstream_counter_decrements(
-                redis, event_payload["orphan_table"], event.event_id
+                redis,
+                config.WORKER,
+                event_payload["orphan_table"],
+                event.event_id,
+                dead_letter_stream_name,
             )
 
 
@@ -392,8 +401,8 @@ async def queue_downstream_decrement_consumer(
             for _attempt in range(1, config.WORKER.MAX_RETRIES + 1):
                 try:
                     # temp truthy tuple to enter loop
+                    # (hehe it kinda looks like a wink)
                     results: list[tuple[str, int]] = [("", 0)]
-                    # hehe it kinda looks like a wink
                     while results:
                         results: list[tuple[str, int]] = await select_decrement_deltas(
                             conn,
@@ -404,11 +413,17 @@ async def queue_downstream_decrement_consumer(
                             event_payload["deletion_author_event_id"],
                         )
                         offset += limit
-                        await emit_downstream_counter_decrement_updates(
-                            redis,
-                            results,
-                            event_payload["hashmap_name"],
-                            event_payload["affected_table_name"],
+
+                        emission_coroutine = (
+                            lambda: emit_downstream_counter_decrement_updates(
+                                redis,
+                                results,
+                                event_payload["hashmap_name"],
+                                event_payload["affected_table_name"],
+                            )
+                        )
+                        await execute_with_redis_retries(
+                            config.WORKER, emission_coroutine
                         )
                 except POTENTIAL_TRANSIENT_ERRORS as e:
                     exception = e

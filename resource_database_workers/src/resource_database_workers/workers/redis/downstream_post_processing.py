@@ -19,11 +19,44 @@ from resource_database_workers.datastructures.downstream import (
     t_downstream_counter_event_metadata,
 )
 
+from resource_database_workers.src.resource_database_workers.config.sub_config import (
+    WorkerConfig,
+)
+from resource_database_workers.src.resource_database_workers.workers.redis.declarations import (
+    declare_standard_event_dead,
+)
+from resource_database_workers.workers.redis.qos import (
+    execute_with_redis_retries,
+)
+
+
+async def _xadd_downstream_events(redis: Redis, events: Iterable[Event]) -> None:
+    async with redis.pipeline() as pipeline:
+        for event in events:
+            pipeline.xadd(
+                StreamName.DOWNSTREAM_DELETIONS,
+                cache_repr(event),
+            )
+        await pipeline.execute()
+
+
+async def _xadd_downstream_counter_decrements(
+    redis: Redis, events: Iterable[Event]
+) -> None:
+    async with redis.pipeline() as pipeline:
+        for event in events:
+            pipeline.xadd(
+                name=StreamName.DOWNSTREAM_COUNTER_DECREMENTS, fields=cache_repr(event)
+            )
+        await pipeline.execute()
+
 
 async def dispatch_downstream_events(
     redis: Redis,
+    worker_config: WorkerConfig,
     upstream_table: StrongEntity,
     deleted_data: Iterable[tuple[int, datetime]],
+    dlq_stream_name: StreamName,
 ) -> None:
     events: list[Event] = []
     downstream_bases: tuple[AnonymousDownstreamDeletionData, ...] = (
@@ -41,17 +74,19 @@ async def dispatch_downstream_events(
             for base in downstream_bases
         )
 
-    async with redis.pipeline() as pipeline:
-        for event in events:
-            pipeline.xadd(
-                StreamName.DOWNSTREAM_DELETIONS,
-                cache_repr(event),
-            )
-        await pipeline.execute()
+    dispatch_coroutine = lambda: _xadd_downstream_events(redis, events)
+    try:
+        await execute_with_redis_retries(worker_config, dispatch_coroutine)
+    except Exception:
+        await declare_standard_event_dead(redis, worker_config, events, dlq_stream_name)
 
 
 async def dispatch_downstream_counter_decrements(
-    redis: Redis, deleted_entity: StrongEntity, deletion_author_event_id: int
+    redis: Redis,
+    worker_config: WorkerConfig,
+    deleted_entity: StrongEntity,
+    deletion_author_event_id: int,
+    dlq_stream_name: StreamName,
 ) -> None:
     downstream_counter_data: tuple[t_downstream_counter_event_metadata, ...] | None = (
         DOWNSTREAM_DECREMENT_MAPPING.get(deleted_entity, None)
@@ -75,12 +110,11 @@ async def dispatch_downstream_counter_decrements(
         for (event_name, foreign_key_column, hashmap_name) in downstream_counter_data
     ]
 
-    async with redis.pipeline() as pipeline:
-        for event in events:
-            pipeline.xadd(
-                name=StreamName.DOWNSTREAM_COUNTER_DECREMENTS, fields=cache_repr(event)
-            )
-        await pipeline.execute()
+    dispatch_coroutine = lambda: _xadd_downstream_counter_decrements(redis, events)
+    try:
+        await execute_with_redis_retries(worker_config, dispatch_coroutine)
+    except Exception:
+        await declare_standard_event_dead(redis, worker_config, events, dlq_stream_name)
 
 
 async def emit_downstream_counter_decrement_updates(
