@@ -17,17 +17,16 @@ from resource_auxillary.events import StreamedEvent
 from resource_database_workers.config.constants import (
     POTENTIAL_TRANSIENT_ERRORS,
 )
-from resource_database_workers.utils.worker_db import (
-    retried_event_database_processing,
-)
-from resource_database_workers.src.resource_database_workers.workers.database.qos import (
+
+from resource_database_workers.workers.database.qos import (
     batch_dedup_insert_events,
     dedup_insert_event,
+    db_execute_with_retries,
 )
 
 from resource_database_workers.utils.coordination import exponential_jittered_backoff
 
-from resource_database_workers.src.resource_database_workers.workers.redis.downstream_post_processing import (
+from resource_database_workers.workers.redis.downstream_post_processing import (
     dispatch_downstream_counter_decrements,
     dispatch_downstream_events,
     emit_downstream_counter_decrement_updates,
@@ -45,14 +44,14 @@ from resource_database_workers.datastructures.downstream import (
     reconstruct_downstream_counter_data_from_stream,
     reconstruct_downstream_data_from_stream,
 )
-from resource_database_workers.src.resource_database_workers.workers.redis.wrappers import (
+from resource_database_workers.workers.redis.wrappers import (
     ack_with_retries,
     declare_dead_with_retries,
 )
-from resource_database_workers.src.resource_database_workers.workers.redis.post_processing import (
+from resource_database_workers.workers.redis.post_processing import (
     atomic_ack_and_emit_side_effects,
 )
-from resource_database_workers.src.resource_database_workers.workers.redis.pre_processing import (
+from resource_database_workers.workers.redis.pre_processing import (
     trim_duplicate_events,
     populate_events_batch_from_queue,
 )
@@ -168,11 +167,9 @@ async def queue_insertion_consumer(
             insertion_callable = lambda: batch_function(
                 conn, batch, inserted_ids, action
             )
-
-            exception = await retried_event_database_processing(
-                conn, config.WORKER.MAX_RETRIES, insertion_callable
-            )
-            if exception:  # Entire batch failed
+            try:
+                await db_execute_with_retries(config.WORKER, conn, insertion_callable)
+            except Exception:  # Entire batch failed
                 await declare_dead_with_retries(
                     redis,
                     config.WORKER,
@@ -247,11 +244,9 @@ async def queue_deletion_consumer(
             deletion_callable = lambda: batch_function(
                 conn, table.value, identifier_column, deletion_data
             )
-
-            exception: Exception | None = await retried_event_database_processing(
-                conn, config.WORKER.MAX_RETRIES, deletion_callable
-            )
-            if exception:  # Entire batch failed
+            try:
+                await db_execute_with_retries(config.WORKER, conn, deletion_callable)
+            except Exception:
                 await declare_dead_with_retries(
                     redis,
                     config.WORKER,
@@ -326,12 +321,13 @@ async def queue_downstream_deletion_consumer(
                 event_payload["deleted_at"],
             )
 
-            exception: Exception | None = await retried_event_database_processing(
-                conn, config.WORKER.MAX_RETRIES, downstream_deletion_callable
-            )
-            # Single event tuple used in place of event
-            # for methods that process batches of events
-            if exception:
+            try:
+                await db_execute_with_retries(
+                    config.WORKER, conn, downstream_deletion_callable
+                )
+            except Exception:
+                # Single event tuple used in place of event
+                # for methods that process batches of events
                 await declare_dead_with_retries(
                     redis,
                     config.WORKER,
