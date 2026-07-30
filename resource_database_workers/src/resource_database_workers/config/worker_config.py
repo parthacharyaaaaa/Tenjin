@@ -1,194 +1,102 @@
-from collections import defaultdict
-from functools import cached_property
-from pathlib import Path
-from typing import Annotated, Self, Protocol
+import tomllib
+from typing import Annotated, Any, ClassVar, Final, LiteralString, Mapping, Self
 
 from resource_auxillary.strings import EventName, StreamName
 
-from pydantic import BaseModel, Field, model_validator
-from pydantic_settings import (
-    BaseSettings,
-    PydanticBaseSettingsSource,
-    SettingsConfigDict,
-    TomlConfigSettingsSource,
-)
+from pydantic import BaseModel, Field
 
-from resource_database_workers.src.resource_database_workers.datastructures.streams import (
+from resource_database_workers.datastructures.streams import (
     STREAM_EVENT_MAPPING,
 )
 
-
-class EventWorkerConfig(Protocol):
-    @cached_property
-    def reader_count_mapping(self) -> dict[StreamName, int]: ...
-
-
-class BaseWorkerConfig(BaseModel):
-    @property
-    def dormant(self) -> bool:
-        return any(v for v in self.model_dump().values())
+STREAM_KEY: Final[LiteralString] = "STREAMS"
+COUNTERS_KEY: Final[LiteralString] = "COUNTERS"
+WORKERS_KEY: Final[LiteralString] = "WORKERS"
+READERS_KEY: Final[LiteralString] = "READERS"
 
 
-class StreamReaderConfig(BaseWorkerConfig):
-    POSTS: Annotated[int, Field(ge=0, default=0)]
-    COMMENTS: Annotated[int, Field(ge=0, default=0)]
-    FORUMS: Annotated[int, Field(ge=0, default=0)]
-    ANIMES: Annotated[int, Field(ge=0, default=0)]
-    USERS: Annotated[int, Field(ge=0, default=0)]
-    DOWNSTREAM_DELETIONS: Annotated[int, Field(ge=0, default=0)]
-    DOWNSTREAM_COUNTER_DECREMENTS: Annotated[int, Field(ge=0, default=0)]
-    DEAD_LETTER_QUEUE: Annotated[int, Field(ge=0, default=0)]
+class CounterWorkersConfig(BaseModel):
+    WORKERS_KEY: ClassVar[LiteralString] = "WORKERS"
+    RETRY_WORKERS_KEY: ClassVar[LiteralString] = "RETRY_WORKERS"
 
-    @cached_property
-    def reader_count_mapping(self) -> dict[StreamName, int]:
-        return {
-            StreamName.POSTS: self.POSTS,
-            StreamName.COMMENTS: self.COMMENTS,
-            StreamName.FORUMS: self.FORUMS,
-            StreamName.ANIMES: self.ANIMES,
-            StreamName.USERS: self.USERS,
-            StreamName.DOWNSTREAM_DELETIONS: self.DOWNSTREAM_DELETIONS,
-            StreamName.DOWNSTREAM_COUNTER_DECREMENTS: self.DOWNSTREAM_COUNTER_DECREMENTS,
-            StreamName.DEAD_LETTER_QUEUE: self.DEAD_LETTER_QUEUE,
-        }
+    WORKER_COUNT: Annotated[int, Field(ge=0, default=0)]
+    RETRY_WORKER_COUNT: Annotated[int, Field(ge=0, default=0)]
 
 
-class CounterWorkerConfig(BaseWorkerConfig):
-    WORKERS: Annotated[int, Field(ge=0, default=0)]
+class StreamWorkersConfig(BaseModel):
+    READER_COUNT: Annotated[int, Field(ge=0, default=0)] = 0
+    EVENT_WORKER_COUNT_MAPPING: Mapping[
+        EventName, Annotated[int, Field(ge=0, default=0)]
+    ] = {}
 
 
-class DLQWorkerConfig(BaseWorkerConfig):
-    WORKERS: Annotated[int, Field(ge=0, default=0)]
-
-
-class DownstreamDeletionWorkerConfig(BaseWorkerConfig):
-    USER_CLEANUP: Annotated[int, Field(ge=0, default=0)]
-    ORPHANED_POST_DELETE: Annotated[int, Field(ge=0, default=0)]
-    ORPHANED_COMMENT_DELETE: Annotated[int, Field(ge=0, default=0)]
-
-    @cached_property
-    def worker_count_mapping(self) -> dict[EventName, int]:
-        return {
-            EventName.ORPHANED_POST_DELETE: self.ORPHANED_POST_DELETE,
-            EventName.ORPHANED_COMMENT_DELETE: self.ORPHANED_COMMENT_DELETE,
-        }
-
-
-class DownstreamDecrementWorkerConfig(BaseWorkerConfig):
-    DOWNSTREAM_USER_POST_DECREMENT: Annotated[int, Field(ge=0, default=0)]
-    DOWNSTREAM_USER_COMMENT_DECREMENT: Annotated[int, Field(ge=0, default=0)]
-    DOWNSTREAM_FORUM_POST_DECREMENT: Annotated[int, Field(ge=0, default=0)]
-    DOWNSTREAM_POST_COMMENT_DECREMENT: Annotated[int, Field(ge=0, default=0)]
-
-    @cached_property
-    def worker_count_mapping(self) -> dict[EventName, int]:
-        return {
-            EventName.DOWNSTREAM_USER_POST_DECREMENT: self.DOWNSTREAM_USER_POST_DECREMENT,
-            EventName.DOWNSTREAM_USER_COMMENT_DECREMENT: self.DOWNSTREAM_USER_COMMENT_DECREMENT,
-            EventName.DOWNSTREAM_FORUM_POST_DECREMENT: self.DOWNSTREAM_FORUM_POST_DECREMENT,
-            EventName.DOWNSTREAM_POST_COMMENT_DECREMENT: self.DOWNSTREAM_POST_COMMENT_DECREMENT,
-        }
-
-
-class UpstreamWorkerConfig(BaseWorkerConfig):
-    POST_DELETE: Annotated[int, Field(ge=0, default=0)]
-    COMMENT_DELETE: Annotated[int, Field(ge=0, default=0)]
-    FORUM_DELETE: Annotated[int, Field(ge=0, default=0)]
-    POST_SAVE: Annotated[int, Field(ge=0, default=0)]
-    POST_VOTE: Annotated[int, Field(ge=0, default=0)]
-    COMMENT_VOTE: Annotated[int, Field(ge=0, default=0)]
-    FORUM_SUB: Annotated[int, Field(ge=0, default=0)]
-    ANIME_SUB: Annotated[int, Field(ge=0, default=0)]
-
-    @cached_property
-    def worker_count_mapping(self) -> dict[EventName, int]:
-        return {
-            EventName.POST_DELETE: self.POST_DELETE,
-            EventName.COMMENT_DELETE: self.COMMENT_DELETE,
-            EventName.FORUM_DELETE: self.FORUM_DELETE,
-            EventName.POST_SAVE: self.POST_SAVE,
-            EventName.POST_VOTE: self.POST_VOTE,
-            EventName.COMMENT_VOTE: self.COMMENT_VOTE,
-            EventName.FORUM_SUB: self.FORUM_SUB,
-            EventName.ANIME_SUB: self.ANIME_SUB,
-        }
-
-
-class WorkerSettings(BaseSettings):
-    READER: StreamReaderConfig
-    COUNTERS: CounterWorkerConfig
-    UPSTREAM: UpstreamWorkerConfig
-    DOWNSTREAM_DELETION: DownstreamDeletionWorkerConfig
-    DOWNSTREAM_DECREMENT: DownstreamDecrementWorkerConfig
+class WorkerCountSettings(BaseModel):
+    STREAM_WORKERS_CONFIG: dict[StreamName, StreamWorkersConfig] = {}
+    COUNTER_WORKERS_CONFIG: Annotated[CounterWorkersConfig, Field(default_factory=CounterWorkersConfig)]  # type: ignore
 
     @classmethod
-    def settings_customise_sources(
-        cls,
-        settings_cls: type[BaseSettings],
-        init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
-        file_secret_settings: PydanticBaseSettingsSource,
-    ) -> tuple[PydanticBaseSettingsSource, ...]:
-        return (TomlConfigSettingsSource(settings_cls),)
+    def construct_from_toml(cls, toml_filepath: str) -> Self:
+        instance = cls()  # type: ignore
 
-    @model_validator(mode="after")
-    def check_consumption_pipeline_integrity(self) -> Self:
-        worker_mapping: dict[EventName, int] = (
-            self.UPSTREAM.worker_count_mapping
-            | self.DOWNSTREAM_DECREMENT.worker_count_mapping
-            | self.DOWNSTREAM_DELETION.worker_count_mapping
-        )
+        with open(toml_filepath, "r") as filepath:
+            config_mapping: dict[str, Any] = tomllib.loads(filepath.read())
 
-        unused_workers: defaultdict[StreamName, list[EventName]] = defaultdict(list)
-        missing_workers: defaultdict[StreamName, list[EventName]] = defaultdict(list)
-        for stream, reader_count in self.READER.reader_count_mapping.items():
-            stream_events: tuple[EventName, ...] = STREAM_EVENT_MAPPING[stream]
-            if reader_count == 0 and any(
-                unused := [i for i in stream_events if worker_mapping[i] != 0]
+        # Counter workers
+        instance.COUNTER_WORKERS_CONFIG.WORKER_COUNT = config_mapping[WORKERS_KEY][
+            COUNTERS_KEY
+        ][CounterWorkersConfig.WORKERS_KEY]
+        instance.COUNTER_WORKERS_CONFIG.RETRY_WORKER_COUNT = config_mapping[
+            WORKERS_KEY
+        ][COUNTERS_KEY][CounterWorkersConfig.RETRY_WORKER_COUNT]
+
+        # Stream Readers
+        for stream_name in StreamName:
+            reader_count: int = config_mapping[READERS_KEY][STREAM_KEY][
+                str(stream_name)
+            ]
+            writer_data: dict[str, int] = config_mapping[WORKERS_KEY][STREAM_KEY][
+                str(stream_name)
+            ]
+            if (
+                reader_count
+                and not all(writer_data.values())
+                or (reader_count == 0 and any(writer_data.values()))
             ):
-                unused_workers[stream].extend(unused)
-            if reader_count != 0 and any(
-                missing := [i for i in stream_events if worker_mapping[i] == 0]
-            ):
-                missing_workers[stream].extend(missing)
-
-        err_msgs: list[str] = []
-        if unused_workers:
-            err_msgs.extend(
-                " ".join(
-                    (
-                        f"No stream readers for stream {stream}",
-                        "but workers specified for stream events:",
-                        ",".join(i.value for i in events),
+                raise ValueError(
+                    " ".join(
+                        (
+                            "Invalid worker-reader configuration for stream:",
+                            stream_name,
+                            "\nEither reader count and all worker counts must be",
+                            "zero or non-zero.",
+                            f"Reader count: {reader_count}\n",
+                            "Workers:\n",
+                            ",".join(f"{k}: {v}" for k, v in writer_data.items()),
+                        )
                     )
                 )
-                for stream, events in unused_workers.items()
-            )
 
-        if missing_workers:
-            err_msgs.extend(
-                " ".join(
-                    (
-                        f"Stream readers specified for stream {stream}",
-                        "but no workers specified for stream events:",
-                        ",".join(i.value for i in events),
+            if not reader_count:
+                continue
+
+            event_normalized_counts = {EventName(k): v for k, v in writer_data.items()}
+            if not all(
+                e in STREAM_EVENT_MAPPING[stream_name]
+                for e in event_normalized_counts.keys()
+            ):
+                raise ValueError(
+                    " ".join(
+                        (
+                            "Unsupported events found in workers for stream",
+                            stream_name,
+                            "\nSupported events:",
+                            ", ".join(STREAM_EVENT_MAPPING[stream_name]),
+                        )
                     )
                 )
-                for stream, events in missing_workers.items()
+
+            instance.STREAM_WORKERS_CONFIG[stream_name] = StreamWorkersConfig(
+                READER_COUNT=reader_count,
+                EVENT_WORKER_COUNT_MAPPING=event_normalized_counts,
             )
-
-        if err_msgs:
-            raise ValueError("\n".join(err_msgs))
-
-        return self
-
-    @classmethod
-    def update_toml_file(cls, filepath: str) -> None:
-        path: Path = Path(filepath)
-        if not path.is_file():
-            raise FileNotFoundError(filepath)
-        if (ext := path.name.split(".")[-1]) != "toml":
-            raise ValueError(f"Expected TOML file, got {ext} instead")
-
-        cls.model_config = SettingsConfigDict(toml_file=str(filepath))
+        return instance

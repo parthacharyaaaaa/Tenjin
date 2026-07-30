@@ -5,7 +5,7 @@ from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
 
 from resource_database_workers.config.config import AppConfig
-from resource_database_workers.config.worker_config import WorkerSettings
+from resource_database_workers.config.worker_config import WorkerCountSettings
 from resource_database_workers.datastructures.queues import QueueRegistry
 
 
@@ -15,8 +15,8 @@ def get_config() -> AppConfig:
 
 
 @lru_cache(maxsize=1)
-def get_worker_settings() -> WorkerSettings:
-    return WorkerSettings()  # type: ignore[reportCallIssue]
+def get_worker_settings() -> WorkerCountSettings:
+    return WorkerCountSettings()  # type: ignore[reportCallIssue]
 
 
 @lru_cache(maxsize=1)
