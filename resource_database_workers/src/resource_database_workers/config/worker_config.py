@@ -37,6 +37,7 @@ class StreamReaderConfig(BaseWorkerConfig):
     USERS: Annotated[int, Field(ge=0, default=0)]
     DOWNSTREAM_DELETIONS: Annotated[int, Field(ge=0, default=0)]
     DOWNSTREAM_COUNTER_DECREMENTS: Annotated[int, Field(ge=0, default=0)]
+    DEAD_LETTER_QUEUE: Annotated[int, Field(ge=0, default=0)]
 
     @cached_property
     def reader_count_mapping(self) -> dict[StreamName, int]:
@@ -48,30 +49,15 @@ class StreamReaderConfig(BaseWorkerConfig):
             StreamName.USERS: self.USERS,
             StreamName.DOWNSTREAM_DELETIONS: self.DOWNSTREAM_DELETIONS,
             StreamName.DOWNSTREAM_COUNTER_DECREMENTS: self.DOWNSTREAM_COUNTER_DECREMENTS,
+            StreamName.DEAD_LETTER_QUEUE: self.DEAD_LETTER_QUEUE,
         }
 
 
-class DeadLetterWorkerConfig(BaseWorkerConfig):
-    STANDARD: Annotated[int, Field(ge=0, default=0)]
-    COUNTERS: Annotated[int, Field(ge=0, default=0)]
-    SIDE_EFFECTS: Annotated[int, Field(ge=0, default=0)]
-
-    @model_validator(mode="after")
-    def validate_worker_split(self) -> Self:
-        worker_counts: tuple[int, ...] = tuple(self.model_dump().values())
-        if any(worker_counts) != all(worker_counts):
-            raise ValueError(
-                " ".join(
-                    (
-                        "DLQ workers must either be all dormant",
-                        "or all at least 1 in quantity",
-                    )
-                )
-            )
-        return self
+class CounterWorkerConfig(BaseWorkerConfig):
+    WORKERS: Annotated[int, Field(ge=0, default=0)]
 
 
-class CounterConfig(BaseWorkerConfig):
+class DLQWorkerConfig(BaseWorkerConfig):
     WORKERS: Annotated[int, Field(ge=0, default=0)]
 
 
@@ -130,8 +116,7 @@ class UpstreamWorkerConfig(BaseWorkerConfig):
 
 class WorkerSettings(BaseSettings):
     READER: StreamReaderConfig
-    DLQ: DeadLetterWorkerConfig
-    COUNTERS: CounterConfig
+    COUNTERS: CounterWorkerConfig
     UPSTREAM: UpstreamWorkerConfig
     DOWNSTREAM_DELETION: DownstreamDeletionWorkerConfig
     DOWNSTREAM_DECREMENT: DownstreamDecrementWorkerConfig
@@ -146,42 +131,6 @@ class WorkerSettings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (TomlConfigSettingsSource(settings_cls),)
-
-    @model_validator(mode="after")
-    def dlq_check(self) -> Self:
-        if self.COUNTERS.WORKERS and not self.DLQ.COUNTERS:
-            raise ValueError(
-                " ".join(
-                    (
-                        f"Non-zero ({self.COUNTERS.WORKERS}) specified with",
-                        "no counter DLQ workers present",
-                    )
-                )
-            )
-        elif not (
-            self.DLQ.STANDARD
-            or all(
-                map(
-                    lambda x: x.dormant,
-                    (
-                        self.DOWNSTREAM_DECREMENT,
-                        self.DOWNSTREAM_DECREMENT,
-                        self.READER,
-                        self.UPSTREAM,
-                    ),
-                )
-            )
-        ):
-            raise ValueError(
-                " ".join(
-                    (
-                        f"Non-zero event-processors specified with no",
-                        "standard DLQ consumer",
-                    )
-                )
-            )
-
-        return self
 
     @model_validator(mode="after")
     def check_consumption_pipeline_integrity(self) -> Self:
