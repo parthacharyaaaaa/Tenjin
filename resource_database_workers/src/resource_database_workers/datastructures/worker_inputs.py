@@ -91,7 +91,8 @@ class UpstreamDispatcherInput(BaseInput):
     config: AppConfig = field(default_factory=get_config)
     redis: Redis = field(default_factory=get_internal_redis)
     queue_mapping: Mapping[
-        EventName, asyncio.Queue[tuple[StreamedEvent]] | asyncio.Queue[StreamedEvent]
+        EventName,
+        asyncio.Queue[tuple[StreamedEvent, ...]] | asyncio.Queue[StreamedEvent],
     ]
     read_history: bool = field(default=True)
     consumer_name: str = field(default_factory=lambda: uuid4().hex)
@@ -249,6 +250,15 @@ SIDE_EFFECTS_DLQ_WORKER_INPUT: Final[DeadLetterQueueWorkerInput] = (
     )
 )
 
+
+@dataclass(slots=True, kw_only=True)
+class CounterWorkerInput:
+    config: AppConfig = field(default_factory=get_config)
+    worker_redis: Redis = field(default_factory=get_internal_redis)
+    server_redis: Redis = field(default_factory=get_app_redis)
+
+
+COUNTER_WORKER_INPUT: Final[CounterWorkerInput] = CounterWorkerInput()
 WORKER_INPUT_DATA_MAPPING: Final[MappingProxyType[EventName, Any]] = MappingProxyType(
     {
         # Strong entity creations

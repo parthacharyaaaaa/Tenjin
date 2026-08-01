@@ -1,4 +1,5 @@
 from asyncio import Queue
+import asyncio
 from dataclasses import dataclass, field
 from functools import cached_property
 from types import MappingProxyType
@@ -8,6 +9,7 @@ from auxillary.singleton import SingletonMetaclass
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import EventName
 
+from resource_auxillary.strings import StreamName
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
 
 
@@ -121,3 +123,16 @@ class QueueRegistry(metaclass=SingletonMetaclass):
                 EventName.DLQ_SIDE_EFFECTS: self.side_effects_dead_letter,
             }
         )
+
+    def resolve_stream_reader_queue_mapping(
+        self, stream: StreamName
+    ) -> MappingProxyType[
+        EventName,
+        asyncio.Queue[StreamedEvent] | asyncio.Queue[tuple[StreamedEvent, ...]],
+    ]:
+        if stream == StreamName.DOWNSTREAM_COUNTER_DECREMENTS:
+            return self.downstream_decrement_event_queue_mapping
+        elif stream == StreamName.DOWNSTREAM_DELETIONS:
+            return self.downstream_deletion_event_queue_apping
+        else:
+            return self.event_queue_mapping
