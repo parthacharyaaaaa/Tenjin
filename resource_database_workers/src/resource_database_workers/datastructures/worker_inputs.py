@@ -1,7 +1,7 @@
 import asyncio
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Final, Mapping
+from typing import Any, Final, LiteralString, Mapping
 from uuid import uuid4
 
 from psycopg_pool import AsyncConnectionPool
@@ -41,6 +41,7 @@ from resource_database_workers.utils.typing import (
 )
 
 QUEUE_REGISTRY: Final[QueueRegistry] = get_queue_registry()
+STATUS_PROXY_NAME: Final[LiteralString] = "status_proxy"
 
 
 @dataclass(slots=True, kw_only=True)
