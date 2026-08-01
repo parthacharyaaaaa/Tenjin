@@ -1,9 +1,18 @@
 import tomllib
-from typing import Annotated, Any, ClassVar, Final, LiteralString, Mapping, Self
+from typing import (
+    Annotated,
+    Any,
+    ClassVar,
+    Final,
+    LiteralString,
+    Mapping,
+    MutableMapping,
+    Self,
+)
 
 from resource_auxillary.strings import EventName, StreamName
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from resource_database_workers.datastructures.streams import (
     STREAM_EVENT_MAPPING,
@@ -19,84 +28,70 @@ class CounterWorkersConfig(BaseModel):
     WORKERS_KEY: ClassVar[LiteralString] = "WORKERS"
     RETRY_WORKERS_KEY: ClassVar[LiteralString] = "RETRY_WORKERS"
 
-    WORKER_COUNT: Annotated[int, Field(ge=0, default=0)]
-    RETRY_WORKER_COUNT: Annotated[int, Field(ge=0, default=0)]
-
-
-class StreamWorkersConfig(BaseModel):
-    READER_COUNT: Annotated[int, Field(ge=0, default=0)] = 0
-    EVENT_WORKER_COUNT_MAPPING: Mapping[
-        EventName, Annotated[int, Field(ge=0, default=0)]
-    ] = {}
-
-
-class WorkerCountSettings(BaseModel):
-    STREAM_WORKERS_CONFIG: dict[StreamName, StreamWorkersConfig] = {}
-    COUNTER_WORKERS_CONFIG: Annotated[CounterWorkersConfig, Field(default_factory=CounterWorkersConfig)]  # type: ignore
+    WORKER_COUNT: Annotated[int, Field(ge=1)]
+    RETRY_WORKER_COUNT: Annotated[int, Field(ge=1)]
 
     @classmethod
     def construct_from_toml(cls, toml_filepath: str) -> Self:
-        instance = cls()  # type: ignore
+        with open(toml_filepath, "r", encoding="utf-8") as toml_file:
+            counters_mapping: dict[str, int] = tomllib.loads(toml_file.read())[
+                WORKERS_KEY
+            ][COUNTERS_KEY]
+        return cls(
+            WORKER_COUNT=counters_mapping[cls.WORKERS_KEY],
+            RETRY_WORKER_COUNT=counters_mapping[cls.RETRY_WORKERS_KEY],
+        )
 
-        with open(toml_filepath, "r") as filepath:
-            config_mapping: dict[str, Any] = tomllib.loads(filepath.read())
 
-        # Counter workers
-        instance.COUNTER_WORKERS_CONFIG.WORKER_COUNT = config_mapping[WORKERS_KEY][
-            COUNTERS_KEY
-        ][CounterWorkersConfig.WORKERS_KEY]
-        instance.COUNTER_WORKERS_CONFIG.RETRY_WORKER_COUNT = config_mapping[
-            WORKERS_KEY
-        ][COUNTERS_KEY][CounterWorkersConfig.RETRY_WORKER_COUNT]
+class StreamWorkersConfig(BaseModel):
+    STREAM: StreamName
+    READER_COUNT: Annotated[int, Field(ge=1)]
+    EVENT_WORKER_COUNT_MAPPING: Mapping[EventName, Annotated[int, Field(ge=1)]] = {}
 
-        # Stream Readers
-        for stream_name in StreamName:
-            reader_count: int = config_mapping[READERS_KEY][STREAM_KEY][
-                str(stream_name)
-            ]
-            writer_data: dict[str, int] = config_mapping[WORKERS_KEY][STREAM_KEY][
-                str(stream_name)
-            ]
-            if (
-                reader_count
-                and not all(writer_data.values())
-                or (reader_count == 0 and any(writer_data.values()))
-            ):
-                raise ValueError(
-                    " ".join(
-                        (
-                            "Invalid worker-reader configuration for stream:",
-                            stream_name,
-                            "\nEither reader count and all worker counts must be",
-                            "zero or non-zero.",
-                            f"Reader count: {reader_count}\n",
-                            "Workers:\n",
-                            ",".join(f"{k}: {v}" for k, v in writer_data.items()),
-                        )
+    @model_validator(mode="after")
+    def validate_event_mapping(self) -> Self:
+        expected_set, actual_set = set(STREAM_EVENT_MAPPING[self.STREAM]), set(
+            self.EVENT_WORKER_COUNT_MAPPING
+        )
+        if missing_events := expected_set - actual_set:
+            raise ValueError(
+                " ".join(
+                    (
+                        f"Missing events for stream: {self.STREAM}",
+                        ", ".join(missing_events),
                     )
                 )
-
-            if not reader_count:
-                continue
-
-            event_normalized_counts = {EventName(k): v for k, v in writer_data.items()}
-            if not all(
-                e in STREAM_EVENT_MAPPING[stream_name]
-                for e in event_normalized_counts.keys()
-            ):
-                raise ValueError(
-                    " ".join(
-                        (
-                            "Unsupported events found in workers for stream",
-                            stream_name,
-                            "\nSupported events:",
-                            ", ".join(STREAM_EVENT_MAPPING[stream_name]),
-                        )
-                    )
-                )
-
-            instance.STREAM_WORKERS_CONFIG[stream_name] = StreamWorkersConfig(
-                READER_COUNT=reader_count,
-                EVENT_WORKER_COUNT_MAPPING=event_normalized_counts,
             )
-        return instance
+        if unexpected_events := actual_set - expected_set:
+            raise ValueError(
+                " ".join(
+                    (
+                        f"Incompatible events specified for stream: {self.STREAM}",
+                        ", ".join(unexpected_events),
+                    )
+                )
+            )
+        return self
+
+    @staticmethod
+    def normalize_config_mapping(d: MutableMapping[str, int]) -> dict[EventName, int]:
+        return {EventName(event): count for event, count in d.items()}
+
+    @classmethod
+    def construct_from_toml(cls, toml_filepath: str, stream_name: StreamName) -> Self:
+        with open(toml_filepath, "r", encoding="utf-8") as toml_file:
+            config_mapping: dict[str, Any] = tomllib.loads(toml_file.read())
+            reader_count: int | None = config_mapping[READERS_KEY][STREAM_KEY].get(
+                stream_name
+            )
+            stream_mapping: dict[str, int] | None = config_mapping.get(stream_name)
+        if not reader_count:
+            raise KeyError("No reader count found for stream:", stream_name)
+        if not stream_mapping:
+            raise KeyError("No worker count found for stream found:", stream_name)
+
+        return cls(
+            STREAM=stream_name,
+            READER_COUNT=reader_count,
+            EVENT_WORKER_COUNT_MAPPING=cls.normalize_config_mapping(stream_mapping),
+        )
