@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Iterable, Literal, MutableSequence, Protocol, Sequence
+from typing import Any, ClassVar, Iterable, Literal, MutableSequence, Protocol, Sequence
 
 from psycopg import AsyncConnection
 
@@ -42,3 +42,7 @@ class BatchDownstreamDeletionFunction(Protocol):
         deletion_time: datetime | None = None,
         /,
     ) -> None: ...
+
+
+class GenericDataclass(Protocol):
+    __dataclass_fields__: ClassVar[dict[str, Any]]
