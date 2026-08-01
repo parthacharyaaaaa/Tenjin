@@ -70,6 +70,9 @@ class WorkerConfig(BaseModel):
     BASE_BACKOFF_INTERVAL: Annotated[int, Field(ge=0)]
     BACKOFF_EXPONENTIAL: Annotated[int, Field(ge=1)]
 
+    # Others
+    GRACEFUL_SHUTDOWN_PERIOD: Annotated[float, Field(ge=0)]
+
     @model_validator(mode="after")
     def validate_backoff_values(self) -> Self:
         if self.BASE_BACKOFF_INTERVAL > self.MAXIMUM_BACKOFF_INTERVAL:
