@@ -71,3 +71,12 @@ def generate_consumer_name(base_name: str, identifier_length: int = 8) -> str:
     return INTERNAL_NAME_SEPERATOR.join(
         (base_name, random.randbytes(identifier_length // 2).hex())  # nosec
     )
+
+
+def generate_worker_name(
+    task_name: str, index: int, *, base_name: str | None = None
+) -> str:
+    if base_name:
+        return INTERNAL_NAME_SEPERATOR.join((base_name, task_name, str(index)))
+    else:
+        return INTERNAL_NAME_SEPERATOR.join((task_name, str(index)))
