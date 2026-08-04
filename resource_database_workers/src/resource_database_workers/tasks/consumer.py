@@ -13,6 +13,10 @@ from resource_auxillary.datastructures.database import StrongEntity
 from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.strings import StreamName
 from resource_auxillary.events import StreamedEvent
+from resource_auxillary.event_processing.pre_processing import (
+    trim_duplicate_events,
+    populate_events_batch_from_queue,
+)
 
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.config.constants import (
@@ -45,10 +49,6 @@ from resource_database_workers.workers.redis.wrappers import (
     ack_with_retries,
     declare_dead_with_retries,
     commit_processed_events,
-)
-from resource_database_workers.workers.redis.pre_processing import (
-    trim_duplicate_events,
-    populate_events_batch_from_queue,
 )
 from resource_database_workers.workers.redis.qos import execute_with_redis_retries
 
