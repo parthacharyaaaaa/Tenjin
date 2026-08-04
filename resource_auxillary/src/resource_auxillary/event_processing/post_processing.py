@@ -17,9 +17,7 @@ from resource_auxillary.events import (
     StreamedEvent,
     Event,
 )
-from resource_database_workers.utils.lua_commands import (
-    CONDITIIONAL_DELETE_TARGET_INTENT_TEMPLATE,
-)
+from resource_auxillary.templates.lua import CONDITIIONAL_DELETE_TARGET_INTENT_TEMPLATE
 
 
 async def amortize_event(

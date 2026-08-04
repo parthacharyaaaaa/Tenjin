@@ -8,12 +8,11 @@ from redis.exceptions import RedisError, ExceptionType
 
 from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.events import StreamedEvent
-from resource_auxillary.strings import StreamName
-from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
-
-from resource_database_workers.src.resource_database_workers.workers.redis.post_processing import (
+from resource_auxillary.event_processing.post_processing import (
     amortize_event,
 )
+from resource_auxillary.strings import StreamName
+from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 
 
 async def execute_with_redis_retries(

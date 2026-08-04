@@ -7,12 +7,12 @@ from redis.asyncio import Redis
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import StreamName
 from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
-
-from resource_database_workers.workers.redis.post_processing import (
+from resource_auxillary.event_processing.post_processing import (
     acknowledge_event,
     amortize_event,
     atomic_ack_and_emit_side_effects,
 )
+
 from resource_database_workers.workers.redis.qos import (
     dlq_aware_process_events,
     execute_with_redis_retries,

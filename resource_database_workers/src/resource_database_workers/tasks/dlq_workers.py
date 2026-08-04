@@ -8,12 +8,14 @@ from psycopg.sql import Composed
 from auxillary.utils import json_repr
 
 from redis.asyncio import Redis
+
 from resource_auxillary.events import (
     CacheUpdate,
     CounterUpdate,
     IntentUpdate,
     StreamedEvent,
 )
+from resource_auxillary.event_processing.post_processing import acknowledge_event
 from resource_auxillary.datastructures.database import SideEffectType
 from resource_auxillary.strings import EventName, StreamName
 
@@ -24,7 +26,6 @@ from resource_database_workers.workers.database.qos import (
     db_execute_with_retries,
     dedup_insert_event,
 )
-from resource_database_workers.workers.redis.post_processing import acknowledge_event
 from resource_database_workers.workers.redis.qos import execute_with_redis_retries
 
 
