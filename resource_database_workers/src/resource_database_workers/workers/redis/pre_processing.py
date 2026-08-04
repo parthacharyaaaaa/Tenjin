@@ -8,8 +8,7 @@ from redis.asyncio import Redis
 
 from resource_auxillary.strings import StreamName
 from resource_auxillary.events import StreamedEvent
-
-from resource_database_workers.config.config import AppConfig
+from resource_auxillary.typing import SupportsInternalQueueConsumerPolicy
 
 
 async def trim_duplicate_events(
@@ -28,29 +27,29 @@ async def trim_duplicate_events(
 
 
 async def populate_events_batch_from_queue(
-    config: AppConfig,
+    batching_policy: SupportsInternalQueueConsumerPolicy,
     queue: asyncio.Queue[tuple[StreamedEvent, ...]],
     reference_time: float,
     batch: list[StreamedEvent],
 ) -> None:
     while True:
         if not (
-            (len(batch) >= config.WORKER.IQ_CONSUMER_BATCH_SIZE_QUOTA)
+            (len(batch) >= batching_policy.IQ_CONSUMER_BATCH_SIZE_QUOTA)
             or time.monotonic() - reference_time
-            > config.WORKER.IQ_CONSUMER_BASE_WAITING_TIME
+            > batching_policy.IQ_CONSUMER_BASE_WAITING_TIME
         ):
             try:
                 new_entries: tuple[StreamedEvent, ...] = await asyncio.wait_for(
-                    queue.get(), config.WORKER.IQ_CONSUMER_GET_TIMEOUT
+                    queue.get(), batching_policy.IQ_CONSUMER_GET_TIMEOUT
                 )
                 if not batch:
                     reference_time = time.monotonic()
                 batch.extend(new_entries)
             except asyncio.TimeoutError:
-                await asyncio.sleep(config.WORKER.IQ_CONSUMER_SLEEP_INTERVAL)
+                await asyncio.sleep(batching_policy.IQ_CONSUMER_SLEEP_INTERVAL)
             continue
 
         if not batch:
-            await asyncio.sleep(config.WORKER.IQ_CONSUMER_SLEEP_INTERVAL)
+            await asyncio.sleep(batching_policy.IQ_CONSUMER_SLEEP_INTERVAL)
             reference_time = time.monotonic()
             continue

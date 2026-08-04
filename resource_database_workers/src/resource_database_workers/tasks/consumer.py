@@ -66,7 +66,9 @@ async def user_orphan_consumer(
     reference_time: float = time.monotonic()
 
     while True:
-        await populate_events_batch_from_queue(config, queue, reference_time, batch)
+        await populate_events_batch_from_queue(
+            config.WORKER, queue, reference_time, batch
+        )
 
         # Database connection only needed for deduplication
         async with pool.connection() as conn:
@@ -149,7 +151,9 @@ async def queue_insertion_consumer(
     reference_time: float = time.monotonic()
 
     while True:
-        await populate_events_batch_from_queue(config, queue, reference_time, batch)
+        await populate_events_batch_from_queue(
+            config.WORKER, queue, reference_time, batch
+        )
         async with pool.connection() as conn:
             # Perform deduplication
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
@@ -221,7 +225,9 @@ async def queue_deletion_consumer(
     reference_time: float = time.monotonic()
 
     while True:
-        await populate_events_batch_from_queue(config, queue, reference_time, batch)
+        await populate_events_batch_from_queue(
+            config.WORKER, queue, reference_time, batch
+        )
         async with pool.connection() as conn:
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
                 conn, (e.event_id for e in batch)
