@@ -10,22 +10,19 @@ from redis.exceptions import RedisError, ExceptionType
 
 from resource_auxillary.datastructures.database import StrongEntity
 
-from resource_database_workers.config.config import AppConfig
+from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.strings import StreamName
 from resource_auxillary.events import StreamedEvent
 
+from resource_database_workers.config.config import AppConfig
 from resource_database_workers.config.constants import (
     POTENTIAL_TRANSIENT_ERRORS,
 )
-
 from resource_database_workers.workers.database.qos import (
     batch_dedup_insert_events,
     dedup_insert_event,
     db_execute_with_retries,
 )
-
-from resource_database_workers.utils.coordination import exponential_jittered_backoff
-
 from resource_database_workers.workers.redis.downstream_post_processing import (
     dispatch_downstream_counter_decrements,
     dispatch_downstream_events,
@@ -47,9 +44,7 @@ from resource_database_workers.datastructures.downstream import (
 from resource_database_workers.workers.redis.wrappers import (
     ack_with_retries,
     declare_dead_with_retries,
-)
-from resource_database_workers.workers.redis.post_processing import (
-    atomic_ack_and_emit_side_effects,
+    commit_processed_events,
 )
 from resource_database_workers.workers.redis.pre_processing import (
     trim_duplicate_events,
@@ -188,7 +183,7 @@ async def queue_insertion_consumer(
                 )
 
                 # post-process successful events and push failed events to DLQ
-                await atomic_ack_and_emit_side_effects(
+                await commit_processed_events(
                     redis,
                     config.WORKER,
                     batch,
@@ -261,7 +256,7 @@ async def queue_deletion_consumer(
                 )
             else:
                 # ACK entire batch and emit side-effects
-                await atomic_ack_and_emit_side_effects(
+                await commit_processed_events(
                     redis,
                     config.WORKER,
                     batch,

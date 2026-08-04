@@ -6,22 +6,22 @@ from typing import Any, Callable, Coroutine, Sequence
 from redis.asyncio import Redis
 from redis.exceptions import RedisError, ExceptionType
 
+from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import StreamName
+from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 
-from resource_database_workers.config.sub_config import WorkerConfig
-from resource_database_workers.utils.coordination import exponential_jittered_backoff
 from resource_database_workers.src.resource_database_workers.workers.redis.post_processing import (
     amortize_event,
 )
 
 
 async def execute_with_redis_retries(
-    worker_config: WorkerConfig,
+    retry_policy: SupportsExponentialJitteredRetryPolicy,
     redis_coroutine: Callable[[], Coroutine[Any, Any, Any]],
     attempts: int | None = None,
 ) -> Any:
-    attempts = attempts or worker_config.MAX_RETRIES
+    attempts = attempts or retry_policy.MAX_RETRIES
     exception: Exception | None = None
     for _attempt in range(1, attempts + 1):
         try:
@@ -30,10 +30,10 @@ async def execute_with_redis_retries(
             exception = redis_error
             if redis_error.error_type == ExceptionType.NETWORK:
                 await exponential_jittered_backoff(
-                    worker_config.MAXIMUM_BACKOFF_INTERVAL,
-                    worker_config.BASE_BACKOFF_INTERVAL,
+                    retry_policy.MAXIMUM_BACKOFF_INTERVAL,
+                    retry_policy.BASE_BACKOFF_INTERVAL,
                     _attempt,
-                    exponential=worker_config.BACKOFF_EXPONENTIAL,
+                    exponential=retry_policy.BACKOFF_EXPONENTIAL,
                 )
                 continue
 
@@ -48,7 +48,7 @@ async def execute_with_redis_retries(
 
 async def dlq_aware_process_events(
     redis: Redis,
-    worker_config: WorkerConfig,
+    retry_policy: SupportsExponentialJitteredRetryPolicy,
     events: Sequence[StreamedEvent],
     redis_coroutine: Callable[[], Coroutine[Any, Any, Any]],
     attempts: int,
@@ -60,7 +60,7 @@ async def dlq_aware_process_events(
     DLQ-aware event processing helper with retries
     """
     try:
-        await execute_with_redis_retries(worker_config, redis_coroutine, attempts)
+        await execute_with_redis_retries(retry_policy, redis_coroutine, attempts)
     except Exception as e:
         dlq_attempts: int = (
             1 if getattr(e, "error_type", None) == ExceptionType.NETWORK else attempts
@@ -68,7 +68,7 @@ async def dlq_aware_process_events(
         coro = lambda: amortize_event(
             redis, events, event_stream_name, group_name, dlq_stream_name
         )
-        await execute_with_redis_retries(worker_config, coro, dlq_attempts)
+        await execute_with_redis_retries(retry_policy, coro, dlq_attempts)
 
 
 @asynccontextmanager

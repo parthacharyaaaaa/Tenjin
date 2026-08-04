@@ -5,12 +5,13 @@ from uuid import uuid4
 from psycopg import AsyncConnection
 from psycopg import sql
 from psycopg.errors import IntegrityError
+
+from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.datastructures.database import EventLiteral
+from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 
 from resource_database_workers.config.constants import POTENTIAL_TRANSIENT_ERRORS
 
-from resource_database_workers.config.sub_config import WorkerConfig
-from resource_database_workers.utils.coordination import exponential_jittered_backoff
 from resource_database_workers.utils.sql_templates import (
     prepare_batch_dedup_sql,
     prepare_single_dedup_sql,
@@ -20,12 +21,12 @@ from resource_database_workers.utils.sql_templates import (
 
 
 async def db_execute_with_retries(
-    worker_config: WorkerConfig,
+    retry_policy: SupportsExponentialJitteredRetryPolicy,
     connection: AsyncConnection,
     db_coroutine: Callable[[], Coroutine[Any, Any, Any]],
     attempts: int | None = None,
 ) -> Any:
-    attempts = attempts or worker_config.MAX_RETRIES
+    attempts = attempts or retry_policy.MAX_RETRIES
     exception: Exception | None = None
     for _attempt in range(1, attempts + 1):
         try:
@@ -34,10 +35,10 @@ async def db_execute_with_retries(
             await connection.rollback()
             exception = pt_err
             await exponential_jittered_backoff(
-                worker_config.MAXIMUM_BACKOFF_INTERVAL,
-                worker_config.BASE_BACKOFF_INTERVAL,
+                retry_policy.MAXIMUM_BACKOFF_INTERVAL,
+                retry_policy.BASE_BACKOFF_INTERVAL,
                 _attempt,
-                exponential=worker_config.BACKOFF_EXPONENTIAL,
+                exponential=retry_policy.BACKOFF_EXPONENTIAL,
             )
         except Exception as e:
             await connection.rollback()

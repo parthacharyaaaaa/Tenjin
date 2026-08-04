@@ -1,7 +1,4 @@
-import asyncio
-import random
 from typing import Mapping, Sequence
-
 
 from redis.asyncio import Redis
 
@@ -13,25 +10,6 @@ from resource_database_workers.datastructures.redis import (
 from resource_database_workers.src.resource_database_workers.workers.redis.helpers import (
     get_min_max_from_xread,
 )
-
-
-def calculate_exponential_backoff_time(
-    cap: float, base: float, attempt: int, *, exponential: int = 2
-) -> float:
-    return min(cap, base * exponential**attempt)
-
-
-async def exponential_jittered_backoff(
-    cap: float, base: float, attempt: int, *, exponential: int = 2
-) -> None:
-    await asyncio.sleep(
-        random.uniform(
-            0,
-            calculate_exponential_backoff_time(
-                cap, base, attempt, exponential=exponential
-            ),
-        )  # nosec
-    )
 
 
 async def get_existing_worker_groups(

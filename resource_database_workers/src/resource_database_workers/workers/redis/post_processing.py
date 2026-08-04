@@ -17,11 +17,6 @@ from resource_auxillary.events import (
     StreamedEvent,
     Event,
 )
-
-from resource_database_workers.config.sub_config import WorkerConfig
-from resource_database_workers.src.resource_database_workers.workers.redis.qos import (
-    dlq_aware_process_events,
-)
 from resource_database_workers.utils.lua_commands import (
     CONDITIIONAL_DELETE_TARGET_INTENT_TEMPLATE,
 )
@@ -105,7 +100,7 @@ def _emit_counter_side_effects(
             )
 
 
-async def _atomic_ack_and_emit_side_effects(
+async def atomic_ack_and_emit_side_effects(
     redis: Redis,
     events: Sequence[StreamedEvent],
     stream_name: StreamName,
@@ -127,30 +122,3 @@ async def _atomic_ack_and_emit_side_effects(
             pipeline, (i.side_effects.cache_invalidations for i in events)
         )
         await pipeline.execute()
-
-
-async def atomic_ack_and_emit_side_effects(
-    redis: Redis,
-    worker_config: WorkerConfig,
-    events: Sequence[StreamedEvent],
-    group_name: str,
-    stream_name: StreamName,
-    dlq_stream_name: StreamName,
-) -> None:
-    """
-    Thin wrapper to atomically acknowledge a collection of events and
-    emit their side-effects
-    """
-    coro = lambda: _atomic_ack_and_emit_side_effects(
-        redis, events, stream_name, group_name
-    )
-    await dlq_aware_process_events(
-        redis,
-        worker_config,
-        events,
-        coro,
-        worker_config.MAX_RETRIES,
-        stream_name,
-        group_name,
-        dlq_stream_name,
-    )
