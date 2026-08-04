@@ -6,30 +6,29 @@ from typing import Literal, MutableMapping
 from redis.asyncio import Redis
 
 from psycopg_pool import AsyncConnectionPool
+
+from resource_auxillary.event_processing.qos import locked_operation
 from resource_auxillary.strings import NAME_SEPERATOR, StreamName
 
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.exceptions import (
     RecoverableDatabaseException,
 )
-from resource_database_workers.src.resource_database_workers.workers.redis.declarations import (
+from resource_database_workers.workers.redis.declarations import (
     declare_counters_event_dead,
 )
 
-from resource_database_workers.src.resource_database_workers.workers.redis.cache import (
+from resource_database_workers.workers.redis.cache import (
     reflect_processed_counters,
 )
-from resource_database_workers.src.resource_database_workers.workers.redis.counters import (
+from resource_database_workers.workers.redis.counters import (
     retrieve_counter_group_names,
     dispatch_to_retrier,
 )
-from resource_database_workers.src.resource_database_workers.workers.database.counters import (
+from resource_database_workers.workers.database.counters import (
     flush_counter_updates,
 )
 
-from resource_database_workers.src.resource_database_workers.workers.redis.qos import (
-    locked_operation,
-)
 from resource_database_workers.utils.strings import (
     derive_lock_key,
     extract_batch_metadata,

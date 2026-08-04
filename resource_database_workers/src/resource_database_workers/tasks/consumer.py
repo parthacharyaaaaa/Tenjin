@@ -8,15 +8,15 @@ from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
 from redis.exceptions import RedisError, ExceptionType
 
-from resource_auxillary.datastructures.database import StrongEntity
-
 from resource_auxillary.coordination import exponential_jittered_backoff
-from resource_auxillary.strings import StreamName
+from resource_auxillary.datastructures.database import StrongEntity
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.event_processing.pre_processing import (
     trim_duplicate_events,
     populate_events_batch_from_queue,
 )
+from resource_auxillary.event_processing.qos import execute_with_redis_retries
+from resource_auxillary.strings import StreamName
 
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.config.constants import (
@@ -50,7 +50,6 @@ from resource_database_workers.workers.redis.wrappers import (
     declare_dead_with_retries,
     commit_processed_events,
 )
-from resource_database_workers.workers.redis.qos import execute_with_redis_retries
 
 
 async def user_orphan_consumer(

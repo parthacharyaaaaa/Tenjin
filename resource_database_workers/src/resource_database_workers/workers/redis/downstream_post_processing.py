@@ -8,6 +8,9 @@ from auxillary.utils import cache_repr
 from resource_auxillary.cache import derive_cache_key
 from resource_auxillary.datastructures.database import StrongEntity
 from resource_auxillary.events import Event
+from resource_auxillary.event_processing.qos import (
+    execute_with_redis_retries,
+)
 from resource_auxillary.strings import EventName, StreamName
 
 from resource_database_workers.datastructures.downstream import (
@@ -24,9 +27,6 @@ from resource_database_workers.src.resource_database_workers.config.sub_config i
 )
 from resource_database_workers.src.resource_database_workers.workers.redis.declarations import (
     declare_standard_event_dead,
-)
-from resource_database_workers.workers.redis.qos import (
-    execute_with_redis_retries,
 )
 
 

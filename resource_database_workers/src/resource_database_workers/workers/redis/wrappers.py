@@ -12,8 +12,7 @@ from resource_auxillary.event_processing.post_processing import (
     amortize_event,
     atomic_ack_and_emit_side_effects,
 )
-
-from resource_database_workers.workers.redis.qos import (
+from resource_auxillary.event_processing.qos import (
     dlq_aware_process_events,
     execute_with_redis_retries,
 )

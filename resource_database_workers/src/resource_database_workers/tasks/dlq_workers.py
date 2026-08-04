@@ -16,6 +16,7 @@ from resource_auxillary.events import (
     StreamedEvent,
 )
 from resource_auxillary.event_processing.post_processing import acknowledge_event
+from resource_auxillary.event_processing.qos import execute_with_redis_retries
 from resource_auxillary.datastructures.database import SideEffectType
 from resource_auxillary.strings import EventName, StreamName
 
@@ -26,7 +27,6 @@ from resource_database_workers.workers.database.qos import (
     db_execute_with_retries,
     dedup_insert_event,
 )
-from resource_database_workers.workers.redis.qos import execute_with_redis_retries
 
 
 def get_dlq_insertion_parameters(event: StreamedEvent) -> tuple[Any, ...]:
