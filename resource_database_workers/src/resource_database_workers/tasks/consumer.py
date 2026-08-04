@@ -16,6 +16,11 @@ from resource_auxillary.event_processing.pre_processing import (
     populate_events_batch_from_queue,
 )
 from resource_auxillary.event_processing.qos import execute_with_redis_retries
+from resource_auxillary.event_processing.wrappers import (
+    ack_with_retries,
+    declare_dead_with_retries,
+    commit_processed_events,
+)
 from resource_auxillary.strings import StreamName
 
 from resource_database_workers.config.config import AppConfig
@@ -44,11 +49,6 @@ from resource_database_workers.datastructures.downstream import (
     DownstreamDeletionData,
     reconstruct_downstream_counter_data_from_stream,
     reconstruct_downstream_data_from_stream,
-)
-from resource_database_workers.workers.redis.wrappers import (
-    ack_with_retries,
-    declare_dead_with_retries,
-    commit_processed_events,
 )
 
 
