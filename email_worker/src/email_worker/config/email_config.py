@@ -21,6 +21,9 @@ class EmailWorkerConfig(
 ):
     GRACEFUL_SHUTDOWN_PERIOD: Annotated[float, Field(ge=0)]
 
+    SMTP_NETWORK_ERROR_WINDOW: Annotated[int, Field(ge=1)]
+    MAXIMUM_SMTP_REFRESHES: Annotated[int, Field(ge=0)]
+
 
 class EmailConfig(BaseSettings):
     config_filepath: ClassVar[Path] = Path(__file__).parent / "email_config.toml"

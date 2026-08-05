@@ -26,3 +26,6 @@ BASE_BACKOFF_INTERVAL=0.005                         # seconds
 BACKOFF_EXPONENTIAL=2
 
 GRACEFUL_SHUTDOWN_PERIOD=10                         # seconds
+
+SMTP_NETWORK_ERROR_WINDOW=30                        # seconds
+MAXIMUM_SMTP_REFRESHES=2
