@@ -9,12 +9,14 @@ from psycopg.errors import IntegrityError
 from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.datastructures.database import EventLiteral
 from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
+from resource_auxillary.templates.sql import (
+    prepare_batch_dedup_sql,
+    prepare_single_dedup_sql,
+)
 
 from resource_database_workers.config.constants import POTENTIAL_TRANSIENT_ERRORS
 
 from resource_database_workers.utils.sql_templates import (
-    prepare_batch_dedup_sql,
-    prepare_single_dedup_sql,
     prepare_temp_table_sql,
     prepare_weak_insertion_copy_sql,
 )

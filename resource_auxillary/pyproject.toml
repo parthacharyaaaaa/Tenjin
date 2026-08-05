@@ -5,8 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "orjson>=3.11.9",
-    "pydantic>=2.13.4",
+    "orjson>=3.11.9, <4",
+    "psycopg>=3.3.4, <4",
+    "pydantic>=2.13.4, <3",
     "redis>=7.0.0, <8",
 ]
 
