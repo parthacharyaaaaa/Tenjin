@@ -1,3 +1,8 @@
+hostname="email_worker"
+port=10_000
+use_tls=true
+
+[worker]
 MAX_RETRIES=2
 
 DLQ_NAME="DLQ"

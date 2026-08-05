@@ -18,12 +18,23 @@ class EmailWorkerConfig(
     config_mixins.WorkerRetryMixin,
     config_mixins.WorkerReclaimMixin,
     config_mixins.WorkerDLQMixin,
-    BaseSettings,
 ):
+    GRACEFUL_SHUTDOWN_PERIOD: Annotated[float, Field(ge=0)]
+
+
+class EmailConfig(BaseSettings):
     config_filepath: ClassVar[Path] = Path(__file__).parent / "email_config.toml"
     model_config = SettingsConfigDict(toml_file=str(config_filepath))
 
-    GRACEFUL_SHUTDOWN_PERIOD: Annotated[float, Field(ge=0)]
+    # Network Identification
+    hostname: str
+    port: Annotated[int, Field(ge=1024, le=65_535)]
+
+    # Security
+    use_tls: Annotated[bool, Field(default=True)]
+
+    # Worker sub-config
+    WORKER: Annotated[EmailWorkerConfig, Field(alias="worker")]
 
     @classmethod
     def settings_customise_sources(
