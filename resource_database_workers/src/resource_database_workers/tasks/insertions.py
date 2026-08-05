@@ -14,11 +14,13 @@ from resource_auxillary.datastructures.casting import (
     CAST_MAPPING,
     default_serializer,
 )
-
-from resource_database_workers.utils.sql_templates import (
+from resource_auxillary.templates.sql import (
+    prepare_temp_table_sql,
     prepare_weak_insertion_copy_sql,
     prepare_weak_insertion_sql,
-    prepare_temp_table_sql,
+)
+
+from resource_database_workers.utils.sql_templates import (
     format_strong_insertion_sql,
 )
 from resource_database_workers.utils.typing import t_action_literal

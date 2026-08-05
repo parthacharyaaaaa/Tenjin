@@ -16,7 +16,7 @@ from resource_auxillary.templates.sql import (
 
 from resource_database_workers.config.constants import POTENTIAL_TRANSIENT_ERRORS
 
-from resource_database_workers.utils.sql_templates import (
+from resource_auxillary.templates.sql import (
     prepare_temp_table_sql,
     prepare_weak_insertion_copy_sql,
 )
