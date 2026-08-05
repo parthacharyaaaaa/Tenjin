@@ -10,6 +10,8 @@ from pydantic import (
     model_validator,
 )
 
+from resource_auxillary import config_mixins
+
 from resource_database_workers.config.constants import DOMAIN_REGEX
 
 
@@ -34,10 +36,14 @@ class RedisContainer(BaseModel):
     INTERNAL: Annotated[RedisConfig, Field(alias="internal")]
 
 
-class WorkerConfig(BaseModel):
-    MAX_RETRIES: Annotated[int, Field(ge=0)]
-    DLQ_NAME: Annotated[str, BeforeValidator(lambda x: x.strip())]
-
+class WorkerConfig(
+    config_mixins.WorkerStreamReaderMixin,
+    config_mixins.WorkerInternalQueueMixin,
+    config_mixins.WorkerRetryMixin,
+    config_mixins.WorkerReclaimMixin,
+    config_mixins.WorkerDLQMixin,
+    BaseModel,
+):
     # Counters
     COUNTER_REGISTRY_NAME: Annotated[str, BeforeValidator(lambda x: x.strip())]
     COUNTER_RETRY_REGISTRY_NAME: Annotated[str, BeforeValidator(lambda x: x.strip())]
@@ -45,61 +51,11 @@ class WorkerConfig(BaseModel):
     COUNTER_FLUSH_LOCK_TTL: Annotated[int, Field(ge=0)]
     COUNTER_FLUSH_INTERVAL: Annotated[int, Field(ge=0)]
 
-    # Consumers
-    CONSUMER_READ_INTERVAL: Annotated[int, Field(ge=0)]
-    CONSUMER_READ_SIZE: Annotated[int, Field(ge=1)]
-    CONSUMER_BLOCK_TIME: Annotated[int, Field(ge=0)]
-    CONSUMER_GROUP_NAME: Annotated[str, Field(frozen=True)]
-
-    # Internal queue consumers
-    IQ_CONSUMER_BASE_WAITING_TIME: Annotated[int, Field(ge=0)]
-    IQ_CONSUMER_GET_TIMEOUT: Annotated[int, Field(ge=0)]
-    IQ_CONSUMER_BATCH_SIZE_QUOTA: Annotated[int, Field(ge=1)]
-    IQ_CONSUMER_SLEEP_INTERVAL: Annotated[int, Field(ge=0)]
-
     # Downstream counter consumers
     DOWNSTREAM_COUNTER_BATCH_SIZE: Annotated[int, Field(ge=1)]
 
-    # Reclaimation
-    RECLAIM_THRESHOLD: Annotated[int, Field(ge=1)]
-    RECLAIMATION_CHECK_INTERVAL: Annotated[int, Field(ge=1)]
-    MAX_DELIVERIES: Annotated[int, Field(ge=1)]
-
-    # Retry backoffs
-    MAXIMUM_BACKOFF_INTERVAL: Annotated[int, Field(ge=0)]
-    BASE_BACKOFF_INTERVAL: Annotated[int, Field(ge=0)]
-    BACKOFF_EXPONENTIAL: Annotated[int, Field(ge=1)]
-
     # Others
     GRACEFUL_SHUTDOWN_PERIOD: Annotated[float, Field(ge=0)]
-
-    @model_validator(mode="after")
-    def validate_backoff_values(self) -> Self:
-        if self.BASE_BACKOFF_INTERVAL > self.MAXIMUM_BACKOFF_INTERVAL:
-            raise ValueError(
-                " ".join(
-                    (
-                        f"Base backoff value {self.BASE_BACKOFF_INTERVAL}",
-                        "cannot be greater than maximum backoff interval",
-                        str(self.MAXIMUM_BACKOFF_INTERVAL),
-                    )
-                )
-            )
-        return self
-
-    @model_validator(mode="after")
-    def validate_reclamation_interval(self) -> Self:
-        if self.RECLAIMATION_CHECK_INTERVAL > self.RECLAIM_THRESHOLD:
-            raise ValueError(
-                " ".join(
-                    (
-                        f"Reclaim threshold {self.RECLAIM_THRESHOLD}",
-                        "cannot be lesser than reclaimation check interval",
-                        str(self.RECLAIMATION_CHECK_INTERVAL),
-                    )
-                )
-            )
-        return self
 
 
 class DatabaseConfig(BaseModel):
