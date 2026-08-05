@@ -11,7 +11,8 @@ members = [
     "auxillary",
     "resource_auxillary",
     "resource_database_workers",
-    "resource_server"
+    "resource_server",
+    "email_worker",
 ]
 
 [dependency-groups]

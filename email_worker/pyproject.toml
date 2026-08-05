@@ -1,0 +1,14 @@
+[project]
+name = "email-worker"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "aiosmtplib>=5.1.2, <6",
+    "psycopg>=3.3.4, <4",
+    "psycopg-pool>=3.3.1, <4",
+    "redis>=7.4.1, <8",
+    "resource-auxillary",
+]
+
+[tool.uv.sources]
+resource-auxillary = { workspace = true }
