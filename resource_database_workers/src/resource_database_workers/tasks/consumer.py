@@ -22,12 +22,10 @@ from resource_auxillary.event_processing.wrappers import (
     commit_processed_events,
 )
 from resource_auxillary.strings import StreamName
+from resource_auxillary.constants import POTENTIAL_TRANSIENT_ERRORS
 
 from resource_database_workers.config.config import AppConfig
-from resource_database_workers.config.constants import (
-    POTENTIAL_TRANSIENT_ERRORS,
-)
-from resource_database_workers.workers.database.qos import (
+from resource_auxillary.event_processing.db_qos import (
     batch_dedup_insert_events,
     dedup_insert_event,
     db_execute_with_retries,
