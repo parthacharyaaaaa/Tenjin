@@ -18,7 +18,7 @@ from resource_database_workers.config.worker_config import (
     CounterWorkersConfig,
     StreamWorkersConfig,
 )
-from resource_database_workers.datastructures.status_indicator import (
+from resource_auxillary.datastructures.status_indicator import (
     StatusController,
     StatusProxy,
 )
