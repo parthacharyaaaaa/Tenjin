@@ -2,6 +2,7 @@ from datetime import timedelta
 from ipaddress import ip_address
 from typing import Annotated, Self
 
+from auxillary.mixins.redis_config import BasicRedisConfigMixin
 import jwt
 
 from pydantic import (
@@ -70,10 +71,7 @@ class DatabaseConfig(BaseModel):
     SQLALCHEMY: SQLAlchemyConfig
 
 
-class BaseRedisConfig(BaseModel):
-    HOST: str | IPvAnyAddress
-    PORT: Annotated[int, Field(le=65_535, ge=1024)]
-    DB: Annotated[int, Field(default=0, ge=0)]
+class BaseRedisConfig(BasicRedisConfigMixin, BaseModel): ...
 
 
 class RedisConfig(BaseModel):

@@ -1,15 +1,15 @@
 import hashlib
 from pathlib import Path
 import re
-from typing import Annotated, Any, Callable, Literal, Self
+from typing import Annotated, Callable, Literal, Self
 from functools import cached_property
+from auxillary.mixins.redis_config import BasicRedisConfigMixin
 from pydantic import (
     BaseModel,
     BeforeValidator,
     Field,
     PrivateAttr,
     computed_field,
-    AfterValidator,
     model_validator,
 )
 from pydantic.networks import IPvAnyAddress
@@ -190,19 +190,7 @@ class DatabaseConfigModel(BaseModel):
     SQLALCHEMY: Annotated[SAConfigModel, Field(alias="sqlalchemy")]
 
 
-class RedisStoreModel(BaseModel):
-    HOST: Annotated[str, Field(min_length=1)]
-    PORT: Annotated[int, Field(default=6379, ge=1024, le=65_535)]
-    DB: Annotated[int, Field(ge=0)]
-    DECODE_RESPONSES: Annotated[bool, Field(default=False)]
-
-    def to_constructor_kwargs(self) -> dict[str, Any]:
-        return {
-            "host": self.HOST,
-            "port": self.PORT,
-            "db": self.DB,
-            "decode_responses": self.DECODE_RESPONSES,
-        }
+class RedisStoreModel(BasicRedisConfigMixin, BaseModel): ...
 
 
 class RedisConfigModel(BaseModel):

@@ -2,6 +2,7 @@ from ipaddress import ip_address
 import multiprocessing
 from typing import Annotated, ClassVar, Self
 
+from auxillary.mixins.redis_config import BasicRedisConfigMixin
 from pydantic import (
     BaseModel,
     BeforeValidator,
@@ -25,10 +26,7 @@ def _verify_hostname(s: str) -> str | IPvAnyAddress:
     return s
 
 
-class RedisConfig(BaseModel):
-    HOST: Annotated[str | IPvAnyAddress, BeforeValidator(_verify_hostname)]
-    PORT: Annotated[int, Field(le=65_535, ge=1024)]
-    DB: Annotated[int, Field(default=0, ge=0)]
+class RedisConfig(BasicRedisConfigMixin, BaseModel): ...
 
 
 class RedisContainer(BaseModel):
