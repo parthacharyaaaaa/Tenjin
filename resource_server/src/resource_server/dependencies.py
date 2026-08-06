@@ -74,12 +74,9 @@ def get_event_streamer() -> EventStreamer:
 def get_database_session_maker() -> async_sessionmaker[AsyncSession]:
     config: Final[AppConfig] = get_app_config()
 
-    URI: Final[str] = config.DATABASE.SQLALCHEMY.derive_sqlalchemy_uri(
+    URI: Final[str] = config.DATABASE.derive_sqlalchemy_uri(
         username=os.environ["RESOURCE_SERVER_POSTGRES_USERNAME"],
         password=os.environ["RESOURCE_SERVER_POSTGRES_PASSWORD"],
-        host=str(config.DATABASE.POSTGRES_HOST),
-        port=config.DATABASE.POSTGRES_PORT,
-        database=config.DATABASE.POSTGRES_DATABASE,
     )
 
     engine: Final[AsyncEngine] = create_async_engine(URI)

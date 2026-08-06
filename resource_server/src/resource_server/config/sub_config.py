@@ -2,6 +2,10 @@ from datetime import timedelta
 from ipaddress import ip_address
 from typing import Annotated, Self
 
+from auxillary.mixins.db_config import (
+    BasicPostgresDatabaseConfigMixin,
+    BasicSQLAlchemyConfigMixin,
+)
 from auxillary.mixins.redis_config import BasicRedisConfigMixin
 import jwt
 
@@ -11,7 +15,6 @@ from pydantic import (
     BeforeValidator,
     Field,
     IPvAnyAddress,
-    PrivateAttr,
     model_validator,
 )
 
@@ -41,33 +44,10 @@ class CoreConfig(BaseModel):
     AUTH_SERVER_NAME: str
 
 
-class SQLAlchemyConfig(BaseModel):
-    _SQLALCHEMY_DATABASE_URI_TEMPLATE: str = PrivateAttr(
-        default="postgresql+psycopg://{username}:{password}@{host}:{port}/{database}"
-    )
-    SQLALCHEMY_POOL_SIZE: Annotated[int, Field(ge=1)]
-    SQLALCHEMY_MAX_OVERFLOW: Annotated[int, Field(ge=0)]
-    SQLALCHEMY_POOL_RECYCLE: Annotated[int, Field(ge=1)]
-    SQLALCHEMY_POOL_TIMEOUT: Annotated[int, Field(ge=1)]
-    SQLALCHEMY_TRACK_MODIFICATIONS: Annotated[bool, Field(default=False)]
-
-    def derive_sqlalchemy_uri(
-        self, username: str, password: str, host: str, port: int, database: str
-    ) -> str:
-        return self._SQLALCHEMY_DATABASE_URI_TEMPLATE.format(
-            username=username,
-            password=password,
-            host=host,
-            port=port,
-            database=database,
-        )
+class SQLAlchemyConfig(BasicSQLAlchemyConfigMixin, BaseModel): ...
 
 
-class DatabaseConfig(BaseModel):
-    POSTGRES_HOST: str | IPvAnyAddress
-    POSTGRES_PORT: Annotated[int, Field(ge=1024, le=65_535)]
-    POSTGRES_DATABASE: str
-
+class DatabaseConfig(BasicPostgresDatabaseConfigMixin, BaseModel):
     SQLALCHEMY: SQLAlchemyConfig
 
 
