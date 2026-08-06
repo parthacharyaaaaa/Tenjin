@@ -11,6 +11,7 @@ from redis.asyncio import Redis
 from email_worker.config.email_config import EmailConfig
 from email_worker.config.redis_config import RedisConfig
 from email_worker.config.db_config import DatabaseConfig
+from email_worker.datastructures.queue_registry import QueueRegistry
 
 
 ### Configurations ###
@@ -68,3 +69,11 @@ def get_connection_pool() -> AsyncConnectionPool:
         conninfo=uri,
         **config.DATABASE.emit_connection_pool_constructor_kwargs(),  # type: ignore
     )
+
+
+### Queues ###
+
+
+@lru_cache(maxsize=1)
+def get_queue_registry() -> QueueRegistry:
+    return QueueRegistry()
