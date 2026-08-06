@@ -3,16 +3,18 @@ from pathlib import Path
 import re
 from typing import Annotated, Callable, Literal, Self
 from functools import cached_property
+from auxillary.mixins.db_config import (
+    BasicPostgresDatabaseConfigMixin,
+    BasicSQLAlchemyConfigMixin,
+)
 from auxillary.mixins.redis_config import BasicRedisConfigMixin
 from pydantic import (
     BaseModel,
     BeforeValidator,
     Field,
-    PrivateAttr,
     computed_field,
     model_validator,
 )
-from pydantic.networks import IPvAnyAddress
 
 from auth_server.config import utils
 
@@ -160,33 +162,10 @@ class AdminConfigModel(BaseModel):
     SESSION_HASHFUNC: Annotated[Callable, Field(default=hashlib.sha256)]
 
 
-class SAConfigModel(BaseModel):
-    _SQLALCHEMY_DATABASE_URI: str = PrivateAttr(
-        "postgresql+psycopg://{username}:{password}@{host}:{port}/{database}"
-    )
-    SQLALCHEMY_POOL_SIZE: Annotated[int, Field(ge=1)]
-    SQLALCHEMY_MAX_OVERFLOW: Annotated[int, Field(ge=0)]
-    SQLALCHEMY_POOL_RECYCLE: Annotated[int, Field(ge=0)]
-    SQLALCHEMY_POOL_TIMEOUT: Annotated[int, Field(ge=0)]
-    SQLALCHEMY_TRACK_MODIFICATIONS: Annotated[bool, Field(default=False)]
-
-    def derive_sqlalchemy_uri(
-        self, username: str, password: str, host: str, port: int, database: str
-    ) -> str:
-        return self._SQLALCHEMY_DATABASE_URI.format(
-            username=username,
-            password=password,
-            host=host,
-            port=port,
-            database=database,
-        )
+class SAConfigModel(BasicSQLAlchemyConfigMixin, BaseModel): ...
 
 
-class DatabaseConfigModel(BaseModel):
-    POSTGRES_HOST: str | IPvAnyAddress
-    POSTGRES_PORT: Annotated[int, Field(ge=1024, le=65_535)]
-    POSTGRES_DATABASE: str
-
+class DatabaseConfigModel(BasicPostgresDatabaseConfigMixin, BaseModel):
     SQLALCHEMY: Annotated[SAConfigModel, Field(alias="sqlalchemy")]
 
 
