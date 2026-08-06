@@ -1,0 +1,4 @@
+HOSTNAME="resource_server_redis"
+PORT=6379
+DB=1
+DECODE_RESPONSES=true
