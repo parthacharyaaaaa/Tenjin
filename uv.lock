@@ -137,6 +137,7 @@ source = { editable = "auxillary" }
 dependencies = [
     { name = "bcrypt" },
     { name = "fastapi" },
+    { name = "pydantic" },
     { name = "redis" },
 ]
 
@@ -144,6 +145,7 @@ dependencies = [
 requires-dist = [
     { name = "bcrypt", specifier = ">=5.0.0" },
     { name = "fastapi", specifier = ">=0.136.3" },
+    { name = "pydantic", specifier = ">=2.13.4" },
     { name = "redis", specifier = ">=7.0.0,<8" },
 ]
 
@@ -430,10 +432,10 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "aiosmtplib", specifier = ">=5.1.2" },
-    { name = "psycopg", specifier = ">=3.3.4" },
-    { name = "psycopg-pool", specifier = ">=3.3.1" },
-    { name = "redis", specifier = ">=7.4.1" },
+    { name = "aiosmtplib", specifier = ">=5.1.2,<6" },
+    { name = "psycopg", specifier = ">=3.3.4,<4" },
+    { name = "psycopg-pool", specifier = ">=3.3.1,<4" },
+    { name = "redis", specifier = ">=7.4.1,<8" },
     { name = "resource-auxillary", editable = "resource_auxillary" },
 ]
 
