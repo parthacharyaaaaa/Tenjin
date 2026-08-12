@@ -517,10 +517,8 @@ class CacheManager(metaclass=SingletonMetaclass):
                     return (
                         list(
                             map(
-                                lambda x: (
-                                    return_dto.construct_from_cache(x) if x else None
-                                ),
-                                (r[0] for r in res),
+                                lambda x: (return_dto.construct_from_cache(x)),
+                                (r[0] for r in res if r[0]),
                             )
                         ),
                         next_cursor,
