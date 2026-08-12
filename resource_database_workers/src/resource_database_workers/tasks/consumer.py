@@ -10,6 +10,7 @@ from redis.exceptions import RedisError, ExceptionType
 
 from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.datastructures.database import StrongEntity
+from resource_auxillary.datastructures.status_indicator import StatusProxy
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.event_processing.pre_processing import (
     trim_duplicate_events,
@@ -58,11 +59,12 @@ async def user_orphan_consumer(
     stream_name: StreamName,
     group_name: str,
     dead_letter_stream_name: StreamName,
+    status_proxy: StatusProxy,
 ) -> None:
     batch: list[StreamedEvent] = []
     reference_time: float = time.monotonic()
 
-    while True:
+    while status_proxy.status_ok:
         await populate_events_batch_from_queue(
             config.WORKER, queue, reference_time, batch
         )
@@ -142,12 +144,13 @@ async def queue_insertion_consumer(
     stream_name: StreamName,
     group_name: str,
     dead_letter_stream_name: StreamName,
+    status_proxy: StatusProxy,
     action: t_action_literal | None = None,
 ) -> None:
     batch: list[StreamedEvent] = []
     reference_time: float = time.monotonic()
 
-    while True:
+    while status_proxy.status_ok:
         await populate_events_batch_from_queue(
             config.WORKER, queue, reference_time, batch
         )
@@ -217,11 +220,12 @@ async def queue_deletion_consumer(
     stream_name: StreamName,
     group_name: str,
     dead_letter_stream_name: StreamName,
+    status_proxy: StatusProxy,
 ) -> None:
     batch: list[StreamedEvent] = []
     reference_time: float = time.monotonic()
 
-    while True:
+    while status_proxy.status_ok:
         await populate_events_batch_from_queue(
             config.WORKER, queue, reference_time, batch
         )
@@ -291,8 +295,9 @@ async def queue_downstream_deletion_consumer(
     stream_name: StreamName,
     group_name: str,
     dead_letter_stream_name: StreamName,
+    status_proxy: StatusProxy,
 ) -> None:
-    while True:
+    while status_proxy.status_ok:
         event: StreamedEvent = await queue.get()
         try:
             event_payload: DownstreamDeletionData = (
@@ -369,8 +374,9 @@ async def queue_downstream_decrement_consumer(
     stream_name: StreamName,
     group_name: str,
     dead_letter_stream_name: StreamName,
+    status_proxy: StatusProxy,
 ) -> None:
-    while True:
+    while status_proxy.status_ok:
         event: StreamedEvent = await queue.get()
         try:
             event_payload: DownstreamCounterDecrementData = (

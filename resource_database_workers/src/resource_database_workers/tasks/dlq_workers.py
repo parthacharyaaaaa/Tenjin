@@ -9,6 +9,7 @@ from auxillary.utils import json_repr
 
 from redis.asyncio import Redis
 
+from resource_auxillary.datastructures.status_indicator import StatusProxy
 from resource_auxillary.events import (
     CacheUpdate,
     CounterUpdate,
@@ -99,8 +100,9 @@ async def dlq_consumer(
     group_name: str,
     queue: asyncio.Queue[StreamedEvent],
     composed_statement: Composed,
+    status_proxy: StatusProxy,
 ) -> None:
-    while True:
+    while status_proxy.status_ok:
         dlq_event: StreamedEvent = await queue.get()
         async with pool.connection() as conn:
             # Apply deduplication

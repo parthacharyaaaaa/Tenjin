@@ -1,5 +1,4 @@
 import asyncio
-import itertools
 import time
 from typing import Literal, MutableMapping
 
@@ -7,6 +6,7 @@ from redis.asyncio import Redis
 
 from psycopg_pool import AsyncConnectionPool
 
+from resource_auxillary.datastructures.status_indicator import StatusProxy
 from resource_auxillary.event_processing.qos import locked_operation
 from resource_auxillary.strings import NAME_SEPERATOR, StreamName
 
@@ -41,8 +41,9 @@ async def batch_update_retry_counters(
     dlq_stream_name: StreamName,
     worker_redis: Redis,
     server_redis: Redis,
+    status_proxy: StatusProxy,
 ) -> None:
-    while True:
+    while status_proxy.status_ok:
         batch_name: str = await worker_redis.blpop(config.WORKER.COUNTER_RETRY_REGISTRY_NAME)  # type: ignore
         if not batch_name:
             await asyncio.sleep(config.WORKER.COUNTER_FLUSH_INTERVAL)
@@ -64,30 +65,49 @@ async def batch_update_counters(
     dlq_stream_name: StreamName,
     worker_redis: Redis,
     server_redis: Redis,
+    status_proxy: StatusProxy,
 ) -> None:
-    counter_groups: set[str] = await retrieve_counter_group_names(
-        worker_redis, config.WORKER.COUNTER_REGISTRY_NAME
+    counter_groups: list[str] = list(
+        await retrieve_counter_group_names(
+            worker_redis, config.WORKER.COUNTER_REGISTRY_NAME
+        )
     )
     refresh_time: int = int(time.monotonic())
-    for counter_group in itertools.cycle(counter_groups):
+    counter_group_iterator_index: int = 0
+    while status_proxy.status_ok:
         # Periodically refresh counter group names
         # in the extremely rare case of a schema change
         if (
             int(time.monotonic()) - refresh_time
             >= config.WORKER.COUNTER_REGISTRY_REFRESH_INTERVAL
         ):
-            counter_groups: set[str] = await retrieve_counter_group_names(
-                worker_redis, config.WORKER.COUNTER_REGISTRY_NAME
+            counter_groups = list(
+                await retrieve_counter_group_names(
+                    worker_redis, config.WORKER.COUNTER_REGISTRY_NAME
+                )
             )
             refresh_time = int(time.monotonic())
 
         counter_data: dict[str, int] | None = await batch_update_counter_group(
-            config, pool, counter_group, dlq_stream_name, worker_redis
+            config,
+            pool,
+            counter_groups[counter_group_iterator_index],
+            dlq_stream_name,
+            worker_redis,
         )
+
         if not counter_data:
+            counter_group_iterator_index = (counter_group_iterator_index + 1) % len(
+                counter_groups
+            )
             continue
 
-        await reflect_processed_counters(server_redis, counter_group, counter_data)
+        await reflect_processed_counters(
+            server_redis, counter_groups[counter_group_iterator_index], counter_data
+        )
+        counter_group_iterator_index = (counter_group_iterator_index + 1) % len(
+            counter_groups
+        )
 
 
 def _cache_normalize_raw_counter_data(
