@@ -1,11 +1,15 @@
 from argparse import ArgumentParser
+import os
 
 
-def _validate_positive_task_count(arg: str) -> int:
-    count = int(arg)
-    if count <= 0:
-        raise ValueError("Invalid task count, must be positive integer")
-    return count
+def _validate_file_existence(arg: str) -> str:
+    arg = arg.strip()
+    if not arg.endswith(".toml"):
+        raise ValueError("Config file must be in TOML format")
+
+    if not os.path.exists(arg):
+        raise FileNotFoundError(f"No such path found: {arg}")
+    return arg
 
 
 def get_argument_parser() -> ArgumentParser:
@@ -13,8 +17,6 @@ def get_argument_parser() -> ArgumentParser:
         prog="email_worker_cli", description="CLI for starting background email workers"
     )
 
-    argparser.add_argument(
-        "--task_count", default=1, type=_validate_positive_task_count
-    )
+    argparser.add_argument("--config-file", "-c", type=_validate_file_existence)
 
     return argparser
