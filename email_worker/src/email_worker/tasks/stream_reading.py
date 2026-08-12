@@ -3,6 +3,7 @@ from collections import defaultdict
 from typing import Literal, Mapping
 
 from redis import Redis
+from resource_auxillary.datastructures.status_indicator import StatusProxy
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import EventName, StreamName
 
@@ -62,10 +63,11 @@ async def upstream_dispatcher(
     stream_name: StreamName,
     group_name: str,
     consumer_name: str,
+    status_proxy: StatusProxy,
     read_history: bool = True,
 ) -> None:
     requested_id: Literal[">"] | int = 0 if read_history else ">"
-    while True:
+    while status_proxy.status_ok:
         events: list[StreamedEvent] = await stream_reader(
             config,
             redis,

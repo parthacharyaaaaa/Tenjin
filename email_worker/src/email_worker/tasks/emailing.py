@@ -9,6 +9,7 @@ from psycopg_pool import AsyncConnectionPool
 
 from redis.asyncio import Redis
 
+from resource_auxillary.datastructures.status_indicator import StatusProxy
 from resource_auxillary.event_processing.db_qos import batch_dedup_insert_events
 from resource_auxillary.event_processing.pre_processing import (
     populate_events_batch_from_queue,
@@ -35,13 +36,14 @@ async def email_dispatcher(
     stream_name: StreamName,
     group_name: str,
     dlq_stream_name: StreamName,
+    status_proxy: StatusProxy,
 ) -> None:
     reference_time: float = time.monotonic()
     batch: list[StreamedEvent] = []
     invalid_events_buffer: list[StreamedEvent] = []
     error_data: list[tuple[SMTPException, float]] = []
 
-    while True:
+    while status_proxy.status_ok:
         await populate_events_batch_from_queue(
             email_config.WORKER, events_queue, reference_time, batch
         )
