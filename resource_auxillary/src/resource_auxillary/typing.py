@@ -13,3 +13,7 @@ class SupportsInternalQueueConsumerPolicy(Protocol):
     IQ_CONSUMER_GET_TIMEOUT: int
     IQ_CONSUMER_BATCH_SIZE_QUOTA: int
     IQ_CONSUMER_SLEEP_INTERVAL: int
+
+
+class HasEventID(Protocol):
+    event_id: int
