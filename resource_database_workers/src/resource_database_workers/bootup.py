@@ -1,16 +1,18 @@
+from resource_database_workers.dependencies.dependency_resolver import (
+    inject_worker_dependencies,
+)
+from resource_database_workers.dependencies.dependency_annotations import GROUP_NAME
+from resource_database_workers.dependencies.dependency_annotations import STREAM_NAME
+from resource_database_workers.dependencies.dependency_annotations import STATUS_PROXY
+from resource_database_workers.dependencies.dependency_resolver import (
+    inject_stream_worker_dependencies,
+)
+from resource_database_workers.dependencies.event_dependencies import (
+    EVENT_WORKER_DATA_MAPPING,
+)
 import asyncio
-from functools import partial
 from typing import Any, Callable, Coroutine, Final, Mapping
 
-from resource_database_workers.datastructures.worker_inputs import (
-    COUNTER_WORKER_INPUT,
-    STATUS_PROXY_NAME,
-    WORKER_INPUT_DATA_MAPPING,
-    UpstreamDispatcherInput,
-)
-from resource_database_workers.datastructures.processors import (
-    EVENT_WORKER_MAPPING,
-)
 from resource_database_workers.datastructures.streams import (
     STREAM_CONSUMER_MAPPING,
 )
@@ -22,15 +24,9 @@ from resource_auxillary.datastructures.status_indicator import (
     StatusController,
     StatusProxy,
 )
-from resource_database_workers.dependencies import (
-    get_queue_registry,
-)
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.utils.strings import (
     generate_worker_name,
-)
-from resource_database_workers.utils.typing import (
-    GenericDataclass,
 )
 from resource_database_workers.tasks.counters import (
     batch_update_counters,
@@ -79,56 +75,46 @@ async def tasks_wrapper(
 
 def _counter_worker_wrapper(
     counter_config: CounterWorkersConfig, status_proxy: StatusProxy
-) -> dict[str, Callable[[], Coroutine[None, None, None]]]:
-    callable_mapping: dict[str, Callable[[], Coroutine[None, None, None]]] = {}
-
-    prepared_inputs: Final[dict[str, Any]] = (
-        COUNTER_WORKER_INPUT.__dataclass_fields__ | {STATUS_PROXY_NAME: status_proxy}
-    )
+) -> dict[str, Callable[[], Any]]:
+    worker_mapping: dict[str, Callable[[], Any]] = {}
+    base_context: dict[Any, Any] = {
+        STATUS_PROXY: status_proxy,
+    }
     for i in range(1, counter_config.WORKER_COUNT + 1):
-        callable_mapping[generate_worker_name("counter", i)] = partial(
-            batch_update_counters, **prepared_inputs
+        worker_mapping[generate_worker_name("counter", i)] = inject_worker_dependencies(
+            batch_update_counters, base_context
         )
     for i in range(1, counter_config.RETRY_WORKER_COUNT + 1):
-        callable_mapping[generate_worker_name("retry_counter", i)] = partial(
-            batch_update_retry_counters, **prepared_inputs
+        worker_mapping[generate_worker_name("retry_counter", i)] = (
+            inject_worker_dependencies(batch_update_retry_counters, base_context)
         )
-    return callable_mapping
+    return worker_mapping
 
 
 def _stream_worker_wrapper(
-    stream_config: StreamWorkersConfig, status_proxy: StatusProxy
-) -> dict[str, Callable[[], Coroutine[None, None, None]]]:
-    worker_mapping: dict[str, Callable[[], Coroutine[None, None, None]]] = {}
-
-    reader_callable: Callable = STREAM_CONSUMER_MAPPING[stream_config.STREAM]
+    stream_config: StreamWorkersConfig, status_proxy: StatusProxy, group_name: str
+) -> dict[str, Callable[[], Any]]:
+    worker_mapping: dict[str, Callable[[], Any]] = {}
+    base_context: dict[Any, Any] = {
+        STATUS_PROXY: status_proxy,
+        STREAM_NAME: stream_config.STREAM,
+        GROUP_NAME: group_name,
+    }
+    # event worker initialization
     for event, worker_count in stream_config.EVENT_WORKER_COUNT_MAPPING.items():
-        worker_callable: Callable = EVENT_WORKER_MAPPING[event]
-        worker_arguments: GenericDataclass = WORKER_INPUT_DATA_MAPPING[event]
+        worker_callable, worker_context = EVENT_WORKER_DATA_MAPPING[event]
         for i in range(1, worker_count + 1):
-            worker_mapping[generate_worker_name(event, i)] = partial(
-                worker_callable,
-                **(
-                    worker_arguments.__dataclass_fields__
-                    | {STATUS_PROXY_NAME: status_proxy}
-                ),
+            worker_mapping[generate_worker_name(event, i)] = (
+                inject_stream_worker_dependencies(event, worker_context | base_context)
             )
-    queue_mapping = get_queue_registry().resolve_stream_reader_queue_mapping(
-        stream_config.STREAM
-    )
-    reader_task_input: UpstreamDispatcherInput = UpstreamDispatcherInput(
-        stream_name=stream_config.STREAM, queue_mapping=queue_mapping
-    )
+
+    # stream reader initialization
+    reader_callable: Callable[..., Any] = STREAM_CONSUMER_MAPPING[stream_config.STREAM]
     for i in range(1, stream_config.READER_COUNT + 1):
         worker_mapping[
             generate_worker_name(stream_config.STREAM, i, base_name="reader")
-        ] = partial(
-            reader_callable,
-            **(
-                reader_task_input.__dataclass_fields__
-                | {STATUS_PROXY_NAME: status_proxy}
-            ),
-        )
+        ] = inject_worker_dependencies(reader_callable, base_context)
+
     return worker_mapping
 
 
@@ -146,7 +132,9 @@ async def spawn_tasks(
         )
     else:
         await tasks_wrapper(
-            _stream_worker_wrapper(worker_config, status_proxy),
+            _stream_worker_wrapper(
+                worker_config, status_proxy, app_config.WORKER.CONSUMER_GROUP_NAME
+            ),
             app_config.WORKER.GRACEFUL_SHUTDOWN_PERIOD,
             status_controller,
         )
