@@ -19,13 +19,23 @@ def get_argument_parser() -> ArgumentParser:
     )
 
     arg_parser.add_argument(
-        "worker_type", help="type of worker", choices=("counter", "stream")
-    )
-
-    arg_parser.add_argument(
         "worker_config_filepath",
         help="TOML filepath for worker count config",
         type=_check_file_existence,
+    )
+
+    arg_parser.add_argument(
+        "--stream",
+        "-s",
+        help="Read stream config and boot-up stream workers",
+        action="store_true",
+    )
+
+    arg_parser.add_argument(
+        "--counter",
+        "-c",
+        help="Read counter config and boot-up counter workers",
+        action="store_true",
     )
 
     return arg_parser
@@ -37,4 +47,10 @@ def parse_args(argparser: ArgumentParser, args: Iterable[str]) -> Namespace:
     additional validation/conversion logic
     """
     parsed_args: Namespace = argparser.parse_args(args)
+
+    if not (parsed_args.stream or parsed_args.counter):
+        raise ValueError(
+            "At least one of the worker-type arguments must be provided, see --help for more"
+        )
+
     return parsed_args

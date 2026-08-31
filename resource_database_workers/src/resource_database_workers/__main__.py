@@ -19,16 +19,17 @@ async def main(args: Sequence[str]) -> None:
 
     app_config: Final[AppConfig] = get_config()
 
-    workers_config: StreamWorkersConfig | CounterWorkersConfig | None = None
-    if parsed_args.worker_type == "stream":
-        workers_config = StreamWorkersConfig.construct_from_toml(
+    stream_workers_config: StreamWorkersConfig | None = None
+    counter_workers_config: CounterWorkersConfig | None = None
+    if parsed_args.stream:
+        stream_workers_config = StreamWorkersConfig.construct_from_toml(
             parsed_args.worker_config_filepath
         )
-    else:
-        workers_config = CounterWorkersConfig.construct_from_toml(
+    if parsed_args.counter:
+        counter_workers_config = CounterWorkersConfig.construct_from_toml(
             parsed_args.worker_config_filepath
         )
-    await spawn_tasks(app_config, workers_config)
+    await spawn_tasks(app_config, stream_workers_config, counter_workers_config)
 
 
 if __name__ == "__main__":
