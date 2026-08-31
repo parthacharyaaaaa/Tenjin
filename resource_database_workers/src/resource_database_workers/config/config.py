@@ -13,11 +13,12 @@ from resource_database_workers.config import sub_config
 
 
 class AppConfig(BaseSettings):
-    config_filepath: ClassVar[Path] = Path(__file__).parent / "app_config.toml"
+    config_filepath: ClassVar[Path] = Path(__file__).parent / "config.toml"
     model_config = SettingsConfigDict(toml_file=str(config_filepath))
 
-    WORKER: Annotated[sub_config.WorkerConfig, Field(alias="business")]
+    WORKER: Annotated[sub_config.WorkerConfig, Field(alias="worker")]
     REDIS: Annotated[sub_config.RedisContainer, Field(alias="redis")]
+    CACHE: Annotated[sub_config.CacheConfig, Field(alias="cache")]
     DATABASE: Annotated[sub_config.DatabaseConfig, Field(alias="database")]
 
     @classmethod

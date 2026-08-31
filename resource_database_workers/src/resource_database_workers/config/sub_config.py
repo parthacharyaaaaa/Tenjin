@@ -5,6 +5,7 @@ from auxillary.mixins.db_config import (
     BasicConnectionPoolConfigMixin,
     BasicPostgresDatabaseConfigMixin,
 )
+from auxillary.mixins.cache_config import BasicCacheTTLConfig, BasicNegativeCacheConfig
 from auxillary.mixins.redis_config import BasicRedisConfigMixin
 from pydantic import (
     BaseModel,
@@ -29,6 +30,9 @@ def _verify_hostname(s: str) -> str | IPvAnyAddress:
 
 
 class RedisConfig(BasicRedisConfigMixin, BaseModel): ...
+
+
+class CacheConfig(BasicCacheTTLConfig, BasicNegativeCacheConfig, BaseModel): ...
 
 
 class RedisContainer(BaseModel):
