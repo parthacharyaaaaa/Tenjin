@@ -1,3 +1,4 @@
+from typing import Protocol
 from dataclasses import dataclass
 from collections.abc import Iterable, Sequence
 
@@ -10,13 +11,42 @@ from resource_auxillary.strings import StreamName
 from resource_auxillary.typing import HasEventID
 
 
+class EventStreamManager(Protocol):
+    async def acknowledge_events(
+        self,
+        events: Iterable[HasEventID],
+        event_stream_name: StreamName,
+        group_name: str,
+    ) -> None: ...
+
+    async def stream_events(
+        self, events: Iterable[Event], stream_name: StreamName
+    ) -> None: ...
+
+    async def amortize_events(
+        self,
+        events: Iterable[HasEventID],
+        event_stream_name: StreamName,
+        group_name: str,
+        dlq_stream_name: StreamName,
+    ) -> None: ...
+
+    async def trim_duplicate_events(
+        self,
+        batch: list[HasEventID],
+        fresh_event_ids: Sequence[int],
+        stream_name: StreamName,
+        group_name: str,
+    ) -> None: ...
+
+
 @dataclass(frozen=True, slots=True)
 class RedisStreamManager:
     """Event-stream manager for Redis streams"""
 
     redis_client: Redis
 
-    async def acknowledge_event(
+    async def acknowledge_events(
         self,
         events: Iterable[HasEventID],
         event_stream_name: StreamName,
@@ -36,7 +66,7 @@ class RedisStreamManager:
                 await pipeline.xadd(stream_name, cache_repr(event))
             await pipeline.execute()
 
-    async def amortize_event(
+    async def amortize_events(
         self,
         events: Iterable[HasEventID],
         event_stream_name: StreamName,
