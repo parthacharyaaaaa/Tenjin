@@ -1,3 +1,12 @@
+from resource_database_workers.dependencies.annotations import DOWNSTREAM_QUEUE_REGISTRY
+from resource_database_workers.dependencies.annotations import UPSTREAM_QUEUE_REGISTRY
+from resource_database_workers.dependencies.annotations import ISOLATED_EVENT_QUEUE
+from resource_auxillary.events import StreamedEvent
+from resource_database_workers.datastructures.queues import EventQueueRegistry
+from resource_database_workers.dependencies.annotations import BATCHED_EVENT_QUEUE
+from resource_database_workers.tasks.stream_readers import upstream_dispatcher
+from resource_database_workers.dependencies.injections import get_queue_registry
+from resource_database_workers.datastructures.queues import EventQueueRegistryContainer
 from resource_database_workers.config.sub_config import WorkerConfig
 from resource_database_workers.dependencies.resolver import (
     inject_worker_dependencies,
@@ -108,16 +117,22 @@ def _stream_worker_wrapper(
         STREAM_NAME: stream_config.STREAM,
         GROUP_NAME: group_name,
     }
-    # event worker initialization
-    for event, worker_count in stream_config.EVENT_WORKER_COUNT_MAPPING.items():
-        worker_callable, worker_context = EVENT_WORKER_DATA_MAPPING[event]
-        for i in range(1, worker_count + 1):
-            worker_mapping[
-                generate_worker_name(worker_config.STREAM_WORKER_TASK_PREFIX, i)
-            ] = inject_stream_worker_dependencies(event, worker_context | base_context)
+    queue_registry_container: Final[EventQueueRegistryContainer] = get_queue_registry()
+    event_queue_registry: (
+        EventQueueRegistry[asyncio.Queue[tuple[StreamedEvent, ...]]]
+        | EventQueueRegistry[asyncio.Queue[StreamedEvent]]
+    ) = queue_registry_container.upstream_registry
+    event_queue_annotation = BATCHED_EVENT_QUEUE  # For worker DI
 
     # stream reader initialization
     reader_callable: Callable[..., Any] = STREAM_CONSUMER_MAPPING[stream_config.STREAM]
+    reader_context: dict[Any, Any] = {}
+    if reader_callable == upstream_dispatcher:
+        reader_context[UPSTREAM_QUEUE_REGISTRY] = event_queue_registry
+    else:
+        event_queue_annotation = ISOLATED_EVENT_QUEUE
+        event_queue_registry = queue_registry_container.downstream_registry
+        reader_context[DOWNSTREAM_QUEUE_REGISTRY] = event_queue_registry
     for i in range(1, stream_config.READER_COUNT + 1):
         worker_mapping[
             generate_worker_name(
@@ -125,7 +140,21 @@ def _stream_worker_wrapper(
                 i,
                 base_name=worker_config.STREAM_READER_TASK_PREFIX,
             )
-        ] = inject_worker_dependencies(reader_callable, base_context)
+        ] = inject_worker_dependencies(reader_callable, base_context | reader_context)
+
+    # event worker initialization
+    # Determine batch / isolated event queue
+    for event, worker_count in stream_config.EVENT_WORKER_COUNT_MAPPING.items():
+        worker_callable, worker_context = EVENT_WORKER_DATA_MAPPING[event]
+        # Create corresponding event queue
+        event_queue_registry.register_event_queue(event)
+        worker_context |= {
+            event_queue_annotation: event_queue_registry.get_event_queue(event)
+        }
+        for i in range(1, worker_count + 1):
+            worker_mapping[
+                generate_worker_name(worker_config.STREAM_WORKER_TASK_PREFIX, i)
+            ] = inject_stream_worker_dependencies(event, worker_context | base_context)
 
     return worker_mapping
 
