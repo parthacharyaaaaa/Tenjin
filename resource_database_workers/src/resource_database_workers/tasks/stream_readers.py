@@ -1,127 +1,118 @@
+from collections.abc import Sequence
+from typing import Any
+from resource_database_workers.datastructures.queues import EventQueueRegistry
 import asyncio
 from collections import defaultdict
-from typing import Literal, Mapping
+from typing import Literal
 
-from redis.asyncio import Redis
-
-from resource_database_workers.config.config import AppConfig
 from resource_auxillary.strings import EventName, StreamName
 from resource_auxillary.events import StreamedEvent
 
+from resource_database_workers.dependencies.annotations import (
+    APP_CONFIG,
+    DEAD_LETTER_STREAM_NAME,
+    GROUP_NAME,
+    CONSUMER_ID,
+    UPSTREAM_QUEUE_REGISTRY,
+    DOWNSTREAM_QUEUE_REGISTRY,
+    EVENT_STREAM_MANAGER,
+)
 
-async def stream_reader(
-    config: AppConfig,
-    redis: Redis,
+
+async def _event_queue_populate(
+    events: Sequence[StreamedEvent],
+    event_queue_registry: EventQueueRegistry[Any],
+    *,
+    batched: bool = False,
+) -> None:
+    if batched:
+        events_batch: defaultdict[EventName, list[StreamedEvent]] = defaultdict(list)
+        for event in events:
+            events_batch[event.name].append(event)
+        for event_name, batch in events_batch.items():
+            await event_queue_registry.append_to_queue(
+                event_name, tuple(batch), make_queue=True
+            )
+    else:
+        for event in events:
+            await event_queue_registry.append_to_queue(
+                event.name, event, make_queue=True
+            )
+
+
+async def base_dispatcher(
+    config: APP_CONFIG,
+    event_stream_manager: EVENT_STREAM_MANAGER,
+    queue_registry: EventQueueRegistry[Any],
+    dlq_stream_name: DEAD_LETTER_STREAM_NAME,
     stream_name: StreamName,
-    dead_letter_queue: asyncio.Queue[StreamedEvent],
-    group_name: str,
-    consumer_name: str,
-    requested_id: Literal[">"] | int = 0,
-) -> list[StreamedEvent]:
-    # result structure is actually:
-    #                 event ID <-|            |-> payload
-    # list[list[str, list[tuple[str, dict[str, str]]]]]
-    #            |-> 0th element is stream name
-    # Hinted as ResponseT btw, bravo
-    result: list[list[list[tuple[str, dict[str, str]]]]] = await redis.xreadgroup(
-        groupname=group_name,
-        consumername=consumer_name,
-        streams={stream_name.value: requested_id},
-        count=config.WORKER.CONSUMER_READ_SIZE,
-        noack=False,
-        block=config.WORKER.CONSUMER_BLOCK_TIME,
-    )
+    group_name: GROUP_NAME,
+    consumer_name: CONSUMER_ID,
+    read_history: bool = True,
+) -> None:
+    requested_id: Literal[">"] | int = 0 if read_history else ">"
+    while True:
+        events, malformed_events = await event_stream_manager.read_events(
+            stream_name,
+            group_name,
+            consumer_name,
+            requested_id,
+            config.WORKER.CONSUMER_READ_SIZE,
+            config.WORKER.CONSUMER_BLOCK_TIME,
+        )
 
-    if len(result[0][1]) == 0:
-        return []
-
-    event_stream_subset = result[0][1]
-    del result
-
-    events: list[StreamedEvent] = []
-    for event_data in event_stream_subset:
-        try:
-            event: StreamedEvent = StreamedEvent.construct_from_stream_record(
-                event_data
+        if malformed_events:
+            await event_stream_manager.amortize_events(
+                malformed_events, stream_name, group_name, dlq_stream_name
             )
-            events.append(event)
-        except ValueError:
-            await dead_letter_queue.put(
-                StreamedEvent.safe_construct_from_malformed_stream(event_data)
-            )
+
+        if not events and requested_id == 0:
+            requested_id = ">"
             continue
 
-    return events
+        await _event_queue_populate(events, queue_registry)
+        await asyncio.sleep(config.WORKER.CONSUMER_READ_INTERVAL)
 
 
 async def upstream_dispatcher(
-    config: AppConfig,
-    redis: Redis,
-    queue_mapping: Mapping[EventName, asyncio.Queue[tuple[StreamedEvent]]],
-    dead_letter_queue: asyncio.Queue[StreamedEvent],
+    config: APP_CONFIG,
+    event_stream_manager: EVENT_STREAM_MANAGER,
+    queue_registry: UPSTREAM_QUEUE_REGISTRY,
+    dlq_stream_name: DEAD_LETTER_STREAM_NAME,
     stream_name: StreamName,
-    group_name: str,
-    consumer_name: str,
+    group_name: GROUP_NAME,
+    consumer_name: CONSUMER_ID,
     read_history: bool = True,
 ) -> None:
-    requested_id: Literal[">"] | int = 0 if read_history else ">"
-    while True:
-        events: list[StreamedEvent] = await stream_reader(
-            config,
-            redis,
-            stream_name,
-            dead_letter_queue,
-            group_name,
-            consumer_name,
-            read_history,
-        )
-
-        if not events and requested_id == requested_id == 0:
-            requested_id = ">"
-
-        event_mapping: defaultdict[
-            asyncio.Queue[tuple[StreamedEvent, ...]], list[StreamedEvent]
-        ] = defaultdict(list)
-        for event in events:
-            event_mapping[queue_mapping[event.name]].append(event)
-        for consumer_queue, events_batch in event_mapping.items():
-            await consumer_queue.put(tuple(events_batch))
-
-        await asyncio.sleep(config.WORKER.CONSUMER_READ_INTERVAL)
+    await base_dispatcher(
+        config,
+        event_stream_manager,
+        queue_registry,
+        dlq_stream_name,
+        stream_name,
+        group_name,
+        consumer_name,
+        read_history,
+    )
 
 
 async def downstream_dispatcher(
-    config: AppConfig,
-    redis: Redis,
-    queue_mapping: Mapping[EventName, asyncio.Queue[StreamedEvent]],
-    dead_letter_queue: asyncio.Queue[StreamedEvent],
+    config: APP_CONFIG,
+    event_stream_manager: EVENT_STREAM_MANAGER,
+    queue_registry: DOWNSTREAM_QUEUE_REGISTRY,
+    dlq_stream_name: DEAD_LETTER_STREAM_NAME,
     stream_name: StreamName,
-    group_name: str,
-    consumer_name: str,
+    group_name: GROUP_NAME,
+    consumer_name: CONSUMER_ID,
     read_history: bool = True,
 ) -> None:
-    requested_id: Literal[">"] | int = 0 if read_history else ">"
-    while True:
-        events: list[StreamedEvent] = await stream_reader(
-            config,
-            redis,
-            stream_name,
-            dead_letter_queue,
-            group_name,
-            consumer_name,
-            read_history,
-        )
-
-        if not events and requested_id == requested_id == 0:
-            requested_id = ">"
-
-        event_mapping: defaultdict[
-            asyncio.Queue[StreamedEvent], list[StreamedEvent]
-        ] = defaultdict(list)
-        for event in events:
-            event_mapping[queue_mapping[event.name]].append(event)
-        for consumer_queue, events_batch in event_mapping.items():
-            for event in events_batch:
-                await consumer_queue.put(event)
-
-        await asyncio.sleep(config.WORKER.CONSUMER_READ_INTERVAL)
+    await base_dispatcher(
+        config,
+        event_stream_manager,
+        queue_registry,
+        dlq_stream_name,
+        stream_name,
+        group_name,
+        consumer_name,
+        read_history,
+    )

@@ -2,10 +2,10 @@
 
 from redis.asyncio import Redis
 
-from resource_database_workers.src.resource_database_workers.config.config import (
+from resource_database_workers.config.config import (
     AppConfig,
 )
-from resource_database_workers.src.resource_database_workers.utils.strings import (
+from resource_database_workers.utils.strings import (
     generate_retry_batch_name,
 )
 

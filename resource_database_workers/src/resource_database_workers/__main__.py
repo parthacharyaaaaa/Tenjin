@@ -10,7 +10,7 @@ from resource_database_workers.config.worker_config import (
     CounterWorkersConfig,
 )
 from resource_database_workers.config.config import AppConfig
-from resource_database_workers.dependencies import get_config
+from resource_database_workers.dependencies.injections import get_config
 
 
 async def main(args: Sequence[str]) -> None:

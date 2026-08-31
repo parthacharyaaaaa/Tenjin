@@ -22,10 +22,10 @@ from resource_database_workers.datastructures.downstream import (
     t_downstream_counter_event_metadata,
 )
 
-from resource_database_workers.src.resource_database_workers.config.sub_config import (
+from resource_database_workers.config.sub_config import (
     WorkerConfig,
 )
-from resource_database_workers.src.resource_database_workers.workers.redis.declarations import (
+from resource_database_workers.workers.redis.declarations import (
     declare_standard_event_dead,
 )
 

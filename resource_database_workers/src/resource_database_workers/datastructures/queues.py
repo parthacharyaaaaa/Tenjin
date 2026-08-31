@@ -1,7 +1,9 @@
-from asyncio import Queue
+from typing import Literal
+from typing import overload
+from typing import TypeVar
+from typing import Generic
 import asyncio
 from dataclasses import dataclass, field
-from functools import cached_property
 from types import MappingProxyType
 
 from auxillary.singleton import SingletonMetaclass
@@ -9,130 +11,79 @@ from auxillary.singleton import SingletonMetaclass
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import EventName
 
-from resource_auxillary.strings import StreamName
-from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
+T = TypeVar("T")
 
 
 @dataclass(slots=True, frozen=True)
-class QueueRegistry(metaclass=SingletonMetaclass):
-    # Strong entity insertions
-    post_insertions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
-    comment_insertions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
-
-    # Weak entity insertions
-    post_report_insertions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
-    post_save_insertions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
-    post_vote_insertions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
-    comment_report_insertions: Queue[tuple[StreamedEvent]] = field(
-        default_factory=Queue
-    )
-    comment_vote_insertions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
-    forum_subscription_insertions: Queue[tuple[StreamedEvent]] = field(
-        default_factory=Queue
-    )
-    anime_subscription_insertions: Queue[tuple[StreamedEvent]] = field(
-        default_factory=Queue
+class EventQueueRegistry(Generic[T]):
+    # _mutex: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+    _event_queue_mapping: dict[EventName, asyncio.Queue[T]] = field(
+        default_factory=dict
     )
 
-    # Strong entity deletions
-    forum_deletions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
-    post_deletions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
-    comment_deletions: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
-    user_cleanup: Queue[tuple[StreamedEvent]] = field(default_factory=Queue)
+    def register_event_queue(self, event: EventName, *, exist_ok: bool = True) -> None:
+        event_queue: asyncio.Queue[T] | None = self._event_queue_mapping.get(event)
+        if event_queue:
+            if exist_ok:
+                return
+            raise ValueError(f"Queue for event '{event}' already exists")
 
-    # Downstream orphan deletions
-    downstream_posts: Queue[StreamedEvent] = field(default_factory=Queue)
-    downstream_comments: Queue[StreamedEvent] = field(default_factory=Queue)
+        self._event_queue_mapping[event] = asyncio.Queue()
 
-    # Downstream counter decrements
-    downstream_user_posts_counters: Queue[StreamedEvent] = field(default_factory=Queue)
-    downstream_forums_posts_counters: Queue[StreamedEvent] = field(
-        default_factory=Queue
+    def remove_event_queue(self, event: EventName, *, missing_ok: bool = True) -> None:
+        event_queue: asyncio.Queue[T] | None = self._event_queue_mapping.get(event)
+        if not event_queue:
+            if missing_ok:
+                return
+            raise KeyError(f"No queue for event '{event}' found")
+
+        del self._event_queue_mapping[event]
+
+    async def append_to_queue(
+        self, event: EventName, entry: T, *, make_queue: bool = True
+    ) -> None:
+        event_queue: asyncio.Queue[T] | None = self._event_queue_mapping.get(event)
+        if not event_queue:
+            if make_queue:
+                event_queue = asyncio.Queue()
+                self._event_queue_mapping[event] = event_queue
+            else:
+                raise KeyError(f"No queue for event '{event}' found")
+        await event_queue.put(entry)
+
+    async def pop_from_queue(self, event: EventName) -> T:
+        event_queue: asyncio.Queue[T] | None = self._event_queue_mapping.get(event)
+        if not event_queue:
+            raise KeyError(f"No queue for event '{event}' found")
+        return await event_queue.get()
+
+    @overload
+    def get_event_queue(
+        self, event: EventName, *, raise_on_miss: Literal[True] = True
+    ) -> asyncio.Queue[T]: ...
+    @overload
+    def get_event_queue(
+        self, event: EventName, *, raise_on_miss: Literal[False] = False
+    ) -> asyncio.Queue[T] | None: ...
+
+    def get_event_queue(
+        self, event: EventName, *, raise_on_miss: bool = True
+    ) -> asyncio.Queue[T] | None:
+        event_queue: asyncio.Queue[T] | None = self._event_queue_mapping.get(event)
+        if not event_queue and raise_on_miss:
+            raise KeyError(f"No queue for event '{event}' found")
+        return event_queue
+
+    @property
+    def mapping_view(self) -> MappingProxyType[EventName, asyncio.Queue[T]]:
+        return MappingProxyType(self._event_queue_mapping)
+
+
+@dataclass(slots=True, frozen=True)
+class EventQueueRegistryContainer(metaclass=SingletonMetaclass):
+    upstream_registry: EventQueueRegistry[asyncio.Queue[tuple[StreamedEvent, ...]]] = (
+        field(default_factory=EventQueueRegistry)
     )
-    downstream_users_comments_counters: Queue[StreamedEvent] = field(
-        default_factory=Queue
+    downstream_registry: EventQueueRegistry[asyncio.Queue[StreamedEvent]] = field(
+        default_factory=EventQueueRegistry
     )
-    downstream_posts_comments_counters: Queue[StreamedEvent] = field(
-        default_factory=Queue
-    )
-
-    # DLQ
-    dead_letter: Queue[StreamedEvent] = field(default_factory=Queue)
-    counter_dead_letter: Queue[DeadCounterBatch] = field(default_factory=Queue)
-    side_effects_dead_letter: Queue[StreamedEvent] = field(default_factory=Queue)
-
-    @cached_property
-    def event_queue_mapping(
-        self,
-    ) -> MappingProxyType[EventName, Queue[tuple[StreamedEvent]]]:
-        return MappingProxyType(
-            {
-                # Posts
-                EventName.POST_CREATE: self.post_insertions,
-                EventName.POST_SAVE: self.post_save_insertions,
-                EventName.POST_UNSAVE: self.post_save_insertions,
-                EventName.POST_REPORT: self.post_report_insertions,
-                EventName.POST_VOTE: self.post_vote_insertions,
-                EventName.POST_UNVOTE: self.post_vote_insertions,
-                EventName.POST_DELETE: self.post_deletions,
-                # Comments
-                EventName.COMMENT_CREATE: self.comment_insertions,
-                EventName.COMMENT_VOTE: self.comment_vote_insertions,
-                EventName.COMMENT_UNVOTE: self.comment_vote_insertions,
-                EventName.COMMENT_REPORT: self.comment_report_insertions,
-                EventName.COMMENT_DELETE: self.comment_deletions,
-                # Subscriptions
-                EventName.FORUM_SUB: self.forum_subscription_insertions,
-                EventName.FORUM_UNSUB: self.forum_subscription_insertions,
-                EventName.ANIME_SUB: self.anime_subscription_insertions,
-                EventName.ANIME_UNSUB: self.anime_subscription_insertions,
-                # Cleanup
-                EventName.USER_CLEANUP: self.user_cleanup,
-            }
-        )
-
-    @cached_property
-    def downstream_deletion_event_queue_apping(
-        self,
-    ) -> MappingProxyType[EventName, Queue[StreamedEvent]]:
-        return MappingProxyType(
-            {
-                EventName.ORPHANED_COMMENT_DELETE: self.downstream_comments,
-                EventName.ORPHANED_POST_DELETE: self.downstream_posts,
-            }
-        )
-
-    @cached_property
-    def downstream_decrement_event_queue_mapping(
-        self,
-    ) -> MappingProxyType[EventName, Queue[StreamedEvent]]:
-        return MappingProxyType(
-            {
-                EventName.DOWNSTREAM_FORUM_POST_DECREMENT: self.downstream_forums_posts_counters,
-                EventName.DOWNSTREAM_USER_POST_DECREMENT: self.downstream_user_posts_counters,
-                EventName.DOWNSTREAM_POST_COMMENT_DECREMENT: self.downstream_posts_comments_counters,
-                EventName.DOWNSTREAM_USER_COMMENT_DECREMENT: self.downstream_users_comments_counters,
-            }
-        )
-
-    @cached_property
-    def dead_letter_queue_mapping(self) -> MappingProxyType[str, Queue]:
-        return MappingProxyType(
-            {
-                EventName.DLQ_COUNTER: self.counter_dead_letter,
-                EventName.DLQ_SIDE_EFFECTS: self.side_effects_dead_letter,
-            }
-        )
-
-    def resolve_stream_reader_queue_mapping(
-        self, stream: StreamName
-    ) -> MappingProxyType[
-        EventName,
-        asyncio.Queue[StreamedEvent] | asyncio.Queue[tuple[StreamedEvent, ...]],
-    ]:
-        if stream == StreamName.DOWNSTREAM_COUNTER_DECREMENTS:
-            return self.downstream_decrement_event_queue_mapping
-        elif stream == StreamName.DOWNSTREAM_DELETIONS:
-            return self.downstream_deletion_event_queue_apping
-        else:
-            return self.event_queue_mapping

@@ -37,16 +37,16 @@ async def batch_insert_with_isolation(
     action: t_action_literal | None,
 ) -> None:
     try:
-        async with conn.transaction():
-            if action:
-                successfully_inserted.extend(
-                    await batch_insert_association_entities(conn, events, action)
-                )
-            else:
-                successfully_inserted.extend(
-                    await batch_insert_strong_entities(conn, events)
-                )
+        if action:
+            successfully_inserted.extend(
+                await batch_insert_association_entities(conn, events, action)
+            )
+        else:
+            successfully_inserted.extend(
+                await batch_insert_strong_entities(conn, events)
+            )
     except IntegrityError:
+        await conn.rollback()
         if len(events) == 1:
             return
         bisected_length: int = len(events) // 2
