@@ -32,7 +32,6 @@ EVENT_QUEUE_REGISTRY_CONTAINER = Annotated[
 ]
 CONNECTION_POOL = Annotated[AsyncConnectionPool, Inject(get_connection_pool)]
 CONSUMER_ID = Annotated[int, Inject(get_process_id)]
-DEAD_LETTER_QUEUE_NAME = Annotated[int, Inject(get_dead_letter_queue_name)]
 UPSTREAM_QUEUE_MAPPING = Annotated[
     asyncio.Queue[tuple[StreamedEvent, ...]],
     Inject(lambda: get_queue_registry().upstream_registry),
@@ -46,7 +45,7 @@ DOWNSTREAM_QUEUE_MAPPING = Annotated[
 STATUS_PROXY = Annotated[StatusProxy, None]
 GROUP_NAME = Annotated[str, None]
 STREAM_NAME = Annotated[StreamName, None]
-DEAD_LETTER_STREAM_NAME = Annotated[StreamName, None]
+DEAD_LETTER_STREAM_NAME = Annotated[StreamName, Inject(get_dead_letter_queue_name)]
 BATCHED_EVENT_QUEUE = Annotated[asyncio.Queue[tuple[StreamedEvent, ...]], None]
 ISOLATED_EVENT_QUEUE = Annotated[asyncio.Queue[tuple[StreamedEvent]], None]
 
