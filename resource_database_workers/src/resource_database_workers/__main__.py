@@ -22,7 +22,7 @@ async def main(args: Sequence[str]) -> None:
     workers_config: StreamWorkersConfig | CounterWorkersConfig | None = None
     if parsed_args.worker_type == "stream":
         workers_config = StreamWorkersConfig.construct_from_toml(
-            parsed_args.worker_config_filepath, parsed_args.strean
+            parsed_args.worker_config_filepath
         )
     else:
         workers_config = CounterWorkersConfig.construct_from_toml(

@@ -2,8 +2,6 @@ from argparse import ArgumentParser, Namespace
 import os
 from typing import Iterable
 
-from resource_auxillary.strings import StreamName
-
 
 def _check_file_existence(arg: str) -> str:
     if not os.path.exists(arg):
@@ -30,19 +28,13 @@ def get_argument_parser() -> ArgumentParser:
         type=_check_file_existence,
     )
 
-    arg_parser.add_argument(
-        "--stream", help="Name of stream, if worker is a stream worker", type=StreamName
-    )
-
     return arg_parser
 
 
 def parse_args(argparser: ArgumentParser, args: Iterable[str]) -> Namespace:
+    """
+    Abstraction wrapping around argparse.parse_args to fit
+    additional validation/conversion logic
+    """
     parsed_args: Namespace = argparser.parse_args(args)
-
-    if parsed_args.worker_type == "stream" and not parsed_args.stream:
-        raise ValueError("Missing stream name")
-    elif parsed_args.worker_type != "stream" and parsed_args.stream:
-        print("Ignoring irrelevant argument: ", parsed_args.stream)
-
     return parsed_args
