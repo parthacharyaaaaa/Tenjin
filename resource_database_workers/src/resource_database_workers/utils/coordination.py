@@ -7,7 +7,7 @@ from resource_database_workers.datastructures.redis import (
     XInfoGroupResponse,
     XPendingRangeResponse,
 )
-from resource_database_workers.src.resource_database_workers.workers.redis.helpers import (
+from resource_database_workers.workers.redis.helpers import (
     get_min_max_from_xread,
 )
 

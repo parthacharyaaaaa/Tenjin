@@ -11,9 +11,7 @@ from resource_database_workers.datastructures.exceptions import (
     RecoverableDatabaseException,
     UnrecoverableDatabaseException,
 )
-from resource_database_workers.src.resource_database_workers.utils.sql_templates import (
-    prepare_updation_sql,
-)
+from resource_database_workers.utils.sql_templates import prepare_updation_sql
 
 
 async def flush_counter_updates(
