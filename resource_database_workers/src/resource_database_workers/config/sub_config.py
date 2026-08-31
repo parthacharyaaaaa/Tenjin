@@ -57,12 +57,12 @@ class WorkerConfig(
     # Others
     GRACEFUL_SHUTDOWN_PERIOD: Annotated[float, Field(ge=0)]
 
-    COUNTER_WORKER_TASK_PREFIX: Annotated[str, BeforeValidator[lambda x: x.strip()]]
+    COUNTER_WORKER_TASK_PREFIX: Annotated[str, BeforeValidator(lambda x: x.strip())]
     RETRY_COUNTER_WORKER_TASK_PREFIX: Annotated[
-        str, BeforeValidator[lambda x: x.strip()]
+        str, BeforeValidator(lambda x: x.strip())
     ]
-    STREAM_READER_TASK_PREFIX: Annotated[str, BeforeValidator[lambda x: x.strip()]]
-    STREAM_WORKER_TASK_PREFIX: Annotated[str, BeforeValidator[lambda x: x.strip()]]
+    STREAM_READER_TASK_PREFIX: Annotated[str, BeforeValidator(lambda x: x.strip())]
+    STREAM_WORKER_TASK_PREFIX: Annotated[str, BeforeValidator(lambda x: x.strip())]
 
 
 class DatabaseConfig(
