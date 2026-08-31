@@ -7,12 +7,13 @@ import asyncio
 from resource_auxillary.events import StreamedEvent
 from psycopg_pool.pool_async import AsyncConnectionPool
 from resource_database_workers.datastructures.queues import QueueRegistry
-from resource_database_workers.dependencies import (
+from resource_database_workers.dependencies.injections import (
     get_queue_registry,
     get_internal_redis,
     get_app_redis,
     get_config,
     get_connection_pool,
+    get_process_id,
 )
 from redis.asyncio.client import Redis
 from typing import LiteralString, Final
@@ -27,6 +28,7 @@ APP_REDIS = Annotated[Redis, Inject(get_app_redis)]
 INTERNAL_REDIS = Annotated[Redis, Inject(get_internal_redis)]
 QUEUE_REGISTRY = Annotated[QueueRegistry, Inject(get_queue_registry)]
 CONNECTION_POOL = Annotated[AsyncConnectionPool, Inject(get_connection_pool)]
+CONSUMER_ID = Annotated[int, Inject(get_process_id)]
 
 # Worker-level dependencies
 STATUS_PROXY = Annotated[StatusProxy, None]
@@ -36,7 +38,7 @@ DEAD_LETTER_STREAM_NAME = Annotated[StreamName, None]
 BATCHED_EVENT_QUEUE = Annotated[asyncio.Queue[tuple[StreamedEvent, ...]], None]
 ISOLATED_EVENT_QUEUE = Annotated[asyncio.Queue[tuple[StreamedEvent]], None]
 
-# Insertion-specific
+## Insertion-specific
 ACTION_LITERAL = Annotated[t_action_literal | None, None]
 
 ## Deletion-specific
