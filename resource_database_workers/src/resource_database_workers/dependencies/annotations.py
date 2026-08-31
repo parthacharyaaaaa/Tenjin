@@ -1,3 +1,6 @@
+from resource_database_workers.datastructures.queues import EventQueueRegistry
+from resource_database_workers.dependencies.injections import get_stream_manager
+from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
 from resource_database_workers.dependencies.indicator import Inject
 from resource_auxillary.datastructures.database import StrongEntity
 from resource_auxillary.strings import StreamName
@@ -31,13 +34,12 @@ EVENT_QUEUE_REGISTRY_CONTAINER = Annotated[
     EventQueueRegistryContainer, Inject(get_queue_registry)
 ]
 CONNECTION_POOL = Annotated[AsyncConnectionPool, Inject(get_connection_pool)]
-CONSUMER_ID = Annotated[str, Inject(get_consumer_id)]
-UPSTREAM_QUEUE_MAPPING = Annotated[
-    asyncio.Queue[tuple[StreamedEvent, ...]],
+UPSTREAM_QUEUE_REGISTRY = Annotated[
+    EventQueueRegistry[tuple[StreamedEvent, ...]],
     Inject(lambda: get_queue_registry().upstream_registry),
 ]
-DOWNSTREAM_QUEUE_MAPPING = Annotated[
-    asyncio.Queue[StreamedEvent],
+DOWNSTREAM_QUEUE_REGISTRY = Annotated[
+    EventQueueRegistry[StreamedEvent],
     Inject(lambda: get_queue_registry().downstream_registry),
 ]
 
@@ -48,6 +50,7 @@ STREAM_NAME = Annotated[StreamName, None]
 DEAD_LETTER_STREAM_NAME = Annotated[StreamName, Inject(get_dead_letter_queue_name)]
 BATCHED_EVENT_QUEUE = Annotated[asyncio.Queue[tuple[StreamedEvent, ...]], None]
 ISOLATED_EVENT_QUEUE = Annotated[asyncio.Queue[tuple[StreamedEvent]], None]
+EVENT_STREAM_MANAGER = Annotated[EventStreamManager, Inject(get_stream_manager)]
 
 ## Insertion-specific
 ACTION_LITERAL = Annotated[t_action_literal | None, None]
@@ -55,3 +58,6 @@ ACTION_LITERAL = Annotated[t_action_literal | None, None]
 ## Deletion-specific
 IDENTIFIER_COLUMN = Annotated[str, None]  # TODO: Update to StrEnum type
 TABLE = Annotated[StrongEntity, None]
+
+## Reader-specific
+CONSUMER_ID = Annotated[str, Inject(get_consumer_id)]
