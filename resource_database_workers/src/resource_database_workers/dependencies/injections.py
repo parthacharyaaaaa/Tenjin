@@ -50,8 +50,8 @@ def get_connection_pool() -> AsyncConnectionPool:
 
 
 @lru_cache(maxsize=1)
-def get_process_id() -> int:
-    return os.getpid()
+def get_consumer_id() -> str:
+    return str(os.getpid())
 
 
 @lru_cache(maxsize=1)

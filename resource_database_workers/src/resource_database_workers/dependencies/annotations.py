@@ -13,7 +13,7 @@ from resource_database_workers.dependencies.injections import (
     get_app_redis,
     get_config,
     get_connection_pool,
-    get_process_id,
+    get_consumer_id,
     get_dead_letter_queue_name,
 )
 from redis.asyncio.client import Redis
@@ -31,7 +31,7 @@ EVENT_QUEUE_REGISTRY_CONTAINER = Annotated[
     EventQueueRegistryContainer, Inject(get_queue_registry)
 ]
 CONNECTION_POOL = Annotated[AsyncConnectionPool, Inject(get_connection_pool)]
-CONSUMER_ID = Annotated[int, Inject(get_process_id)]
+CONSUMER_ID = Annotated[str, Inject(get_consumer_id)]
 UPSTREAM_QUEUE_MAPPING = Annotated[
     asyncio.Queue[tuple[StreamedEvent, ...]],
     Inject(lambda: get_queue_registry().upstream_registry),
