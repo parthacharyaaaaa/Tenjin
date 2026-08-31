@@ -48,3 +48,8 @@ def get_connection_pool() -> AsyncConnectionPool:
         conninfo=uri,
         **config.DATABASE.emit_connection_pool_constructor_kwargs(),  # type: ignore
     )
+
+
+@lru_cache(maxsize=1)
+def get_process_id() -> int:
+    return os.getpid()
