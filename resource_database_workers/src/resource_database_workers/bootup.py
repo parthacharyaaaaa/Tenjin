@@ -1,11 +1,13 @@
 from resource_database_workers.config.sub_config import WorkerConfig
-from resource_database_workers.dependencies.dependency_resolver import (
+from resource_database_workers.dependencies.resolver import (
     inject_worker_dependencies,
 )
-from resource_database_workers.dependencies.dependency_annotations import GROUP_NAME
-from resource_database_workers.dependencies.dependency_annotations import STREAM_NAME
-from resource_database_workers.dependencies.dependency_annotations import STATUS_PROXY
-from resource_database_workers.dependencies.dependency_resolver import (
+from resource_database_workers.dependencies.annotations import (
+    GROUP_NAME,
+    STREAM_NAME,
+    STATUS_PROXY,
+)
+from resource_database_workers.dependencies.resolver import (
     inject_stream_worker_dependencies,
 )
 from resource_database_workers.dependencies.event_dependencies import (

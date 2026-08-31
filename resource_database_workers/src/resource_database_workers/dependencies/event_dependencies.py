@@ -2,11 +2,11 @@
 Event-specific worker dependency mappings
 """
 
-from resource_database_workers.dependencies.dependency_annotations import ACTION_LITERAL
-from resource_database_workers.dependencies.dependency_annotations import (
+from resource_database_workers.dependencies.annotations import (
     IDENTIFIER_COLUMN,
+    ACTION_LITERAL,
+    TABLE,
 )
-from resource_database_workers.dependencies.dependency_annotations import TABLE
 from typing import Any, Callable, Final
 from types import MappingProxyType
 
