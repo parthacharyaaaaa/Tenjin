@@ -1,3 +1,7 @@
+from resource_auxillary.event_processing.event_stream_manager import (
+    EventStreamManager,
+    RedisStreamManager,
+)
 from resource_database_workers.datastructures.queues import EventQueueRegistryContainer
 from resource_auxillary.strings import StreamName
 from functools import lru_cache
@@ -59,3 +63,10 @@ def get_dead_letter_queue_name() -> StreamName:
     # I wanted to have this as a DI
     # in case we ever decide to have a multiple/dynamic DLQ naming scheme
     return StreamName.DEAD_LETTER_QUEUE
+
+
+@lru_cache(maxsize=1)
+def get_stream_manager() -> EventStreamManager:
+    """Current Implementation: Redis Streams"""
+    redis_client = Redis = get_internal_redis()
+    return RedisStreamManager(redis_client)
