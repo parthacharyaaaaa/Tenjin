@@ -7,9 +7,9 @@ from resource_auxillary.strings import StreamName
 
 
 class WorkerRetryMixin:
-    MAXIMUM_BACKOFF_INTERVAL: Annotated[int, Field(ge=0)]
-    BASE_BACKOFF_INTERVAL: Annotated[int, Field(ge=0)]
-    BACKOFF_EXPONENTIAL: Annotated[int, Field(ge=1)]
+    MAXIMUM_BACKOFF_INTERVAL: Annotated[float, Field(ge=0)]
+    BASE_BACKOFF_INTERVAL: Annotated[float, Field(ge=0)]
+    BACKOFF_EXPONENTIAL: Annotated[float, Field(ge=1)]
 
     @model_validator(mode="after")
     def validate_backoff_values(self) -> Self:

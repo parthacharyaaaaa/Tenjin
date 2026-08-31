@@ -31,7 +31,7 @@ NF_SENTINEL_VALUE="1"
 [worker]
 MAX_RETRIES=2
 
-DLQ_NAME="DLQ"
+DLQ_NAME="DEAD_LETTER_QUEUE"
 COUNTER_REGISTRY_NAME="counters"
 COUNTER_RETRY_REGISTRY_NAME="counters:retries"
 COUNTER_REGISTRY_REFRESH_INTERVAL=1800          # seconds
@@ -44,7 +44,6 @@ CONSUMER_BLOCK_TIME=500                         # milliseconds
 CONSUMER_GROUP_NAME="consumers"
 
 IQ_CONSUMER_BASE_WAITING_TIME=2                     # seconds
-IQ_CONSUMER_BATCH_SIZE_QUOTA=0.1
 IQ_CONSUMER_GET_TIMEOUT=0.1                         # seconds
 IQ_CONSUMER_SLEEP_INTERVAL=0.01                     # seconds
 
