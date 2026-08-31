@@ -59,11 +59,11 @@ class EventQueueRegistry(Generic[T]):
 
     @overload
     def get_event_queue(
-        self, event: EventName, *, raise_on_miss: Literal[True]
+        self, event: EventName, *, raise_on_miss: Literal[True] = True
     ) -> asyncio.Queue[T]: ...
     @overload
     def get_event_queue(
-        self, event: EventName, *, raise_on_miss: Literal[False]
+        self, event: EventName, *, raise_on_miss: Literal[False] = False
     ) -> asyncio.Queue[T] | None: ...
 
     def get_event_queue(
