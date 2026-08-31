@@ -1,21 +1,30 @@
+from resource_database_workers.dependencies.annotations import (
+    ACTION_LITERAL,
+    ISOLATED_EVENT_QUEUE,
+    BATCHED_EVENT_QUEUE,
+    STREAM_NAME,
+    IDENTIFIER_COLUMN,
+    TABLE,
+    STATUS_PROXY,
+    DEAD_LETTER_STREAM_NAME,
+    GROUP_NAME,
+    INTERNAL_REDIS,
+    CONNECTION_POOL,
+    APP_CONFIG,
+)
 from resource_database_workers.tasks.insertions import batch_insert_with_isolation
 from resource_database_workers.tasks.deletions import (
     downstream_soft_delete_strong_entity,
 )
 from resource_database_workers.tasks.deletions import soft_delete_strong_entity
-import asyncio
 from datetime import datetime
 import time
 from typing import Generator
 
-from psycopg_pool import AsyncConnectionPool
-
-from redis.asyncio import Redis
 from redis.exceptions import RedisError, ExceptionType
 
 from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.datastructures.database import StrongEntity
-from resource_auxillary.datastructures.status_indicator import StatusProxy
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.event_processing.pre_processing import (
     trim_duplicate_events,
@@ -27,10 +36,8 @@ from resource_auxillary.event_processing.wrappers import (
     declare_dead_with_retries,
     commit_processed_events,
 )
-from resource_auxillary.strings import StreamName
 from resource_auxillary.constants import POTENTIAL_TRANSIENT_ERRORS
 
-from resource_database_workers.config.config import AppConfig
 from resource_auxillary.event_processing.db_qos import (
     batch_dedup_insert_events,
     dedup_insert_event,
@@ -42,9 +49,6 @@ from resource_database_workers.workers.redis.downstream_post_processing import (
     emit_downstream_counter_decrement_updates,
 )
 from resource_database_workers.tasks.selections import select_decrement_deltas
-from resource_database_workers.utils.typing import (
-    t_action_literal,
-)
 from resource_database_workers.datastructures.downstream import (
     DownstreamCounterDecrementData,
     DownstreamDeletionData,
@@ -54,14 +58,14 @@ from resource_database_workers.datastructures.downstream import (
 
 
 async def user_orphan_consumer(
-    config: AppConfig,
-    pool: AsyncConnectionPool,
-    redis: Redis,
-    queue: asyncio.Queue[tuple[StreamedEvent]],
-    stream_name: StreamName,
-    group_name: str,
-    dead_letter_stream_name: StreamName,
-    status_proxy: StatusProxy,
+    config: APP_CONFIG,
+    pool: CONNECTION_POOL,
+    redis: INTERNAL_REDIS,
+    queue: BATCHED_EVENT_QUEUE,
+    stream_name: STREAM_NAME,
+    group_name: GROUP_NAME,
+    dead_letter_stream_name: DEAD_LETTER_STREAM_NAME,
+    status_proxy: STATUS_PROXY,
 ) -> None:
     batch: list[StreamedEvent] = []
     reference_time: float = time.monotonic()
@@ -138,15 +142,15 @@ async def user_orphan_consumer(
 
 
 async def queue_insertion_consumer(
-    config: AppConfig,
-    pool: AsyncConnectionPool,
-    redis: Redis,
-    queue: asyncio.Queue[tuple[StreamedEvent]],
-    stream_name: StreamName,
-    group_name: str,
-    dead_letter_stream_name: StreamName,
-    status_proxy: StatusProxy,
-    action: t_action_literal | None = None,
+    config: APP_CONFIG,
+    pool: CONNECTION_POOL,
+    redis: INTERNAL_REDIS,
+    queue: BATCHED_EVENT_QUEUE,
+    stream_name: STREAM_NAME,
+    group_name: GROUP_NAME,
+    dead_letter_stream_name: DEAD_LETTER_STREAM_NAME,
+    status_proxy: STATUS_PROXY,
+    action: ACTION_LITERAL = None,
 ) -> None:
     batch: list[StreamedEvent] = []
     reference_time: float = time.monotonic()
@@ -211,16 +215,16 @@ async def queue_insertion_consumer(
 
 
 async def queue_deletion_consumer(
-    config: AppConfig,
-    pool: AsyncConnectionPool,
-    redis: Redis,
-    table: StrongEntity,
-    identifier_column: str,
-    queue: asyncio.Queue[tuple[StreamedEvent]],
-    stream_name: StreamName,
-    group_name: str,
-    dead_letter_stream_name: StreamName,
-    status_proxy: StatusProxy,
+    config: APP_CONFIG,
+    pool: CONNECTION_POOL,
+    redis: INTERNAL_REDIS,
+    table: TABLE,
+    identifier_column: IDENTIFIER_COLUMN,
+    queue: BATCHED_EVENT_QUEUE,
+    stream_name: STREAM_NAME,
+    group_name: GROUP_NAME,
+    dead_letter_stream_name: DEAD_LETTER_STREAM_NAME,
+    status_proxy: STATUS_PROXY,
 ) -> None:
     batch: list[StreamedEvent] = []
     reference_time: float = time.monotonic()
@@ -287,14 +291,14 @@ async def queue_deletion_consumer(
 
 
 async def queue_downstream_deletion_consumer(
-    config: AppConfig,
-    pool: AsyncConnectionPool,
-    redis: Redis,
-    queue: asyncio.Queue[StreamedEvent],
-    stream_name: StreamName,
-    group_name: str,
-    dead_letter_stream_name: StreamName,
-    status_proxy: StatusProxy,
+    config: APP_CONFIG,
+    pool: CONNECTION_POOL,
+    redis: INTERNAL_REDIS,
+    queue: ISOLATED_EVENT_QUEUE,
+    stream_name: STREAM_NAME,
+    group_name: GROUP_NAME,
+    dead_letter_stream_name: DEAD_LETTER_STREAM_NAME,
+    status_proxy: STATUS_PROXY,
 ) -> None:
     while status_proxy.status_ok:
         event: StreamedEvent = await queue.get()
@@ -366,14 +370,14 @@ async def queue_downstream_deletion_consumer(
 
 
 async def queue_downstream_decrement_consumer(
-    config: AppConfig,
-    pool: AsyncConnectionPool,
-    redis: Redis,
-    queue: asyncio.Queue[StreamedEvent],
-    stream_name: StreamName,
-    group_name: str,
-    dead_letter_stream_name: StreamName,
-    status_proxy: StatusProxy,
+    config: APP_CONFIG,
+    pool: CONNECTION_POOL,
+    redis: INTERNAL_REDIS,
+    queue: ISOLATED_EVENT_QUEUE,
+    stream_name: STREAM_NAME,
+    group_name: GROUP_NAME,
+    dead_letter_stream_name: DEAD_LETTER_STREAM_NAME,
+    status_proxy: STATUS_PROXY,
 ) -> None:
     while status_proxy.status_ok:
         event: StreamedEvent = await queue.get()
