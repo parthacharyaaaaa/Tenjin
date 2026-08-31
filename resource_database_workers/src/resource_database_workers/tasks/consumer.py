@@ -1,3 +1,8 @@
+from resource_database_workers.tasks.insertions import batch_insert_with_isolation
+from resource_database_workers.tasks.deletions import (
+    downstream_soft_delete_strong_entity,
+)
+from resource_database_workers.tasks.deletions import soft_delete_strong_entity
 import asyncio
 from datetime import datetime
 import time
@@ -38,9 +43,6 @@ from resource_database_workers.workers.redis.downstream_post_processing import (
 )
 from resource_database_workers.tasks.selections import select_decrement_deltas
 from resource_database_workers.utils.typing import (
-    BatchDeletionFunction,
-    BatchDownstreamDeletionFunction,
-    BatchInsertionFunction,
     t_action_literal,
 )
 from resource_database_workers.datastructures.downstream import (
@@ -140,7 +142,6 @@ async def queue_insertion_consumer(
     pool: AsyncConnectionPool,
     redis: Redis,
     queue: asyncio.Queue[tuple[StreamedEvent]],
-    batch_function: BatchInsertionFunction,
     stream_name: StreamName,
     group_name: str,
     dead_letter_stream_name: StreamName,
@@ -166,7 +167,7 @@ async def queue_insertion_consumer(
                 continue
 
             inserted_ids: list[int] = []  # Populated in-place by batch_function
-            insertion_callable = lambda: batch_function(
+            insertion_callable = lambda: batch_insert_with_isolation(
                 conn, batch, inserted_ids, action
             )
             try:
@@ -216,7 +217,6 @@ async def queue_deletion_consumer(
     table: StrongEntity,
     identifier_column: str,
     queue: asyncio.Queue[tuple[StreamedEvent]],
-    batch_function: BatchDeletionFunction,
     stream_name: StreamName,
     group_name: str,
     dead_letter_stream_name: StreamName,
@@ -246,7 +246,7 @@ async def queue_deletion_consumer(
                 for event in batch
             )
 
-            deletion_callable = lambda: batch_function(
+            deletion_callable = lambda: soft_delete_strong_entity(
                 conn, table.value, identifier_column, deletion_data
             )
             try:
@@ -291,7 +291,6 @@ async def queue_downstream_deletion_consumer(
     pool: AsyncConnectionPool,
     redis: Redis,
     queue: asyncio.Queue[StreamedEvent],
-    batch_function: BatchDownstreamDeletionFunction,
     stream_name: StreamName,
     group_name: str,
     dead_letter_stream_name: StreamName,
@@ -321,7 +320,7 @@ async def queue_downstream_deletion_consumer(
                 await redis.xack(stream_name, group_name, event.event_id)
                 continue
 
-            downstream_deletion_callable = lambda: batch_function(
+            downstream_deletion_callable = lambda: downstream_soft_delete_strong_entity(
                 conn,
                 event_payload["foreign_key"],
                 event_payload["orphan_table"],
