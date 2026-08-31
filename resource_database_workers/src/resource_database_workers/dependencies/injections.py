@@ -1,3 +1,5 @@
+from resource_database_workers.datastructures.queues import EventQueueRegistryContainer
+from resource_auxillary.strings import StreamName
 from functools import lru_cache
 import os
 
@@ -5,7 +7,6 @@ from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
 
 from resource_database_workers.config.config import AppConfig
-from resource_database_workers.datastructures.queues import QueueRegistry
 
 
 @lru_cache(maxsize=1)
@@ -16,24 +17,22 @@ def get_config() -> AppConfig:
 @lru_cache(maxsize=1)
 def get_app_redis() -> Redis:
     app: AppConfig = get_config()
-    return Redis(
-        host=str(app.REDIS.APP.HOST), port=app.REDIS.APP.PORT, db=app.REDIS.APP.DB
-    )
+    return Redis(host=app.REDIS.APP.HOST, port=app.REDIS.APP.PORT, db=app.REDIS.APP.DB)
 
 
 @lru_cache(maxsize=1)
 def get_internal_redis() -> Redis:
     app: AppConfig = get_config()
     return Redis(
-        host=str(app.REDIS.INTERNAL.HOST),
+        host=app.REDIS.INTERNAL.HOST,
         port=app.REDIS.INTERNAL.PORT,
         db=app.REDIS.INTERNAL.DB,
     )
 
 
 @lru_cache(maxsize=1)
-def get_queue_registry() -> QueueRegistry:
-    return QueueRegistry()
+def get_queue_registry() -> EventQueueRegistryContainer:
+    return EventQueueRegistryContainer()
 
 
 @lru_cache(maxsize=1)
@@ -53,3 +52,10 @@ def get_connection_pool() -> AsyncConnectionPool:
 @lru_cache(maxsize=1)
 def get_process_id() -> int:
     return os.getpid()
+
+
+@lru_cache(maxsize=1)
+def get_dead_letter_queue_name() -> StreamName:
+    # I wanted to have this as a DI
+    # in case we ever decide to have a multiple/dynamic DLQ naming scheme
+    return StreamName.DEAD_LETTER_QUEUE

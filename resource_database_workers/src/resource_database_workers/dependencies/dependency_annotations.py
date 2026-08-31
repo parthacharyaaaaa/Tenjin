@@ -6,7 +6,7 @@ from resource_database_workers.utils.typing import t_action_literal
 import asyncio
 from resource_auxillary.events import StreamedEvent
 from psycopg_pool.pool_async import AsyncConnectionPool
-from resource_database_workers.datastructures.queues import QueueRegistry
+from resource_database_workers.datastructures.queues import EventQueueRegistryContainer
 from resource_database_workers.dependencies.injections import (
     get_queue_registry,
     get_internal_redis,
@@ -14,6 +14,7 @@ from resource_database_workers.dependencies.injections import (
     get_config,
     get_connection_pool,
     get_process_id,
+    get_dead_letter_queue_name,
 )
 from redis.asyncio.client import Redis
 from typing import LiteralString, Final
@@ -26,9 +27,20 @@ _DEFAULT_METADATA_STRING: Final[LiteralString] = "DI Annotation"
 APP_CONFIG = Annotated[AppConfig, Inject(get_config)]
 APP_REDIS = Annotated[Redis, Inject(get_app_redis)]
 INTERNAL_REDIS = Annotated[Redis, Inject(get_internal_redis)]
-QUEUE_REGISTRY = Annotated[QueueRegistry, Inject(get_queue_registry)]
+EVENT_QUEUE_REGISTRY_CONTAINER = Annotated[
+    EventQueueRegistryContainer, Inject(get_queue_registry)
+]
 CONNECTION_POOL = Annotated[AsyncConnectionPool, Inject(get_connection_pool)]
 CONSUMER_ID = Annotated[int, Inject(get_process_id)]
+DEAD_LETTER_QUEUE_NAME = Annotated[int, Inject(get_dead_letter_queue_name)]
+UPSTREAM_QUEUE_MAPPING = Annotated[
+    asyncio.Queue[tuple[StreamedEvent, ...]],
+    Inject(lambda: get_queue_registry().upstream_registry),
+]
+DOWNSTREAM_QUEUE_MAPPING = Annotated[
+    asyncio.Queue[StreamedEvent],
+    Inject(lambda: get_queue_registry().downstream_registry),
+]
 
 # Worker-level dependencies
 STATUS_PROXY = Annotated[StatusProxy, None]
