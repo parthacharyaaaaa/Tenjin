@@ -3,8 +3,8 @@ from typing import Protocol
 
 class SupportsExponentialJitteredRetryPolicy(Protocol):
     MAX_RETRIES: int
-    MAXIMUM_BACKOFF_INTERVAL: int
-    BASE_BACKOFF_INTERVAL: int
+    MAXIMUM_BACKOFF_INTERVAL: float
+    BASE_BACKOFF_INTERVAL: float
     BACKOFF_EXPONENTIAL: int
 
 
