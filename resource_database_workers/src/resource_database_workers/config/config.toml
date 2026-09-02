@@ -46,6 +46,7 @@ CONSUMER_GROUP_NAME="consumers"
 IQ_CONSUMER_BASE_WAITING_TIME=2                     # seconds
 IQ_CONSUMER_GET_TIMEOUT=0.1                         # seconds
 IQ_CONSUMER_SLEEP_INTERVAL=0.01                     # seconds
+IQ_CONSUMER_BATCH_SIZE_QUOTA=10
 
 DOWNSTREAM_COUNTER_BATCH_SIZE=10000
 
