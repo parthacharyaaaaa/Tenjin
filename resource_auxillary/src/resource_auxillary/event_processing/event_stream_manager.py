@@ -1,3 +1,4 @@
+from typing import TypeVar
 from resource_auxillary.events import StreamedEvent
 from datetime import timedelta
 from typing import Protocol
@@ -11,6 +12,8 @@ from auxillary.utils import cache_repr
 from resource_auxillary.events import Event
 from resource_auxillary.strings import StreamName
 from resource_auxillary.typing import HasEventID
+
+T = TypeVar("T", bound=HasEventID)
 
 
 class EventStreamManager(Protocol):
@@ -49,7 +52,7 @@ class EventStreamManager(Protocol):
 
     async def trim_duplicate_events(
         self,
-        batch: list[HasEventID],
+        batch: list[T],
         fresh_event_ids: Sequence[int],
         stream_name: StreamName,
         group_name: str,
@@ -134,7 +137,7 @@ class RedisStreamManager:
 
     async def amortize_events(
         self,
-        events: Iterable[HasEventID],
+        events: Iterable[StreamedEvent],
         event_stream_name: StreamName,
         group_name: str,
         dlq_stream_name: StreamName,
@@ -147,7 +150,7 @@ class RedisStreamManager:
 
     async def trim_duplicate_events(
         self,
-        batch: list[HasEventID],
+        batch: list[T],
         fresh_event_ids: Sequence[int],
         stream_name: StreamName,
         group_name: str,
