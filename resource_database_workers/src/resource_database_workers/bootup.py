@@ -1,3 +1,4 @@
+from resource_auxillary.strings import EventName
 from resource_database_workers.dependencies.annotations import DOWNSTREAM_QUEUE_REGISTRY
 from resource_database_workers.dependencies.annotations import UPSTREAM_QUEUE_REGISTRY
 from resource_database_workers.dependencies.annotations import ISOLATED_EVENT_QUEUE
@@ -13,7 +14,6 @@ from resource_database_workers.dependencies.resolver import (
 )
 from resource_database_workers.dependencies.annotations import (
     GROUP_NAME,
-    STREAM_NAME,
     STATUS_PROXY,
 )
 from resource_database_workers.dependencies.resolver import (
@@ -114,7 +114,6 @@ def _stream_worker_wrapper(
     worker_mapping: dict[str, Callable[[], Any]] = {}
     base_context: dict[Any, Any] = {
         STATUS_PROXY: status_proxy,
-        STREAM_NAME: stream_config.STREAM,
         GROUP_NAME: group_name,
     }
     queue_registry_container: Final[EventQueueRegistryContainer] = get_queue_registry()
@@ -124,61 +123,75 @@ def _stream_worker_wrapper(
     ) = queue_registry_container.upstream_registry
     event_queue_annotation = BATCHED_EVENT_QUEUE  # For worker DI
 
-    # stream reader initialization
-    reader_callable: Callable[..., Any] = STREAM_CONSUMER_MAPPING[stream_config.STREAM]
-    reader_context: dict[Any, Any] = {}
-    if reader_callable == upstream_dispatcher:
-        reader_context[UPSTREAM_QUEUE_REGISTRY] = event_queue_registry
-    else:
-        event_queue_annotation = ISOLATED_EVENT_QUEUE
-        event_queue_registry = queue_registry_container.downstream_registry
-        reader_context[DOWNSTREAM_QUEUE_REGISTRY] = event_queue_registry
-    for i in range(1, stream_config.READER_COUNT + 1):
-        worker_mapping[
-            generate_worker_name(
-                stream_config.STREAM,
-                i,
-                base_name=worker_config.STREAM_READER_TASK_PREFIX,
-            )
-        ] = inject_worker_dependencies(reader_callable, base_context | reader_context)
-
-    # event worker initialization
-    # Determine batch / isolated event queue
-    for event, worker_count in stream_config.EVENT_WORKER_COUNT_MAPPING.items():
-        worker_callable, worker_context = EVENT_WORKER_DATA_MAPPING[event]
-        # Create corresponding event queue
-        event_queue_registry.register_event_queue(event)
-        worker_context |= {
-            event_queue_annotation: event_queue_registry.get_event_queue(event)
-        }
-        for i in range(1, worker_count + 1):
+    for stream, reader_count in stream_config.STREAM_READER_COUNT_MAPPING.items():
+        # stream reader initialization
+        reader_callable: Callable[..., Any] = STREAM_CONSUMER_MAPPING[stream]
+        reader_context: dict[Any, Any] = {}
+        if reader_callable == upstream_dispatcher:
+            reader_context[UPSTREAM_QUEUE_REGISTRY] = event_queue_registry
+        else:
+            event_queue_annotation = ISOLATED_EVENT_QUEUE
+            event_queue_registry = queue_registry_container.downstream_registry
+            reader_context[DOWNSTREAM_QUEUE_REGISTRY] = event_queue_registry
+        for i in range(1, reader_count + 1):
             worker_mapping[
-                generate_worker_name(worker_config.STREAM_WORKER_TASK_PREFIX, i)
-            ] = inject_stream_worker_dependencies(event, worker_context | base_context)
+                generate_worker_name(
+                    stream,
+                    i,
+                    base_name=worker_config.STREAM_READER_TASK_PREFIX,
+                )
+            ] = inject_worker_dependencies(
+                reader_callable, base_context | reader_context
+            )
+
+        # event worker initialization
+        stream_worker_data: dict[EventName, int] = (
+            stream_config.EVENT_WORKER_COUNT_MAPPING[stream]
+        )
+        for event, worker_count in stream_worker_data.items():
+            worker_callable, worker_context = EVENT_WORKER_DATA_MAPPING[event]
+            # Create corresponding event queue
+            event_queue_registry.register_event_queue(event)
+            worker_context |= {
+                event_queue_annotation: event_queue_registry.get_event_queue(event)
+            }
+            for i in range(1, worker_count + 1):
+                worker_mapping[
+                    generate_worker_name(worker_config.STREAM_WORKER_TASK_PREFIX, i)
+                ] = inject_stream_worker_dependencies(
+                    event, worker_context | base_context
+                )
 
     return worker_mapping
 
 
 async def spawn_tasks(
     app_config: AppConfig,
-    worker_config: CounterWorkersConfig | StreamWorkersConfig,
+    stream_worker_config: StreamWorkersConfig | None = None,
+    counter_worker_config: CounterWorkersConfig | None = None,
 ) -> None:
+    if not (stream_worker_config or counter_worker_config):
+        raise ValueError("Missing configurations")
+
     status_controller: Final[StatusController] = StatusController()
     status_proxy: StatusProxy = StatusProxy(status_controller)
-    if isinstance(worker_config, CounterWorkersConfig):
-        await tasks_wrapper(
-            _counter_worker_wrapper(app_config.WORKER, worker_config, status_proxy),
-            app_config.WORKER.GRACEFUL_SHUTDOWN_PERIOD,
-            status_controller,
+
+    tasks_mapping: dict[str, Callable[[], Coroutine[None, None, None]]] = {}
+
+    if counter_worker_config:
+        tasks_mapping |= _counter_worker_wrapper(
+            app_config.WORKER, counter_worker_config, status_proxy
         )
-    else:
-        await tasks_wrapper(
-            _stream_worker_wrapper(
-                app_config.WORKER,
-                worker_config,
-                status_proxy,
-                app_config.WORKER.CONSUMER_GROUP_NAME,
-            ),
-            app_config.WORKER.GRACEFUL_SHUTDOWN_PERIOD,
-            status_controller,
+    if stream_worker_config:
+        tasks_mapping |= _stream_worker_wrapper(
+            app_config.WORKER,
+            stream_worker_config,
+            status_proxy,
+            app_config.WORKER.CONSUMER_GROUP_NAME,
         )
+
+    await tasks_wrapper(
+        tasks_mapping,
+        app_config.WORKER.GRACEFUL_SHUTDOWN_PERIOD,
+        status_controller,
+    )

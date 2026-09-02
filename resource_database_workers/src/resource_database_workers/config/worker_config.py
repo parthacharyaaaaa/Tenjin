@@ -6,7 +6,6 @@ from typing import (
     ClassVar,
     Final,
     LiteralString,
-    Mapping,
     Self,
 )
 
@@ -41,9 +40,9 @@ class CounterWorkersConfig(BaseModel):
 
 
 class StreamWorkersConfig(BaseModel):
-    STREAM_READER_COUNT_MAPPING: Mapping[StreamName, Annotated[int, Field(ge=0)]] = {}
-    EVENT_WORKER_COUNT_MAPPING: Mapping[
-        StreamName, Mapping[EventName, Annotated[int, Field(ge=0)]]
+    STREAM_READER_COUNT_MAPPING: dict[StreamName, Annotated[int, Field(ge=0)]] = {}
+    EVENT_WORKER_COUNT_MAPPING: dict[
+        StreamName, dict[EventName, Annotated[int, Field(ge=0)]]
     ] = {}
 
     @classmethod
@@ -107,7 +106,7 @@ class StreamWorkersConfig(BaseModel):
         for stream_name, reader_count in self.STREAM_READER_COUNT_MAPPING.items():
             corresponding_write_data: dict[EventName, int] | None = (
                 self.EVENT_WORKER_COUNT_MAPPING.get(stream_name)
-            )  # pyrefly: ignore[bad-assignment]
+            )
             if not corresponding_write_data:
                 raise KeyError(f"Missing write data for stream: {stream_name}")
             if reader_count == 0 and any(corresponding_write_data.keys()):
