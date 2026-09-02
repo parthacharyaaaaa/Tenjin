@@ -49,7 +49,7 @@ GROUP_NAME = Annotated[str, None]
 STREAM_NAME = Annotated[StreamName, None]
 DEAD_LETTER_STREAM_NAME = Annotated[StreamName, Inject(get_dead_letter_queue_name)]
 BATCHED_EVENT_QUEUE = Annotated[asyncio.Queue[tuple[StreamedEvent, ...]], None]
-ISOLATED_EVENT_QUEUE = Annotated[asyncio.Queue[tuple[StreamedEvent]], None]
+ISOLATED_EVENT_QUEUE = Annotated[asyncio.Queue[StreamedEvent], None]
 EVENT_STREAM_MANAGER = Annotated[EventStreamManager, Inject(get_stream_manager)]
 
 ## Insertion-specific
