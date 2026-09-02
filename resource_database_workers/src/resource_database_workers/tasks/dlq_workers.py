@@ -2,14 +2,10 @@ import asyncio
 from typing import Any, Sequence
 
 from psycopg import AsyncConnection
-from psycopg_pool import AsyncConnectionPool
 from psycopg.sql import Composed
 
 from auxillary.utils import json_repr
 
-from redis.asyncio import Redis
-
-from resource_auxillary.datastructures.status_indicator import StatusProxy
 from resource_auxillary.events import (
     CacheUpdate,
     CounterUpdate,
@@ -20,14 +16,19 @@ from resource_auxillary.event_processing.db_qos import (
     db_execute_with_retries,
     dedup_insert_event,
 )
-from resource_auxillary.event_processing.post_processing import acknowledge_event
 from resource_auxillary.event_processing.qos import execute_with_redis_retries
 from resource_auxillary.datastructures.database import SideEffectType
-from resource_auxillary.strings import EventName, StreamName
+from resource_auxillary.strings import EventName
 
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
-from resource_database_workers.config.config import AppConfig
-from resource_database_workers.config.sub_config import WorkerConfig
+from resource_database_workers.dependencies.annotations import (
+    APP_CONFIG,
+    DEAD_LETTER_STREAM_NAME,
+    CONNECTION_POOL,
+    GROUP_NAME,
+    STATUS_PROXY,
+    EVENT_STREAM_MANAGER,
+)
 
 
 def get_dlq_insertion_parameters(event: StreamedEvent) -> tuple[Any, ...]:
@@ -70,19 +71,6 @@ def get_dlq_insertion_parameters(event: StreamedEvent) -> tuple[Any, ...]:
         return (event.event_id, json_repr(event))
 
 
-async def _acknowledge_dlq_event(
-    redis: Redis,
-    worker_config: WorkerConfig,
-    dlq_event: StreamedEvent,
-    stream_name: StreamName,
-    group_name: str,
-) -> None:
-    ack_coroutine = lambda: acknowledge_event(
-        redis, [dlq_event], stream_name, group_name
-    )
-    await execute_with_redis_retries(worker_config, ack_coroutine)
-
-
 async def _insert_dlq_record(
     connection: AsyncConnection,
     composed_statement: Composed,
@@ -93,22 +81,27 @@ async def _insert_dlq_record(
 
 
 async def dlq_consumer(
-    config: AppConfig,
-    stream_name: StreamName,
-    pool: AsyncConnectionPool,
-    redis: Redis,
-    group_name: str,
+    config: APP_CONFIG,
+    stream_name: DEAD_LETTER_STREAM_NAME,
+    pool: CONNECTION_POOL,
+    event_stream_manager: EVENT_STREAM_MANAGER,
+    group_name: GROUP_NAME,
     queue: asyncio.Queue[StreamedEvent],
     composed_statement: Composed,
-    status_proxy: StatusProxy,
+    status_proxy: STATUS_PROXY,
 ) -> None:
     while status_proxy.status_ok:
         dlq_event: StreamedEvent = await queue.get()
         async with pool.connection() as conn:
             # Apply deduplication
+
             if not await dedup_insert_event(conn, dlq_event.event_id):
-                await _acknowledge_dlq_event(
-                    redis, config.WORKER, dlq_event, stream_name, group_name
+                # Retry, but appending back to DLQ is pointless in a DLQ worker
+                await execute_with_redis_retries(
+                    config.WORKER,
+                    lambda: event_stream_manager.acknowledge_events(
+                        (dlq_event,), stream_name, group_name
+                    ),
                 )
 
             # !duplicate event
@@ -117,11 +110,9 @@ async def dlq_consumer(
                 conn, composed_statement, insertion_params
             )
             await db_execute_with_retries(config.WORKER, conn, db_coroutine)
-            await _acknowledge_dlq_event(
-                redis, config.WORKER, dlq_event, stream_name, group_name
+            await execute_with_redis_retries(
+                config.WORKER,
+                lambda: event_stream_manager.acknowledge_events(
+                    (dlq_event,), stream_name, group_name
+                ),
             )
-
-            ack_coroutine = lambda: acknowledge_event(
-                redis, [dlq_event], stream_name, group_name
-            )
-            await execute_with_redis_retries(config.WORKER, ack_coroutine)
