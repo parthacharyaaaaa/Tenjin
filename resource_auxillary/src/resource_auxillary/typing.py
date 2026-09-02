@@ -10,9 +10,8 @@ class SupportsExponentialJitteredRetryPolicy(Protocol):
 
 class SupportsInternalQueueConsumerPolicy(Protocol):
     IQ_CONSUMER_BASE_WAITING_TIME: int
-    IQ_CONSUMER_GET_TIMEOUT: int
-    IQ_CONSUMER_BATCH_SIZE_QUOTA: int
-    IQ_CONSUMER_SLEEP_INTERVAL: int
+    IQ_CONSUMER_GET_TIMEOUT: float
+    IQ_CONSUMER_SLEEP_INTERVAL: float
 
 
 class HasEventID(Protocol):
