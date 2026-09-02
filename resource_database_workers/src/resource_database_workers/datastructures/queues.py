@@ -153,5 +153,5 @@ class EventQueueRegistryContainer(metaclass=SingletonMetaclass):
     )
 
     dlq_registry: EventQueueRegistry[asyncio.Queue[StreamedEvent]] = field(
-        default_factory=EventQueueRegistry
+        default_factory=DeadLetterQueueRegistry
     )

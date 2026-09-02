@@ -1,4 +1,4 @@
-import asyncio
+from resource_database_workers.dependencies.annotations import ISOLATED_EVENT_QUEUE
 from typing import Any, Sequence
 
 from psycopg import AsyncConnection
@@ -86,7 +86,7 @@ async def dlq_consumer(
     pool: CONNECTION_POOL,
     event_stream_manager: EVENT_STREAM_MANAGER,
     group_name: GROUP_NAME,
-    queue: asyncio.Queue[StreamedEvent],
+    queue: ISOLATED_EVENT_QUEUE,
     composed_statement: Composed,
     status_proxy: STATUS_PROXY,
 ) -> None:

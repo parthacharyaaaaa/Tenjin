@@ -1,3 +1,6 @@
+from resource_database_workers.dependencies.annotations import (
+    DEAD_LETTER_QUEUE_REGISTRY,
+)
 from collections.abc import Sequence
 from typing import Any
 from resource_database_workers.datastructures.queues import EventQueueRegistry
@@ -100,6 +103,28 @@ async def downstream_dispatcher(
     config: APP_CONFIG,
     event_stream_manager: EVENT_STREAM_MANAGER,
     queue_registry: DOWNSTREAM_QUEUE_REGISTRY,
+    dlq_stream_name: DEAD_LETTER_STREAM_NAME,
+    stream_name: StreamName,
+    group_name: GROUP_NAME,
+    consumer_name: CONSUMER_ID,
+    read_history: bool = True,
+) -> None:
+    await base_dispatcher(
+        config,
+        event_stream_manager,
+        queue_registry,
+        dlq_stream_name,
+        stream_name,
+        group_name,
+        consumer_name,
+        read_history,
+    )
+
+
+async def dlq_dispatcher(
+    config: APP_CONFIG,
+    event_stream_manager: EVENT_STREAM_MANAGER,
+    queue_registry: DEAD_LETTER_QUEUE_REGISTRY,
     dlq_stream_name: DEAD_LETTER_STREAM_NAME,
     stream_name: StreamName,
     group_name: GROUP_NAME,

@@ -43,6 +43,11 @@ DOWNSTREAM_QUEUE_REGISTRY = Annotated[
     Inject(lambda: get_queue_registry().downstream_registry),
 ]
 
+DEAD_LETTER_QUEUE_REGISTRY = Annotated[
+    EventQueueRegistry[StreamedEvent],
+    Inject(lambda: get_queue_registry().dlq_registry),
+]
+
 # Worker-level dependencies
 STATUS_PROXY = Annotated[StatusProxy, None]
 GROUP_NAME = Annotated[str, None]
