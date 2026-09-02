@@ -75,3 +75,7 @@ class EventName(StrEnum):
     USER_DELETION_EMAIL = "USER_DELETION_EMAIL"
     USER_REGISTRATION_EMAIL = "USER_REGISTRATION_EMAIL"
     USER_PASSWORD_RECOVERY_EMAIL = "USER_PASSWORD_RECOVERY_EMAIL"  # nosec
+
+    DEAD_LETTER_SENTINEL = (
+        "DEAD_LETTER_SENTINEL"  # For internal queues only, must never touch Redis
+    )
