@@ -11,6 +11,7 @@ from resource_database_workers.dependencies.annotations import (
     INTERNAL_REDIS,
     CONNECTION_POOL,
     APP_CONFIG,
+    EVENT_STREAM_MANAGER,
 )
 from resource_database_workers.tasks.insertions import batch_insert_with_isolation
 from resource_database_workers.tasks.deletions import (
@@ -27,14 +28,12 @@ from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.datastructures.database import StrongEntity
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.event_processing.pre_processing import (
-    trim_duplicate_events,
     populate_events_batch_from_queue,
 )
 from resource_auxillary.event_processing.qos import execute_with_redis_retries
 from resource_auxillary.event_processing.wrappers import (
     ack_with_retries,
     declare_dead_with_retries,
-    commit_processed_events,
 )
 from resource_auxillary.constants import POTENTIAL_TRANSIENT_ERRORS
 
@@ -61,6 +60,7 @@ async def user_orphan_consumer(
     config: APP_CONFIG,
     pool: CONNECTION_POOL,
     redis: INTERNAL_REDIS,
+    event_stream_manager: EVENT_STREAM_MANAGER,
     queue: BATCHED_EVENT_QUEUE,
     stream_name: STREAM_NAME,
     group_name: GROUP_NAME,
@@ -81,8 +81,8 @@ async def user_orphan_consumer(
                 conn, (e.event_id for e in batch)
             )
 
-        await trim_duplicate_events(
-            redis, batch, fresh_event_ids, stream_name, group_name
+        await event_stream_manager.trim_duplicate_events(
+            batch, fresh_event_ids, stream_name, group_name
         )
 
         exception: Exception | None = None
@@ -117,24 +117,22 @@ async def user_orphan_consumer(
 
         if exception:  # Entire batch failed
             await declare_dead_with_retries(
-                redis,
+                event_stream_manager,
                 config.WORKER,
                 batch,
                 stream_name,
                 group_name,
                 dead_letter_stream_name,
-                config.WORKER.MAX_RETRIES,
             )
         else:
             # ACK entire batch
             await ack_with_retries(
-                redis,
+                event_stream_manager,
                 config.WORKER,
                 batch,
                 stream_name,
                 group_name,
                 dead_letter_stream_name,
-                config.WORKER.MAX_RETRIES,
             )
 
         batch.clear()
@@ -144,7 +142,7 @@ async def user_orphan_consumer(
 async def queue_insertion_consumer(
     config: APP_CONFIG,
     pool: CONNECTION_POOL,
-    redis: INTERNAL_REDIS,
+    event_stream_manager: EVENT_STREAM_MANAGER,
     queue: BATCHED_EVENT_QUEUE,
     stream_name: STREAM_NAME,
     group_name: GROUP_NAME,
@@ -164,8 +162,8 @@ async def queue_insertion_consumer(
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
                 conn, (e.event_id for e in batch)
             )
-            await trim_duplicate_events(
-                redis, batch, fresh_event_ids, stream_name, group_name
+            await event_stream_manager.trim_duplicate_events(
+                batch, fresh_event_ids, stream_name, group_name
             )
             if not batch:
                 continue
@@ -178,13 +176,12 @@ async def queue_insertion_consumer(
                 await db_execute_with_retries(config.WORKER, conn, insertion_callable)
             except Exception:  # Entire batch failed
                 await declare_dead_with_retries(
-                    redis,
+                    event_stream_manager,
                     config.WORKER,
                     batch,
                     stream_name,
                     group_name,
                     dead_letter_stream_name,
-                    config.WORKER.MAX_RETRIES,
                 )
             else:
                 successful_events: tuple[StreamedEvent, ...] = tuple(
@@ -192,22 +189,21 @@ async def queue_insertion_consumer(
                 )
 
                 # post-process successful events and push failed events to DLQ
-                await commit_processed_events(
-                    redis,
+                await ack_with_retries(
+                    event_stream_manager,
                     config.WORKER,
                     batch,
-                    group_name,
                     stream_name,
+                    group_name,
                     dead_letter_stream_name,
                 )
                 await declare_dead_with_retries(
-                    redis,
+                    event_stream_manager,
                     config.WORKER,
                     tuple(event for event in batch if event not in successful_events),
                     stream_name,
                     group_name,
                     dead_letter_stream_name,
-                    config.WORKER.MAX_RETRIES,
                 )
 
             reference_time = time.monotonic()
@@ -218,6 +214,7 @@ async def queue_deletion_consumer(
     config: APP_CONFIG,
     pool: CONNECTION_POOL,
     redis: INTERNAL_REDIS,
+    event_stream_manager: EVENT_STREAM_MANAGER,
     table: TABLE,
     identifier_column: IDENTIFIER_COLUMN,
     queue: BATCHED_EVENT_QUEUE,
@@ -237,8 +234,8 @@ async def queue_deletion_consumer(
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
                 conn, (e.event_id for e in batch)
             )
-            await trim_duplicate_events(
-                redis, batch, fresh_event_ids, stream_name, group_name
+            await event_stream_manager.trim_duplicate_events(
+                batch, fresh_event_ids, stream_name, group_name
             )
 
             deletion_data: Generator[tuple[int, datetime, int]] = (
@@ -257,22 +254,21 @@ async def queue_deletion_consumer(
                 await db_execute_with_retries(config.WORKER, conn, deletion_callable)
             except Exception:
                 await declare_dead_with_retries(
-                    redis,
+                    event_stream_manager,
                     config.WORKER,
                     batch,
                     stream_name,
                     group_name,
                     dead_letter_stream_name,
-                    config.WORKER.MAX_RETRIES,
                 )
             else:
                 # ACK entire batch and emit side-effects
-                await commit_processed_events(
-                    redis,
+                await ack_with_retries(
+                    event_stream_manager,
                     config.WORKER,
                     batch,
-                    group_name,
                     stream_name,
+                    group_name,
                     dead_letter_stream_name,
                 )
                 await dispatch_downstream_events(
@@ -294,6 +290,7 @@ async def queue_downstream_deletion_consumer(
     config: APP_CONFIG,
     pool: CONNECTION_POOL,
     redis: INTERNAL_REDIS,
+    event_stream_manager: EVENT_STREAM_MANAGER,
     queue: ISOLATED_EVENT_QUEUE,
     stream_name: STREAM_NAME,
     group_name: GROUP_NAME,
@@ -308,20 +305,21 @@ async def queue_downstream_deletion_consumer(
             )
         except (KeyError, ValueError):
             await declare_dead_with_retries(
-                redis,
+                event_stream_manager,
                 config.WORKER,
                 (event,),
                 stream_name,
                 group_name,
                 dead_letter_stream_name,
-                config.WORKER.MAX_RETRIES,
             )
             continue
 
         async with pool.connection() as conn:
             # Deduplication
             if not await dedup_insert_event(conn, event.event_id):
-                await redis.xack(stream_name, group_name, event.event_id)
+                await event_stream_manager.acknowledge_events(
+                    (event,), stream_name, group_name
+                )
                 continue
 
             downstream_deletion_callable = lambda: downstream_soft_delete_strong_entity(
@@ -340,24 +338,22 @@ async def queue_downstream_deletion_consumer(
                 # Single event tuple used in place of event
                 # for methods that process batches of events
                 await declare_dead_with_retries(
-                    redis,
+                    event_stream_manager,
                     config.WORKER,
                     (event,),
                     stream_name,
                     group_name,
                     dead_letter_stream_name,
-                    config.WORKER.MAX_RETRIES,
                 )
                 continue
 
             await ack_with_retries(
-                redis,
+                event_stream_manager,
                 config.WORKER,
                 (event,),
                 stream_name,
                 group_name,
                 dead_letter_stream_name,
-                config.WORKER.MAX_RETRIES,
             )
 
             await dispatch_downstream_counter_decrements(
@@ -373,6 +369,7 @@ async def queue_downstream_decrement_consumer(
     config: APP_CONFIG,
     pool: CONNECTION_POOL,
     redis: INTERNAL_REDIS,
+    event_stream_manager: EVENT_STREAM_MANAGER,
     queue: ISOLATED_EVENT_QUEUE,
     stream_name: STREAM_NAME,
     group_name: GROUP_NAME,
@@ -387,13 +384,12 @@ async def queue_downstream_decrement_consumer(
             )
         except (KeyError, ValueError):
             await declare_dead_with_retries(
-                redis,
+                event_stream_manager,
                 config.WORKER,
                 (event,),
                 stream_name,
                 group_name,
                 dead_letter_stream_name,
-                config.WORKER.MAX_RETRIES,
             )
             continue
 
@@ -402,13 +398,15 @@ async def queue_downstream_decrement_consumer(
         exception: Exception | None = None
         async with pool.connection() as conn:
             if not await dedup_insert_event(conn, event.event_id):
-                await redis.xack(stream_name, group_name, event.event_id)
+                await event_stream_manager.acknowledge_events(
+                    (event,), stream_name, group_name
+                )
                 continue
 
             for _attempt in range(1, config.WORKER.MAX_RETRIES + 1):
                 try:
                     # temp truthy tuple to enter loop
-                    # (hehe it kinda looks like a wink)
+                    # (hehe the initial list kinda looks like a wink)
                     results: list[tuple[str, int]] = [("", 0)]
                     while results:
                         results: list[tuple[str, int]] = await select_decrement_deltas(
@@ -449,21 +447,19 @@ async def queue_downstream_decrement_consumer(
 
             if exception:
                 await declare_dead_with_retries(
-                    redis,
+                    event_stream_manager,
                     config.WORKER,
                     (event,),
                     stream_name,
                     group_name,
                     dead_letter_stream_name,
-                    config.WORKER.MAX_RETRIES,
                 )
             else:
                 await ack_with_retries(
-                    redis,
+                    event_stream_manager,
                     config.WORKER,
                     (event,),
                     stream_name,
                     group_name,
                     dead_letter_stream_name,
-                    config.WORKER.MAX_RETRIES,
                 )

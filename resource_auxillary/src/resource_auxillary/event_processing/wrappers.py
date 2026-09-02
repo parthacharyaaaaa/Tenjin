@@ -2,87 +2,58 @@
 
 from typing import Sequence
 
-from redis.asyncio import Redis
-
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import StreamName
 from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
-from resource_auxillary.event_processing.post_processing import (
-    acknowledge_event,
-    amortize_event,
-    atomic_ack_and_emit_side_effects,
-)
 from resource_auxillary.event_processing.qos import (
     dlq_aware_process_events,
     execute_with_redis_retries,
 )
+from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
 
 
 async def declare_dead_with_retries(
-    redis: Redis,
+    event_stream_manager: EventStreamManager,
     retry_policy: SupportsExponentialJitteredRetryPolicy,
     batch: Sequence[StreamedEvent],
     stream_name: StreamName,
     group_name: str,
     dead_letter_stream_name: StreamName,
-    attempts: int,
+    *,
+    attempts: int | None = None,
 ) -> None:
     """
-    Thin wrapper over sibling utility functions to declare an event as dead
+    Thin wrapper over sibling utility functions to declare an event batch as dead
     """
-    coro = lambda: amortize_event(
-        redis, batch, stream_name, group_name, dead_letter_stream_name
+    coro = lambda: event_stream_manager.amortize_events(
+        batch, stream_name, group_name, dead_letter_stream_name
     )
     await execute_with_redis_retries(retry_policy, coro, attempts)
 
 
 async def ack_with_retries(
-    redis: Redis,
+    event_stream_manager: EventStreamManager,
     retry_policy: SupportsExponentialJitteredRetryPolicy,
     batch: Sequence[StreamedEvent],
     stream_name: StreamName,
     group_name: str,
     dead_letter_stream_name: StreamName,
-    attempts: int,
+    *,
+    attempts: int | None = None,
 ) -> None:
     """
-    Thin wrapper over sibling utility functions to acknowledge an event
+    Thin wrapper over sibling utility functions to acknowledge an event batch
     """
-    coro = lambda: acknowledge_event(redis, batch, stream_name, group_name)
+    coro = lambda: event_stream_manager.acknowledge_events(
+        batch, stream_name, group_name
+    )
     await dlq_aware_process_events(
-        redis,
+        event_stream_manager,
         retry_policy,
         batch,
         coro,
-        attempts,
         stream_name,
         group_name,
         dead_letter_stream_name,
-    )
-
-
-async def commit_processed_events(
-    redis: Redis,
-    retry_policy: SupportsExponentialJitteredRetryPolicy,
-    events: Sequence[StreamedEvent],
-    group_name: str,
-    stream_name: StreamName,
-    dlq_stream_name: StreamName,
-) -> None:
-    """
-    Thin wrapper to atomically acknowledge a collection of events and
-    emit their side-effects
-    """
-    coro = lambda: atomic_ack_and_emit_side_effects(
-        redis, events, stream_name, group_name
-    )
-    await dlq_aware_process_events(
-        redis,
-        retry_policy,
-        events,
-        coro,
-        retry_policy.MAX_RETRIES,
-        stream_name,
-        group_name,
-        dlq_stream_name,
+        attempts=attempts,
     )

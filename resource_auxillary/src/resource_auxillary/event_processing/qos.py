@@ -1,5 +1,6 @@
 """Quality-of-Service utility functions"""
 
+from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Coroutine, Sequence
 
@@ -8,9 +9,6 @@ from redis.exceptions import RedisError, ExceptionType
 
 from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.events import StreamedEvent
-from resource_auxillary.event_processing.post_processing import (
-    amortize_event,
-)
 from resource_auxillary.strings import StreamName
 from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 
@@ -46,27 +44,30 @@ async def execute_with_redis_retries(
 
 
 async def dlq_aware_process_events(
-    redis: Redis,
+    event_stream_manager: EventStreamManager,
     retry_policy: SupportsExponentialJitteredRetryPolicy,
     events: Sequence[StreamedEvent],
     redis_coroutine: Callable[[], Coroutine[Any, Any, Any]],
-    attempts: int,
     event_stream_name: StreamName,
     group_name: str,
     dlq_stream_name: StreamName,
+    *,
+    attempts: int | None = None,
 ) -> Any:
     """
     DLQ-aware event processing helper with retries
     """
+    attempts = attempts or retry_policy.MAX_RETRIES
     try:
         await execute_with_redis_retries(retry_policy, redis_coroutine, attempts)
     except Exception as e:
         dlq_attempts: int = (
             1 if getattr(e, "error_type", None) == ExceptionType.NETWORK else attempts
         )
-        coro = lambda: amortize_event(
-            redis, events, event_stream_name, group_name, dlq_stream_name
+        coro = lambda: event_stream_manager.amortize_events(
+            events, event_stream_name, group_name, dlq_stream_name
         )
+        # Fail hard on this retried attempt
         await execute_with_redis_retries(retry_policy, coro, dlq_attempts)
 
 

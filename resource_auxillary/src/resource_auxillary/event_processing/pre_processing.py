@@ -2,28 +2,9 @@
 
 import asyncio
 import time
-from typing import Sequence
 
-from redis.asyncio import Redis
-
-from resource_auxillary.strings import StreamName
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.typing import SupportsInternalQueueConsumerPolicy
-
-
-async def trim_duplicate_events(
-    redis: Redis,
-    batch: list[StreamedEvent],
-    fresh_event_ids: Sequence[int],
-    stream_name: StreamName,
-    group_name: str,
-) -> None:
-    async with redis.pipeline() as pipeline:
-        for event in batch.copy():
-            if event.event_id not in fresh_event_ids:
-                batch.remove(event)
-                pipeline.xack(stream_name, group_name, event.event_id)
-        await pipeline.execute()
 
 
 async def populate_events_batch_from_queue(
