@@ -1,26 +1,24 @@
 """Utility functions for declaring new events"""
 
+from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 from typing import Sequence
 
-from redis.asyncio import Redis
-
-from auxillary.utils import cache_repr, json_repr
+from auxillary.utils import json_repr
 
 from resource_auxillary.events import Event, StreamedEvent
 from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
 from resource_auxillary.event_processing.qos import execute_with_redis_retries
 from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
 
-from resource_database_workers.config.sub_config import WorkerConfig
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
 
 
 async def declare_counters_event_dead(
-    redis: Redis,
+    stream_manager: EventStreamManager,
+    retry_policy: SupportsExponentialJitteredRetryPolicy,
     dlq_stream_name: StreamName,
     counter_group: str,
     batch: dict[int, int],
-    attempts: int,
 ) -> None:
     table, column = counter_group.split(NAME_SEPERATOR)
     dlq_counters_batch: DeadCounterBatch = DeadCounterBatch.construct_from_failed_batch(
@@ -32,14 +30,15 @@ async def declare_counters_event_dead(
         side_effects=EventSideEffects(),  # type: ignore
     )
 
-    xack_coroutine = lambda: redis.xadd(dlq_stream_name, cache_repr(failure_event))
-    await execute_with_redis_retries(xack_coroutine, attempts)  # type: ignore[reportArgumentType]
+    dlq_coroutine = lambda: stream_manager.stream_events(
+        (failure_event,), dlq_stream_name
+    )
+    await execute_with_redis_retries(retry_policy, dlq_coroutine)
 
 
 async def declare_side_effects_event_dead(
-    redis: Redis,
     stream_manager: EventStreamManager,
-    worker_config: WorkerConfig,
+    retry_policy: SupportsExponentialJitteredRetryPolicy,
     batch: Sequence[StreamedEvent],
     dlq_stream_name: StreamName,
     attempts: int,
@@ -56,4 +55,4 @@ async def declare_side_effects_event_dead(
     dlq_coroutine = lambda: stream_manager.stream_events(
         failure_events, dlq_stream_name
     )
-    await execute_with_redis_retries(worker_config, dlq_coroutine, attempts)
+    await execute_with_redis_retries(retry_policy, dlq_coroutine, attempts)
