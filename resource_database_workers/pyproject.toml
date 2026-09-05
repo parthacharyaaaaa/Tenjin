@@ -10,6 +10,7 @@ dependencies = [
     "psycopg-pool>=3.3.1",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
+    "python-dotenv>=1.2.2",
     "redis>=7.0.0, <8",
     "resource_auxillary",
 ]
@@ -28,5 +29,8 @@ known_first_party=[
     "resource_database_workers",
     "resource_server"
 ]
+[tool.deptry.package_module_name_map]
+python-dotenv = "dotenv"
+
 
 [tool.pyrefly]

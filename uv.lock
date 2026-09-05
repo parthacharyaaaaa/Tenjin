@@ -1114,6 +1114,7 @@ dependencies = [
     { name = "psycopg-pool" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
     { name = "redis" },
     { name = "resource-auxillary" },
 ]
@@ -1125,6 +1126,7 @@ requires-dist = [
     { name = "psycopg-pool", specifier = ">=3.3.1" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.14.1" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "redis", specifier = ">=7.0.0,<8" },
     { name = "resource-auxillary", editable = "resource_auxillary" },
 ]
