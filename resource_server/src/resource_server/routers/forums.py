@@ -7,7 +7,6 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
-from redis.typing import FieldT
 
 from auxillary.utils import cache_repr, json_repr, to_base64url
 
@@ -223,7 +222,9 @@ async def delete_forum(
     ):
         deletion_paylaod: ForumDeletion = ForumDeletion(forum_id=forum_id)
         event: Event = Event(
-            name=EventName.FORUM_DELETE, payload=deletion_paylaod  # type: ignore
+            name=EventName.FORUM_DELETE,
+            payload=deletion_paylaod,
+            side_effects=EventSideEffects(),
         )
 
         await event_streamer.emit_user_event(StreamName.FORUMS, event)

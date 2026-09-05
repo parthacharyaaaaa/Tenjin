@@ -89,7 +89,7 @@ class KeyManager(metaclass=SingletonMetaclass):
         """Get JWKS cache in Redis"""
         res: dict[str, str] = await self.app_redis_client.hgetall(
             RedisConstants.JWKS_MAPPING
-        )  # type: ignore[reportGeneralTypeIssues]
+        )  # pyrefly: ignore[not-async]
 
         # crypto APIs expect bytes
         return {kid: pub_pem.encode() for kid, pub_pem in res.items()}

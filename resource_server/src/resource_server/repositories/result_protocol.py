@@ -17,7 +17,7 @@ class AbstractResult:
 
     def __init_subclass__(cls):
         cls._fields = tuple(f.name for f in fields(cls))
-        cls._counter_fields_map = {
+        cls.counter_fields_map = {
             i: NAME_SEPERATOR.join((cls.resource_name, i)) for i in cls._counter_fields
         }
         if not hasattr(cls, "resource_name"):
