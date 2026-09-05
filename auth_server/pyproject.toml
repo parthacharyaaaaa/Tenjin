@@ -42,3 +42,5 @@ pyjwt = "jwt"
 
 [tool.deptry.per_rule_ignores]
 DEP002 = ["psycopg", "mako", "cryptography"]
+
+[tool.pyrefly]

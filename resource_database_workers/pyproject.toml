@@ -28,3 +28,5 @@ known_first_party=[
     "resource_database_workers",
     "resource_server"
 ]
+
+[tool.pyrefly]

@@ -40,3 +40,5 @@ known_first_party=[
 [tool.deptry.package_module_name_map]
 python-dotenv = "dotenv"
 pyjwt = "jwt"
+
+[tool.pyrefly]

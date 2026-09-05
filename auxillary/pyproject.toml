@@ -20,3 +20,5 @@ where = ["src"]
 
 [tool.deptry]
 known_first_party=["auxillary"]
+
+[tool.pyrefly]

@@ -12,3 +12,5 @@ dependencies = [
 
 [tool.uv.sources]
 resource-auxillary = { workspace = true }
+
+[tool.pyrefly]
