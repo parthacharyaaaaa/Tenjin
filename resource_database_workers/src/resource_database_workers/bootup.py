@@ -1,3 +1,4 @@
+from resource_database_workers.dependencies.annotations import STREAM_NAME
 from resource_database_workers.dependencies.annotations import (
     DEAD_LETTER_QUEUE_REGISTRY,
 )
@@ -130,7 +131,7 @@ def _stream_worker_wrapper(
     for stream, reader_count in stream_config.STREAM_READER_COUNT_MAPPING.items():
         # stream reader initialization
         reader_callable: Callable[..., Any] = STREAM_CONSUMER_MAPPING[stream]
-        reader_context: dict[Any, Any] = {}
+        reader_context: dict[Any, Any] = {STREAM_NAME: stream}
 
         # Resolve DI context based on stream type (and its corresponding dispatch function)
         # a little bit hacky
@@ -164,7 +165,8 @@ def _stream_worker_wrapper(
             # Create corresponding event queue
             event_queue_registry.register_event_queue(event)
             worker_context |= {
-                event_queue_annotation: event_queue_registry.get_event_queue(event)
+                event_queue_annotation: event_queue_registry.get_event_queue(event),
+                STREAM_NAME: stream,
             }
             for i in range(1, worker_count + 1):
                 worker_mapping[
