@@ -33,3 +33,9 @@ class PostDeletion(TypedDict):
 class UserCleanup(TypedDict):
     user_id: int
     time_deleted: datetime
+
+
+class UserTicket(TypedDict):
+    email: str
+    time_raised: datetime
+    description: str

@@ -50,6 +50,7 @@ _INSERTION_EVENT_ARGS_MAPPING: Final[MappingProxyType[EventName, dict[Any, Any]]
         {
             EventName.POST_CREATE: {ACTION_LITERAL: None},
             EventName.COMMENT_CREATE: {ACTION_LITERAL: None},
+            EventName.USER_TICKET: {ACTION_LITERAL: None},
             EventName.POST_VOTE: {ACTION_LITERAL: "vote"},
             EventName.POST_REPORT: {ACTION_LITERAL: None},
             EventName.POST_UNVOTE: {ACTION_LITERAL: "vote"},
@@ -74,6 +75,7 @@ EVENT_WORKER_DATA_MAPPING: Final[MappingProxyType[EventName, t_event_worker_data
             )
             for event, worker in {
                 EventName.USER_CLEANUP: user_orphan_consumer,
+                EventName.USER_TICKET: queue_insertion_consumer,
                 EventName.POST_CREATE: queue_insertion_consumer,
                 EventName.POST_DELETE: queue_deletion_consumer,
                 EventName.POST_REPORT: queue_insertion_consumer,

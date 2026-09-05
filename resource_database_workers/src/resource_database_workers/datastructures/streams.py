@@ -52,7 +52,7 @@ STREAM_EVENT_MAPPING: Final[MappingProxyType[StreamName, tuple[EventName, ...]]]
                 EventName.ANIME_SUB,
                 EventName.ANIME_UNSUB,
             ),
-            StreamName.USERS: (EventName.USER_CLEANUP,),
+            StreamName.USERS: (EventName.USER_CLEANUP, EventName.USER_TICKET),
             StreamName.DOWNSTREAM_DELETIONS: (
                 EventName.ORPHANED_POST_DELETE,
                 EventName.ORPHANED_COMMENT_DELETE,
