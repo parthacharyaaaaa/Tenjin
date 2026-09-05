@@ -143,7 +143,7 @@ class DeadLetterQueueRegistry(Generic[T], EventQueueRegistry[T]):
         )
 
 
-@dataclass(slots=True, frozen=True)
+@dataclass(slots=True, frozen=True, weakref_slot=True)
 class EventQueueRegistryContainer(metaclass=SingletonMetaclass):
     upstream_registry: EventQueueRegistry[asyncio.Queue[tuple[StreamedEvent, ...]]] = (
         field(default_factory=EventQueueRegistry)
