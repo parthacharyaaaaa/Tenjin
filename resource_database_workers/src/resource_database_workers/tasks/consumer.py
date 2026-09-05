@@ -59,7 +59,6 @@ from resource_database_workers.datastructures.downstream import (
 async def user_orphan_consumer(
     config: APP_CONFIG,
     pool: CONNECTION_POOL,
-    redis: INTERNAL_REDIS,
     event_stream_manager: EVENT_STREAM_MANAGER,
     queue: BATCHED_EVENT_QUEUE,
     stream_name: STREAM_NAME,
@@ -89,7 +88,7 @@ async def user_orphan_consumer(
         for _attempt in range(1, config.WORKER.MAX_RETRIES + 1):
             try:
                 await dispatch_downstream_events(
-                    redis,
+                    event_stream_manager,
                     config.WORKER,
                     StrongEntity.USER,
                     (
@@ -213,7 +212,6 @@ async def queue_insertion_consumer(
 async def queue_deletion_consumer(
     config: APP_CONFIG,
     pool: CONNECTION_POOL,
-    redis: INTERNAL_REDIS,
     event_stream_manager: EVENT_STREAM_MANAGER,
     table: TABLE,
     identifier_column: IDENTIFIER_COLUMN,
@@ -272,7 +270,7 @@ async def queue_deletion_consumer(
                     dead_letter_stream_name,
                 )
                 await dispatch_downstream_events(
-                    redis,
+                    event_stream_manager,
                     config.WORKER,
                     table,
                     (
@@ -289,7 +287,6 @@ async def queue_deletion_consumer(
 async def queue_downstream_deletion_consumer(
     config: APP_CONFIG,
     pool: CONNECTION_POOL,
-    redis: INTERNAL_REDIS,
     event_stream_manager: EVENT_STREAM_MANAGER,
     queue: ISOLATED_EVENT_QUEUE,
     stream_name: STREAM_NAME,
@@ -357,7 +354,7 @@ async def queue_downstream_deletion_consumer(
             )
 
             await dispatch_downstream_counter_decrements(
-                redis,
+                event_stream_manager,
                 config.WORKER,
                 event_payload["orphan_table"],
                 event.event_id,

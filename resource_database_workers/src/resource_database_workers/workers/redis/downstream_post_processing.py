@@ -1,9 +1,8 @@
+from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
 from datetime import datetime
 from typing import Iterable
 
 from redis.asyncio import Redis
-
-from auxillary.utils import cache_repr
 
 from resource_auxillary.cache import derive_cache_key
 from resource_auxillary.datastructures.database import StrongEntity
@@ -25,38 +24,16 @@ from resource_database_workers.datastructures.downstream import (
 from resource_database_workers.config.sub_config import (
     WorkerConfig,
 )
-from resource_database_workers.workers.redis.declarations import (
-    declare_standard_event_dead,
-)
-
-
-async def _xadd_downstream_events(redis: Redis, events: Iterable[Event]) -> None:
-    async with redis.pipeline() as pipeline:
-        for event in events:
-            pipeline.xadd(
-                StreamName.DOWNSTREAM_DELETIONS,
-                cache_repr(event),
-            )
-        await pipeline.execute()
-
-
-async def _xadd_downstream_counter_decrements(
-    redis: Redis, events: Iterable[Event]
-) -> None:
-    async with redis.pipeline() as pipeline:
-        for event in events:
-            pipeline.xadd(
-                name=StreamName.DOWNSTREAM_COUNTER_DECREMENTS, fields=cache_repr(event)
-            )
-        await pipeline.execute()
 
 
 async def dispatch_downstream_events(
-    redis: Redis,
+    event_stream_manager: EventStreamManager,
     worker_config: WorkerConfig,
     upstream_table: StrongEntity,
     deleted_data: Iterable[tuple[int, datetime]],
     dlq_stream_name: StreamName,
+    *,
+    downstream_deletions_stream_name: StreamName = StreamName.DOWNSTREAM_DELETIONS,
 ) -> None:
     events: list[Event] = []
     downstream_bases: tuple[AnonymousDownstreamDeletionData, ...] = (
@@ -74,19 +51,26 @@ async def dispatch_downstream_events(
             for base in downstream_bases
         )
 
-    dispatch_coroutine = lambda: _xadd_downstream_events(redis, events)
+    dispatch_coroutine = lambda: event_stream_manager.stream_events(
+        events, downstream_deletions_stream_name
+    )
     try:
         await execute_with_redis_retries(worker_config, dispatch_coroutine)
     except Exception:
-        await declare_standard_event_dead(redis, worker_config, events, dlq_stream_name)
+        dispatch_coroutine = lambda: event_stream_manager.stream_events(
+            events, dlq_stream_name
+        )
+        await execute_with_redis_retries(worker_config, dispatch_coroutine)
 
 
 async def dispatch_downstream_counter_decrements(
-    redis: Redis,
+    event_stream_manager: EventStreamManager,
     worker_config: WorkerConfig,
     deleted_entity: StrongEntity,
     deletion_author_event_id: int,
     dlq_stream_name: StreamName,
+    *,
+    downstream_decrements_stream_name: StreamName = StreamName.DOWNSTREAM_COUNTER_DECREMENTS,
 ) -> None:
     downstream_counter_data: tuple[t_downstream_counter_event_metadata, ...] | None = (
         DOWNSTREAM_DECREMENT_MAPPING.get(deleted_entity, None)
@@ -110,11 +94,16 @@ async def dispatch_downstream_counter_decrements(
         for (event_name, foreign_key_column, hashmap_name) in downstream_counter_data
     ]
 
-    dispatch_coroutine = lambda: _xadd_downstream_counter_decrements(redis, events)
+    dispatch_coroutine = lambda: event_stream_manager.stream_events(
+        events, downstream_decrements_stream_name
+    )
     try:
         await execute_with_redis_retries(worker_config, dispatch_coroutine)
     except Exception:
-        await declare_standard_event_dead(redis, worker_config, events, dlq_stream_name)
+        dispatch_coroutine = lambda: event_stream_manager.stream_events(
+            events, dlq_stream_name
+        )
+        await execute_with_redis_retries(worker_config, dispatch_coroutine)
 
 
 async def emit_downstream_counter_decrement_updates(

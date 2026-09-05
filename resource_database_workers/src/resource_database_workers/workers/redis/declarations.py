@@ -7,7 +7,7 @@ from redis.asyncio import Redis
 from auxillary.utils import cache_repr, json_repr
 
 from resource_auxillary.events import Event, StreamedEvent
-from resource_auxillary.event_processing.post_processing import stream_events
+from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
 from resource_auxillary.event_processing.qos import execute_with_redis_retries
 from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
 
@@ -38,12 +38,13 @@ async def declare_counters_event_dead(
 
 async def declare_side_effects_event_dead(
     redis: Redis,
+    stream_manager: EventStreamManager,
     worker_config: WorkerConfig,
     batch: Sequence[StreamedEvent],
     dlq_stream_name: StreamName,
     attempts: int,
 ) -> None:
-    failure_events: tuple[Event] = tuple(
+    failure_events: tuple[Event, ...] = tuple(
         Event(
             name=EventName.DLQ_SIDE_EFFECTS,
             payload=json_repr(event),
@@ -52,16 +53,7 @@ async def declare_side_effects_event_dead(
         for event in batch
     )
 
-    dlq_coroutine = lambda: stream_events(redis, failure_events, dlq_stream_name)
-    await execute_with_redis_retries(worker_config, dlq_coroutine, attempts)
-
-
-async def declare_standard_event_dead(
-    redis: Redis,
-    worker_config: WorkerConfig,
-    batch: Sequence[Event],
-    dlq_stream_name: StreamName,
-    attempts: int | None = None,
-) -> None:
-    dlq_coroutine = lambda: stream_events(redis, batch, dlq_stream_name)
+    dlq_coroutine = lambda: stream_manager.stream_events(
+        failure_events, dlq_stream_name
+    )
     await execute_with_redis_retries(worker_config, dlq_coroutine, attempts)
