@@ -1,5 +1,6 @@
 from resource_database_workers.dependencies.annotations import (
     DEAD_LETTER_QUEUE_REGISTRY,
+    STREAM_NAME,
 )
 from collections.abc import Sequence
 from typing import Any
@@ -82,7 +83,7 @@ async def upstream_dispatcher(
     event_stream_manager: EVENT_STREAM_MANAGER,
     queue_registry: UPSTREAM_QUEUE_REGISTRY,
     dlq_stream_name: DEAD_LETTER_STREAM_NAME,
-    stream_name: StreamName,
+    stream_name: STREAM_NAME,
     group_name: GROUP_NAME,
     consumer_name: CONSUMER_ID,
     read_history: bool = True,
@@ -104,7 +105,7 @@ async def downstream_dispatcher(
     event_stream_manager: EVENT_STREAM_MANAGER,
     queue_registry: DOWNSTREAM_QUEUE_REGISTRY,
     dlq_stream_name: DEAD_LETTER_STREAM_NAME,
-    stream_name: StreamName,
+    stream_name: STREAM_NAME,
     group_name: GROUP_NAME,
     consumer_name: CONSUMER_ID,
     read_history: bool = True,
@@ -126,7 +127,7 @@ async def dlq_dispatcher(
     event_stream_manager: EVENT_STREAM_MANAGER,
     queue_registry: DEAD_LETTER_QUEUE_REGISTRY,
     dlq_stream_name: DEAD_LETTER_STREAM_NAME,
-    stream_name: StreamName,
+    stream_name: STREAM_NAME,
     group_name: GROUP_NAME,
     consumer_name: CONSUMER_ID,
     read_history: bool = True,
