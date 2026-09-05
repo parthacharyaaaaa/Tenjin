@@ -351,7 +351,7 @@ async def vote_post(
         )
 
         payload: PostVoteAssosciation = PostVoteAssosciation(
-            user_id=access_token["sid"], post_id=post_id, vote=delta  # type: ignore
+            user_id=access_token["sid"], post_id=post_id, vote=delta  # pyrefly: ignore
         )
 
         vote_event: Event = Event(
