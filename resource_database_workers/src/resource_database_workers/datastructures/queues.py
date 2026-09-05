@@ -103,13 +103,13 @@ class DeadLetterQueueRegistry(Generic[T], EventQueueRegistry[T]):
 
     @override
     def register_event_queue(self, event: EventName, *, exist_ok: bool = True) -> None:
-        return super().register_event_queue(
+        return super(DeadLetterQueueRegistry, self).register_event_queue(
             self.translate_event_name(event), exist_ok=exist_ok
         )
 
     @override
     def remove_event_queue(self, event: EventName, *, missing_ok: bool = True) -> None:
-        return super().remove_event_queue(
+        return super(DeadLetterQueueRegistry, self).remove_event_queue(
             self.translate_event_name(event), missing_ok=missing_ok
         )
 
@@ -117,13 +117,15 @@ class DeadLetterQueueRegistry(Generic[T], EventQueueRegistry[T]):
     async def append_to_queue(
         self, event: EventName, entry: T, *, make_queue: bool = True
     ) -> None:
-        return await super().append_to_queue(
+        return await super(DeadLetterQueueRegistry, self).append_to_queue(
             self.translate_event_name(event), entry, make_queue=make_queue
         )
 
     @override
     async def pop_from_queue(self, event: EventName) -> T:
-        return await super().pop_from_queue(self.translate_event_name(event))
+        return await super(DeadLetterQueueRegistry, self).pop_from_queue(
+            self.translate_event_name(event)
+        )
 
     @overload
     def get_event_queue(
@@ -138,7 +140,7 @@ class DeadLetterQueueRegistry(Generic[T], EventQueueRegistry[T]):
     def get_event_queue(
         self, event: EventName, *, raise_on_miss: bool = True
     ) -> asyncio.Queue[T] | None:
-        return self.get_event_queue(
+        return super(DeadLetterQueueRegistry, self).get_event_queue(
             self.translate_event_name(event), raise_on_miss=raise_on_miss
         )
 
