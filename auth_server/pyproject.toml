@@ -44,3 +44,6 @@ pyjwt = "jwt"
 DEP002 = ["psycopg", "mako", "cryptography"]
 
 [tool.pyrefly]
+project-excludes=[
+    "**/alembic/versions"
+]

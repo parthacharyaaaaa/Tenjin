@@ -42,3 +42,6 @@ python-dotenv = "dotenv"
 pyjwt = "jwt"
 
 [tool.pyrefly]
+project-excludes=[
+    "**/alembic/versions"
+]
