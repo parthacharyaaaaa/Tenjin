@@ -43,9 +43,9 @@ CONSUMER_READ_SIZE=1000
 CONSUMER_BLOCK_TIME=500                         # milliseconds
 CONSUMER_GROUP_NAME="consumers"
 
-IQ_CONSUMER_BASE_WAITING_TIME=2                     # seconds
-IQ_CONSUMER_GET_TIMEOUT=0.1                         # seconds
-IQ_CONSUMER_SLEEP_INTERVAL=0.01                     # seconds
+IQ_CONSUMER_BASE_WAITING_TIME=2000              # milliseconds
+IQ_CONSUMER_GET_TIMEOUT=100                     # milliseconds
+IQ_CONSUMER_SLEEP_INTERVAL=10                   # milliseconds
 IQ_CONSUMER_BATCH_SIZE_QUOTA=10
 
 DOWNSTREAM_COUNTER_BATCH_SIZE=10000
@@ -54,8 +54,8 @@ RECLAIM_THRESHOLD=120_000                           # milliseconds
 RECLAIMATION_CHECK_INTERVAL=30_000                  # milliseconds
 MAX_DELIVERIES=3
 
-MAXIMUM_BACKOFF_INTERVAL=0.08                       # seconds
-BASE_BACKOFF_INTERVAL=0.005                         # seconds
+MAXIMUM_BACKOFF_INTERVAL=8                       # milliseconds
+BASE_BACKOFF_INTERVAL=5                         # milliseconds
 BACKOFF_EXPONENTIAL=2
 
 GRACEFUL_SHUTDOWN_PERIOD=10                         # seconds

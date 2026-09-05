@@ -3,6 +3,8 @@ import asyncio
 import sys
 from typing import Final, Sequence
 
+from dotenv import load_dotenv
+
 from resource_database_workers.bootup import spawn_tasks
 from resource_database_workers.cli import get_argument_parser, parse_args
 from resource_database_workers.config.worker_config import (
@@ -33,4 +35,6 @@ async def main(args: Sequence[str]) -> None:
 
 
 if __name__ == "__main__":
+    # NOTE: DEV ONLY
+    load_dotenv()
     sys.exit(asyncio.run(main(sys.argv[1:])))

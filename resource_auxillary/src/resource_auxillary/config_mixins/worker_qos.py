@@ -3,13 +3,15 @@
 from typing import Annotated, Self
 
 from pydantic import BeforeValidator, Field, model_validator
+
 from resource_auxillary.strings import StreamName
+from resource_auxillary.config_mixins.annotations import timedelta_ms
 
 
 class WorkerRetryMixin:
-    MAXIMUM_BACKOFF_INTERVAL: Annotated[float, Field(ge=0)]
-    BASE_BACKOFF_INTERVAL: Annotated[float, Field(ge=0)]
-    BACKOFF_EXPONENTIAL: Annotated[int, Field(ge=1)]
+    MAXIMUM_BACKOFF_INTERVAL: timedelta_ms
+    BASE_BACKOFF_INTERVAL: timedelta_ms
+    BACKOFF_EXPONENTIAL: Annotated[int, Field(ge=1, default=2)]
 
     @model_validator(mode="after")
     def validate_backoff_values(self) -> Self:
@@ -27,8 +29,8 @@ class WorkerRetryMixin:
 
 
 class WorkerReclaimMixin:
-    RECLAIM_THRESHOLD: Annotated[int, Field(ge=1)]
-    RECLAIMATION_CHECK_INTERVAL: Annotated[int, Field(ge=1)]
+    RECLAIM_THRESHOLD: timedelta_ms
+    RECLAIMATION_CHECK_INTERVAL: timedelta_ms
     MAX_DELIVERIES: Annotated[int, Field(ge=1)]
 
     @model_validator(mode="after")
