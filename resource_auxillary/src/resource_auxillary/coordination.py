@@ -1,5 +1,6 @@
 """Common coordination utilities"""
 
+from datetime import timedelta
 import asyncio
 import random
 
@@ -11,13 +12,16 @@ def calculate_exponential_backoff_time(
 
 
 async def exponential_jittered_backoff(
-    cap: float, base: float, attempt: int, *, exponential: int = 2
+    cap: timedelta, base: timedelta, attempt: int, *, exponential: int = 2
 ) -> None:
     await asyncio.sleep(
         random.uniform(
             0,
             calculate_exponential_backoff_time(
-                cap, base, attempt, exponential=exponential
+                cap.total_seconds(),
+                base.total_seconds(),
+                attempt,
+                exponential=exponential,
             ),
         )  # nosec
     )

@@ -75,7 +75,7 @@ async def base_dispatcher(
             continue
 
         await _event_queue_populate(events, queue_registry)
-        await asyncio.sleep(config.WORKER.CONSUMER_READ_INTERVAL)
+        await asyncio.sleep(config.WORKER.CONSUMER_READ_INTERVAL.total_seconds())
 
 
 async def upstream_dispatcher(

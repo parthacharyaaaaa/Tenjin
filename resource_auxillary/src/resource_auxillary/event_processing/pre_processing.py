@@ -17,20 +17,24 @@ async def populate_events_batch_from_queue(
         if not (
             (len(batch) >= batching_policy.IQ_CONSUMER_BATCH_SIZE_QUOTA)
             or time.monotonic() - reference_time
-            > batching_policy.IQ_CONSUMER_BASE_WAITING_TIME
+            > batching_policy.IQ_CONSUMER_BASE_WAITING_TIME.total_seconds()
         ):
             try:
                 new_entries: tuple[StreamedEvent, ...] = await asyncio.wait_for(
-                    queue.get(), batching_policy.IQ_CONSUMER_GET_TIMEOUT
+                    queue.get(), batching_policy.IQ_CONSUMER_GET_TIMEOUT.total_seconds()
                 )
                 if not batch:
                     reference_time = time.monotonic()
                 batch.extend(new_entries)
             except asyncio.TimeoutError:
-                await asyncio.sleep(batching_policy.IQ_CONSUMER_SLEEP_INTERVAL)
+                await asyncio.sleep(
+                    batching_policy.IQ_CONSUMER_SLEEP_INTERVAL.total_seconds()
+                )
             continue
 
         if not batch:
-            await asyncio.sleep(batching_policy.IQ_CONSUMER_SLEEP_INTERVAL)
+            await asyncio.sleep(
+                batching_policy.IQ_CONSUMER_SLEEP_INTERVAL.total_seconds()
+            )
             reference_time = time.monotonic()
             continue
