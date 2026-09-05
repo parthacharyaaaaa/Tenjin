@@ -1,3 +1,4 @@
+import traceback
 from resource_database_workers.dependencies.annotations import STREAM_NAME
 from resource_database_workers.dependencies.annotations import (
     DEAD_LETTER_QUEUE_REGISTRY,
@@ -64,13 +65,9 @@ async def tasks_wrapper(
         for name, worker_callable in worker_callables.items()
     )
     failed, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
-    assert len(failed) == 1  # nosec
-
-    # Save initial exception
-    exception: Exception = next(iter(failed)).exception()  # type: ignore[reportAssignmentType]
 
     status_controller.status_ok = False
-    done, pending = await asyncio.wait(pending, timeout=graceful_shutdown_timeout)
+    _done, pending = await asyncio.wait(pending, timeout=graceful_shutdown_timeout)
 
     for task in pending:
         task.cancel()
@@ -78,15 +75,31 @@ async def tasks_wrapper(
     forced_cancellation_results = await asyncio.gather(
         *(pending), return_exceptions=True
     )
-    exception.add_note(
-        "\n".join(
-            (
-                f"Forced cancelled {len(forced_cancellation_results)} tasks.",
-                "Cancellation results:",
-                ", ".join(str(i) for i in forced_cancellation_results),
-            )
+
+    failed_tasks_info_string = "\n\n".join(
+        (
+            f"Task: {task.get_name()}\n"
+            f"Exception: {type(exception).__name__}: {exception}\n"
+            "Traceback:\n"
+            f"{''.join(traceback.format_exception(exception))}"
         )
+        for task in failed
+        if not task.cancelled() and (exception := task.exception()) is not None
     )
+    forced_cancellation_info_string = "\n\n".join(
+        (f"Task: {task.get_name()}\n" f"Result: {type(result).__name__}: {result}")
+        for task, result in zip(pending, forced_cancellation_results)
+    )
+
+    exception = Exception("Worker tasks terminated unexpectedly")
+    exception.add_note(
+        f"Failed tasks ({len(failed)}):\n" f"{failed_tasks_info_string or '<none>'}"
+    )
+    exception.add_note(
+        f"Forced-cancelled tasks ({len(pending)}):\n"
+        f"{forced_cancellation_info_string or '<none>'}"
+    )
+
     raise exception
 
 
