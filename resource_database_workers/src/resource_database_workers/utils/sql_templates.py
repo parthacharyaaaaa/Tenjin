@@ -46,25 +46,10 @@ def format_strong_insertion_sql(table: str, columns: Sequence[str]) -> Composed:
     )
 
 
-def format_dlq_insertion_sql() -> Composed:
-    return STRONG_INSERTION_SQL.format(
-        table=Identifier(DeadLetterQueueLiteral.TABLE_NAME),
-        placeholders=SQL(", ").join(Placeholder() * 2),
-    )
-
-
-def format_counters_dlq_insertion_sql() -> Composed:
-    return STRONG_INSERTION_SQL.format(
-        table=Identifier(DeadLetterQueueLiteral.COUNTERS_TABLE_NAME),
-        placeholders=SQL(", ").join(Placeholder() * 4),
-    )
-
-
-def format_failed_side_effects_sql() -> Composed:
-    return STRONG_INSERTION_SQL.format(
-        table=Identifier(DeadLetterQueueLiteral.FAILED_SIDE_EFFECTS_TABLE_NAME),
-        placeholder=SQL(", ").join(Placeholder() * 3),
-    )
+DLQ_INSERTION_COMPOSED_STATEMENT: Final[Composed] = STRONG_INSERTION_SQL.format(
+    table=Identifier(DeadLetterQueueLiteral.TABLE_NAME),
+    placeholders=SQL(", ").join(Placeholder() * 2),
+)
 
 
 STRONG_DELETION_SQL: Final[SQL] = SQL("""UPDATE {table}

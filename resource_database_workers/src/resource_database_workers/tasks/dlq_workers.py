@@ -1,3 +1,6 @@
+from resource_database_workers.utils.sql_templates import (
+    DLQ_INSERTION_COMPOSED_STATEMENT,
+)
 from resource_database_workers.dependencies.annotations import ISOLATED_EVENT_QUEUE
 from typing import Any, Sequence
 
@@ -87,7 +90,6 @@ async def dlq_consumer(
     event_stream_manager: EVENT_STREAM_MANAGER,
     group_name: GROUP_NAME,
     queue: ISOLATED_EVENT_QUEUE,
-    composed_statement: Composed,
     status_proxy: STATUS_PROXY,
 ) -> None:
     while status_proxy.status_ok:
@@ -107,7 +109,7 @@ async def dlq_consumer(
             # !duplicate event
             insertion_params: tuple[Any, ...] = get_dlq_insertion_parameters(dlq_event)
             db_coroutine = lambda: _insert_dlq_record(
-                conn, composed_statement, insertion_params
+                conn, DLQ_INSERTION_COMPOSED_STATEMENT, insertion_params
             )
             await db_execute_with_retries(config.WORKER, conn, db_coroutine)
             await execute_with_redis_retries(
