@@ -44,7 +44,7 @@ class EventStreamManager(Protocol):
 
     async def amortize_events(
         self,
-        events: Iterable[HasEventID],
+        events: Iterable[StreamedEvent],
         event_stream_name: StreamName,
         group_name: str,
         dlq_stream_name: StreamName,
