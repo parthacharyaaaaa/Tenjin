@@ -182,28 +182,28 @@ async def queue_insertion_consumer(
                     group_name,
                     dead_letter_stream_name,
                 )
-            else:
-                successful_events: tuple[StreamedEvent, ...] = tuple(
-                    event for event in batch if event.event_id in inserted_ids
-                )
+                continue
+            successful_events: tuple[StreamedEvent, ...] = tuple(
+                event for event in batch if event.event_id in inserted_ids
+            )
 
-                # post-process successful events and push failed events to DLQ
-                await ack_with_retries(
-                    event_stream_manager,
-                    config.WORKER,
-                    batch,
-                    stream_name,
-                    group_name,
-                    dead_letter_stream_name,
-                )
-                await declare_dead_with_retries(
-                    event_stream_manager,
-                    config.WORKER,
-                    tuple(event for event in batch if event not in successful_events),
-                    stream_name,
-                    group_name,
-                    dead_letter_stream_name,
-                )
+            # post-process successful events and push failed events to DLQ
+            await ack_with_retries(
+                event_stream_manager,
+                config.WORKER,
+                batch,
+                stream_name,
+                group_name,
+                dead_letter_stream_name,
+            )
+            await declare_dead_with_retries(
+                event_stream_manager,
+                config.WORKER,
+                tuple(event for event in batch if event not in successful_events),
+                stream_name,
+                group_name,
+                dead_letter_stream_name,
+            )
 
             reference_time = time.monotonic()
             batch.clear()
@@ -259,26 +259,26 @@ async def queue_deletion_consumer(
                     group_name,
                     dead_letter_stream_name,
                 )
-            else:
-                # ACK entire batch and emit side-effects
-                await ack_with_retries(
-                    event_stream_manager,
-                    config.WORKER,
-                    batch,
-                    stream_name,
-                    group_name,
-                    dead_letter_stream_name,
-                )
-                await dispatch_downstream_events(
-                    event_stream_manager,
-                    config.WORKER,
-                    table,
-                    (
-                        (event.payload[identifier_column], event.payload["deleted_at"])
-                        for event in batch
-                    ),
-                    dead_letter_stream_name,
-                )
+                continue
+            # ACK entire batch and emit side-effects
+            await ack_with_retries(
+                event_stream_manager,
+                config.WORKER,
+                batch,
+                stream_name,
+                group_name,
+                dead_letter_stream_name,
+            )
+            await dispatch_downstream_events(
+                event_stream_manager,
+                config.WORKER,
+                table,
+                (
+                    (event.payload[identifier_column], event.payload["deleted_at"])
+                    for event in batch
+                ),
+                dead_letter_stream_name,
+            )
 
             batch.clear()
             reference_time = time.monotonic()
