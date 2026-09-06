@@ -7,13 +7,12 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import text, func
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, BYTEA, ENUM
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, BYTEA
 from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, TEXT
 
 from datetime import datetime
 from typing import Any
 from dataclasses import dataclass
-from types import FunctionType
 
 from resource_auxillary.datastructures.database import (
     StrongEntity,
@@ -22,18 +21,23 @@ from resource_auxillary.datastructures.database import (
     ForeignKeyColumnLiteral,
     AssociationColumnLiteral,
     GenericLiterals,
-    SideEffectType,
 )
 
 from resource_server.config import database_constants
 from resource_server.config.constants import EMAIL_PATTERN
-from resource_server.models.database_enums import AdminRoles, ReportTags
+from resource_server.models.database_enums import (
+    AdminRoles,
+    ReportTags,
+    REPORT_TAGS,
+    ADMIN_ROLES,
+)
 from resource_server.models.database_mixins import (
     SaveAssociationMixin,
     SoftDeletionMixin,
     SoftEventDeletionMixin,
     SubAssociationMixin,
     VoteAssociationMixin,
+    EventTableMixin,
 )
 
 __all__ = (
@@ -61,24 +65,6 @@ __all__ = (
 
 class Base(DeclarativeBase):
     pass
-
-
-### Deserialization functions commonly used in all models
-deserialize_bool: FunctionType = lambda serial: bool(int(serial))
-deserialize_optional: FunctionType = lambda serial: None if not serial else serial
-
-### Enums ###
-ADMIN_ROLES = ENUM(*(i.value for i in AdminRoles), name="ADMIN_ROLES", create_type=True)
-
-REPORT_TAGS = ENUM(
-    *(i.value for i in ReportTags),
-    name="REPORT_TAGS",
-    create_type=True,
-)
-
-SIDE_EFFECT_TYPES = ENUM(
-    *(i.value for i in SideEffectType), name=SideEffectType.__NAME__, create_type=True
-)
 
 
 ### Assosciation Tables ###
@@ -166,7 +152,7 @@ class PostReport(Base):
         primary_key=True,
         name=AssociationColumnLiteral.POST_ID,
     )
-    report_tag: Mapped[str] = mapped_column(
+    report_tag: Mapped[ReportTags] = mapped_column(
         REPORT_TAGS, nullable=False, primary_key=True
     )
     report_time: Mapped[datetime] = mapped_column(
@@ -199,7 +185,7 @@ class CommentReport(Base):
         primary_key=True,
         name=AssociationColumnLiteral.COMMENT_ID,
     )
-    report_tag: Mapped[str] = mapped_column(
+    report_tag: Mapped[ReportTags] = mapped_column(
         REPORT_TAGS, nullable=False, primary_key=True
     )
     report_time: Mapped[datetime] = mapped_column(
@@ -272,7 +258,7 @@ class ForumAdmin(Base):
         primary_key=True,
         name=AssociationColumnLiteral.USER_ID,
     )
-    role: Mapped[str] = mapped_column(
+    role: Mapped[AdminRoles] = mapped_column(
         ADMIN_ROLES, nullable=False, server_default=text(AdminRoles.ADMIN)
     )
 
@@ -628,12 +614,9 @@ class Comment(SoftEventDeletionMixin, Base):
     )
 
 
-class StreamEvent(Base):
+class StreamEvent(EventTableMixin, Base):
     __tablename__ = EventLiteral.EVENTS_TABLE_NAME
 
-    event_id: Mapped[str] = mapped_column(
-        TEXT, primary_key=True, name=EventLiteral.EVENT_ID_COLUMN_NAME
-    )
     acknowledgement_time: Mapped[datetime] = mapped_column(
         TIMESTAMP,
         server_default=text("CURRENT_TIMESTAMP"),
@@ -642,12 +625,9 @@ class StreamEvent(Base):
     )
 
 
-class DeadLetterQueue(Base):
+class DeadLetterQueue(EventTableMixin, Base):
     __tablename__ = DeadLetterQueueLiteral.TABLE_NAME
 
-    event_id: Mapped[str] = mapped_column(
-        TEXT, primary_key=True, name=EventLiteral.EVENT_ID_COLUMN_NAME
-    )
     payload: Mapped[Any] = mapped_column(
         JSONB, nullable=False, name=DeadLetterQueueLiteral.PAYLOAD_COLUMN_NAME
     )
@@ -658,54 +638,4 @@ class DeadLetterQueue(Base):
         index=True,
         server_default=text("CURRENT_TIMESTAMP"),
         name=DeadLetterQueueLiteral.COUNTERS_FAILURE_TIME_COLUMN_NAME,
-    )
-
-
-class CounterDeadLetterQueue(Base):
-    __tablename__ = DeadLetterQueueLiteral.COUNTERS_TABLE_NAME
-
-    id_: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
-
-    table_name: Mapped[str] = mapped_column(
-        VARCHAR(64),
-        index=True,
-        nullable=False,
-        name=DeadLetterQueueLiteral.COUNTERS_AFFECTED_RELATION_COLUMN_NAME,
-    )
-
-    column_name: Mapped[str] = mapped_column(
-        VARCHAR(64),
-        index=True,
-        nullable=False,
-        name=DeadLetterQueueLiteral.COUNTERS_AFFECTED_COLUMN_COLUMN_NAME,
-    )
-
-    failure_time: Mapped[datetime] = mapped_column(
-        TIMESTAMP,
-        nullable=False,
-        index=True,
-        server_default=text("CURRENT_TIMESTAMP"),
-        name=DeadLetterQueueLiteral.COUNTERS_FAILURE_TIME_COLUMN_NAME,
-    )
-
-    counter_data: Mapped[Any] = mapped_column(
-        JSONB, nullable=False, name=DeadLetterQueueLiteral.PAYLOAD_COLUMN_NAME
-    )
-
-
-class FailedSideEffects(Base):
-    __tablename__ = DeadLetterQueueLiteral.FAILED_SIDE_EFFECTS_TABLE_NAME
-
-    id_: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
-    event_id: Mapped[int] = mapped_column(
-        BIGINT, nullable=False, index=True, name=EventLiteral.EVENT_ID_COLUMN_NAME
-    )
-    effect_type: Mapped[int] = mapped_column(
-        SIDE_EFFECT_TYPES,
-        nullable=False,
-        index=True,
-        name=DeadLetterQueueLiteral.SIDE_EFFECT_TYPE_COLUMN_NAME,
-    )
-    payload: Mapped[int] = mapped_column(
-        JSONB, nullable=False, name=DeadLetterQueueLiteral.PAYLOAD_COLUMN_NAME
     )

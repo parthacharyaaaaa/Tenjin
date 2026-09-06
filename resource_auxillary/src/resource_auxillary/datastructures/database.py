@@ -17,6 +17,7 @@ class EventLiteral(StrEnum):
     EVENTS_TABLE_NAME = "stream_events"
     EVENT_ID_COLUMN_NAME = "event_id"
     EVENT_TIMESTAMP_COLUMN_NAME = "acknowledgement_time"
+    EVENT_NAME_COLUMN_NAME = "event_name"
 
 
 class DeadLetterQueueLiteral(StrEnum):

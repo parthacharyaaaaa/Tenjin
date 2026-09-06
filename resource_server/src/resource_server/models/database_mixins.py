@@ -1,12 +1,17 @@
 from datetime import datetime
 
+from sqlalchemy import text
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import BIGINT, BOOLEAN, TIMESTAMP, TEXT
+
+from resource_auxillary.datastructures.database import EventLiteral
 from resource_auxillary.datastructures.database import (
     DeletionColumnLiteral,
     EventMetadataLiteral,
 )
-from sqlalchemy import text
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.dialects.postgresql import BIGINT, BOOLEAN, TIMESTAMP
+from resource_auxillary.strings import EventName
+
+from resource_server.models.database_enums import EVENT_NAME
 
 
 class EventAssociationMixin:
@@ -56,4 +61,13 @@ class SoftDeletionMixin:
 class SoftEventDeletionMixin(SoftDeletionMixin):
     deletion_author_event: Mapped[int | None] = mapped_column(
         BIGINT, name=DeletionColumnLiteral.DELETION_AUTHOR_EVENT
+    )
+
+
+class EventTableMixin:
+    event_id: Mapped[str] = mapped_column(
+        TEXT, primary_key=True, name=EventLiteral.EVENT_ID_COLUMN_NAME
+    )
+    event_name: Mapped[EventName] = mapped_column(
+        EVENT_NAME, nullable=False, name=EventLiteral.EVENT_NAME_COLUMN_NAME, index=True
     )
