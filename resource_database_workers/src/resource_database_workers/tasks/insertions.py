@@ -1,3 +1,9 @@
+from resource_database_workers.utils.sql_templates import (
+    FORMATTED_CACHE_SIDE_EFFECTS_INSERTION_STATEMENT,
+)
+from resource_auxillary.datastructures.database import CacheSideEffectsLiteral
+from resource_auxillary.datastructures.database import EventLiteral
+from auxillary.utils import json_repr
 from typing import Any, Final, Literal, MutableSequence, Sequence, get_type_hints
 from uuid import uuid4
 
@@ -132,3 +138,27 @@ async def batch_insert_strong_entities(
     async with conn.cursor() as cursor:
         await cursor.executemany(insertion_sql, insertion_records)
         return []  # TODO: Add RETURNING/CTE
+
+
+async def outbox_insertion(
+    conn: AsyncConnection,
+    events: Sequence[StreamedEvent],
+) -> None:
+    cache_insertion_records: list[dict[str, Any]] = []
+    for event in events:
+        cache_insertion_record: dict[str, Any] = {}
+        if event.side_effects.cache:
+            cache_insertion_record[EventLiteral.EVENT_ID_COLUMN_NAME] = event.event_id
+            cache_insertion_record[
+                CacheSideEffectsLiteral.CACHE_SIDE_EFFECTS_EMITTED
+            ] = False
+            cache_insertion_record[
+                CacheSideEffectsLiteral.CACHE_SIDE_EFFECTS_PAYLOAD
+            ] = json_repr(event.side_effects.cache)
+            cache_insertion_records.append(cache_insertion_record)
+    async with conn.cursor() as cursor:
+        await cursor.executemany(
+            FORMATTED_CACHE_SIDE_EFFECTS_INSERTION_STATEMENT,
+            cache_insertion_records,
+            returning=True,
+        )

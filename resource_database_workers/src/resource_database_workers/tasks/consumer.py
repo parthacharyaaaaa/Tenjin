@@ -1,3 +1,4 @@
+from resource_database_workers.tasks.insertions import outbox_insertion
 from resource_database_workers.dependencies.annotations import (
     ACTION_LITERAL,
     ISOLATED_EVENT_QUEUE,
@@ -173,6 +174,15 @@ async def queue_insertion_consumer(
             )
             try:
                 await db_execute_with_retries(config.WORKER, conn, insertion_callable)
+                successful_events: tuple[StreamedEvent, ...] = tuple(
+                    event for event in batch if event.event_id in inserted_ids
+                )
+                outbox_insertion_callable = lambda: outbox_insertion(
+                    conn, successful_events
+                )
+                await db_execute_with_retries(
+                    config.WORKER, conn, outbox_insertion_callable
+                )
                 await conn.commit()
             except Exception:  # Entire batch failed
                 await declare_dead_with_retries(
@@ -184,15 +194,12 @@ async def queue_insertion_consumer(
                     dead_letter_stream_name,
                 )
                 continue
-        successful_events: tuple[StreamedEvent, ...] = tuple(
-            event for event in batch if event.event_id in inserted_ids
-        )
 
         # post-process successful events and push failed events to DLQ
         await ack_with_retries(
             event_stream_manager,
             config.WORKER,
-            batch,
+            successful_events,
             stream_name,
             group_name,
             dead_letter_stream_name,
@@ -251,6 +258,10 @@ async def queue_deletion_consumer(
             )
             try:
                 await db_execute_with_retries(config.WORKER, conn, deletion_callable)
+                outbox_insertion_callable = lambda: outbox_insertion(conn, batch)
+                await db_execute_with_retries(
+                    config.WORKER, conn, outbox_insertion_callable
+                )
                 await conn.commit()
             except Exception:
                 await declare_dead_with_retries(
@@ -271,6 +282,8 @@ async def queue_deletion_consumer(
             group_name,
             dead_letter_stream_name,
         )
+
+        # TODO: Absorb this logic into DB outbox >:3
         await dispatch_downstream_events(
             event_stream_manager,
             config.WORKER,
@@ -356,6 +369,7 @@ async def queue_downstream_deletion_consumer(
             dead_letter_stream_name,
         )
 
+        # TODO: Absorb this logic into DB outbox >:3
         await dispatch_downstream_counter_decrements(
             event_stream_manager,
             config.WORKER,
@@ -365,6 +379,10 @@ async def queue_downstream_deletion_consumer(
         )
 
 
+# TODO: This function will be an outbox consumer instead of a Redis stream consumer,
+# And we'll need to manage idempotency/atomicity for insanely large downstream workloads
+# (e.g. Forum deletion -> decrement post count per user for every post EVER!!!).
+# God, this is gonna be a pain to revamp >:((((
 async def queue_downstream_decrement_consumer(
     config: APP_CONFIG,
     pool: CONNECTION_POOL,
