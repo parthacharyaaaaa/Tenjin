@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import text
+from sqlalchemy import text, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import BIGINT, BOOLEAN, TIMESTAMP, TEXT
 
@@ -70,4 +70,15 @@ class EventTableMixin:
     )
     event_name: Mapped[EventName] = mapped_column(
         EVENT_NAME, nullable=False, name=EventLiteral.EVENT_NAME_COLUMN_NAME, index=True
+    )
+
+
+class EventReferrerTableMixin:
+    event_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey(
+            f"{EventLiteral.EVENTS_TABLE_NAME}.{EventLiteral.EVENT_ID_COLUMN_NAME}"
+        ),
+        primary_key=True,
+        name=EventLiteral.EVENT_ID_COLUMN_NAME,
     )

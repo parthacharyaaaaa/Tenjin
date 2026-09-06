@@ -1,4 +1,6 @@
+from resource_server.models.database_mixins import EventReferrerTableMixin
 from sqlalchemy import (
+    Index,
     ForeignKey,
     CheckConstraint,
     UniqueConstraint,
@@ -21,6 +23,7 @@ from resource_auxillary.datastructures.database import (
     ForeignKeyColumnLiteral,
     AssociationColumnLiteral,
     GenericLiterals,
+    CacheSideEffectsLiteral,
 )
 
 from resource_server.config import database_constants
@@ -622,6 +625,34 @@ class StreamEvent(EventTableMixin, Base):
         server_default=text("CURRENT_TIMESTAMP"),
         index=True,
         name=EventLiteral.EVENT_TIMESTAMP_COLUMN_NAME,
+    )
+
+
+class CacheSideEffects(EventReferrerTableMixin, Base):
+    __tablename__ = CacheSideEffectsLiteral.TABLE_NAME
+
+    cache_side_effects_emitted: Mapped[bool] = mapped_column(
+        BOOLEAN, nullable=False, name=CacheSideEffectsLiteral.CACHE_SIDE_EFFECTS_EMITTED
+    )
+    payload: Mapped[Any] = mapped_column(
+        JSONB, name=CacheSideEffectsLiteral.CACHE_SIDE_EFFECTS_PAYLOAD
+    )
+
+    # @declared_attr
+    # def __table_args__(cls) -> tuple[Index]:
+    #     return (
+    #         Index(
+    #             "non_emitted_events",
+    #             cls.event_id,
+    #             postgresql_where=not cls.cache_side_effects_emitted,
+    #         ),
+    #     )
+    __table_args__ = (
+        Index(
+            "non_emitted_events",
+            EventReferrerTableMixin.event_id,
+            postgresql_where=(~cache_side_effects_emitted),
+        ),
     )
 
 
