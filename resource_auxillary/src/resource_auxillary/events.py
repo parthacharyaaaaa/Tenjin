@@ -1,3 +1,4 @@
+from datetime import datetime
 from functools import cached_property
 from typing import Annotated, Any, Literal, Self
 
@@ -84,7 +85,7 @@ class CacheUpdate(BaseModel):
         }
 
 
-class EventSideEffects(BaseModel):
+class CacheSideEffects(BaseModel):
     counter_updates: Annotated[tuple[CounterUpdate, ...], Field(default_factory=tuple)]
     intent_updates: Annotated[tuple[IntentUpdate, ...], Field(default_factory=tuple)]
     cache_invalidations: Annotated[
@@ -112,12 +113,17 @@ class EventSideEffects(BaseModel):
         }
 
 
+class EventSideEffects(BaseModel):
+    cache: Annotated[CacheSideEffects, Field(default_factory=EventSideEffects)]
+
+
 class Event(BaseModel):
     name: Annotated[
         EventName, Field(frozen=True), BeforeValidator(lambda x: x.strip().upper())
     ]
     payload: dict[str, Any]
     side_effects: Annotated[EventSideEffects, Field(frozen=True)]
+    creation_time: Annotated[datetime, Field(frozen=True, default_factory=datetime.now)]
 
     @property
     def resource_name(self) -> str:

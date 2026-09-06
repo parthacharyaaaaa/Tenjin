@@ -1,3 +1,4 @@
+from datetime import datetime
 from resource_database_workers.utils.sql_templates import (
     DLQ_INSERTION_COMPOSED_STATEMENT,
 )
@@ -10,9 +11,6 @@ from psycopg.sql import Composed
 from auxillary.utils import json_repr
 
 from resource_auxillary.events import (
-    CacheUpdate,
-    CounterUpdate,
-    IntentUpdate,
     StreamedEvent,
 )
 from resource_auxillary.event_processing.db_qos import (
@@ -20,10 +18,8 @@ from resource_auxillary.event_processing.db_qos import (
     dedup_insert_event,
 )
 from resource_auxillary.event_processing.qos import execute_with_redis_retries
-from resource_auxillary.datastructures.database import SideEffectType
 from resource_auxillary.strings import EventName
 
-from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
 from resource_database_workers.dependencies.annotations import (
     APP_CONFIG,
     DEAD_LETTER_STREAM_NAME,
@@ -34,44 +30,19 @@ from resource_database_workers.dependencies.annotations import (
 )
 
 
-def get_dlq_insertion_parameters(event: StreamedEvent) -> tuple[Any, ...]:
-    if event.name == EventName.DLQ_COUNTER:
-        dead_counter_batch: DeadCounterBatch = (
-            DeadCounterBatch.construct_from_event_payload(event.payload)
-        )
-        return (
-            dead_counter_batch.table,
-            dead_counter_batch.column,
-            dead_counter_batch.failure_time,
-            dead_counter_batch.counters,
-        )
-    elif event.name == EventName.DLQ_SIDE_EFFECTS:
-        side_effect_groups: tuple[
-            tuple[
-                SideEffectType, tuple[CounterUpdate | IntentUpdate | CacheUpdate, ...]
-            ],
-            ...,
-        ] = (
-            (
-                SideEffectType.CACHE_INVALIDATION,
-                event.side_effects.cache_invalidations,
-            ),
-            (
-                SideEffectType.COUNTER_UPDATE,
-                event.side_effects.counter_updates,
-            ),
-            (
-                SideEffectType.INTENT_INVALIDATION,
-                event.side_effects.intent_updates,
-            ),
-        )
-        return tuple(
-            (event.event_id, side_effect_type.value, json_repr(side_effect))
-            for (side_effect_type, side_effects) in side_effect_groups
-            for side_effect in side_effects
-        )
-    else:  # Standard failed StreamedEvent
-        return (event.event_id, json_repr(event))
+def get_dlq_insertion_parameters(
+    event: StreamedEvent,
+) -> tuple[int, EventName, dict[str, Any], datetime]:
+    return (
+        event.event_id,
+        event.name,
+        json_repr(event),
+        (
+            event.creation_time
+            if event.name in (EventName.DLQ_COUNTER, EventName.DLQ_SIDE_EFFECTS)
+            else datetime.now()
+        ),
+    )
 
 
 async def _insert_dlq_record(
