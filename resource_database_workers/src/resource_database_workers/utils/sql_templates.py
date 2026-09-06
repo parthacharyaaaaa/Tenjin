@@ -1,3 +1,4 @@
+from resource_auxillary.datastructures.database import EventLiteral
 from resource_auxillary.templates.sql import SQL_Literal
 from resource_auxillary.datastructures.database import CacheSideEffectsLiteral
 from typing import Any
@@ -50,8 +51,9 @@ def format_strong_insertion_sql(table: str, columns: Sequence[str]) -> Composed:
 
 
 _SIDE_EFFECTS_COLUMN_LITERALS: Final[
-    tuple[CacheSideEffectsLiteral, CacheSideEffectsLiteral]
+    tuple[EventLiteral, CacheSideEffectsLiteral, CacheSideEffectsLiteral]
 ] = (
+    EventLiteral.EVENT_ID_COLUMN_NAME,
     CacheSideEffectsLiteral.CACHE_SIDE_EFFECTS_EMITTED,
     CacheSideEffectsLiteral.CACHE_SIDE_EFFECTS_PAYLOAD,
 )
