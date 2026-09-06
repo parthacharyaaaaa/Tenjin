@@ -1,3 +1,6 @@
+from resource_auxillary.templates.sql import SQL_Literal
+from resource_auxillary.datastructures.database import CacheSideEffectsLiteral
+from typing import Any
 from datetime import datetime
 from typing import Final, Iterable, Mapping, Sequence
 
@@ -43,6 +46,26 @@ def format_strong_insertion_sql(table: str, columns: Sequence[str]) -> Composed:
         table=Identifier(table),
         columns=SQL(", ").join(map(Identifier, columns)),
         placeholders=SQL(", ").join(Placeholder(column) for column in columns),
+    )
+
+
+_SIDE_EFFECTS_COLUMN_LITERALS: Final[
+    tuple[CacheSideEffectsLiteral, CacheSideEffectsLiteral]
+] = (
+    CacheSideEffectsLiteral.CACHE_SIDE_EFFECTS_EMITTED,
+    CacheSideEffectsLiteral.CACHE_SIDE_EFFECTS_PAYLOAD,
+)
+
+
+def format_cache_side_effects_insertion_sql(
+    parent_event_id: str, event_payload: dict[str, Any], *, event_emitted: bool = False
+) -> Composed:
+    return STRONG_INSERTION_SQL.format(
+        table=Identifier(CacheSideEffectsLiteral.TABLE_NAME),
+        columns=SQL(", ").join(map(Identifier, _SIDE_EFFECTS_COLUMN_LITERALS)),
+        placeholders=SQL(", ").join(
+            map(SQL_Literal, (parent_event_id, event_emitted, event_payload))
+        ),
     )
 
 
