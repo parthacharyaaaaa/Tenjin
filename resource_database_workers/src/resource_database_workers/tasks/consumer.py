@@ -77,7 +77,7 @@ async def user_orphan_consumer(
         # Database connection only needed for deduplication
         async with pool.connection() as conn:
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
-                conn, (e.event_id for e in batch)
+                conn, (e.event_id for e in batch), batch[0].name
             )
 
         await event_stream_manager.trim_duplicate_events(
@@ -159,7 +159,7 @@ async def queue_insertion_consumer(
         async with pool.connection() as conn:
             # Perform deduplication
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
-                conn, (e.event_id for e in batch)
+                conn, (e.event_id for e in batch), batch[0].name
             )
             await event_stream_manager.trim_duplicate_events(
                 batch, fresh_event_ids, stream_name, group_name
@@ -230,7 +230,7 @@ async def queue_deletion_consumer(
         )
         async with pool.connection() as conn:
             fresh_event_ids: tuple[int, ...] = await batch_dedup_insert_events(
-                conn, (e.event_id for e in batch)
+                conn, (e.event_id for e in batch), batch[0].name
             )
             await event_stream_manager.trim_duplicate_events(
                 batch, fresh_event_ids, stream_name, group_name
@@ -313,7 +313,7 @@ async def queue_downstream_deletion_consumer(
 
         async with pool.connection() as conn:
             # Deduplication
-            if not await dedup_insert_event(conn, event.event_id):
+            if not await dedup_insert_event(conn, event.event_id, event.name):
                 await event_stream_manager.acknowledge_events(
                     (event,), stream_name, group_name
                 )
@@ -394,7 +394,7 @@ async def queue_downstream_decrement_consumer(
         limit, offset = config.WORKER.DOWNSTREAM_COUNTER_BATCH_SIZE, 0
         exception: Exception | None = None
         async with pool.connection() as conn:
-            if not await dedup_insert_event(conn, event.event_id):
+            if not await dedup_insert_event(conn, event.event_id, event.name):
                 await event_stream_manager.acknowledge_events(
                     (event,), stream_name, group_name
                 )

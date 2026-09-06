@@ -97,7 +97,7 @@ async def dlq_consumer(
         async with pool.connection() as conn:
             # Apply deduplication
 
-            if not await dedup_insert_event(conn, dlq_event.event_id):
+            if not await dedup_insert_event(conn, dlq_event.event_id, dlq_event.name):
                 # Retry, but appending back to DLQ is pointless in a DLQ worker
                 await execute_with_redis_retries(
                     config.WORKER,

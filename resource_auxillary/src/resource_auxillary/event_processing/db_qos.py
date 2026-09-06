@@ -8,6 +8,7 @@ from psycopg.errors import IntegrityError
 from resource_auxillary.constants import POTENTIAL_TRANSIENT_ERRORS
 from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.datastructures.database import EventLiteral
+from resource_auxillary.strings import EventName
 from resource_auxillary.templates.sql import (
     prepare_batch_dedup_sql,
     prepare_single_dedup_sql,
@@ -47,10 +48,13 @@ async def db_execute_with_retries(
 
 
 async def dedup_insert_event(
-    conn: AsyncConnection, event_id: int, acknowledgement_time: datetime | None = None
+    conn: AsyncConnection,
+    event_id: int,
+    event_name: EventName,
+    acknowledgement_time: datetime | None = None,
 ) -> bool:
     dedup_insertion_statement: sql.Composed = prepare_single_dedup_sql(
-        event_id, acknowledgement_time
+        event_id, event_name, acknowledgement_time
     )
     try:
         async with conn.transaction():
@@ -64,6 +68,7 @@ async def dedup_insert_event(
 async def batch_dedup_insert_events(
     conn: AsyncConnection,
     event_ids: Iterable[int],
+    event_name: EventName,
     acknowledgement_time: datetime | None = None,
 ) -> tuple[int, ...]:
     acknowledgement_time = acknowledgement_time or datetime.now()
@@ -78,9 +83,10 @@ async def batch_dedup_insert_events(
                 temp_table_name,
                 EventLiteral.EVENT_ID_COLUMN_NAME,
                 EventLiteral.EVENT_TIMESTAMP_COLUMN_NAME,
+                EventLiteral.EVENT_NAME_COLUMN_NAME,
             )
         ) as copy:
             for event_id in event_ids:
-                await copy.write_row((event_id, acknowledgement_time))
+                await copy.write_row((event_id, acknowledgement_time, event_name))
         await cursor.execute(prepare_batch_dedup_sql(temp_table_name))
         return tuple(i[0] for i in await cursor.fetchall())
