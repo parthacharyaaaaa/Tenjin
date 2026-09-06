@@ -173,6 +173,7 @@ async def queue_insertion_consumer(
             )
             try:
                 await db_execute_with_retries(config.WORKER, conn, insertion_callable)
+                await conn.commit()
             except Exception:  # Entire batch failed
                 await declare_dead_with_retries(
                     event_stream_manager,
@@ -183,30 +184,30 @@ async def queue_insertion_consumer(
                     dead_letter_stream_name,
                 )
                 continue
-            successful_events: tuple[StreamedEvent, ...] = tuple(
-                event for event in batch if event.event_id in inserted_ids
-            )
+        successful_events: tuple[StreamedEvent, ...] = tuple(
+            event for event in batch if event.event_id in inserted_ids
+        )
 
-            # post-process successful events and push failed events to DLQ
-            await ack_with_retries(
-                event_stream_manager,
-                config.WORKER,
-                batch,
-                stream_name,
-                group_name,
-                dead_letter_stream_name,
-            )
-            await declare_dead_with_retries(
-                event_stream_manager,
-                config.WORKER,
-                tuple(event for event in batch if event not in successful_events),
-                stream_name,
-                group_name,
-                dead_letter_stream_name,
-            )
+        # post-process successful events and push failed events to DLQ
+        await ack_with_retries(
+            event_stream_manager,
+            config.WORKER,
+            batch,
+            stream_name,
+            group_name,
+            dead_letter_stream_name,
+        )
+        await declare_dead_with_retries(
+            event_stream_manager,
+            config.WORKER,
+            tuple(event for event in batch if event not in successful_events),
+            stream_name,
+            group_name,
+            dead_letter_stream_name,
+        )
 
-            reference_time = time.monotonic()
-            batch.clear()
+        reference_time = time.monotonic()
+        batch.clear()
 
 
 async def queue_deletion_consumer(
@@ -250,6 +251,7 @@ async def queue_deletion_consumer(
             )
             try:
                 await db_execute_with_retries(config.WORKER, conn, deletion_callable)
+                await conn.commit()
             except Exception:
                 await declare_dead_with_retries(
                     event_stream_manager,
@@ -260,28 +262,28 @@ async def queue_deletion_consumer(
                     dead_letter_stream_name,
                 )
                 continue
-            # ACK entire batch and emit side-effects
-            await ack_with_retries(
-                event_stream_manager,
-                config.WORKER,
-                batch,
-                stream_name,
-                group_name,
-                dead_letter_stream_name,
-            )
-            await dispatch_downstream_events(
-                event_stream_manager,
-                config.WORKER,
-                table,
-                (
-                    (event.payload[identifier_column], event.payload["deleted_at"])
-                    for event in batch
-                ),
-                dead_letter_stream_name,
-            )
+        # ACK entire batch and emit side-effects
+        await ack_with_retries(
+            event_stream_manager,
+            config.WORKER,
+            batch,
+            stream_name,
+            group_name,
+            dead_letter_stream_name,
+        )
+        await dispatch_downstream_events(
+            event_stream_manager,
+            config.WORKER,
+            table,
+            (
+                (event.payload[identifier_column], event.payload["deleted_at"])
+                for event in batch
+            ),
+            dead_letter_stream_name,
+        )
 
-            batch.clear()
-            reference_time = time.monotonic()
+        batch.clear()
+        reference_time = time.monotonic()
 
 
 async def queue_downstream_deletion_consumer(
@@ -331,6 +333,7 @@ async def queue_downstream_deletion_consumer(
                 await db_execute_with_retries(
                     config.WORKER, conn, downstream_deletion_callable
                 )
+                await conn.commit()
             except Exception:
                 # Single event tuple used in place of event
                 # for methods that process batches of events
@@ -344,22 +347,22 @@ async def queue_downstream_deletion_consumer(
                 )
                 continue
 
-            await ack_with_retries(
-                event_stream_manager,
-                config.WORKER,
-                (event,),
-                stream_name,
-                group_name,
-                dead_letter_stream_name,
-            )
+        await ack_with_retries(
+            event_stream_manager,
+            config.WORKER,
+            (event,),
+            stream_name,
+            group_name,
+            dead_letter_stream_name,
+        )
 
-            await dispatch_downstream_counter_decrements(
-                event_stream_manager,
-                config.WORKER,
-                event_payload["orphan_table"],
-                event.event_id,
-                dead_letter_stream_name,
-            )
+        await dispatch_downstream_counter_decrements(
+            event_stream_manager,
+            config.WORKER,
+            event_payload["orphan_table"],
+            event.event_id,
+            dead_letter_stream_name,
+        )
 
 
 async def queue_downstream_decrement_consumer(
@@ -442,21 +445,21 @@ async def queue_downstream_decrement_consumer(
                     await conn.rollback()
                     break
 
-            if exception:
-                await declare_dead_with_retries(
-                    event_stream_manager,
-                    config.WORKER,
-                    (event,),
-                    stream_name,
-                    group_name,
-                    dead_letter_stream_name,
-                )
-            else:
-                await ack_with_retries(
-                    event_stream_manager,
-                    config.WORKER,
-                    (event,),
-                    stream_name,
-                    group_name,
-                    dead_letter_stream_name,
-                )
+        if exception:
+            await declare_dead_with_retries(
+                event_stream_manager,
+                config.WORKER,
+                (event,),
+                stream_name,
+                group_name,
+                dead_letter_stream_name,
+            )
+        else:
+            await ack_with_retries(
+                event_stream_manager,
+                config.WORKER,
+                (event,),
+                stream_name,
+                group_name,
+                dead_letter_stream_name,
+            )
