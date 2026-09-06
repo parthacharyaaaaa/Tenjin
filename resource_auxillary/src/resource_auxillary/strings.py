@@ -36,6 +36,8 @@ class Action(StrEnum):
 
 
 class EventName(StrEnum):
+    __NAME__ = "EVENT_NAME"
+
     POST_CREATE = "POST_CREATE"
     POST_SAVE = "POST_SAVE"
     POST_UNSAVE = "POST_UNSAVE"
@@ -80,3 +82,8 @@ class EventName(StrEnum):
     DEAD_LETTER_SENTINEL = (
         "DEAD_LETTER_SENTINEL"  # For internal queues only, must never touch Redis
     )
+
+
+SECOND_CLASS_EVENTS: Final[frozenset] = frozenset(
+    (EventName.DEAD_LETTER_SENTINEL, EventName.__NAME__)
+)
