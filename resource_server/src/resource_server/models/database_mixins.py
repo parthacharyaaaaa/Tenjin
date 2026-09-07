@@ -1,3 +1,4 @@
+from sqlalchemy.orm import declared_attr
 from datetime import datetime
 from typing import Any
 
@@ -87,6 +88,7 @@ class EventReferrerTableMixin:
 
 
 class EventSideEffectsTableMixin(EventReferrerTableMixin):
+    __tablename__: str
     side_effects_emitted: Mapped[bool] = mapped_column(
         BOOLEAN, nullable=False, name=SideEffectsLiteral.SIDE_EFFECTS_EMITTED
     )
@@ -94,10 +96,22 @@ class EventSideEffectsTableMixin(EventReferrerTableMixin):
         JSONB, name=SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD
     )
 
-    __table_args__ = (
-        Index(
-            SideEffectsLiteral.NON_EMITTED_EVENTS_INDEX,
-            EventReferrerTableMixin.event_id,
-            postgresql_where=(not side_effects_emitted),
-        ),
-    )
+    def __init_subclass__(cls) -> None:
+        if not hasattr(cls, "__tablename__"):
+            raise ValueError(f"Missing __tablename__ in class: {cls.__name__}")
+        if not hasattr(cls.__tablename__, "__str__"):
+            raise ValueError(
+                f"String incompatible tablename provided: {cls.__tablename__}"
+            )
+
+    @declared_attr.directive
+    def __table_args__(cls):
+        return (
+            Index(
+                f"{cls.__tablename__}_{SideEffectsLiteral.NON_EMITTED_EVENTS_INDEX}",
+                cls.event_id,
+                postgresql_where=(
+                    ~cls.side_effects_emitted
+                ),  # pyrefly: ignore[deprecated]
+            ),
+        )
