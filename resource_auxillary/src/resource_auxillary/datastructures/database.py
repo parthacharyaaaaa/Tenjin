@@ -31,6 +31,8 @@ class SideEffectsLiteral(StrEnum):
 
 class SideEffectsTables(StrEnum):
     CACHE = "cache_side_effects"
+    DOWNSTREAM_DELETION = "downstream_deletion_side_effects"
+    DOWNSTREAM_DECREMENT = "downstream_decrement_side_effects"
 
 
 class DeadLetterQueueLiteral(StrEnum):
