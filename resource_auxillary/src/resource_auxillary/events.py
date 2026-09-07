@@ -114,7 +114,7 @@ class CacheSideEffects(BaseModel):
 
 
 class EventSideEffects(BaseModel):
-    cache: Annotated[CacheSideEffects, Field(default_factory=EventSideEffects)]
+    cache: Annotated[CacheSideEffects, Field(default_factory=CacheSideEffects)]
 
 
 class Event(BaseModel):
