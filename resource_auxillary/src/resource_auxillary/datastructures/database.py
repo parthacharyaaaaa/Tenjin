@@ -20,12 +20,17 @@ class EventLiteral(StrEnum):
     EVENT_NAME_COLUMN_NAME = "event_name"
 
 
-class CacheSideEffectsLiteral(StrEnum):
-    """Table and column names for cache side-effects table"""
+class SideEffectsLiteral(StrEnum):
+    """Common table and column names for side-effects tables"""
 
-    TABLE_NAME = "cache_side_effects"
-    CACHE_SIDE_EFFECTS_EMITTED = "cache_se_emitted"
-    CACHE_SIDE_EFFECTS_PAYLOAD = "cache_se_payload"
+    SIDE_EFFECTS_EMITTED = "side_effects_emitted"
+    SIDE_EFFECTS_PAYLOAD = "side_effects_payload"
+
+    NON_EMITTED_EVENTS_INDEX = "non_emitted_events"
+
+
+class SideEffectsTables(StrEnum):
+    CACHE = "cache_side_effects"
 
 
 class DeadLetterQueueLiteral(StrEnum):

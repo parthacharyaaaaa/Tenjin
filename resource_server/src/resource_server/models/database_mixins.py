@@ -1,13 +1,15 @@
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import text, ForeignKey
+from sqlalchemy import text, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.dialects.postgresql import BIGINT, BOOLEAN, TIMESTAMP, TEXT
+from sqlalchemy.dialects.postgresql import BIGINT, BOOLEAN, TIMESTAMP, TEXT, JSONB
 
-from resource_auxillary.datastructures.database import EventLiteral
 from resource_auxillary.datastructures.database import (
     DeletionColumnLiteral,
     EventMetadataLiteral,
+    SideEffectsLiteral,
+    EventLiteral,
 )
 from resource_auxillary.strings import EventName
 
@@ -81,4 +83,21 @@ class EventReferrerTableMixin:
         ),
         primary_key=True,
         name=EventLiteral.EVENT_ID_COLUMN_NAME,
+    )
+
+
+class EventSideEffectsTableMixin(EventReferrerTableMixin):
+    side_effects_emitted: Mapped[bool] = mapped_column(
+        BOOLEAN, nullable=False, name=SideEffectsLiteral.SIDE_EFFECTS_EMITTED
+    )
+    payload: Mapped[Any] = mapped_column(
+        JSONB, name=SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD
+    )
+
+    __table_args__ = (
+        Index(
+            SideEffectsLiteral.NON_EMITTED_EVENTS_INDEX,
+            EventReferrerTableMixin.event_id,
+            postgresql_where=(not side_effects_emitted),
+        ),
     )
