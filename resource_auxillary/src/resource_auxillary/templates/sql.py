@@ -1,5 +1,6 @@
 """SQL templates and composed strings"""
 
+from resource_auxillary.datastructures.database import SideEffectsTables
 from datetime import datetime
 from typing import Final, Literal, Sequence
 
@@ -126,4 +127,23 @@ def prepare_copy_insertion_sql(
     return COPIED_INSERTION_SQL.format(
         table=Identifier(table),
         temp_table=Identifier(temp_table),
+    )
+
+
+SIDE_EFFECTS_READ_SQL: Final[SQL] = SQL("""
+    SELECT * FROM {side_effects_table}
+    WHERE {parent_event_id_column} = {parent_event_id}
+    LIMIT 1
+    FOR NO KEY UPDATE
+    SKIP LOCKED;
+    """)
+
+
+def prepare_side_effects_read_sql(
+    side_effects_table_name: SideEffectsTables, parent_event_id: int
+) -> Composed:
+    return SIDE_EFFECTS_READ_SQL.format(
+        side_effects_table=side_effects_table_name,
+        parent_event_id_column=EventLiteral.EVENT_ID_COLUMN_NAME,
+        parent_event_id=parent_event_id,
     )
