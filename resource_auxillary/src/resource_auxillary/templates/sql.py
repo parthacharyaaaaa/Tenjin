@@ -108,4 +108,22 @@ def prepare_weak_insertion_sql(
             EventMetadataLiteral.LAST_EVENT_IDENTIFIER_COLUMN_NAME
         ),
         conflict_columns=SQL(", ").join(Identifier(c) for c in conflicting_columns),
+        event_id_column=Identifier(EventLiteral.EVENT_ID_COLUMN_NAME),
+    )
+
+
+COPIED_INSERTION_SQL: Final[SQL] = SQL("""
+    INSERT INTO {table}
+    SELECT *
+    FROM {temp_table}
+    """)
+
+
+def prepare_copy_insertion_sql(
+    table: str,
+    temp_table: str,
+) -> Composed:
+    return COPIED_INSERTION_SQL.format(
+        table=Identifier(table),
+        temp_table=Identifier(temp_table),
     )

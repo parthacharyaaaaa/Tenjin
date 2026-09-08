@@ -1,8 +1,15 @@
+from resource_auxillary.templates.sql import prepare_copy_insertion_sql
+from resource_database_workers.datastructures.downstream import (
+    DownstreamDeletionMapping,
+)
+from resource_database_workers.datastructures.downstream import (
+    AnonymousDownstreamDeletionData,
+)
+from resource_auxillary.datastructures.database import StrongEntity
+from resource_database_workers.datastructures.downstream import DownstreamDeletionData
 from resource_database_workers.utils.sql_templates import (
     FORMATTED_CACHE_SIDE_EFFECTS_INSERTION_STATEMENT,
 )
-from resource_auxillary.datastructures.database import CacheSideEffectsLiteral
-from resource_auxillary.datastructures.database import EventLiteral
 from auxillary.utils import json_repr
 from typing import Any, Final, Literal, MutableSequence, Sequence, get_type_hints
 from uuid import uuid4
@@ -19,6 +26,11 @@ from resource_auxillary.datastructures.translation import (
 from resource_auxillary.datastructures.casting import (
     CAST_MAPPING,
     default_serializer,
+)
+from resource_auxillary.datastructures.database import (
+    EventLiteral,
+    SideEffectsTables,
+    SideEffectsLiteral,
 )
 from resource_auxillary.templates.sql import (
     prepare_temp_table_sql,
@@ -149,16 +161,73 @@ async def outbox_insertion(
         cache_insertion_record: dict[str, Any] = {}
         if event.side_effects.cache:
             cache_insertion_record[EventLiteral.EVENT_ID_COLUMN_NAME] = event.event_id
-            cache_insertion_record[
-                CacheSideEffectsLiteral.CACHE_SIDE_EFFECTS_EMITTED
-            ] = False
-            cache_insertion_record[
-                CacheSideEffectsLiteral.CACHE_SIDE_EFFECTS_PAYLOAD
-            ] = json_repr(event.side_effects.cache)
+            cache_insertion_record[SideEffectsLiteral.SIDE_EFFECTS_EMITTED] = False
+            cache_insertion_record[SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD] = json_repr(
+                event.side_effects.cache
+            )
             cache_insertion_records.append(cache_insertion_record)
     async with conn.cursor() as cursor:
         await cursor.executemany(
             FORMATTED_CACHE_SIDE_EFFECTS_INSERTION_STATEMENT,
             cache_insertion_records,
             returning=True,
+        )
+
+
+async def downstream_deletion_outbox_insertion(
+    conn: AsyncConnection,
+    events: Sequence[StreamedEvent],
+    upstream_table: StrongEntity,
+    identifier_column: str,
+) -> None:
+    child_deletion_data_tuple: tuple[AnonymousDownstreamDeletionData, ...] = (
+        DownstreamDeletionMapping[upstream_table]
+    )
+
+    temp_table_name = f"_downstream_deletion_staging_{upstream_table}_{uuid4().hex}"
+    async with conn.cursor() as cursor:
+        await cursor.execute(
+            prepare_temp_table_sql(
+                temp_table_name, SideEffectsTables.DOWNSTREAM_DELETION
+            )
+        )
+        async with cursor.copy(
+            prepare_weak_insertion_copy_sql(
+                temp_table_name,
+                *(
+                    EventLiteral.EVENT_ID_COLUMN_NAME,
+                    SideEffectsLiteral.SIDE_EFFECTS_EMITTED,
+                    SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD,
+                ),
+            )
+        ) as copy:
+            for event in events:
+                # Common outbox record values per event side-effect
+                base_downstream_deletion_record: dict[str, Any] = {
+                    EventLiteral.EVENT_ID_COLUMN_NAME: event.event_id,
+                    SideEffectsLiteral.SIDE_EFFECTS_EMITTED: False,
+                }
+                # Side-effect specific values
+                for child_deletion_data in child_deletion_data_tuple:
+                    downstream_deletion_data: DownstreamDeletionData = (
+                        DownstreamDeletionData(
+                            foreign_key=event.payload[identifier_column],
+                            deleted_at=event.payload["deleted_at"],
+                            **child_deletion_data,
+                        )
+                    )
+
+                    # Friendly reminder that 3.6+ dicts preserve order :3
+                    await copy.write_row(
+                        list(
+                            (
+                                base_downstream_deletion_record
+                                | {
+                                    SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD: downstream_deletion_data
+                                }
+                            ).values()
+                        )
+                    )
+        await cursor.execute(
+            prepare_copy_insertion_sql(upstream_table, temp_table_name)
         )

@@ -1,3 +1,6 @@
+from resource_database_workers.tasks.insertions import (
+    downstream_deletion_outbox_insertion,
+)
 from resource_database_workers.tasks.insertions import outbox_insertion
 from resource_database_workers.dependencies.annotations import (
     ACTION_LITERAL,
@@ -262,6 +265,16 @@ async def queue_deletion_consumer(
                 await db_execute_with_retries(
                     config.WORKER, conn, outbox_insertion_callable
                 )
+
+                # Implicit events not in the network payload (downstream deletion only in this case)
+                downstream_deletion_outbox_callable = (
+                    lambda: downstream_deletion_outbox_insertion(
+                        conn, batch, table, identifier_column
+                    )
+                )
+                await db_execute_with_retries(
+                    config.WORKER, conn, downstream_deletion_outbox_callable
+                )
                 await conn.commit()
             except Exception:
                 await declare_dead_with_retries(
@@ -280,18 +293,6 @@ async def queue_deletion_consumer(
             batch,
             stream_name,
             group_name,
-            dead_letter_stream_name,
-        )
-
-        # TODO: Absorb this logic into DB outbox >:3
-        await dispatch_downstream_events(
-            event_stream_manager,
-            config.WORKER,
-            table,
-            (
-                (event.payload[identifier_column], event.payload["deleted_at"])
-                for event in batch
-            ),
             dead_letter_stream_name,
         )
 
