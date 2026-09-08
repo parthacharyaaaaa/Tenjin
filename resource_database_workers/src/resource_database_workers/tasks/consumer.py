@@ -316,6 +316,7 @@ async def queue_downstream_deletion_consumer(
 
             downstream_deletion_callable = lambda: downstream_soft_delete_strong_entity(
                 conn,
+                event.event_id,
                 event_payload["foreign_key"],
                 event_payload["orphan_table"],
                 event_payload["foreign_key_column"],

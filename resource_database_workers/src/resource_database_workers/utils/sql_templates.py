@@ -99,21 +99,28 @@ def prepare_strong_deletion_sql(
 
 
 KILL_ORPHANS_SQL: Final[SQL] = SQL("""UPDATE {orphan_table}
-    SET {deletion_column} = true;
-    {deleted_at} = {deletion_time}
+    SET {deletion_column} = true,
+    {deleted_at} = {deletion_time},
+    {deletion_author_column} = {deletion_author_event_id}
     WHERE {parent_fk_column} = {parent_fk};""")
 
 
 def prepare_orphan_deletion(
-    orphan_table: str, parent_fk_column: str, parent_fk: int, deletion_time: datetime
+    orphan_table: str,
+    parent_fk_column: str,
+    parent_fk: int,
+    deletion_time: datetime,
+    deletion_author_id: int,
 ) -> Composed:
     return KILL_ORPHANS_SQL.format(
         orphan_table=Identifier(orphan_table),
         deletion_column=Identifier(DeletionColumnLiteral.DELETED_COLUMN_NAME),
         deleted_at=Identifier(DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME),
+        deletion_author_column=Identifier(DeletionColumnLiteral.DELETION_AUTHOR_EVENT),
         deletion_time=Literal(deletion_time),
         parent_fk_column=Identifier(parent_fk_column),
         parent_values=Literal(parent_fk),
+        deletion_author_event_id=Literal(deletion_author_id),
     )
 
 

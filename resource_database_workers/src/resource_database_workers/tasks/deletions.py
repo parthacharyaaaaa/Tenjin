@@ -24,6 +24,7 @@ async def soft_delete_strong_entity(
 
 async def downstream_soft_delete_strong_entity(
     conn: AsyncConnection,
+    deletion_author_event_id: int,
     parent_foreign_key: int,
     orphan_table: str,
     foreign_key_column: str,
@@ -31,6 +32,10 @@ async def downstream_soft_delete_strong_entity(
 ) -> None:
     deletion_time = deletion_time or datetime.now()
     deletion_statement: Composed = prepare_orphan_deletion(
-        orphan_table, foreign_key_column, parent_foreign_key, deletion_time
+        orphan_table,
+        foreign_key_column,
+        parent_foreign_key,
+        deletion_time,
+        deletion_author_event_id,
     )
     await conn.execute(deletion_statement)
