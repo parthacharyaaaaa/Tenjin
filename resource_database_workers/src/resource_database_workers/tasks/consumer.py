@@ -1,3 +1,4 @@
+from resource_auxillary.datastructures.database import GenericLiterals
 from resource_database_workers.tasks.insertions import (
     downstream_deletion_outbox_insertion,
 )
@@ -26,7 +27,6 @@ from datetime import datetime
 import time
 from typing import Generator
 
-from redis.exceptions import RedisError, ExceptionType
 
 from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.datastructures.database import StrongEntity
@@ -48,7 +48,6 @@ from resource_auxillary.event_processing.db_qos import (
 )
 from resource_database_workers.workers.redis.downstream_post_processing import (
     dispatch_downstream_counter_decrements,
-    dispatch_downstream_events,
     emit_downstream_counter_decrement_updates,
 )
 from resource_database_workers.tasks.selections import select_decrement_deltas
@@ -84,50 +83,30 @@ async def user_orphan_consumer(
                 conn, (e.event_id for e in batch), batch[0].name
             )
 
-        await event_stream_manager.trim_duplicate_events(
-            batch, fresh_event_ids, stream_name, group_name
-        )
+            await event_stream_manager.trim_duplicate_events(
+                batch, fresh_event_ids, stream_name, group_name
+            )
 
-        exception: Exception | None = None
-        for _attempt in range(1, config.WORKER.MAX_RETRIES + 1):
+            # Implicit events not in the network payload (downstream deletion only in this case)
+            downstream_deletion_outbox_callable = (
+                lambda: downstream_deletion_outbox_insertion(
+                    conn, batch, StrongEntity.USER, GenericLiterals.ID
+                )
+            )
             try:
-                await dispatch_downstream_events(
+                await db_execute_with_retries(
+                    config.WORKER, conn, downstream_deletion_outbox_callable
+                )
+            except Exception:
+                await declare_dead_with_retries(
                     event_stream_manager,
                     config.WORKER,
-                    StrongEntity.USER,
-                    (
-                        (event.payload["user_id"], event.payload["time_deleted"])
-                        for event in batch
-                    ),
+                    batch,
+                    stream_name,
+                    group_name,
                     dead_letter_stream_name,
                 )
-                exception = None
-                break
-            except RedisError as redis_error:
-                exception = redis_error
-                if redis_error.error_type == ExceptionType.NETWORK:
-                    await exponential_jittered_backoff(
-                        config.WORKER.MAXIMUM_BACKOFF_INTERVAL,
-                        config.WORKER.BASE_BACKOFF_INTERVAL,
-                        _attempt,
-                        exponential=config.WORKER.BACKOFF_EXPONENTIAL,
-                    )
-                    continue
-                break
-            except Exception as e:
-                exception = e
-                break
-
-        if exception:  # Entire batch failed
-            await declare_dead_with_retries(
-                event_stream_manager,
-                config.WORKER,
-                batch,
-                stream_name,
-                group_name,
-                dead_letter_stream_name,
-            )
-        else:
+                continue
             # ACK entire batch
             await ack_with_retries(
                 event_stream_manager,
