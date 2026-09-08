@@ -1,3 +1,4 @@
+from typing import TypeVar
 from datetime import datetime
 from typing import Any, Callable, Coroutine, Iterable
 from uuid import uuid4
@@ -17,21 +18,23 @@ from resource_auxillary.templates.sql import (
 )
 from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 
+T = TypeVar("T")
+
 
 async def db_execute_with_retries(
     retry_policy: SupportsExponentialJitteredRetryPolicy,
     connection: AsyncConnection,
-    db_coroutine: Callable[[], Coroutine[Any, Any, Any]],
+    db_coroutine: Callable[[], Coroutine[Any, Any, T]],
     attempts: int | None = None,
-) -> Any:
-    attempts = attempts or retry_policy.MAX_RETRIES
-    exception: Exception | None = None
+) -> T:
+    attempts = attempts if attempts is not None else retry_policy.MAX_RETRIES
     for _attempt in range(1, attempts + 1):
         try:
             return await db_coroutine()
         except POTENTIAL_TRANSIENT_ERRORS as pt_err:
             await connection.rollback()
-            exception = pt_err
+            if _attempt == attempts:
+                raise pt_err
             await exponential_jittered_backoff(
                 retry_policy.MAXIMUM_BACKOFF_INTERVAL,
                 retry_policy.BASE_BACKOFF_INTERVAL,
@@ -40,11 +43,8 @@ async def db_execute_with_retries(
             )
         except Exception as e:
             await connection.rollback()
-            exception = e
-            break
-
-    if exception:
-        raise exception
+            raise
+    raise AssertionError("Retry loop exited unexpectedly")
 
 
 async def dedup_insert_event(

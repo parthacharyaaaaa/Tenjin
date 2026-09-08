@@ -1,5 +1,6 @@
 """Quality-of-Service utility functions"""
 
+from typing import TypeVar
 from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
 from contextlib import asynccontextmanager
 from typing import Any, Callable, Coroutine, Sequence
@@ -12,20 +13,20 @@ from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import StreamName
 from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 
+T = TypeVar("T")
+
 
 async def execute_with_redis_retries(
     retry_policy: SupportsExponentialJitteredRetryPolicy,
-    redis_coroutine: Callable[[], Coroutine[Any, Any, Any]],
+    redis_coroutine: Callable[[], Coroutine[Any, Any, T]],
     attempts: int | None = None,
-) -> Any:
-    attempts = attempts or retry_policy.MAX_RETRIES
-    exception: Exception | None = None
+) -> T:
+    attempts = attempts if attempts is not None else retry_policy.MAX_RETRIES
     for _attempt in range(1, attempts + 1):
         try:
             return await redis_coroutine()
         except RedisError as redis_error:
-            exception = redis_error
-            if redis_error.error_type == ExceptionType.NETWORK:
+            if redis_error.error_type == ExceptionType.NETWORK and _attempt < attempts:
                 await exponential_jittered_backoff(
                     retry_policy.MAXIMUM_BACKOFF_INTERVAL,
                     retry_policy.BASE_BACKOFF_INTERVAL,
@@ -33,14 +34,8 @@ async def execute_with_redis_retries(
                     exponential=retry_policy.BACKOFF_EXPONENTIAL,
                 )
                 continue
-
-            break
-        except Exception as e:
-            exception = e
-            break
-
-    if exception:
-        raise exception
+            raise redis_error
+    raise AssertionError("Retry loop exited unexpectedly")
 
 
 async def dlq_aware_process_events(
