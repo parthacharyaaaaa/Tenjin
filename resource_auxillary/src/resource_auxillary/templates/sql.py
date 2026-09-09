@@ -114,20 +114,49 @@ def prepare_weak_insertion_sql(
     )
 
 
-COPIED_INSERTION_SQL: Final[SQL] = SQL("""
-    INSERT INTO {table}
-    SELECT *
+FAN_OUT_COPY_INSERTION_SQL: Final[SQL] = SQL("""
+    INSERT INTO {target_table} (
+        {event_id_col},
+        {event_emitted_column},
+        {event_payload_column}
+    )
+    SELECT {event_id_col}, {event_emitted_column}, {event_payload_column}
     FROM {temp_table}
+    WHERE {target_table_column} = {target_table};
     """)
 
 
-def prepare_copy_insertion_sql(
-    table: str,
+def prepare_fan_out_copy_insertion_sql(
+    target_table: SideEffectsTables,
     temp_table: str,
 ) -> Composed:
-    return COPIED_INSERTION_SQL.format(
-        table=Identifier(table),
+    return FAN_OUT_COPY_INSERTION_SQL.format(
+        target_table=SQL_Literal(target_table),
+        event_id_col=Identifier(EventLiteral.EVENT_ID_COLUMN_NAME),
+        event_emitted_column=Identifier(SideEffectsLiteral.SIDE_EFFECTS_EMITTED),
+        event_payload_column=Identifier(SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD),
         temp_table=Identifier(temp_table),
+        target_table_column=Identifier(SideEffectsLiteral.COPY_TARGET_TABLE),
+    )
+
+
+SIDE_EFFECTS_TEMP_TABLE_SQL: Final[SQL] = SQL("""
+    CREATE TEMP TABLE {temp_table}
+    (
+        LIKE {reference} INCLUDING DEFAULTS
+        {target_table_column} TEXT NOT NULL;
+    )
+    ON COMMIT DROP;
+    """)
+
+
+def prepare_side_effects_staging_table_sql(
+    tablename: str, reference_table: str
+) -> Composed:
+    return TEMP_TABLE_SQL.format(
+        table=Identifier(tablename),
+        reference=Identifier(reference_table),
+        target_table_column=Identifier(SideEffectsLiteral.COPY_TARGET_TABLE),
     )
 
 

@@ -27,6 +27,7 @@ class SideEffectsLiteral(StrEnum):
     SIDE_EFFECTS_PAYLOAD = "side_effects_payload"
 
     NON_EMITTED_EVENTS_INDEX = "non_emitted_events"
+    COPY_TARGET_TABLE = "copy_target_table"
 
 
 class SideEffectsTables(StrEnum):

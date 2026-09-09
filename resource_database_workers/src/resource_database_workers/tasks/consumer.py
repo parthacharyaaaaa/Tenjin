@@ -1,6 +1,7 @@
+from functools import partial
 from resource_auxillary.datastructures.database import GenericLiterals
 from resource_database_workers.tasks.insertions import (
-    downstream_deletion_outbox_insertion,
+    insert_downstream_deletion_outbox_entries,
 )
 from resource_database_workers.tasks.insertions import outbox_insertion
 from resource_database_workers.dependencies.annotations import (
@@ -69,7 +70,7 @@ async def user_orphan_consumer(
 
             # Implicit events not in the network payload (downstream deletion only in this case)
             downstream_deletion_outbox_callable = (
-                lambda: downstream_deletion_outbox_insertion(
+                lambda: insert_downstream_deletion_outbox_entries(
                     conn, batch, StrongEntity.USER, GenericLiterals.ID
                 )
             )
@@ -215,26 +216,35 @@ async def queue_deletion_consumer(
                 for event in batch
             )
 
-            deletion_callable = lambda: soft_delete_strong_entity(
-                conn, table.value, identifier_column, deletion_data
-            )
             try:
-                await db_execute_with_retries(config.WORKER, conn, deletion_callable)
-                outbox_insertion_callable = lambda: outbox_insertion(conn, batch)
                 await db_execute_with_retries(
-                    config.WORKER, conn, outbox_insertion_callable
+                    config.WORKER,
+                    conn,
+                    partial(
+                        soft_delete_strong_entity,
+                        conn,
+                        table.value,
+                        identifier_column,
+                        deletion_data,
+                    ),
                 )
+                # outbox_insertion_callable = lambda: outbox_insertion(conn, batch)
+                # await db_execute_with_retries(
+                #     config.WORKER, conn, outbox_insertion_callable
+                # )
 
                 # Implicit events not in the network payload (downstream deletion only in this case)
-                downstream_deletion_outbox_callable = (
-                    lambda: downstream_deletion_outbox_insertion(
-                        conn, batch, table, identifier_column
-                    )
-                )
                 await db_execute_with_retries(
-                    config.WORKER, conn, downstream_deletion_outbox_callable
+                    config.WORKER,
+                    conn,
+                    partial(
+                        insert_downstream_deletion_outbox_entries,
+                        conn,
+                        batch,
+                        table,
+                        identifier_column,
+                    ),
                 )
-                await conn.commit()
             except Exception:
                 await declare_dead_with_retries(
                     event_stream_manager,

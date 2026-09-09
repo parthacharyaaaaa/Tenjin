@@ -1,7 +1,11 @@
+from resource_database_workers.utils.db import fan_out_side_effect
+from resource_database_workers.datastructures.side_effects import (
+    DownstreamCacheInvalidationPayload,
+)
+from resource_auxillary.templates.sql import prepare_side_effects_staging_table_sql
 from resource_database_workers.datastructures.side_effects import (
     DownstreamDeletionPayload,
 )
-from resource_auxillary.templates.sql import prepare_copy_insertion_sql
 from resource_database_workers.datastructures.downstream import (
     DOWNSTREAM_DELETION_ANONYMOUS_PAYLOAD_MAPPING,
 )
@@ -176,7 +180,7 @@ async def outbox_insertion(
         )
 
 
-async def downstream_deletion_outbox_insertion(
+async def insert_downstream_deletion_outbox_entries(
     conn: AsyncConnection,
     events: Sequence[StreamedEvent],
     upstream_table: StrongEntity,
@@ -186,32 +190,31 @@ async def downstream_deletion_outbox_insertion(
         DOWNSTREAM_DELETION_ANONYMOUS_PAYLOAD_MAPPING[upstream_table]
     )
 
-    temp_table_name = f"_downstream_deletion_staging_{upstream_table}_{uuid4().hex}"
+    staging_table_name = f"_downstream_deletion_staging_{upstream_table}_{uuid4().hex}"
     async with conn.cursor() as cursor:
         await cursor.execute(
-            prepare_temp_table_sql(
-                temp_table_name, SideEffectsTables.DOWNSTREAM_DELETION
+            prepare_side_effects_staging_table_sql(
+                staging_table_name, SideEffectsTables.DOWNSTREAM_DELETION
             )
         )
         async with cursor.copy(
             prepare_weak_insertion_copy_sql(
-                temp_table_name,
+                staging_table_name,
                 *(
                     EventLiteral.EVENT_ID_COLUMN_NAME,
                     SideEffectsLiteral.SIDE_EFFECTS_EMITTED,
                     SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD,
+                    SideEffectsLiteral.COPY_TARGET_TABLE,
                 ),
             )
         ) as copy:
             for event in events:
-                # Common outbox record values per event side-effect
-                base_downstream_deletion_record: dict[str, Any] = {
-                    EventLiteral.EVENT_ID_COLUMN_NAME: event.event_id,
-                    SideEffectsLiteral.SIDE_EFFECTS_EMITTED: False,
-                }
+                # NOTE: Order of outbox entries is non-trivial in copy.write_rows!
+                # Common side-effects outbox values (referred event ID and event_emitted column)
+                base_outbox_values: tuple[int, Literal[False]] = (event.event_id, False)
                 # Side-effect specific values
                 for child_deletion_data in child_deletion_data_tuple:
-                    downstream_deletion_data: DownstreamDeletionPayload = (
+                    downstream_deletion_payload: DownstreamDeletionPayload = (
                         DownstreamDeletionPayload(
                             foreign_key=event.payload[identifier_column],
                             deleted_at=event.payload["deleted_at"],
@@ -219,17 +222,35 @@ async def downstream_deletion_outbox_insertion(
                         )
                     )
 
+                    downstream_cache_invalidation_payload: (
+                        DownstreamCacheInvalidationPayload
+                    ) = DownstreamCacheInvalidationPayload(
+                        downstream_table=child_deletion_data["orphan_table"]
+                    )
+
                     # Friendly reminder that 3.6+ dicts preserve order :3
+                    # Downstream database deletion
                     await copy.write_row(
-                        list(
-                            (
-                                base_downstream_deletion_record
-                                | {
-                                    SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD: downstream_deletion_data.model_dump()
-                                }
-                            ).values()
+                        (
+                            *base_outbox_values,
+                            downstream_deletion_payload.model_dump(),
+                            SideEffectsTables.DOWNSTREAM_DELETION,
                         )
                     )
-        await cursor.execute(
-            prepare_copy_insertion_sql(upstream_table, temp_table_name)
-        )
+                    # Downstream cache invalidation
+                    await copy.write_row(
+                        (
+                            *base_outbox_values,
+                            downstream_cache_invalidation_payload.model_dump(),
+                            SideEffectsTables.DOWNSTREAM_CACHE_INVALIDATION,
+                        )
+                    )
+
+            await fan_out_side_effect(
+                conn,
+                staging_table_name,
+                (
+                    SideEffectsTables.DOWNSTREAM_CACHE_INVALIDATION,
+                    SideEffectsTables.DOWNSTREAM_DELETION,
+                ),
+            )

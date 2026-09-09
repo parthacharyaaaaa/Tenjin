@@ -1,3 +1,5 @@
+from resource_auxillary.templates.sql import prepare_fan_out_copy_insertion_sql
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
 from auxillary.typing_utils import SupportsMembershipCheck
@@ -42,6 +44,17 @@ async def mark_side_effect_row_processed(
     await conn.execute(
         prepare_side_effects_processing_sql(side_effects_table, parent_event_id)
     )
+
+
+async def fan_out_side_effect(
+    conn: AsyncConnection,
+    staging_table_name: str,
+    destination_tables: Sequence[SideEffectsTables],
+) -> None:
+    for destination_table in destination_tables:
+        await conn.execute(
+            prepare_fan_out_copy_insertion_sql(destination_table, staging_table_name)
+        )
 
 
 @asynccontextmanager
