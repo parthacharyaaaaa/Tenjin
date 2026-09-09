@@ -32,6 +32,7 @@ class SideEffectsLiteral(StrEnum):
 class SideEffectsTables(StrEnum):
     CACHE = "cache_side_effects"
     DOWNSTREAM_DELETION = "downstream_deletion_side_effects"
+    DOWNSTREAM_CACHE_INVALIDATION = "downstream_cache_invalidation"
     DOWNSTREAM_DECREMENT = "downstream_decrement_side_effects"
 
 

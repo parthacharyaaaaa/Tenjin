@@ -639,6 +639,10 @@ class DownstreamDecrementSideEffects(EventSideEffectsTableMixin, Base):
     __tablename__ = SideEffectsTables.DOWNSTREAM_DECREMENT
 
 
+class DownstreamCacheInvalidationSideEffects(EventSideEffectsTableMixin, Base):
+    __tablename__ = SideEffectsTables.DOWNSTREAM_CACHE_INVALIDATION
+
+
 class DeadLetterQueue(EventTableMixin, Base):
     __tablename__ = DeadLetterQueueLiteral.TABLE_NAME
 
