@@ -1,3 +1,4 @@
+from resource_database_workers.utils.db import mark_side_effect_row_processed
 from resource_database_workers.workers.redis.downstream_post_processing import (
     register_counter_decrement_updates,
 )
@@ -42,7 +43,7 @@ async def downstream_deletion_worker(
     status_proxy: STATUS_PROXY,
 ) -> None:
     side_effects_retrieval_coroutine = lambda: get_side_effect_row(
-        conn, SideEffectsTables.DOWNSTREAM_DELETION, DownstreamDeletionPayload
+        conn, SideEffectsTables.DOWNSTREAM_DELETION
     )
     while status_proxy.status_ok:
         async with pool.connection() as conn:
@@ -74,10 +75,15 @@ async def downstream_deletion_worker(
                 payload.foreign_key_column,
                 payload.deleted_at,
             )
-
+            outbox_processing_coroutine = lambda: mark_side_effect_row_processed(
+                conn, SideEffectsTables.DOWNSTREAM_DELETION, event_id
+            )
             try:
                 await db_execute_with_retries(
                     config.WORKER, conn, downstream_deletion_callable
+                )
+                await db_execute_with_retries(
+                    config.WORKER, conn, outbox_processing_coroutine
                 )
             except Exception:
                 dead_event: Event = Event(
@@ -91,10 +97,6 @@ async def downstream_deletion_worker(
                 await execute_with_redis_retries(config.WORKER, emission_coroutine)
 
 
-# TODO: This function will be an outbox consumer instead of a Redis stream consumer,
-# And we'll need to manage idempotency/atomicity for insanely large downstream workloads
-# (e.g. Forum deletion -> decrement post count per user for every post EVER!!!).
-# God, this is gonna be a pain to revamp >:((((
 async def downstream_decrement_worker(
     config: APP_CONFIG,
     pool: CONNECTION_POOL,
@@ -106,7 +108,7 @@ async def downstream_decrement_worker(
     while status_proxy.status_ok:
         async with pool.connection() as conn:
             side_effects_retrieval_coroutine = lambda: get_side_effect_row(
-                conn, SideEffectsTables.DOWNSTREAM_DECREMENT, DownstreamDecrementPayload
+                conn, SideEffectsTables.DOWNSTREAM_DECREMENT
             )
             event_id, raw_payload = await db_execute_with_retries(
                 config.WORKER, conn, side_effects_retrieval_coroutine
@@ -155,6 +157,14 @@ async def downstream_decrement_worker(
                             payload.orphaned_table,
                         )
                     await pipeline.execute()
+                    outbox_processing_coroutine = (
+                        lambda: mark_side_effect_row_processed(
+                            conn, SideEffectsTables.DOWNSTREAM_DECREMENT, event_id
+                        )
+                    )
+                    await db_execute_with_retries(
+                        config.WORKER, conn, outbox_processing_coroutine
+                    )
                 except POTENTIAL_TRANSIENT_ERRORS as e:
                     if _attempt == config.WORKER.MAX_RETRIES:
                         raise e
@@ -168,3 +178,13 @@ async def downstream_decrement_worker(
                     # Reset selection params
                     limit, offset = config.WORKER.DOWNSTREAM_COUNTER_BATCH_SIZE, 0
                     continue
+                except Exception:
+                    dead_event: Event = Event(
+                        name=EventName.DLQ_SIDE_EFFECTS,
+                        payload={"event_id": event_id},
+                        side_effects=EventSideEffects(),
+                    )
+                    emission_coroutine = lambda: event_stream_manager.stream_events(
+                        (dead_event,), dead_letter_stream_name
+                    )
+                    await execute_with_redis_retries(config.WORKER, emission_coroutine)

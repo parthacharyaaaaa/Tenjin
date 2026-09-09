@@ -1,3 +1,4 @@
+from resource_auxillary.templates.sql import prepare_side_effects_processing_sql
 from resource_auxillary.datastructures.database import SideEffectsLiteral
 from typing import Any, TypeVar
 
@@ -13,7 +14,7 @@ T = TypeVar("T", bound=BaseModel)
 
 
 async def get_side_effect_row(
-    conn: AsyncConnection, side_effects_table: SideEffectsTables, payload_type: type[T]
+    conn: AsyncConnection, side_effects_table: SideEffectsTables
 ) -> tuple[int, dict[str, Any]]:
     async with conn.cursor(row_factory=dict_row) as cursor:
         while True:
@@ -25,3 +26,11 @@ async def get_side_effect_row(
             result[EventLiteral.EVENT_ID_COLUMN_NAME],
             result[SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD],
         )
+
+
+async def mark_side_effect_row_processed(
+    conn: AsyncConnection, side_effects_table: SideEffectsTables, parent_event_id: int
+) -> None:
+    await conn.execute(
+        prepare_side_effects_processing_sql(side_effects_table, parent_event_id)
+    )

@@ -147,3 +147,23 @@ def prepare_side_effects_read_sql(
         side_effects_table=Identifier(side_effects_table_name),
         emitted_column_name=Identifier(SideEffectsLiteral.SIDE_EFFECTS_EMITTED),
     )
+
+
+SIDE_EFFECTS_PROCESSED_SQL: Final[SQL] = SQL("""
+    UPDATE {side_effects_table}
+    SET {side_effect_emitted_column} = true,
+    {side_effects_payload_column} = NULL
+    WHERE {root_event_column} = {root_event_id};
+    """)
+
+
+def prepare_side_effects_processing_sql(
+    side_effects_table: SideEffectsTables, parent_event_id: int
+) -> Composed:
+    return SIDE_EFFECTS_PROCESSED_SQL.format(
+        side_effects_table=Identifier(side_effects_table),
+        side_effects_emitted_column=Identifier(SideEffectsLiteral.SIDE_EFFECTS_EMITTED),
+        side_effects_payload_column=Identifier(SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD),
+        root_event_column=Identifier(EventLiteral.EVENT_ID_COLUMN_NAME),
+        root_event_id=SQL_Literal(parent_event_id),
+    )
