@@ -1,12 +1,14 @@
+from resource_database_workers.datastructures.side_effects import (
+    DownstreamDeletionPayload,
+)
 from resource_auxillary.templates.sql import prepare_copy_insertion_sql
 from resource_database_workers.datastructures.downstream import (
-    DownstreamDeletionMapping,
+    DOWNSTREAM_DELETION_ANONYMOUS_PAYLOAD_MAPPING,
 )
 from resource_database_workers.datastructures.downstream import (
     AnonymousDownstreamDeletionData,
 )
 from resource_auxillary.datastructures.database import StrongEntity
-from resource_database_workers.datastructures.downstream import DownstreamDeletionData
 from resource_database_workers.utils.sql_templates import (
     FORMATTED_CACHE_SIDE_EFFECTS_INSERTION_STATEMENT,
 )
@@ -181,7 +183,7 @@ async def downstream_deletion_outbox_insertion(
     identifier_column: str,
 ) -> None:
     child_deletion_data_tuple: tuple[AnonymousDownstreamDeletionData, ...] = (
-        DownstreamDeletionMapping[upstream_table]
+        DOWNSTREAM_DELETION_ANONYMOUS_PAYLOAD_MAPPING[upstream_table]
     )
 
     temp_table_name = f"_downstream_deletion_staging_{upstream_table}_{uuid4().hex}"
@@ -209,8 +211,8 @@ async def downstream_deletion_outbox_insertion(
                 }
                 # Side-effect specific values
                 for child_deletion_data in child_deletion_data_tuple:
-                    downstream_deletion_data: DownstreamDeletionData = (
-                        DownstreamDeletionData(
+                    downstream_deletion_data: DownstreamDeletionPayload = (
+                        DownstreamDeletionPayload(
                             foreign_key=event.payload[identifier_column],
                             deleted_at=event.payload["deleted_at"],
                             **child_deletion_data,
@@ -223,7 +225,7 @@ async def downstream_deletion_outbox_insertion(
                             (
                                 base_downstream_deletion_record
                                 | {
-                                    SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD: downstream_deletion_data
+                                    SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD: downstream_deletion_data.model_dump()
                                 }
                             ).values()
                         )
