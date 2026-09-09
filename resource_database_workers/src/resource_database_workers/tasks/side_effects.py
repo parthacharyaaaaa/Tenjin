@@ -1,14 +1,14 @@
+from resource_database_workers.workers.redis.downstream_post_processing import (
+    register_counter_decrement_updates,
+)
 from resource_auxillary.events import EventSideEffects
 from resource_auxillary.strings import EventName
 from resource_auxillary.events import Event
 from pydantic import ValidationError
 from resource_auxillary.datastructures.database import SideEffectsTables
 from resource_database_workers.dependencies.annotations import (
-    ISOLATED_EVENT_QUEUE,
-    STREAM_NAME,
     STATUS_PROXY,
     DEAD_LETTER_STREAM_NAME,
-    GROUP_NAME,
     INTERNAL_REDIS,
     CONNECTION_POOL,
     APP_CONFIG,
@@ -20,28 +20,16 @@ from resource_database_workers.tasks.deletions import (
 
 
 from resource_auxillary.coordination import exponential_jittered_backoff
-from resource_auxillary.events import StreamedEvent
 from resource_auxillary.event_processing.qos import execute_with_redis_retries
-from resource_auxillary.event_processing.wrappers import (
-    ack_with_retries,
-    declare_dead_with_retries,
-)
 from resource_auxillary.constants import POTENTIAL_TRANSIENT_ERRORS
 
 from resource_auxillary.event_processing.db_qos import (
-    dedup_insert_event,
     db_execute_with_retries,
 )
-from resource_database_workers.workers.redis.downstream_post_processing import (
-    emit_downstream_counter_decrement_updates,
-)
 from resource_database_workers.tasks.selections import select_decrement_deltas
-from resource_database_workers.datastructures.downstream import (
-    DownstreamCounterDecrementData,
-    reconstruct_downstream_counter_data_from_stream,
-)
 from resource_database_workers.datastructures.side_effects import (
     DownstreamDeletionPayload,
+    DownstreamDecrementPayload,
 )
 from resource_database_workers.utils.db import get_side_effect_row
 
@@ -112,68 +100,64 @@ async def downstream_decrement_worker(
     pool: CONNECTION_POOL,
     redis: INTERNAL_REDIS,
     event_stream_manager: EVENT_STREAM_MANAGER,
-    queue: ISOLATED_EVENT_QUEUE,
-    stream_name: STREAM_NAME,
-    group_name: GROUP_NAME,
     dead_letter_stream_name: DEAD_LETTER_STREAM_NAME,
     status_proxy: STATUS_PROXY,
 ) -> None:
     while status_proxy.status_ok:
-        event: StreamedEvent = await queue.get()
-        try:
-            event_payload: DownstreamCounterDecrementData = (
-                reconstruct_downstream_counter_data_from_stream(event.payload)
+        async with pool.connection() as conn:
+            side_effects_retrieval_coroutine = lambda: get_side_effect_row(
+                conn, SideEffectsTables.DOWNSTREAM_DECREMENT, DownstreamDecrementPayload
             )
-        except (KeyError, ValueError):
-            await declare_dead_with_retries(
-                event_stream_manager,
-                config.WORKER,
-                (event,),
-                stream_name,
-                group_name,
-                dead_letter_stream_name,
+            event_id, raw_payload = await db_execute_with_retries(
+                config.WORKER, conn, side_effects_retrieval_coroutine
             )
-            continue
+            try:
+                payload: DownstreamDecrementPayload = (
+                    DownstreamDecrementPayload.model_construct(**raw_payload)
+                )
+            except (ValueError, ValidationError, KeyError):
+                dead_event: Event = Event(
+                    name=EventName.DLQ_SIDE_EFFECTS,
+                    payload={"event_id": event_id},
+                    side_effects=EventSideEffects(),
+                )
+                emission_coroutine = lambda: event_stream_manager.stream_events(
+                    (dead_event,), dead_letter_stream_name
+                )
+                await execute_with_redis_retries(config.WORKER, emission_coroutine)
+                continue
+            del raw_payload
 
         # Downstream counters may be too big to materialize all at once
         limit, offset = config.WORKER.DOWNSTREAM_COUNTER_BATCH_SIZE, 0
-        exception: Exception | None = None
-        async with pool.connection() as conn:
-            if not await dedup_insert_event(conn, event.event_id, event.name):
-                await event_stream_manager.acknowledge_events(
-                    (event,), stream_name, group_name
-                )
-                continue
-
-            for _attempt in range(1, config.WORKER.MAX_RETRIES + 1):
+        for _attempt in range(1, config.WORKER.MAX_RETRIES + 1):
+            async with redis.pipeline(transaction=True) as pipeline:
                 try:
                     # temp truthy tuple to enter loop
                     # (hehe the initial list kinda looks like a wink)
                     results: list[tuple[str, int]] = [("", 0)]
                     while results:
+                        # Fetch subset of counter deltas
                         results: list[tuple[str, int]] = await select_decrement_deltas(
                             conn,
-                            event_payload["affected_column_name"],
+                            payload.foreign_key_column,
                             limit,
                             offset,
-                            event_payload["affected_table_name"],
-                            event_payload["deletion_author_event_id"],
+                            payload.orphaned_table,
+                            event_id,
                         )
                         offset += limit
-
-                        emission_coroutine = (
-                            lambda: emit_downstream_counter_decrement_updates(
-                                redis,
-                                results,
-                                event_payload["hashmap_name"],
-                                event_payload["affected_table_name"],
-                            )
+                        # Buffer HINCRBY commands to pipeline
+                        register_counter_decrement_updates(
+                            pipeline,
+                            results,
+                            payload.hashmap_name,
+                            payload.orphaned_table,
                         )
-                        await execute_with_redis_retries(
-                            config.WORKER, emission_coroutine
-                        )
+                    await pipeline.execute()
                 except POTENTIAL_TRANSIENT_ERRORS as e:
-                    exception = e
+                    if _attempt == config.WORKER.MAX_RETRIES:
+                        raise e
                     await conn.rollback()
                     await exponential_jittered_backoff(
                         config.WORKER.MAXIMUM_BACKOFF_INTERVAL,
@@ -181,27 +165,6 @@ async def downstream_decrement_worker(
                         _attempt,
                         exponential=config.WORKER.BACKOFF_EXPONENTIAL,
                     )
+                    # Reset selection params
+                    limit, offset = config.WORKER.DOWNSTREAM_COUNTER_BATCH_SIZE, 0
                     continue
-                except Exception as e:
-                    exception = e
-                    await conn.rollback()
-                    break
-
-        if exception:
-            await declare_dead_with_retries(
-                event_stream_manager,
-                config.WORKER,
-                (event,),
-                stream_name,
-                group_name,
-                dead_letter_stream_name,
-            )
-        else:
-            await ack_with_retries(
-                event_stream_manager,
-                config.WORKER,
-                (event,),
-                stream_name,
-                group_name,
-                dead_letter_stream_name,
-            )
