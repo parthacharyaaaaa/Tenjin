@@ -1,3 +1,5 @@
+from auth_server.repositories.keydata import KeyPrivateDataResult
+from auth_server.repositories.keydata import KeyPublicDataResult
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Final
@@ -52,22 +54,20 @@ async def get_key(
         AdminSession, Depends(require_permissions(Permission.READ_KEY))
     ],
     session: Annotated[AsyncSession, Depends(get_database_session)],
+    keydata_repository: Annotated[KeydataRepository, Depends(get_keydata_repository)],
+    public: bool = True,
 ) -> JSONResponse:
     try:
-        key: KeyData | None = (
-            await session.execute(select(KeyData).where(KeyData.kid == kid))
-        ).scalar_one_or_none()
+        key: KeyPublicDataResult | KeyPrivateDataResult | None = (
+            await keydata_repository.get_keydata(kid, public_only=public)
+        )
 
         if not key:
             raise HTTPException(404, "No key with this ID found")
     except SQLAlchemyError:
-        raise Exception
+        raise Exception("Failed to fetch key")
 
-    key_mapping: dict[str, Any] = json_repr(key)
-    # KeyData.__json_like__ does not expose private PEM
-    key_mapping["private_pem"] = key.private_pem.decode()
-
-    return JSONResponse(key_mapping)
+    return JSONResponse(json_repr(key))
 
 
 @KEY.delete("/keys/{kid}")
