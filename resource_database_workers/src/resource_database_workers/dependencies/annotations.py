@@ -38,10 +38,6 @@ UPSTREAM_QUEUE_REGISTRY = Annotated[
     EventQueueRegistry[tuple[StreamedEvent, ...]],
     Inject(lambda: get_queue_registry().upstream_registry),
 ]
-DOWNSTREAM_QUEUE_REGISTRY = Annotated[
-    EventQueueRegistry[StreamedEvent],
-    Inject(lambda: get_queue_registry().downstream_registry),
-]
 
 DEAD_LETTER_QUEUE_REGISTRY = Annotated[
     EventQueueRegistry[StreamedEvent],

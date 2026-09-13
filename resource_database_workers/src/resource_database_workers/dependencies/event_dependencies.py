@@ -21,7 +21,6 @@ from resource_database_workers.tasks.consumer import (
 )
 from resource_database_workers.tasks.side_effects import (
     downstream_deletion_worker,
-    downstream_decrement_worker,
 )
 from resource_database_workers.tasks.dlq_workers import dlq_consumer
 
@@ -97,10 +96,6 @@ EVENT_WORKER_DATA_MAPPING: Final[MappingProxyType[EventName, t_event_worker_data
                 EventName.ANIME_UNSUB: queue_insertion_consumer,
                 EventName.ORPHANED_POST_DELETE: downstream_deletion_worker,
                 EventName.ORPHANED_COMMENT_DELETE: downstream_deletion_worker,
-                EventName.DOWNSTREAM_USER_POST_DECREMENT: downstream_decrement_worker,
-                EventName.DOWNSTREAM_USER_COMMENT_DECREMENT: downstream_decrement_worker,
-                EventName.DOWNSTREAM_FORUM_POST_DECREMENT: downstream_decrement_worker,
-                EventName.DOWNSTREAM_POST_COMMENT_DECREMENT: downstream_decrement_worker,
                 EventName.DLQ_COUNTER: dlq_consumer,
                 EventName.DLQ_SIDE_EFFECTS: dlq_consumer,
                 EventName.DEAD_LETTER_SENTINEL: dlq_consumer,

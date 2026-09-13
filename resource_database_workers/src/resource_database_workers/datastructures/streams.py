@@ -6,7 +6,6 @@ from resource_auxillary.strings import EventName, StreamName
 
 from resource_database_workers.tasks.stream_readers import (
     upstream_dispatcher,
-    downstream_dispatcher,
 )
 
 STREAM_CONSUMER_MAPPING: Final[MappingProxyType[StreamName, Callable]] = (
@@ -18,8 +17,6 @@ STREAM_CONSUMER_MAPPING: Final[MappingProxyType[StreamName, Callable]] = (
             StreamName.COMMENTS: upstream_dispatcher,
             StreamName.USERS: upstream_dispatcher,
             StreamName.DEAD_LETTER_QUEUE: dlq_dispatcher,
-            StreamName.DOWNSTREAM_DELETIONS: downstream_dispatcher,
-            StreamName.DOWNSTREAM_COUNTER_DECREMENTS: downstream_dispatcher,
         }
     )
 )
@@ -53,16 +50,6 @@ STREAM_EVENT_MAPPING: Final[MappingProxyType[StreamName, tuple[EventName, ...]]]
                 EventName.ANIME_UNSUB,
             ),
             StreamName.USERS: (EventName.USER_CLEANUP, EventName.USER_TICKET),
-            StreamName.DOWNSTREAM_DELETIONS: (
-                EventName.ORPHANED_POST_DELETE,
-                EventName.ORPHANED_COMMENT_DELETE,
-            ),
-            StreamName.DOWNSTREAM_COUNTER_DECREMENTS: (
-                EventName.DOWNSTREAM_USER_POST_DECREMENT,
-                EventName.DOWNSTREAM_FORUM_POST_DECREMENT,
-                EventName.DOWNSTREAM_USER_COMMENT_DECREMENT,
-                EventName.DOWNSTREAM_POST_COMMENT_DECREMENT,
-            ),
             StreamName.DEAD_LETTER_QUEUE: (
                 EventName.DLQ_COUNTER,
                 EventName.DLQ_SIDE_EFFECTS,

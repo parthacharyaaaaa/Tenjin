@@ -6,7 +6,6 @@ from resource_auxillary.datastructures.database import (
     StrongEntity,
     ForeignKeyColumnLiteral,
 )
-from resource_auxillary.strings import EventName
 
 
 class AnonymousDownstreamDeletionData(TypedDict):
@@ -44,9 +43,7 @@ type t_downstream_deletion_mapping = Mapping[
 
 # Upstream strong entity mapped to event name,
 # foreign key of downstream entity, and Redis hashmap name
-type t_downstream_counter_event_metadata = tuple[
-    EventName, ForeignKeyColumnLiteral, str
-]
+type t_downstream_counter_event_metadata = tuple[ForeignKeyColumnLiteral, str]
 type t_downstream_decrement_mapping = Mapping[
     StrongEntity, tuple[t_downstream_counter_event_metadata, ...]
 ]
@@ -72,26 +69,22 @@ DOWNSTREAM_DECREMENT_MAPPING: t_downstream_decrement_mapping = MappingProxyType(
     {
         StrongEntity.USER: (
             (
-                EventName.DOWNSTREAM_USER_POST_DECREMENT,
                 ForeignKeyColumnLiteral.AUTHOR_ID,
                 derive_hashmap_name(StrongEntity.USER, StrongEntity.POST),
             ),
             (
-                EventName.DOWNSTREAM_USER_COMMENT_DECREMENT,
                 ForeignKeyColumnLiteral.AUTHOR_ID,
                 derive_hashmap_name(StrongEntity.USER, StrongEntity.COMMENT),
             ),
         ),
         StrongEntity.POST: (
             (
-                EventName.DOWNSTREAM_POST_COMMENT_DECREMENT,
                 ForeignKeyColumnLiteral.AUTHOR_ID,
                 derive_hashmap_name(StrongEntity.USER, StrongEntity.COMMENT),
             ),
         ),
         StrongEntity.FORUM: (
             (
-                EventName.DOWNSTREAM_FORUM_POST_DECREMENT,
                 ForeignKeyColumnLiteral.AUTHOR_ID,
                 derive_hashmap_name(StrongEntity.USER, StrongEntity.POST),
             ),
