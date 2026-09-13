@@ -1,5 +1,8 @@
-from resource_auxillary.datastructures.database import EventLiteral
-from resource_auxillary.datastructures.database import CacheSideEffectsLiteral
+from resource_auxillary.datastructures.database import (
+    EventLiteral,
+    SideEffectsLiteral,
+    SideEffectsTables,
+)
 from datetime import datetime
 from typing import Final, Iterable, Mapping, Sequence
 
@@ -49,16 +52,16 @@ def format_strong_insertion_sql(table: str, columns: Sequence[str]) -> Composed:
 
 
 _SIDE_EFFECTS_COLUMN_LITERALS: Final[
-    tuple[EventLiteral, CacheSideEffectsLiteral, CacheSideEffectsLiteral]
+    tuple[EventLiteral, SideEffectsLiteral, SideEffectsLiteral]
 ] = (
     EventLiteral.EVENT_ID_COLUMN_NAME,
-    CacheSideEffectsLiteral.CACHE_SIDE_EFFECTS_EMITTED,
-    CacheSideEffectsLiteral.CACHE_SIDE_EFFECTS_PAYLOAD,
+    SideEffectsLiteral.SIDE_EFFECTS_EMITTED,
+    SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD,
 )
 
 FORMATTED_CACHE_SIDE_EFFECTS_INSERTION_STATEMENT: Final[Composed] = (
     STRONG_INSERTION_SQL.format(
-        table=Identifier(CacheSideEffectsLiteral.TABLE_NAME),
+        table=Identifier(SideEffectsTables.CACHE),
         columns=SQL(", ").join(map(Identifier, _SIDE_EFFECTS_COLUMN_LITERALS)),
         placeholders=SQL(", ").join(map(Placeholder, (_SIDE_EFFECTS_COLUMN_LITERALS))),
     )
