@@ -1,3 +1,15 @@
+from resource_database_workers.workers.redis.downstream_post_processing import (
+    fetch_event_processing_checkpoint,
+)
+from typing import Final
+from functools import partial
+from resource_auxillary.event_processing.qos import execute_with_redis_retries
+from resource_database_workers.workers.redis.downstream_post_processing import (
+    clear_downstream_checkpoint,
+)
+from resource_database_workers.workers.redis.downstream_post_processing import (
+    set_downstream_checkpoint,
+)
 from resource_database_workers.utils.db import side_effects_processing_context
 from resource_database_workers.workers.redis.downstream_post_processing import (
     register_counter_decrement_updates,
@@ -104,26 +116,38 @@ async def downstream_decrement_worker(
                 del raw_payload
 
                 # Downstream counters may be too big to materialize all at once
-                limit, offset = config.WORKER.DOWNSTREAM_COUNTER_BATCH_SIZE, 0
+                limit: Final[int] = config.WORKER.DOWNSTREAM_COUNTER_BATCH_SIZE
+                offset: int = await fetch_event_processing_checkpoint(
+                    redis, config.WORKER.PROCESSING_CHECKPOINT_PREFIX, event_id
+                )
                 for _attempt in range(1, config.WORKER.MAX_RETRIES + 1):
-                    async with redis.pipeline(transaction=True) as pipeline:
-                        try:
-                            # temp truthy tuple to enter loop
-                            # (hehe the initial list kinda looks like a wink)
-                            results: list[tuple[str, int]] = [("", 0)]
-                            while results:
-                                # Fetch subset of counter deltas
-                                results: list[tuple[str, int]] = (
-                                    await select_decrement_deltas(
-                                        conn,
-                                        payload.foreign_key_column,
-                                        limit,
-                                        offset,
-                                        payload.orphaned_table,
-                                        event_id,
-                                    )
+                    try:
+                        # temp truthy tuple to enter loop
+                        # (hehe the initial list kinda looks like a wink)
+                        results: list[tuple[str, int]] = [("", 0)]
+                        while results:
+                            # Fetch subset of counter deltas
+                            results: list[tuple[str, int]] = (
+                                await select_decrement_deltas(
+                                    conn,
+                                    payload.foreign_key_column,
+                                    limit,
+                                    offset,
+                                    payload.orphaned_table,
+                                    event_id,
                                 )
-                                offset += limit
+                            )
+                            offset += limit
+
+                            # Atomically set new checkpoint and emit the
+                            # previous checkpoint's counter decrement effects
+                            async with redis.pipeline(transaction=True) as pipeline:
+                                set_downstream_checkpoint(
+                                    pipeline,
+                                    config.WORKER.PROCESSING_CHECKPOINT_PREFIX,
+                                    event_id,
+                                    offset,
+                                )
                                 # Buffer HINCRBY commands to pipeline
                                 register_counter_decrement_updates(
                                     pipeline,
@@ -131,21 +155,26 @@ async def downstream_decrement_worker(
                                     payload.hashmap_name,
                                     payload.orphaned_table,
                                 )
-                            await pipeline.execute()
+                        await pipeline.execute()
 
-                        except POTENTIAL_TRANSIENT_ERRORS as e:
-                            if _attempt == config.WORKER.MAX_RETRIES:
-                                raise e
-                            await conn.rollback()
-                            await exponential_jittered_backoff(
-                                config.WORKER.MAXIMUM_BACKOFF_INTERVAL,
-                                config.WORKER.BASE_BACKOFF_INTERVAL,
-                                _attempt,
-                                exponential=config.WORKER.BACKOFF_EXPONENTIAL,
-                            )
-                            # Reset selection params
-                            limit, offset = (
-                                config.WORKER.DOWNSTREAM_COUNTER_BATCH_SIZE,
-                                0,
-                            )
-                            continue
+                    except POTENTIAL_TRANSIENT_ERRORS as e:
+                        if _attempt == config.WORKER.MAX_RETRIES:
+                            raise e
+                        await conn.rollback()
+                        await exponential_jittered_backoff(
+                            config.WORKER.MAXIMUM_BACKOFF_INTERVAL,
+                            config.WORKER.BASE_BACKOFF_INTERVAL,
+                            _attempt,
+                            exponential=config.WORKER.BACKOFF_EXPONENTIAL,
+                        )
+                        continue
+
+            await execute_with_redis_retries(
+                config.WORKER,
+                partial(
+                    clear_downstream_checkpoint,
+                    redis,
+                    config.WORKER.PROCESSING_CHECKPOINT_PREFIX,
+                    event_id,
+                ),
+            )

@@ -55,6 +55,11 @@ class WorkerConfig(
     COUNTER_FLUSH_LOCK_TTL: Annotated[int, Field(ge=0)]
     COUNTER_FLUSH_INTERVAL: Annotated[int, Field(ge=0)]
 
+    # Downstream
+    PROCESSING_CHECKPOINT_PREFIX: Annotated[
+        str, Field(frozen=True, default="_CHECKPOINT")
+    ]
+
     # Downstream counter consumers
     DOWNSTREAM_COUNTER_BATCH_SIZE: Annotated[int, Field(ge=1)]
 

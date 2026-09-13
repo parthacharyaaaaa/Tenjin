@@ -1,3 +1,4 @@
+from redis.typing import EncodableT
 import time
 from typing import Final, LiteralString
 
@@ -80,3 +81,7 @@ def generate_worker_name(
         return INTERNAL_NAME_SEPERATOR.join((base_name, task_name, str(index)))
     else:
         return INTERNAL_NAME_SEPERATOR.join((task_name, str(index)))
+
+
+def generate_checkpoint_name(prefix: str, event_id: EncodableT) -> str:
+    return INTERNAL_NAME_SEPERATOR.join((prefix, str(event_id)))
