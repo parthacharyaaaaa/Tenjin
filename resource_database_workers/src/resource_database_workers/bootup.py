@@ -3,11 +3,8 @@ from resource_database_workers.dependencies.annotations import STREAM_NAME
 from resource_database_workers.dependencies.annotations import (
     DEAD_LETTER_QUEUE_REGISTRY,
 )
-from resource_database_workers.tasks.stream_readers import downstream_dispatcher
 from resource_auxillary.strings import EventName
-from resource_database_workers.dependencies.annotations import DOWNSTREAM_QUEUE_REGISTRY
 from resource_database_workers.dependencies.annotations import UPSTREAM_QUEUE_REGISTRY
-from resource_database_workers.dependencies.annotations import ISOLATED_EVENT_QUEUE
 from resource_auxillary.events import StreamedEvent
 from resource_database_workers.datastructures.queues import EventQueueRegistry
 from resource_database_workers.dependencies.annotations import BATCHED_EVENT_QUEUE
@@ -151,13 +148,9 @@ def _stream_worker_wrapper(
         if reader_callable == upstream_dispatcher:
             reader_context[UPSTREAM_QUEUE_REGISTRY] = event_queue_registry
         else:
-            event_queue_annotation = ISOLATED_EVENT_QUEUE
-            if reader_callable == downstream_dispatcher:
-                event_queue_registry = queue_registry_container.downstream_registry
-                reader_context[DOWNSTREAM_QUEUE_REGISTRY] = event_queue_registry
-            else:
-                event_queue_registry = queue_registry_container.dlq_registry
-                reader_context[DEAD_LETTER_QUEUE_REGISTRY] = event_queue_registry
+            # DLQ
+            event_queue_registry = queue_registry_container.dlq_registry
+            reader_context[DEAD_LETTER_QUEUE_REGISTRY] = event_queue_registry
         for i in range(1, reader_count + 1):
             worker_mapping[
                 generate_worker_name(

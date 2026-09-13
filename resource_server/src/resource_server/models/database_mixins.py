@@ -1,12 +1,20 @@
+from sqlalchemy.orm import declared_attr
 from datetime import datetime
+from typing import Any
+
+from sqlalchemy import text, ForeignKey, Index
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import BIGINT, BOOLEAN, TIMESTAMP, TEXT, JSONB
 
 from resource_auxillary.datastructures.database import (
     DeletionColumnLiteral,
     EventMetadataLiteral,
+    SideEffectsLiteral,
+    EventLiteral,
 )
-from sqlalchemy import text
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.dialects.postgresql import BIGINT, BOOLEAN, TIMESTAMP
+from resource_auxillary.strings import EventName
+
+from resource_server.models.database_enums import EVENT_NAME
 
 
 class EventAssociationMixin:
@@ -57,3 +65,53 @@ class SoftEventDeletionMixin(SoftDeletionMixin):
     deletion_author_event: Mapped[int | None] = mapped_column(
         BIGINT, name=DeletionColumnLiteral.DELETION_AUTHOR_EVENT
     )
+
+
+class EventTableMixin:
+    event_id: Mapped[str] = mapped_column(
+        TEXT, primary_key=True, name=EventLiteral.EVENT_ID_COLUMN_NAME
+    )
+    event_name: Mapped[EventName] = mapped_column(
+        EVENT_NAME, nullable=False, name=EventLiteral.EVENT_NAME_COLUMN_NAME, index=True
+    )
+
+
+class EventReferrerTableMixin:
+    event_id: Mapped[str] = mapped_column(
+        TEXT,
+        ForeignKey(
+            f"{EventLiteral.EVENTS_TABLE_NAME}.{EventLiteral.EVENT_ID_COLUMN_NAME}"
+        ),
+        primary_key=True,
+        name=EventLiteral.EVENT_ID_COLUMN_NAME,
+    )
+
+
+class EventSideEffectsTableMixin(EventReferrerTableMixin):
+    __tablename__: str
+    side_effects_emitted: Mapped[bool] = mapped_column(
+        BOOLEAN, nullable=False, name=SideEffectsLiteral.SIDE_EFFECTS_EMITTED
+    )
+    payload: Mapped[Any] = mapped_column(
+        JSONB, name=SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD
+    )
+
+    def __init_subclass__(cls) -> None:
+        if not hasattr(cls, "__tablename__"):
+            raise ValueError(f"Missing __tablename__ in class: {cls.__name__}")
+        if not hasattr(cls.__tablename__, "__str__"):
+            raise ValueError(
+                f"String incompatible tablename provided: {cls.__tablename__}"
+            )
+
+    @declared_attr.directive
+    def __table_args__(cls):
+        return (
+            Index(
+                f"{cls.__tablename__}_{SideEffectsLiteral.NON_EMITTED_EVENTS_INDEX}",
+                cls.event_id,
+                postgresql_where=(
+                    ~cls.side_effects_emitted
+                ),  # pyrefly: ignore[deprecated]
+            ),
+        )

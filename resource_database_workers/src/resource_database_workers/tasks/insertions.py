@@ -1,3 +1,22 @@
+from resource_database_workers.utils.db import fan_out_side_effect
+from resource_database_workers.datastructures.side_effects import (
+    DownstreamCacheInvalidationPayload,
+)
+from resource_auxillary.templates.sql import prepare_side_effects_staging_table_sql
+from resource_database_workers.datastructures.side_effects import (
+    DownstreamDeletionPayload,
+)
+from resource_database_workers.datastructures.downstream import (
+    DOWNSTREAM_DELETION_ANONYMOUS_PAYLOAD_MAPPING,
+)
+from resource_database_workers.datastructures.downstream import (
+    AnonymousDownstreamDeletionData,
+)
+from resource_auxillary.datastructures.database import StrongEntity
+from resource_database_workers.utils.sql_templates import (
+    FORMATTED_CACHE_SIDE_EFFECTS_INSERTION_STATEMENT,
+)
+from auxillary.utils import json_repr
 from typing import Any, Final, Literal, MutableSequence, Sequence, get_type_hints
 from uuid import uuid4
 
@@ -13,6 +32,11 @@ from resource_auxillary.datastructures.translation import (
 from resource_auxillary.datastructures.casting import (
     CAST_MAPPING,
     default_serializer,
+)
+from resource_auxillary.datastructures.database import (
+    EventLiteral,
+    SideEffectsTables,
+    SideEffectsLiteral,
 )
 from resource_auxillary.templates.sql import (
     prepare_temp_table_sql,
@@ -132,3 +156,101 @@ async def batch_insert_strong_entities(
     async with conn.cursor() as cursor:
         await cursor.executemany(insertion_sql, insertion_records)
         return []  # TODO: Add RETURNING/CTE
+
+
+async def outbox_insertion(
+    conn: AsyncConnection,
+    events: Sequence[StreamedEvent],
+) -> None:
+    cache_insertion_records: list[dict[str, Any]] = []
+    for event in events:
+        cache_insertion_record: dict[str, Any] = {}
+        if event.side_effects.cache:
+            cache_insertion_record[EventLiteral.EVENT_ID_COLUMN_NAME] = event.event_id
+            cache_insertion_record[SideEffectsLiteral.SIDE_EFFECTS_EMITTED] = False
+            cache_insertion_record[SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD] = json_repr(
+                event.side_effects.cache
+            )
+            cache_insertion_records.append(cache_insertion_record)
+    async with conn.cursor() as cursor:
+        await cursor.executemany(
+            FORMATTED_CACHE_SIDE_EFFECTS_INSERTION_STATEMENT,
+            cache_insertion_records,
+            returning=True,
+        )
+
+
+async def insert_downstream_deletion_outbox_entries(
+    conn: AsyncConnection,
+    events: Sequence[StreamedEvent],
+    upstream_table: StrongEntity,
+    identifier_column: str,
+) -> None:
+    child_deletion_data_tuple: tuple[AnonymousDownstreamDeletionData, ...] = (
+        DOWNSTREAM_DELETION_ANONYMOUS_PAYLOAD_MAPPING[upstream_table]
+    )
+
+    staging_table_name = f"_downstream_deletion_staging_{upstream_table}_{uuid4().hex}"
+    async with conn.cursor() as cursor:
+        await cursor.execute(
+            prepare_side_effects_staging_table_sql(
+                staging_table_name, SideEffectsTables.DOWNSTREAM_DELETION
+            )
+        )
+        async with cursor.copy(
+            prepare_weak_insertion_copy_sql(
+                staging_table_name,
+                *(
+                    EventLiteral.EVENT_ID_COLUMN_NAME,
+                    SideEffectsLiteral.SIDE_EFFECTS_EMITTED,
+                    SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD,
+                    SideEffectsLiteral.COPY_TARGET_TABLE,
+                ),
+            )
+        ) as copy:
+            for event in events:
+                # NOTE: Order of outbox entries is non-trivial in copy.write_rows!
+                # Common side-effects outbox values (referred event ID and event_emitted column)
+                base_outbox_values: tuple[int, Literal[False]] = (event.event_id, False)
+                # Side-effect specific values
+                for child_deletion_data in child_deletion_data_tuple:
+                    downstream_deletion_payload: DownstreamDeletionPayload = (
+                        DownstreamDeletionPayload(
+                            foreign_key=event.payload[identifier_column],
+                            deleted_at=event.payload["deleted_at"],
+                            **child_deletion_data,
+                        )
+                    )
+
+                    downstream_cache_invalidation_payload: (
+                        DownstreamCacheInvalidationPayload
+                    ) = DownstreamCacheInvalidationPayload(
+                        downstream_table=child_deletion_data["orphan_table"]
+                    )
+
+                    # Friendly reminder that 3.6+ dicts preserve order :3
+                    # Downstream database deletion
+                    await copy.write_row(
+                        (
+                            *base_outbox_values,
+                            downstream_deletion_payload.model_dump(),
+                            SideEffectsTables.DOWNSTREAM_DELETION,
+                        )
+                    )
+                    # Downstream cache invalidation
+                    await copy.write_row(
+                        (
+                            *base_outbox_values,
+                            downstream_cache_invalidation_payload.model_dump(),
+                            SideEffectsTables.DOWNSTREAM_CACHE_INVALIDATION,
+                        )
+                    )
+
+            await fan_out_side_effect(
+                conn,
+                staging_table_name,
+                (
+                    SideEffectsTables.DOWNSTREAM_CACHE_INVALIDATION,
+                    SideEffectsTables.DOWNSTREAM_DELETION,
+                ),
+            )

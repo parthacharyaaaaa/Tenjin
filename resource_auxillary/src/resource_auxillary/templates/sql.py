@@ -1,5 +1,7 @@
 """SQL templates and composed strings"""
 
+from resource_auxillary.datastructures.database import SideEffectsLiteral
+from resource_auxillary.datastructures.database import SideEffectsTables
 from datetime import datetime
 from typing import Final, Literal, Sequence
 
@@ -9,27 +11,30 @@ from resource_auxillary.datastructures.database import (
     EventLiteral,
     EventMetadataLiteral,
 )
+from resource_auxillary.strings import EventName
 
 SINGLE_DEDUP_STATEMENT: Final[SQL] = SQL("""INSERT INTO {event_dedup_table}
-    ({event_id_col}, {ack_time_col})
-    VALUES ({event_id}, {acknowledgement_time})""")
+    ({event_id_col}, {ack_time_col}, {event_name_col})
+    VALUES ({event_id}, {acknowledgement_time}, {event_name})""")
 
 
 def prepare_single_dedup_sql(
-    event_id: int, acknowledgement_time: datetime | None = None
+    event_id: int, event_name: EventName, acknowledgement_time: datetime | None = None
 ) -> Composed:
     return SINGLE_DEDUP_STATEMENT.format(
         event_dedup_table=Identifier(EventLiteral.EVENTS_TABLE_NAME),
         event_id_col=Identifier(EventLiteral.EVENT_ID_COLUMN_NAME),
         ack_time_col=Identifier(EventLiteral.EVENT_TIMESTAMP_COLUMN_NAME),
+        event_name_col=Identifier(EventLiteral.EVENT_NAME_COLUMN_NAME),
         event_id=SQL_Literal(event_id),
         acknowledgement_time=SQL_Literal(acknowledgement_time or datetime.now()),
+        event_name=SQL_Literal(event_name),
     )
 
 
 BATCH_DEDUP_STATEMENT: Final[SQL] = SQL("""WITH attempted AS (
-        INSERT INTO {event_dedup_table} ({event_id_col}, {ack_time_col})
-        SELECT {event_id_col}, {ack_time_col}
+        INSERT INTO {event_dedup_table} ({event_id_col}, {ack_time_col}, {event_name_col})
+        SELECT {event_id_col}, {ack_time_col}, {event_name_col}
         FROM {temp_table}
         ON CONFLICT ({event_id_col}) DO NOTHING
         RETURNING {event_id_col}
@@ -38,10 +43,11 @@ BATCH_DEDUP_STATEMENT: Final[SQL] = SQL("""WITH attempted AS (
 
 
 def prepare_batch_dedup_sql(temp_table: str) -> Composed:
-    return SINGLE_DEDUP_STATEMENT.format(
+    return BATCH_DEDUP_STATEMENT.format(
         event_dedup_table=Identifier(EventLiteral.EVENTS_TABLE_NAME),
         event_id_col=Identifier(EventLiteral.EVENT_ID_COLUMN_NAME),
         ack_time_col=Identifier(EventLiteral.EVENT_TIMESTAMP_COLUMN_NAME),
+        event_name_col=Identifier(EventLiteral.EVENT_NAME_COLUMN_NAME),
         temp_table=Identifier(temp_table),
     )
 
@@ -104,4 +110,89 @@ def prepare_weak_insertion_sql(
             EventMetadataLiteral.LAST_EVENT_IDENTIFIER_COLUMN_NAME
         ),
         conflict_columns=SQL(", ").join(Identifier(c) for c in conflicting_columns),
+        event_id_column=Identifier(EventLiteral.EVENT_ID_COLUMN_NAME),
+    )
+
+
+FAN_OUT_COPY_INSERTION_SQL: Final[SQL] = SQL("""
+    INSERT INTO {target_table} (
+        {event_id_col},
+        {event_emitted_column},
+        {event_payload_column}
+    )
+    SELECT {event_id_col}, {event_emitted_column}, {event_payload_column}
+    FROM {temp_table}
+    WHERE {target_table_column} = {target_table};
+    """)
+
+
+def prepare_fan_out_copy_insertion_sql(
+    target_table: SideEffectsTables,
+    temp_table: str,
+) -> Composed:
+    return FAN_OUT_COPY_INSERTION_SQL.format(
+        target_table=SQL_Literal(target_table),
+        event_id_col=Identifier(EventLiteral.EVENT_ID_COLUMN_NAME),
+        event_emitted_column=Identifier(SideEffectsLiteral.SIDE_EFFECTS_EMITTED),
+        event_payload_column=Identifier(SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD),
+        temp_table=Identifier(temp_table),
+        target_table_column=Identifier(SideEffectsLiteral.COPY_TARGET_TABLE),
+    )
+
+
+SIDE_EFFECTS_TEMP_TABLE_SQL: Final[SQL] = SQL("""
+    CREATE TEMP TABLE {temp_table}
+    (
+        LIKE {reference} INCLUDING DEFAULTS
+        {target_table_column} TEXT NOT NULL;
+    )
+    ON COMMIT DROP;
+    """)
+
+
+def prepare_side_effects_staging_table_sql(
+    tablename: str, reference_table: str
+) -> Composed:
+    return TEMP_TABLE_SQL.format(
+        table=Identifier(tablename),
+        reference=Identifier(reference_table),
+        target_table_column=Identifier(SideEffectsLiteral.COPY_TARGET_TABLE),
+    )
+
+
+SIDE_EFFECTS_READ_SQL: Final[SQL] = SQL("""
+    SELECT * FROM {side_effects_table}
+    AND {emitted_column_name} = false
+    LIMIT 1
+    FOR NO KEY UPDATE
+    SKIP LOCKED;
+    """)
+
+
+def prepare_side_effects_read_sql(
+    side_effects_table_name: SideEffectsTables,
+) -> Composed:
+    return SIDE_EFFECTS_READ_SQL.format(
+        side_effects_table=Identifier(side_effects_table_name),
+        emitted_column_name=Identifier(SideEffectsLiteral.SIDE_EFFECTS_EMITTED),
+    )
+
+
+SIDE_EFFECTS_PROCESSED_SQL: Final[SQL] = SQL("""
+    UPDATE {side_effects_table}
+    SET {side_effect_emitted_column} = true,
+    {side_effects_payload_column} = NULL
+    WHERE {root_event_column} = {root_event_id};
+    """)
+
+
+def prepare_side_effects_processing_sql(
+    side_effects_table: SideEffectsTables, parent_event_id: int
+) -> Composed:
+    return SIDE_EFFECTS_PROCESSED_SQL.format(
+        side_effects_table=Identifier(side_effects_table),
+        side_effects_emitted_column=Identifier(SideEffectsLiteral.SIDE_EFFECTS_EMITTED),
+        side_effects_payload_column=Identifier(SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD),
+        root_event_column=Identifier(EventLiteral.EVENT_ID_COLUMN_NAME),
+        root_event_id=SQL_Literal(parent_event_id),
     )

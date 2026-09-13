@@ -41,14 +41,14 @@ class EventStreamer(metaclass=SingletonMetaclass):
     async def emit_user_event(self, stream: StreamName, event: Event) -> None:
         async with self.redis_client.pipeline(transaction=True) as pipeline:
             # Perform event-side effects, apart from cache invalidation
-            for counter_update in event.side_effects.counter_updates:
+            for counter_update in event.side_effects.cache.counter_updates:
                 self._pipeline_update_counter(
                     pipeline,
                     counter_update.counter_group,
                     counter_update.cache_key,
                     counter_update.delta,
                 )
-            for intent_update in event.side_effects.intent_updates:
+            for intent_update in event.side_effects.cache.intent_updates:
                 self._pipeline_set_intent(
                     pipeline,
                     intent_update.intent_name,

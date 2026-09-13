@@ -1,9 +1,16 @@
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar, Generic
 
 from redis.asyncio.client import Pipeline
 from redis.typing import FieldT, EncodableT
 
-__all__ = ("SupportsJSON", "SupportsAsyncRedis")
+__all__ = (
+    "SupportsJSON",
+    "SupportsCache",
+    "SupportsAsyncRedis",
+    "SupportsMembershipCheck",
+)
+
+T = TypeVar("T", covariant=True)
 
 
 class SupportsJSON(Protocol):
@@ -180,3 +187,7 @@ class SupportsAsyncRedis(Protocol):
     ) -> int: ...
 
     def pipeline(self, transaction: bool = False) -> Pipeline: ...
+
+
+class SupportsMembershipCheck(Generic[T], Protocol):
+    def __contains__(self, o: object, /) -> bool: ...

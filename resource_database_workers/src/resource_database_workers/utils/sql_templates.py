@@ -1,3 +1,9 @@
+from resource_auxillary.datastructures.database import GenericLiterals
+from resource_auxillary.datastructures.database import (
+    EventLiteral,
+    SideEffectsLiteral,
+    SideEffectsTables,
+)
 from datetime import datetime
 from typing import Final, Iterable, Mapping, Sequence
 
@@ -46,6 +52,23 @@ def format_strong_insertion_sql(table: str, columns: Sequence[str]) -> Composed:
     )
 
 
+_SIDE_EFFECTS_COLUMN_LITERALS: Final[
+    tuple[EventLiteral, SideEffectsLiteral, SideEffectsLiteral]
+] = (
+    EventLiteral.EVENT_ID_COLUMN_NAME,
+    SideEffectsLiteral.SIDE_EFFECTS_EMITTED,
+    SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD,
+)
+
+FORMATTED_CACHE_SIDE_EFFECTS_INSERTION_STATEMENT: Final[Composed] = (
+    STRONG_INSERTION_SQL.format(
+        table=Identifier(SideEffectsTables.CACHE),
+        columns=SQL(", ").join(map(Identifier, _SIDE_EFFECTS_COLUMN_LITERALS)),
+        placeholders=SQL(", ").join(map(Placeholder, (_SIDE_EFFECTS_COLUMN_LITERALS))),
+    )
+)
+
+
 DLQ_INSERTION_COMPOSED_STATEMENT: Final[Composed] = STRONG_INSERTION_SQL.format(
     table=Identifier(DeadLetterQueueLiteral.TABLE_NAME),
     placeholders=SQL(", ").join(Placeholder() * 2),
@@ -80,21 +103,28 @@ def prepare_strong_deletion_sql(
 
 
 KILL_ORPHANS_SQL: Final[SQL] = SQL("""UPDATE {orphan_table}
-    SET {deletion_column} = true;
-    {deleted_at} = {deletion_time}
+    SET {deletion_column} = true,
+    {deleted_at} = {deletion_time},
+    {deletion_author_column} = {deletion_author_event_id}
     WHERE {parent_fk_column} = {parent_fk};""")
 
 
 def prepare_orphan_deletion(
-    orphan_table: str, parent_fk_column: str, parent_fk: int, deletion_time: datetime
+    orphan_table: str,
+    parent_fk_column: str,
+    parent_fk: int,
+    deletion_time: datetime,
+    deletion_author_id: int,
 ) -> Composed:
     return KILL_ORPHANS_SQL.format(
         orphan_table=Identifier(orphan_table),
         deletion_column=Identifier(DeletionColumnLiteral.DELETED_COLUMN_NAME),
         deleted_at=Identifier(DeletionColumnLiteral.DELETION_TIME_COLUMN_NAME),
+        deletion_author_column=Identifier(DeletionColumnLiteral.DELETION_AUTHOR_EVENT),
         deletion_time=Literal(deletion_time),
         parent_fk_column=Identifier(parent_fk_column),
         parent_values=Literal(parent_fk),
+        deletion_author_event_id=Literal(deletion_author_id),
     )
 
 
@@ -117,6 +147,34 @@ def prepare_deltas_selection(
 ) -> Composed:
     return SELECT_DECREMENT_DELTAS_SQL.format(
         identifier_column=Identifier(foreign_key_column),
+        table=Identifier(table),
+        deletion_author_event_id_column=Identifier(
+            DeletionColumnLiteral.DELETION_AUTHOR_EVENT
+        ),
+        deletion_author_event_id=Literal(deletion_author_event_id),
+        limit=Literal(limit),
+        offset=Literal(offset),
+    )
+
+
+SELECT_INVALIDATION_ENTRIES_SQL: Final[SQL] = SQL("""SELECT {idenfitier_column}
+    FROM {table}
+    WHERE {deletion_author_event_id_column} = {deletion_author_event_id}
+    LIMIT {limit}
+    OFFSET {offset};
+    """)
+
+
+def prepare_cache_invalidation_entries_selection(
+    table: str,
+    deletion_author_event_id: int,
+    limit: int,
+    offset: int,
+    *,
+    primary_key_column: str = GenericLiterals.ID,
+) -> Composed:
+    return SELECT_DECREMENT_DELTAS_SQL.format(
+        identifier_column=Identifier(primary_key_column),
         table=Identifier(table),
         deletion_author_event_id_column=Identifier(
             DeletionColumnLiteral.DELETION_AUTHOR_EVENT

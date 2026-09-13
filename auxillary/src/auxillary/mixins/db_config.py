@@ -72,7 +72,7 @@ class BasicConnectionPoolConfigMixin:
 
 class BasicPostgresDatabaseConfigMixin:
     DATABASE_URI_TEMPLATE: ClassVar[str] = (
-        "postgresql+psycopg2://{username}:{password}@{host}:{port}/{database}"
+        "postgresql+psycopg://{username}:{password}@{host}:{port}/{database}"
     )
 
     POSTGRES_HOST: str

@@ -17,6 +17,24 @@ class EventLiteral(StrEnum):
     EVENTS_TABLE_NAME = "stream_events"
     EVENT_ID_COLUMN_NAME = "event_id"
     EVENT_TIMESTAMP_COLUMN_NAME = "acknowledgement_time"
+    EVENT_NAME_COLUMN_NAME = "event_name"
+
+
+class SideEffectsLiteral(StrEnum):
+    """Common table and column names for side-effects tables"""
+
+    SIDE_EFFECTS_EMITTED = "side_effects_emitted"
+    SIDE_EFFECTS_PAYLOAD = "side_effects_payload"
+
+    NON_EMITTED_EVENTS_INDEX = "non_emitted_events"
+    COPY_TARGET_TABLE = "copy_target_table"
+
+
+class SideEffectsTables(StrEnum):
+    CACHE = "cache_side_effects"
+    DOWNSTREAM_DELETION = "downstream_deletion_side_effects"
+    DOWNSTREAM_CACHE_INVALIDATION = "downstream_cache_invalidation"
+    DOWNSTREAM_DECREMENT = "downstream_decrement_side_effects"
 
 
 class DeadLetterQueueLiteral(StrEnum):
