@@ -42,12 +42,9 @@ def _set_sqlalchemy_uri_config() -> None:
 
     app_config: AppConfig = get_app_config()
 
-    URI: str = app_config.DATABASE.SQLALCHEMY.derive_sqlalchemy_uri(
+    URI: str = app_config.DATABASE.derive_sqlalchemy_uri(
         username=os.environ["AUTH_WORKER_POSTGRES_USERNAME"],
         password=os.environ["AUTH_WORKER_POSTGRES_PASSWORD"],
-        host=str(app_config.DATABASE.POSTGRES_HOST),
-        port=app_config.DATABASE.POSTGRES_PORT,
-        database=app_config.DATABASE.POSTGRES_DATABASE,
     )
 
     config.set_main_option("sqlalchemy.url", URI)
