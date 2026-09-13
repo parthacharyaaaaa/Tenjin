@@ -25,6 +25,13 @@ def register_counter_decrement_updates(
         )
 
 
+def register_cache_invalidation_updates(
+    pipeline: Pipeline, entries: Iterable[str], entry_prefix: StrongEntity
+) -> None:
+    for entry in entries:
+        pipeline.delete(derive_cache_key(entry_prefix, entry))
+
+
 def set_downstream_checkpoint(
     pipeline: Pipeline,
     prefix: str,

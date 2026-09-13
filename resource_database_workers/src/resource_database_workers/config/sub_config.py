@@ -62,6 +62,7 @@ class WorkerConfig(
 
     # Downstream counter consumers
     DOWNSTREAM_COUNTER_BATCH_SIZE: Annotated[int, Field(ge=1)]
+    DOWNSTREAM_CACHE_INVALIDATION_BATCH_SIZE: Annotated[int, Field(ge=1)]
 
     # Others
     GRACEFUL_SHUTDOWN_PERIOD: Annotated[float, Field(ge=0)]

@@ -1,3 +1,4 @@
+from resource_auxillary.datastructures.database import GenericLiterals
 from resource_auxillary.datastructures.database import (
     EventLiteral,
     SideEffectsLiteral,
@@ -146,6 +147,34 @@ def prepare_deltas_selection(
 ) -> Composed:
     return SELECT_DECREMENT_DELTAS_SQL.format(
         identifier_column=Identifier(foreign_key_column),
+        table=Identifier(table),
+        deletion_author_event_id_column=Identifier(
+            DeletionColumnLiteral.DELETION_AUTHOR_EVENT
+        ),
+        deletion_author_event_id=Literal(deletion_author_event_id),
+        limit=Literal(limit),
+        offset=Literal(offset),
+    )
+
+
+SELECT_INVALIDATION_ENTRIES_SQL: Final[SQL] = SQL("""SELECT {idenfitier_column}
+    FROM {table}
+    WHERE {deletion_author_event_id_column} = {deletion_author_event_id}
+    LIMIT {limit}
+    OFFSET {offset};
+    """)
+
+
+def prepare_cache_invalidation_entries_selection(
+    table: str,
+    deletion_author_event_id: int,
+    limit: int,
+    offset: int,
+    *,
+    primary_key_column: str = GenericLiterals.ID,
+) -> Composed:
+    return SELECT_DECREMENT_DELTAS_SQL.format(
+        identifier_column=Identifier(primary_key_column),
         table=Identifier(table),
         deletion_author_event_id_column=Identifier(
             DeletionColumnLiteral.DELETION_AUTHOR_EVENT

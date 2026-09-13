@@ -1,3 +1,8 @@
+from resource_database_workers.datastructures.side_effects import (
+    DownstreamCacheInvalidationPayload,
+)
+from resource_auxillary.datastructures.database import StrongEntity
+from resource_database_workers.tasks.selections import select_cache_invalidation_entries
 from resource_database_workers.workers.redis.downstream_post_processing import (
     fetch_event_processing_checkpoint,
 )
@@ -13,6 +18,7 @@ from resource_database_workers.workers.redis.downstream_post_processing import (
 from resource_database_workers.utils.db import side_effects_processing_context
 from resource_database_workers.workers.redis.downstream_post_processing import (
     register_counter_decrement_updates,
+    register_cache_invalidation_updates,
 )
 from resource_auxillary.datastructures.database import SideEffectsTables
 from resource_database_workers.dependencies.annotations import (
@@ -154,6 +160,92 @@ async def downstream_decrement_worker(
                                     results,
                                     payload.hashmap_name,
                                     payload.orphaned_table,
+                                )
+                        await pipeline.execute()
+
+                    except POTENTIAL_TRANSIENT_ERRORS as e:
+                        if _attempt == config.WORKER.MAX_RETRIES:
+                            raise e
+                        await conn.rollback()
+                        await exponential_jittered_backoff(
+                            config.WORKER.MAXIMUM_BACKOFF_INTERVAL,
+                            config.WORKER.BASE_BACKOFF_INTERVAL,
+                            _attempt,
+                            exponential=config.WORKER.BACKOFF_EXPONENTIAL,
+                        )
+                        continue
+
+            await execute_with_redis_retries(
+                config.WORKER,
+                partial(
+                    clear_downstream_checkpoint,
+                    redis,
+                    config.WORKER.PROCESSING_CHECKPOINT_PREFIX,
+                    event_id,
+                ),
+            )
+
+
+async def downstream_cache_invalidation_worker(
+    config: APP_CONFIG,
+    pool: CONNECTION_POOL,
+    redis: INTERNAL_REDIS,
+    event_stream_manager: EVENT_STREAM_MANAGER,
+    dead_letter_stream_name: DEAD_LETTER_STREAM_NAME,
+    status_proxy: STATUS_PROXY,
+) -> None:
+    while status_proxy.status_ok:
+        async with pool.connection() as conn:
+            side_effects_retrieval_coroutine = lambda: get_side_effect_row(
+                conn, SideEffectsTables.DOWNSTREAM_CACHE_INVALIDATION
+            )
+            event_id, raw_payload = await db_execute_with_retries(
+                config.WORKER, conn, side_effects_retrieval_coroutine
+            )
+            async with side_effects_processing_context(
+                conn,
+                SideEffectsTables.DOWNSTREAM_CACHE_INVALIDATION,
+                event_stream_manager,
+                dead_letter_stream_name,
+                event_id,
+                config.WORKER,
+            ):
+                payload: DownstreamCacheInvalidationPayload = (
+                    DownstreamCacheInvalidationPayload.model_construct(**raw_payload)
+                )
+                del raw_payload
+
+                limit: Final[int] = (
+                    config.WORKER.DOWNSTREAM_CACHE_INVALIDATION_BATCH_SIZE
+                )
+                offset: int = await fetch_event_processing_checkpoint(
+                    redis, config.WORKER.PROCESSING_CHECKPOINT_PREFIX, event_id
+                )
+                for _attempt in range(1, config.WORKER.MAX_RETRIES + 1):
+                    try:
+                        results: tuple[str] = ("",)
+                        while results:
+                            results = await select_cache_invalidation_entries(
+                                conn,
+                                limit,
+                                offset,
+                                payload.downstream_table,
+                                event_id,
+                            )
+                            offset += limit
+
+                            # Atomically set new checkpoint and emit the
+                            # previous checkpoint's cache invalidation effects
+                            async with redis.pipeline(transaction=True) as pipeline:
+                                set_downstream_checkpoint(
+                                    pipeline,
+                                    config.WORKER.PROCESSING_CHECKPOINT_PREFIX,
+                                    event_id,
+                                    offset,
+                                )
+                                # Buffer HINCRBY commands to pipeline
+                                register_cache_invalidation_updates(
+                                    pipeline, results, StrongEntity.ANIME
                                 )
                         await pipeline.execute()
 
