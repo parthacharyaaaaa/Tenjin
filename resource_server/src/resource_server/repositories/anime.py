@@ -18,13 +18,11 @@ from resource_server.models.database import (
     AnimeGenre,
 )
 from auxillary.singleton import SingletonMetaclass
-from resource_server.repositories.result_protocol import AbstractResult
-
-from resource_auxillary.strings import NAME_SEPERATOR
+from resource_server.repositories.result_protocol import AbstractDTO
 
 
 @dataclass(slots=True, init=False)
-class AnimeResult(AbstractResult):
+class AnimeResult(AbstractDTO):
     id_: int
     title: str
     members: int

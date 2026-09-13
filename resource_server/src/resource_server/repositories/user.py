@@ -5,15 +5,13 @@ from typing import Any, ClassVar, Mapping, Never, Self
 from sqlalchemy import ColumnElement, Row, and_, delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from resource_server.repositories.result_protocol import AbstractResult
+from resource_server.repositories.result_protocol import AbstractDTO
 from resource_server.models.database import PasswordRecoveryToken, User
 from auxillary.singleton import SingletonMetaclass
 
-from resource_auxillary.strings import NAME_SEPERATOR
-
 
 @dataclass(slots=True, init=False)
-class UserResult(AbstractResult):
+class UserResult(AbstractDTO):
     id_: int
     username: str
 

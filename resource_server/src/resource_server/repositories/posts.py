@@ -8,15 +8,13 @@ from sqlalchemy.orm import DeclarativeBase
 
 from resource_server.datastructures.requests import SortOption
 from auxillary.singleton import SingletonMetaclass
-from resource_server.repositories.result_protocol import AbstractResult
+from resource_server.repositories.result_protocol import AbstractDTO
 from resource_server.models.database import Post, PostReport, PostSave, PostVote, User
 from resource_server.models.database_enums import ReportTags
 
-from resource_auxillary.strings import NAME_SEPERATOR
-
 
 @dataclass(slots=True, init=False)
-class PostResult(AbstractResult):
+class PostResult(AbstractDTO):
     id_: int
     author_id: int
     forum_id: int

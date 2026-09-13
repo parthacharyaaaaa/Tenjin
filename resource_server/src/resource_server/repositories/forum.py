@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resource_server.repositories.user import UserResult
 from auxillary.singleton import SingletonMetaclass
-from resource_server.repositories.result_protocol import AbstractResult
+from resource_server.repositories.result_protocol import AbstractDTO
 from resource_server.models.database import (
     Forum,
     ForumAdmin,
@@ -26,11 +26,9 @@ from resource_server.models.database import (
     AdminRoles,
 )
 
-from resource_auxillary.strings import NAME_SEPERATOR
-
 
 @dataclass(slots=True, init=False)
-class ForumResult(AbstractResult):
+class ForumResult(AbstractDTO):
     id_: int
     name_: str
     anime: int
@@ -47,7 +45,7 @@ class ForumResult(AbstractResult):
 
 
 @dataclass(slots=True, init=False)
-class ForumAdminResult(AbstractResult):
+class ForumAdminResult(AbstractDTO):
     forum_id: int
     user_id: int
     role: AdminRoles

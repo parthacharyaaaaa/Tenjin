@@ -139,6 +139,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "pydantic" },
     { name = "redis" },
+    { name = "sqlalchemy" },
 ]
 
 [package.metadata]
@@ -147,6 +148,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.136.3" },
     { name = "pydantic", specifier = ">=2.13.4,<3" },
     { name = "redis", specifier = ">=7.0.0,<8" },
+    { name = "sqlalchemy", specifier = ">=2.0.51" },
 ]
 
 [[package]]
