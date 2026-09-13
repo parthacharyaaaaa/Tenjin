@@ -137,9 +137,9 @@ async def master_bootup(
 
             # Atleast 1 non-expired key exists in DB
             if len(keydata) > config.JWKS.JWKS_CAP:
-                keydata_repository.expire_keydata(
+                await keydata_repository.expire_keydata(
                     keydata[config.JWKS.JWKS_CAP - (1 + missing_active)].epoch
-                )  # type: ignore
+                )
                 keydata = keydata[: config.JWKS.JWKS_CAP]
 
             if missing_active:

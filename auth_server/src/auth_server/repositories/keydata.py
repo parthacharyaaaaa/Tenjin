@@ -41,7 +41,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
             )
             if not keydata and raise_on_empty:
                 raise ValueError("Key data empty")
-            return keydata
+            return []
 
     @overload
     async def insert_keydata(
@@ -107,7 +107,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
         threshold: datetime,
         expiry_time: datetime | None = None,
         *,
-        return_expired: Literal[False],
+        return_expired: Literal[False] = False,
     ) -> None: ...
     @overload
     async def expire_keydata(
@@ -115,7 +115,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
         threshold: datetime,
         expiry_time: datetime | None = None,
         *,
-        return_expired: Literal[True],
+        return_expired: Literal[True] = True,
     ) -> list[KeyData]: ...
 
     async def expire_keydata(
