@@ -69,8 +69,8 @@ async def get_verification_key(
     admin_context: Annotated[AdminContext, Depends(get_admin_session)],
 ) -> ecdsa.VerifyingKey:
     try:
-        key_pem: bytes | None = await synced_store_client.hget(
-            AdminStrings.ADMIN_KEY_CACHE, admin_context.session.admin_id  # type: ignore
+        key_pem: bytes | None = await synced_store_client.hget(  # pyrefly: ignore
+            AdminStrings.ADMIN_KEY_CACHE, str(admin_context.session.admin_id)
         )
 
         if key_pem:
@@ -121,10 +121,11 @@ async def validate_admin_session(
         await synced_store_client.delete(admin_context.session.session_key)
         raise HTTPException(401, "Session expired")
 
-    server_session_mapping: dict[bytes, Any] = await synced_store_client.hgetall(
-        admin_context.session.session_key
+    server_session_mapping: dict[bytes, Any] = (
+        await synced_store_client.hgetall(  # pyrefly: ignore[not-async]
+            admin_context.session.session_key
+        )
     )
-
     if not server_session_mapping:
         err_msg: str = "Missing server-side session"
         await report_suspicious_activity(

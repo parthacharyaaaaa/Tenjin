@@ -1,3 +1,4 @@
+from typing import Any
 import asyncio
 import time
 from traceback import format_exc
@@ -111,13 +112,16 @@ class TokenManager:
                     "This key is not recognised, meaning it is possibly tampered, forged, or simply expired a long time ago."
                 )
 
-            return jwt.decode(
+            decoded_token: dict[str, Any] = jwt.decode(
                 jwt=token,
                 key=self.key_mapping[kid].PUBLIC_PEM,
                 algorithms=[self.key_mapping[kid].ALGORITHM],
                 leeway=self.leeway,
                 options=kwargs.get("options"),
             )
+            if token_type == TokenType.StandardAccess:
+                return StandardAccessTokenClaims(**decoded_token)
+            return StandardRefreshTokenClaims(**decoded_token)
         except (
             JWTexc.ImmatureSignatureError,
             JWTexc.InvalidIssuedAtError,
