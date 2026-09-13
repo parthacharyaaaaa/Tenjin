@@ -1,5 +1,7 @@
 """Data access repository for Keydata SA model"""
 
+from auth_server.strings import SelectionLockOption
+from collections.abc import Sequence
 from collections.abc import MutableMapping
 from redis.typing import EncodableT
 from redis.typing import FieldT
@@ -70,21 +72,36 @@ class KeydataRepository(metaclass=SingletonMetaclass):
 
     @overload
     async def get_keydata(
-        self, key_id: str, *, public_only: Literal[True] = True
+        self,
+        key_id: str,
+        *,
+        public_only: Literal[True] = True,
+        lock_args: Sequence[SelectionLockOption] | None = None,
     ) -> KeyPublicDataResult | None: ...
 
     @overload
     async def get_keydata(
-        self, key_id: str, *, public_only: Literal[False] = False
+        self,
+        key_id: str,
+        *,
+        public_only: Literal[False] = False,
+        lock_args: Sequence[SelectionLockOption] | None = None,
     ) -> KeyPrivateDataResult | None: ...
 
     async def get_keydata(
-        self, key_id: str, *, public_only: bool = True
+        self,
+        key_id: str,
+        *,
+        public_only: bool = True,
+        lock_args: Sequence[SelectionLockOption] | None = None,
     ) -> KeyPublicDataResult | KeyPrivateDataResult | None:
+        statement = select(KeyData).where(KeyData.kid == key_id)
+        if lock_args:
+            statement = statement.with_for_update(
+                **{lock_arg: True for lock_arg in lock_args}  # pyrefly: ignore
+            )
         async with self.session_maker() as session:
-            keydata: KeyData | None = (
-                await session.execute(select(KeyData).where(KeyData.kid == key_id))
-            ).scalar_one_or_none()
+            keydata = (await session.execute(statement)).scalar_one_or_none()
             if not keydata:
                 return
             if public_only:
@@ -98,6 +115,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
         raise_on_empty: bool = False,
         *,
         public_data_only: Literal[True] = True,
+        lock_args: Sequence[SelectionLockOption] | None = None,
     ) -> list[KeyPublicDataResult]: ...
 
     @overload
@@ -107,6 +125,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
         raise_on_empty: bool = False,
         *,
         public_data_only: Literal[False] = False,
+        lock_args: Sequence[SelectionLockOption] | None = None,
     ) -> list[KeyPrivateDataResult]: ...
 
     async def get_relevant_keydata(
@@ -115,23 +134,29 @@ class KeydataRepository(metaclass=SingletonMetaclass):
         raise_on_empty: bool = False,
         *,
         public_data_only: bool = True,
+        lock_args: Sequence[SelectionLockOption] | None = None,
     ) -> list[KeyPublicDataResult] | list[KeyPrivateDataResult]:
+        statement = (
+            select(KeyData)
+            .where(KeyData.expired_at.is_(None))
+            .order_by(KeyData.epoch.desc())
+            .limit(limit)
+        )
+
+        if lock_args:
+            statement = statement.with_for_update(
+                **{lock_arg: True for lock_arg in lock_args}  # pyrefly: ignore
+            )
+
         async with self.session_maker() as session:
             keydata: list[KeyData] = list(
-                (
-                    await session.execute(
-                        select(KeyData)
-                        .where(KeyData.expired_at.is_(None))
-                        .order_by(KeyData.epoch.desc())
-                        .limit(limit)
-                    )
-                )
-                .scalars()
-                .all()
+                (await session.execute(statement)).scalars().all()
             )
             if not keydata and raise_on_empty:
                 raise ValueError("Key data empty")
-            return []
+            if public_data_only:
+                return list(map(KeyPublicDataResult.construct_from_orm, keydata))
+            return list(map(KeyPrivateDataResult.construct_from_orm, keydata))
 
     @overload
     async def insert_keydata(
