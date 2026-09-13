@@ -1,10 +1,29 @@
-from abc import abstractmethod
+from datetime import datetime
 from dataclasses import dataclass, fields
-from typing import Any, ClassVar, Mapping, Self
+from types import NoneType, MappingProxyType
+from typing import Any, ClassVar, Mapping, Self, Final, Callable
 
 from redis.typing import FieldT, EncodableT
 
 from sqlalchemy.orm import DeclarativeBase
+
+type t_dto_casting_map = MappingProxyType[type, Callable[[Any], Any]]
+
+JSON_TYPE_MAPPING: Final[t_dto_casting_map] = MappingProxyType(
+    {
+        datetime: lambda x: x.isoformat(),
+    }
+)
+
+CACHE_TYPE_MAPPING: Final[t_dto_casting_map] = MappingProxyType(
+    JSON_TYPE_MAPPING
+    | {
+        NoneType: lambda _: "",
+        bool: int,
+        list: str,
+        dict: str,
+    }
+)
 
 
 @dataclass(slots=True, init=False)
@@ -35,13 +54,19 @@ class AbstractResult:
                 setattr(instance, dataclass_attribute, getattr(obj, attribute))
         return instance
 
-    def __json_repr__(self) -> dict[str, Any]:
+    def map_fields(
+        self, casting_map: Mapping[type, Callable[[Any], Any]]
+    ) -> dict[str, Any]:
         return {
-            field.name.strip("_"): getattr(self, field.name)
+            field.name.strip("_"): casting_map.get(field.type, lambda x: x)(  # type: ignore
+                getattr(self, field.name)
+            )
             for field in fields(self)
             if not field.name.startswith("_")
         }
 
-    @abstractmethod
+    def __json_repr__(self) -> dict[str, Any]:
+        return self.map_fields(JSON_TYPE_MAPPING)
+
     def __cache_repr__(self) -> dict[FieldT, EncodableT]:
-        raise NotImplementedError()
+        return self.map_fields(CACHE_TYPE_MAPPING)  # type: ignore

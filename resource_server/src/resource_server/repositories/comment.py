@@ -18,7 +18,7 @@ class CommentResult(AbstractDTO):
     id_: int
     author_id: int
     author_username: str
-    parent_forum: int  # XXX: Unneeded much?
+    parent_forum: int
     parent_post: int
 
     time_created: datetime
