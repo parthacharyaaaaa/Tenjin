@@ -1,3 +1,5 @@
+from auth_server.repositories.admin import AdminRepository
+from auth_server.repositories.admin import AdminPrivateResult
 import base64
 from datetime import datetime
 from typing import Annotated, Final
@@ -15,7 +17,6 @@ from redis.exceptions import RedisError
 from sqlalchemy import select, update, insert
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.sql import and_
 
 from auxillary.utils import (
     bcrypt_check_password,
@@ -29,6 +30,7 @@ from auth_server.dependencies import (
     get_app_config,
     get_synced_store_client,
     get_database_session,
+    get_admin_repository,
 )
 from auth_server.models.cmd_requests import (
     AdminAuthenticationModel,
@@ -58,22 +60,21 @@ async def admin_login(
     config: Annotated[AppConfig, Depends(get_app_config)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
     session: Annotated[AsyncSession, Depends(get_database_session)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
 ) -> JSONResponse:
-    admin: Admin | None = None
+    admin: AdminPrivateResult | None = None
     try:
-        admin = (
-            await session.execute(
-                select(Admin).where(
-                    and_(
-                        Admin.username == auth_model.identity,
-                        Admin.time_deleted == None,
-                    )
-                )
-            )
-        ).scalar_one_or_none()
+        admin = await admin_repository.get_admin_by_username(
+            auth_model.identity, public_data_only=False, include_deleted=True
+        )
 
         if not admin:
-            raise HTTPException(404, "No admin with these credentials found")
+            raise HTTPException(
+                404, f"No admin with identity {auth_model.identity} found"
+            )
+
+        if admin.time_deleted is not None:
+            raise HTTPException(410, f"Admin {admin.username} has been deleted")
 
         if admin.locked:
             await report_suspicious_activity(
@@ -89,7 +90,7 @@ async def admin_login(
                 "This account is currently locked on grounds of suspicious activities",
             )
     except SQLAlchemyError:
-        raise Exception
+        raise HTTPException(500, "Failed to fetch admin information")
 
     if not bcrypt_check_password(auth_model.password, admin.password_hash):
         await report_suspicious_activity(
@@ -105,7 +106,9 @@ async def admin_login(
     # Exists in DB, check synced_store_client to see if session is already active
     session_key: Final[str] = f"admin:{admin.id_}"
     try:
-        admin_session: dict[str, str] = synced_store_client.hgetall(session_key)  # type: ignore[reportAssignmentType]
+        admin_session: dict[str, str] = synced_store_client.hgetall(
+            session_key
+        )  # pyrefly: ignore[bad-assignment]
 
         # Single sign-in policy, invalidate existing session and add entry in logs
         if admin_session:
@@ -126,7 +129,7 @@ async def admin_login(
         raise HTTPException(500, "An error occured when validating session integrity")
 
     try:
-        await session.execute(update(Admin).values(last_login=datetime.now()))
+        await admin_repository.update_last_login(admin.id_)
     except SQLAlchemyError:
         raise HTTPException(500, "An error occured when logging you in")
 
