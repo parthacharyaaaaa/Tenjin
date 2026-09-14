@@ -42,7 +42,7 @@ python-dotenv = "dotenv"
 pyjwt = "jwt"
 
 [tool.deptry.per_rule_ignores]
-DEP002 = ["psycopg", "mako", "cryptography"]
+DEP002 = ["psycopg", "mako", "cryptography", "types-aiofiles"]
 
 [tool.pyrefly]
 project-excludes=[
