@@ -1,3 +1,4 @@
+from auxillary.utils import json_repr
 from auth_server.repositories.admin import AdminPublicResult
 from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.admin import AdminPrivateResult
@@ -15,7 +16,6 @@ import orjson
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from sqlalchemy import select, insert
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -38,7 +38,6 @@ from auth_server.models.cmd_requests import (
     AdminIdentificationModel,
     AdminRefreshModel,
 )
-from auth_server.models.database import Admin
 from auth_server.models.session import AdminSession
 from auth_server.security.admin_roles import AdminRole
 from auth_server.security.keygen import generate_ecdsa_pair
@@ -387,37 +386,33 @@ async def create_admin(
     admin_session: Annotated[
         AdminSession, Depends(require_permissions(Permission.CREATE_ADMIN))
     ],
-    session: Annotated[AsyncSession, Depends(get_database_session)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
 ) -> JSONResponse:
     try:
-        existing_admin_id: int | None = (
-            await session.execute(
-                select(Admin.id_).where(Admin.username == admin_model.identity)
-            )
-        ).scalar_one_or_none()
-
-        if existing_admin_id:
-            raise HTTPException(409, "An admin with this suername already exists")
+        existing_admin: AdminPublicResult | None = (
+            await admin_repository.get_admin_by_username(admin_model.identity)
+        )
     except SQLAlchemyError:
         genericDBFetchException()
+    if existing_admin:
+        raise HTTPException(
+            409, f"Admin with username {admin_model.identity} already exists"
+        )
 
-    pw_hash: bytes = bcrypt_hash_password(admin_model.password)
+    pw_hash: Final[bytes] = bcrypt_hash_password(admin_model.password)
     _, signing_key, verification_key = generate_ecdsa_pair()
     try:
-        await session.execute(
-            insert(Admin).values(
-                username=admin_model.identity,
-                password_hash=pw_hash,
-                role=AdminRole.STAFF.value,
-                created_by=admin_session.admin_id,
-                signing_key=signing_key.to_pem(),
-                verification_key=verification_key.to_pem(),
-            )
+        admin: AdminPublicResult = await admin_repository.create_admin(
+            username=admin_model.identity,
+            password_hash=pw_hash,
+            role=AdminRole.STAFF,
+            creation_author=admin_session.admin_id,
+            signing_key=signing_key.to_pem(),
+            verification_key=verification_key.to_pem(),
+            returning=True,
+            public_data_only=True,
         )
-        await session.commit()
-    except SQLAlchemyError:
-        raise HTTPException(
-            500, "Failed to create a new admin, this is not from an erroneous input"
-        )
+    except SQLAlchemyError as e:
+        raise HTTPException(500, "Failed to create a new admin") from e
 
-    return JSONResponse({"message": "Admin created"}, 202)
+    return JSONResponse({"message": "Admin created", "admin": json_repr(admin)}, 202)

@@ -1,5 +1,6 @@
 """Data access repository for Keydata SA model"""
 
+from auth_server.security.admin_roles import AdminRole
 from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -358,3 +359,80 @@ class AdminRepository(metaclass=SingletonMetaclass):
                     return AdminPublicResult.construct_from_orm(admin)
                 return AdminPrivateResult.construct_from_orm(admin)
             return None
+
+    @overload
+    async def create_admin(
+        self,
+        username: str,
+        password_hash: bytes | bytearray,
+        creation_author: int,
+        signing_key: bytes | bytearray,
+        verification_key: bytes | bytearray,
+        role: AdminRole = AdminRole.STAFF,
+        *,
+        returning: Literal[False] = False,
+        public_data_only: bool = True,
+    ) -> None: ...
+
+    @overload
+    async def create_admin(
+        self,
+        username: str,
+        password_hash: bytes | bytearray,
+        creation_author: int,
+        signing_key: bytes | bytearray,
+        verification_key: bytes | bytearray,
+        role: AdminRole = AdminRole.STAFF,
+        *,
+        returning: Literal[True] = True,
+        public_data_only: Literal[True] = True,
+    ) -> AdminPublicResult: ...
+
+    @overload
+    async def create_admin(
+        self,
+        username: str,
+        password_hash: bytes | bytearray,
+        creation_author: int,
+        signing_key: bytes | bytearray,
+        verification_key: bytes | bytearray,
+        role: AdminRole = AdminRole.STAFF,
+        *,
+        returning: Literal[True] = True,
+        public_data_only: Literal[False] = False,
+    ) -> AdminPrivateResult: ...
+
+    async def create_admin(
+        self,
+        username: str,
+        password_hash: bytes | bytearray,
+        creation_author: int,
+        signing_key: bytes | bytearray,
+        verification_key: bytes | bytearray,
+        role: AdminRole = AdminRole.STAFF,
+        *,
+        returning: bool = False,
+        public_data_only: bool = True,
+    ) -> AdminPublicResult | AdminPrivateResult | None:
+        async with self.session_maker() as session:
+            admin: Admin = (
+                await session.execute(
+                    insert(Admin)
+                    .values(
+                        username=username,
+                        password_hash=password_hash,
+                        role=role,
+                        created_by=creation_author,
+                        signing_key=signing_key,
+                        verification_key=verification_key,
+                    )
+                    .returning(Admin)
+                )
+            ).scalar_one()
+            await session.commit()
+
+            if not returning:
+                return
+            if public_data_only:
+                return AdminPublicResult.construct_from_orm(admin)
+            return AdminPrivateResult.construct_from_orm(admin)
