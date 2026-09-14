@@ -1,3 +1,4 @@
+from auth_server.repositories.admin import AdminPublicResult
 from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.admin import AdminPrivateResult
 import base64
@@ -164,32 +165,35 @@ async def admin_delete(
         AdminSession, Depends(require_permissions(Permission.DELETE_ADMIN))
     ],
     session: Annotated[AsyncSession, Depends(get_database_session)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
 ) -> JSONResponse:
     try:
-        admin: Admin | None = (
-            await session.execute(
-                select(Admin).where(
-                    (Admin.id_ == deletion_model.id_) & (Admin.time_deleted == None)
-                )
-            )
-        ).scalar_one_or_none()
-        if not admin:
-            raise HTTPException(404, f"No admin with ID {deletion_model.id_} found")
-
+        admin: AdminPublicResult | None = await admin_repository.get_admin(
+            deletion_model.id_, include_deleted=True
+        )
     except SQLAlchemyError:
         genericDBFetchException()
-
-    try:
-        await session.execute(
-            update(Admin)
-            .where(Admin.id_ == deletion_model.id_)
-            .values(time_deleted=datetime.now())
+    if not admin:
+        raise HTTPException(404, f"No admin with ID {deletion_model.id_} found")
+    elif admin.time_deleted:
+        raise HTTPException(
+            410, f"Admin {admin.username} (ID: {admin.id_}) already deleted"
         )
-        await session.commit()
+
+    deletion_time: datetime = datetime.now()
+    try:
+        await admin_repository.delete_admin(deletion_model.id_, deletion_time)
     except:
         raise HTTPException(500, "Failed to delete admin account")
 
-    return JSONResponse({"message": "Admin deleted"})
+    return JSONResponse(
+        {
+            "message": "Admin deleted",
+            "admin_id": admin.id_,
+            "admin_username": admin.username,
+            "time_deleted": deletion_time,
+        }
+    )
 
 
 @ADMIN.post("/admins/refresh")
