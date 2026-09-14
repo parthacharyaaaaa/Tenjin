@@ -164,7 +164,6 @@ async def admin_delete(
     admin_session: Annotated[
         AdminSession, Depends(require_permissions(Permission.DELETE_ADMIN))
     ],
-    session: Annotated[AsyncSession, Depends(get_database_session)],
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
 ) -> JSONResponse:
     try:
@@ -296,51 +295,43 @@ async def admin_logout(
 async def admin_lock(
     request: Request,
     identification_model: AdminIdentificationModel,
-    session: Annotated[AsyncSession, Depends(get_database_session)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+    synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
 ) -> JSONResponse:
     """Lock a staff admin's account"""
     try:
-        admin: Admin | None = (
-            await session.execute(
-                select(Admin)
-                .where(Admin.id_ == identification_model.id_)
-                .with_for_update(key_share=True)
-            )
-        ).scalar_one_or_none()
-
-        if not admin:
-            raise HTTPException(
-                404, f"No admin with id {identification_model.id_} could be found"
-            )
-        if admin.locked:
-            conflict: HTTPException = HTTPException(
-                409, "Admin account is already locked"
-            )
-            setattr(
-                conflict,
-                "kwargs",
-                {
-                    "links": {
-                        "unlock admin account": {
-                            "_href": request.url_for("admin_unlock")
-                        }
-                    }
-                },
-            )
-            raise conflict
-
-        await session.execute(
-            update(Admin)
-            .where(Admin.id_ == identification_model.id_)
-            .values(locked=True)
+        admin: AdminPublicResult | None = await admin_repository.get_admin(
+            identification_model.id_
         )
-        await session.commit()
     except SQLAlchemyError:
-        raise Exception
+        genericDBFetchException()
+
+    if not admin:
+        raise HTTPException(
+            404, f"No admin with id {identification_model.id_} could be found"
+        )
+    if admin.locked:
+        conflict: HTTPException = HTTPException(409, "Admin account is already locked")
+        setattr(
+            conflict,
+            "kwargs",
+            {
+                "links": {
+                    "unlock admin account": {"_href": request.url_for("admin_unlock")}
+                }
+            },
+        )
+        raise conflict
+
+    try:
+        await admin_repository.set_admin_locked(admin.id_, True)
+    except SQLAlchemyError:
+        raise HTTPException(
+            500, f"Failed to lock admin {admin.username} (ID: {admin.id_})"
+        )
 
     # Log out the target admin
-    synced_store_client: Final[Redis] = get_synced_store_client()
-    synced_store_client.delete(f"admin:{identification_model.id_}")
+    await synced_store_client.delete(f"admin:{identification_model.id_}")
 
     return JSONResponse({"message": "Admin locked succesfully"})
 
