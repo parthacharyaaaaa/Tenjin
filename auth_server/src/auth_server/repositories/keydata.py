@@ -111,7 +111,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
     @overload
     async def get_relevant_keydata(
         self,
-        limit: int | None,
+        limit: int | None = None,
         raise_on_empty: bool = False,
         *,
         public_data_only: Literal[True] = True,
@@ -121,7 +121,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
     @overload
     async def get_relevant_keydata(
         self,
-        limit: int | None,
+        limit: int | None = None,
         raise_on_empty: bool = False,
         *,
         public_data_only: Literal[False] = False,
@@ -130,7 +130,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
 
     async def get_relevant_keydata(
         self,
-        limit: int | None,
+        limit: int | None = None,
         raise_on_empty: bool = False,
         *,
         public_data_only: bool = True,
@@ -435,3 +435,43 @@ class KeydataRepository(metaclass=SingletonMetaclass):
             if public_data_only:
                 return KeyPublicDataResult.construct_from_orm(active_key)
             return KeyPrivateDataResult.construct_from_orm(active_key)
+
+    async def rotate_key(
+        self,
+        previous_key_id: str,
+        new_key_id: str,
+        new_key_public_pem: bytes | bytearray,
+        new_key_private_pem: bytes | bytearray,
+        *,
+        alg: str = "ES256",
+        curve: str = str(ecdsa.SECP256k1),
+        rotation_author: int | None = None,
+        epoch: datetime | None = None,
+        previous_key_rotation_time: datetime | None = None,
+    ) -> None:
+        epoch = epoch or datetime.now()
+        previous_key_rotation_time = previous_key_rotation_time or epoch
+
+        async with self.session_maker() as session:
+            await session.execute(
+                update(KeyData)
+                .where(KeyData.kid == previous_key_id)
+                .values(
+                    rotated_out_at=datetime.now(),
+                    manual_rotation=True,
+                    rotated_by=rotation_author,
+                )
+            )
+
+            # Add new key
+            await session.execute(
+                insert(KeyData).values(
+                    kid=new_key_id,
+                    curve=curve,
+                    private_pem=new_key_private_pem,
+                    public_pem=new_key_public_pem,
+                    alg=alg,
+                )
+            )
+
+            await session.commit()
