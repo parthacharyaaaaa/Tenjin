@@ -203,11 +203,15 @@ async def admin_refresh(
     config: Annotated[AppConfig, Depends(get_app_config)],
     session: Annotated[AsyncSession, Depends(get_database_session)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
 ) -> JSONResponse:
-    """Refresh an admin's session and enforce a maximum number of times a session can be refreshed before requiring reauthentication"""
+    """
+    Refresh an admin's session and enforce a maximum number of times
+    a session can be refreshed before requiring reauthentication
+    """
     admin_key: Final[str] = f"admin:{refresh_model.id_}"
     if admin_session.iteration >= config.ADMIN.MAX_SESSION_ITERATIONS:
-        synced_store_client.delete(admin_key)
+        await synced_store_client.delete(admin_key)
         raise HTTPException(
             409,
             " ".join(
@@ -219,15 +223,15 @@ async def admin_refresh(
             ),
         )
 
-    actual_digest_bytes: bytes = synced_store_client.hget(admin_key, "revival_digest")  # type: ignore[reportAssignmentType]
+    actual_digest_bytes: bytes = await synced_store_client.hget(admin_key, "revival_digest")  # type: ignore[reportAssignmentType]
     if not actual_digest_bytes:
-        synced_store_client.delete(admin_key)
+        await synced_store_client.delete(admin_key)
         raise HTTPException(
             500, "An error occured in verifying revival digests. Please reuthenticate"
         )
 
     if actual_digest_bytes == AdminStrings.NO_REFRESH_SENTINEL:
-        synced_store_client.delete(admin_key)
+        await synced_store_client.delete(admin_key)
         raise HTTPException(409, "Maximum session reiterations reached")
 
     if actual_digest_bytes.decode() != refresh_model.refresh_digest:
@@ -241,11 +245,14 @@ async def admin_refresh(
         raise HTTPException(403, "Invalid revival digest provided")
 
     try:
-        signing_key: Final[bytes] = (
-            await session.execute(
-                select(Admin.signing_key).where(Admin.id_ == admin_session.admin_id)
-            )
-        ).scalar_one()
+        _admin_data: AdminPrivateResult | None = await admin_repository.get_admin(
+            refresh_model.id_, public_data_only=False
+        )
+        if not _admin_data:
+            await synced_store_client.delete(admin_key)
+            raise HTTPException(500, "Session invalid")
+        signing_key: Final[bytes] = _admin_data.signing_key
+        del _admin_data
     except SQLAlchemyError as e:
         raise HTTPException(500) from e
 
@@ -259,7 +266,7 @@ async def admin_refresh(
     )
 
     # type ignore for TypedDict, which behaves as dict at runtime
-    synced_store_client.hset(session_key, mapping=session_mapping)  # type: ignore[reportArgumentType]
+    await synced_store_client.hset(session_key, mapping=session_mapping)  # type: ignore[reportArgumentType]
     revival_digest: str = session_mapping.pop("revival_digest")  # type: ignore[reportAssignmentType]
     if session_mapping["session_iteration"] == config.ADMIN.MAX_SESSION_ITERATIONS:
         revival_digest = AdminStrings.NO_REFRESH_SENTINEL
