@@ -358,3 +358,80 @@ class KeydataRepository(metaclass=SingletonMetaclass):
             if public_data_only:
                 return list(map(KeyPublicDataResult.construct_from_orm, expired_keys))
             return list(map(KeyPrivateDataResult.construct_from_orm, expired_keys))
+
+    @overload
+    async def get_valid_inactive_keys(
+        self,
+        limit: int | None = None,
+        *,
+        public_data_only: Literal[True] = True,
+        lock_args: Sequence[SelectionLockOption] | None = None,
+    ) -> list[KeyPublicDataResult]: ...
+    @overload
+    async def get_valid_inactive_keys(
+        self,
+        limit: int | None = None,
+        *,
+        public_data_only: Literal[False] = False,
+        lock_args: Sequence[SelectionLockOption] | None = None,
+    ) -> list[KeyPrivateDataResult]: ...
+    async def get_valid_inactive_keys(
+        self,
+        limit: int | None = None,
+        *,
+        public_data_only: bool = True,
+        lock_args: Sequence[SelectionLockOption] | None = None,
+    ) -> list[KeyPublicDataResult] | list[KeyPrivateDataResult]:
+        statement = (
+            select(KeyData)
+            .where((KeyData.expired_at == None) & (KeyData.rotated_out_at.isnot(None)))
+            .limit(limit)
+        )
+        if lock_args:
+            statement = statement.with_for_update(
+                **{i: True for i in lock_args}  # pyrefly: ignore
+            )
+        async with self.session_maker() as session:
+            keys: list[KeyData] = list(
+                (await session.execute(statement)).scalars().all()
+            )
+            if public_data_only:
+                return list(map(KeyPublicDataResult.construct_from_orm, keys))
+            return list(map(KeyPrivateDataResult.construct_from_orm, keys))
+
+    @overload
+    async def get_active_key(
+        self,
+        *,
+        public_data_only: Literal[True] = True,
+        lock_args: Sequence[SelectionLockOption] | None = None,
+    ) -> KeyPublicDataResult | None: ...
+    @overload
+    async def get_active_key(
+        self,
+        *,
+        public_data_only: Literal[False] = False,
+        lock_args: Sequence[SelectionLockOption] | None = None,
+    ) -> KeyPrivateDataResult | None: ...
+
+    async def get_active_key(
+        self,
+        *,
+        public_data_only: bool = True,
+        lock_args: Sequence[SelectionLockOption] | None = None,
+    ) -> KeyPublicDataResult | KeyPrivateDataResult | None:
+        statement = select(KeyData).where(KeyData.rotated_out_at.is_(None))
+        if lock_args:
+            statement = statement.with_for_update(
+                **{i: True for i in lock_args}  # pyrefly: ignore
+            )
+
+        async with self.session_maker() as session:
+            active_key: KeyData | None = (
+                await session.execute(statement)
+            ).scalar_one_or_none()
+            if not active_key:
+                return
+            if public_data_only:
+                return KeyPublicDataResult.construct_from_orm(active_key)
+            return KeyPrivateDataResult.construct_from_orm(active_key)
