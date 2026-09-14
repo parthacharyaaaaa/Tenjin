@@ -284,11 +284,11 @@ async def admin_refresh(
 
 
 @ADMIN.patch("/admins/logout")
-def admin_logout(
+async def admin_logout(
     identification_model: AdminIdentificationModel,
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
 ) -> JSONResponse:
-    synced_store_client.delete(f"admin:{identification_model.id_}")
+    await synced_store_client.delete(f"admin:{identification_model.id_}")
     return JSONResponse({"message": "Logout successful"})
 
 
