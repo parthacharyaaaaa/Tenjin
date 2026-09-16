@@ -72,17 +72,14 @@ async def get_database_session() -> AsyncGenerator[AsyncSession, None]:
         await session.close()
 
 
-@lru_cache(maxsize=1)
 def get_keydata_repository() -> KeydataRepository:
     return KeydataRepository(get_database_session_maker())
 
 
-@lru_cache(maxsize=1)
 def get_admin_repository() -> AdminRepository:
     return AdminRepository(get_database_session_maker())
 
 
-@lru_cache(maxsize=1)
 def get_suspicious_activity_repository() -> SuspiciousActivityRepository:
     return SuspiciousActivityRepository(get_database_session_maker())
 
