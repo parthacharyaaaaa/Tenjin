@@ -1,19 +1,10 @@
-from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
-from resource_database_workers.dependencies.annotations import EVENT_STREAM_MANAGER
-from resource_database_workers.dependencies.annotations import STATUS_PROXY
-from resource_database_workers.dependencies.annotations import APP_REDIS
-from resource_database_workers.dependencies.annotations import INTERNAL_REDIS
-from resource_database_workers.dependencies.annotations import DEAD_LETTER_STREAM_NAME
-from resource_database_workers.dependencies.annotations import CONNECTION_POOL
-from resource_database_workers.dependencies.annotations import APP_CONFIG
 import asyncio
 import time
 from typing import Literal, MutableMapping
 
-from redis.asyncio import Redis
-
 from psycopg_pool import AsyncConnectionPool
-
+from redis.asyncio import Redis
+from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
 from resource_auxillary.event_processing.qos import locked_operation
 from resource_auxillary.strings import NAME_SEPERATOR, StreamName
 
@@ -21,24 +12,31 @@ from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.exceptions import (
     RecoverableDatabaseException,
 )
-from resource_database_workers.workers.redis.declarations import (
-    declare_counters_event_dead,
+from resource_database_workers.dependencies.annotations import (
+    APP_CONFIG,
+    APP_REDIS,
+    CONNECTION_POOL,
+    DEAD_LETTER_STREAM_NAME,
+    EVENT_STREAM_MANAGER,
+    INTERNAL_REDIS,
+    STATUS_PROXY,
 )
-
-from resource_database_workers.workers.redis.cache import (
-    reflect_processed_counters,
-)
-from resource_database_workers.workers.redis.counters import (
-    retrieve_counter_group_names,
-    dispatch_to_retrier,
+from resource_database_workers.utils.strings import (
+    derive_lock_key,
+    extract_batch_metadata,
 )
 from resource_database_workers.workers.database.counters import (
     flush_counter_updates,
 )
-
-from resource_database_workers.utils.strings import (
-    derive_lock_key,
-    extract_batch_metadata,
+from resource_database_workers.workers.redis.cache import (
+    reflect_processed_counters,
+)
+from resource_database_workers.workers.redis.counters import (
+    dispatch_to_retrier,
+    retrieve_counter_group_names,
+)
+from resource_database_workers.workers.redis.declarations import (
+    declare_counters_event_dead,
 )
 
 

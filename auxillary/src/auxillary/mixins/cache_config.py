@@ -1,4 +1,5 @@
 from typing import Annotated, Self
+
 from pydantic import Field, model_validator
 
 

@@ -1,12 +1,12 @@
 from typing import Annotated
 
-from pydantic import Field, BeforeValidator
+from pydantic import BeforeValidator, Field
 
 from resource_server.config.constants import EMAIL_PATTERN
 from resource_server.config.database_constants import (
-    UserConstants,
     ForumConstants,
     PostConstants,
+    UserConstants,
 )
 from resource_server.models.database_enums import ReportTags
 

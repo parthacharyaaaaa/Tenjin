@@ -2,27 +2,26 @@
 Event-specific worker dependency mappings
 """
 
-from resource_database_workers.tasks.consumer import user_orphan_consumer
-from resource_database_workers.dependencies.annotations import (
-    IDENTIFIER_COLUMN,
-    ACTION_LITERAL,
-    TABLE,
-)
-from typing import Any, Callable, Final
 from types import MappingProxyType
+from typing import Any, Callable, Final
 
-from resource_auxillary.datastructures.database import GenericLiterals
-from resource_auxillary.datastructures.database import StrongEntity
+from resource_auxillary.datastructures.database import GenericLiterals, StrongEntity
 from resource_auxillary.strings import EventName
 
-from resource_database_workers.tasks.consumer import (
-    queue_insertion_consumer,
-    queue_deletion_consumer,
+from resource_database_workers.dependencies.annotations import (
+    ACTION_LITERAL,
+    IDENTIFIER_COLUMN,
+    TABLE,
 )
+from resource_database_workers.tasks.consumer import (
+    queue_deletion_consumer,
+    queue_insertion_consumer,
+    user_orphan_consumer,
+)
+from resource_database_workers.tasks.dlq_workers import dlq_consumer
 from resource_database_workers.tasks.side_effects import (
     downstream_deletion_worker,
 )
-from resource_database_workers.tasks.dlq_workers import dlq_consumer
 
 type t_event_worker_data = tuple[Callable[..., Any], dict[Any, Any]]
 _EMPTY_DICT_SENTINEL: Final[dict[Any, Any]] = {}

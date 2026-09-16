@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Any, Mapping, Self
 
 import orjson
-from redis.typing import FieldT, EncodableT
+from redis.typing import EncodableT, FieldT
 
 
 @dataclass(slots=True, init=False)

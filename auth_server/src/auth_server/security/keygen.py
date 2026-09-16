@@ -1,16 +1,16 @@
+import os
+import secrets
+from hashlib import sha512
 from pathlib import Path
 from typing import Sequence
 
 import ecdsa
-from hashlib import sha512
-import os
-import secrets
-from auth_server.security.key_container import KeyMetadata
-from auth_server.repositories.keydata import KeydataRepository
-from auxillary.utils import to_base64url
 import orjson
+from auxillary.utils import to_base64url
 
 from auth_server.models.database import KeyData
+from auth_server.repositories.keydata import KeydataRepository
+from auth_server.security.key_container import KeyMetadata
 
 
 def generate_ecdsa_pair() -> tuple[str, ecdsa.SigningKey, ecdsa.VerifyingKey]:

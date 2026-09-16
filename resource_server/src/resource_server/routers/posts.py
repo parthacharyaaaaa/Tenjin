@@ -3,11 +3,9 @@ from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
 
+from auxillary.utils import cache_repr, json_repr, to_base64url
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-
-from auxillary.utils import cache_repr, json_repr, to_base64url
-
 from resource_auxillary.cache import (
     NAME_SEPERATOR,
     Action,
@@ -24,9 +22,9 @@ from resource_auxillary.datastructures.payloads.standalone import PostDeletion
 from resource_auxillary.events import (
     CounterUpdate,
     Event,
-    IntentUpdate,
-    EventSideEffects,
     EventName,
+    EventSideEffects,
+    IntentUpdate,
 )
 from resource_auxillary.strings import EventName, IntentFlag, StreamName
 
@@ -41,12 +39,15 @@ from resource_server.dependencies import (
     get_post_repository,
 )
 from resource_server.event_streamer import EventStreamer
+from resource_server.models.admin_permissions import AdminPermissions, check_permission
+from resource_server.models.database import PostVote
 from resource_server.models.requests import (
     PostAmendmentModel,
     PostCreationModel,
     ReportModel,
     VoteModel,
 )
+from resource_server.repositories.comment import CommentRepository, CommentResult
 from resource_server.repositories.forum import (
     ForumAdminResult,
     ForumRepository,
@@ -58,9 +59,6 @@ from resource_server.request_dependencies import (
     cursor_preprocessor,
     validate_access_token,
 )
-from resource_server.models.admin_permissions import AdminPermissions, check_permission
-from resource_server.models.database import PostVote
-from resource_server.repositories.comment import CommentRepository, CommentResult
 from resource_server.utils.typing import StandardAccessTokenClaims
 from resource_server.utils.validation import validate_duplicate_amendment_contents
 

@@ -1,8 +1,7 @@
 from enum import StrEnum
 
+from resource_auxillary.strings import SECOND_CLASS_EVENTS, EventName
 from sqlalchemy.dialects.postgresql import ENUM
-
-from resource_auxillary.strings import EventName, SECOND_CLASS_EVENTS
 
 # from resource_auxillary.datastructures.database import SideEffectType
 

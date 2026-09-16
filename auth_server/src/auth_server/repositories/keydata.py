@@ -1,20 +1,18 @@
 """Data access repository for Keydata SA model"""
 
-from collections.abc import Sequence, MutableMapping
+from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, ClassVar, Literal, overload
 
 import ecdsa
-from redis.typing import EncodableT, FieldT
-
 from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
-
+from redis.typing import EncodableT, FieldT
 from sqlalchemy import insert, select, update
 
-from auth_server.strings import SelectionLockOption
 from auth_server.models.database import KeyData
+from auth_server.strings import SelectionLockOption
 
 
 @dataclass(slots=True, init=False)

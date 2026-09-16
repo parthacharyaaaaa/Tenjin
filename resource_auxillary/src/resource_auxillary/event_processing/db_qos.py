@@ -1,6 +1,5 @@
-from typing import TypeVar
 from datetime import datetime
-from typing import Any, Callable, Coroutine, Iterable
+from typing import Any, Callable, Coroutine, Iterable, TypeVar
 from uuid import uuid4
 
 from psycopg import AsyncConnection, sql

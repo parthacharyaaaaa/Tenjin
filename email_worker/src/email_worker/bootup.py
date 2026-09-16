@@ -6,16 +6,17 @@ from resource_auxillary.datastructures.status_indicator import (
     StatusController,
     StatusProxy,
 )
+
 from email_worker.config.worker_config import WorkerCountConfig
 from email_worker.datastructures.queue_registry import QueueRegistry
-from email_worker.dependencies import get_queue_registry, get_email_config
-from email_worker.tasks.emailing import email_dispatcher
-from email_worker.tasks.stream_reading import upstream_dispatcher
+from email_worker.datastructures.streams import STREAM_EVENT_MAPPING
 from email_worker.datastructures.worker_inputs import (
     GeneralEmailInput,
     UpstreamDispatcherInput,
 )
-from email_worker.datastructures.streams import STREAM_EVENT_MAPPING
+from email_worker.dependencies import get_email_config, get_queue_registry
+from email_worker.tasks.emailing import email_dispatcher
+from email_worker.tasks.stream_reading import upstream_dispatcher
 
 type _t_worker_task_callable = Callable[[], Coroutine[None, None, None]]
 

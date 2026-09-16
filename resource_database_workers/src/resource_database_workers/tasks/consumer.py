@@ -1,31 +1,13 @@
-from functools import partial
-from resource_auxillary.datastructures.database import GenericLiterals
-from resource_database_workers.tasks.insertions import (
-    insert_downstream_deletion_outbox_entries,
-)
-from resource_database_workers.tasks.insertions import outbox_insertion
-from resource_database_workers.dependencies.annotations import (
-    ACTION_LITERAL,
-    BATCHED_EVENT_QUEUE,
-    STREAM_NAME,
-    IDENTIFIER_COLUMN,
-    TABLE,
-    STATUS_PROXY,
-    DEAD_LETTER_STREAM_NAME,
-    GROUP_NAME,
-    CONNECTION_POOL,
-    APP_CONFIG,
-    EVENT_STREAM_MANAGER,
-)
-from resource_database_workers.tasks.insertions import batch_insert_with_isolation
-from resource_database_workers.tasks.deletions import soft_delete_strong_entity
-from datetime import datetime
 import time
+from datetime import datetime
+from functools import partial
 from typing import Generator
 
-
-from resource_auxillary.datastructures.database import StrongEntity
-from resource_auxillary.events import StreamedEvent
+from resource_auxillary.datastructures.database import GenericLiterals, StrongEntity
+from resource_auxillary.event_processing.db_qos import (
+    batch_dedup_insert_events,
+    db_execute_with_retries,
+)
 from resource_auxillary.event_processing.pre_processing import (
     populate_events_batch_from_queue,
 )
@@ -33,10 +15,26 @@ from resource_auxillary.event_processing.wrappers import (
     ack_with_retries,
     declare_dead_with_retries,
 )
+from resource_auxillary.events import StreamedEvent
 
-from resource_auxillary.event_processing.db_qos import (
-    batch_dedup_insert_events,
-    db_execute_with_retries,
+from resource_database_workers.dependencies.annotations import (
+    ACTION_LITERAL,
+    APP_CONFIG,
+    BATCHED_EVENT_QUEUE,
+    CONNECTION_POOL,
+    DEAD_LETTER_STREAM_NAME,
+    EVENT_STREAM_MANAGER,
+    GROUP_NAME,
+    IDENTIFIER_COLUMN,
+    STATUS_PROXY,
+    STREAM_NAME,
+    TABLE,
+)
+from resource_database_workers.tasks.deletions import soft_delete_strong_entity
+from resource_database_workers.tasks.insertions import (
+    batch_insert_with_isolation,
+    insert_downstream_deletion_outbox_entries,
+    outbox_insertion,
 )
 
 

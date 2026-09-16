@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from typing import ClassVar, Mapping
 
 from auxillary.data_structures.dto import AbstractResult
-
 from resource_auxillary.cache import NAME_SEPERATOR
 
 

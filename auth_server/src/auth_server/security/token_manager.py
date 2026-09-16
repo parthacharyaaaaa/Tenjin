@@ -1,18 +1,16 @@
-from typing import Any
 import asyncio
 import time
-from traceback import format_exc
 import uuid
-from typing import Final, Optional, Literal, TypeAlias, overload
+from traceback import format_exc
+from typing import Any, Final, Literal, Optional, TypeAlias, overload
 
 import jwt
 import jwt.exceptions as JWTexc
-
 from redis.asyncio import Redis
 
-from auth_server.security.key_container import KeyMetadata
 from auth_server.models.database import KeyData
 from auth_server.repositories.keydata import KeydataRepository
+from auth_server.security.key_container import KeyMetadata
 from auth_server.security.tokens import (
     StandardAccessTokenClaims,
     StandardRefreshTokenClaims,

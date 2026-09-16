@@ -1,9 +1,9 @@
-from redis.typing import EncodableT
+import random
 import time
 from typing import Final, LiteralString
 
+from redis.typing import EncodableT
 from resource_auxillary.strings import NAME_SEPERATOR, StreamName
-import random
 
 INTERNAL_NAME_SEPERATOR: Final[LiteralString] = "-"
 assert INTERNAL_NAME_SEPERATOR != NAME_SEPERATOR  # nosec

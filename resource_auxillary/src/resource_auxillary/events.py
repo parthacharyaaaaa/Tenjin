@@ -2,12 +2,10 @@ from datetime import datetime
 from functools import cached_property
 from typing import Annotated, Any, Literal, Self
 
-from auxillary.utils import cache_repr, json_repr
 import orjson
-
-from pydantic import BaseModel, BeforeValidator, Field, ConfigDict
-
-from redis.typing import FieldT, EncodableT
+from auxillary.utils import cache_repr, json_repr
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from redis.typing import EncodableT, FieldT
 
 from resource_auxillary.strings import (
     NAME_SEPERATOR,

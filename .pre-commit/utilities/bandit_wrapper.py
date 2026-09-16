@@ -1,10 +1,9 @@
 import os
-
-import orjson
-import sys
 import subprocess
+import sys
 from typing import Any
 
+import orjson
 from constants import ERROR_DIRECTORY_NAME
 
 

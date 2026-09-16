@@ -1,8 +1,9 @@
 import hashlib
-from pathlib import Path
 import re
-from typing import Annotated, Callable, Literal, Self
 from functools import cached_property
+from pathlib import Path
+from typing import Annotated, Callable, Literal, Self
+
 from auxillary.mixins.db_config import (
     BasicPostgresDatabaseConfigMixin,
     BasicSQLAlchemyConfigMixin,

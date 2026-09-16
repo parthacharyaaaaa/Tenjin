@@ -1,15 +1,12 @@
-from typing import TypeVar
-from resource_auxillary.events import StreamedEvent
-from datetime import timedelta
-from typing import Protocol
-from dataclasses import dataclass
 from collections.abc import Iterable, Sequence
-
-from redis.asyncio import Redis
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Protocol, TypeVar
 
 from auxillary.utils import cache_repr
+from redis.asyncio import Redis
 
-from resource_auxillary.events import Event
+from resource_auxillary.events import Event, StreamedEvent
 from resource_auxillary.strings import StreamName
 from resource_auxillary.typing import HasEventID
 

@@ -1,15 +1,12 @@
 import time
+from datetime import datetime
 from functools import partial
 from typing import Annotated, Final
-from datetime import datetime
 from uuid import uuid4
 
+from auxillary.utils import cache_repr, json_repr, to_base64url
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-
-
-from auxillary.utils import cache_repr, json_repr, to_base64url
-
 from resource_auxillary.cache import (
     Action,
     create_intent_flag,
@@ -22,9 +19,9 @@ from resource_auxillary.datastructures.payloads.assosciation import (
 from resource_auxillary.datastructures.payloads.standalone import ForumDeletion
 from resource_auxillary.events import (
     CounterUpdate,
-    IntentUpdate,
-    EventSideEffects,
     Event,
+    EventSideEffects,
+    IntentUpdate,
 )
 from resource_auxillary.strings import NAME_SEPERATOR, EventName, IntentFlag, StreamName
 
@@ -34,24 +31,29 @@ from resource_server.datastructures.requests import SortOption, TimeFrameOption
 from resource_server.dependencies import (
     get_anime_repository,
     get_app_config,
+    get_cache_manager,
     get_event_streamer,
     get_forum_repository,
-    get_cache_manager,
     get_post_repository,
     get_user_repository,
 )
-from resource_server.models.database import Forum, ForumAdmin, Post, Anime
+from resource_server.event_streamer import EventStreamer
+from resource_server.models.admin_permissions import AdminPermissions, check_permission
+from resource_server.models.database import Anime, Forum, ForumAdmin, Post
+from resource_server.models.database_enums import AdminRoles
 from resource_server.models.requests import (
+    AdminAddModel,
     ForumCreationModel,
     ForumUpdationModel,
-    AdminAddModel,
     GenericAdminModel,
 )
+from resource_server.repositories.anime import AnimeRepository, AnimeResult
 from resource_server.repositories.forum import (
     ForumAdminResult,
     ForumRepository,
     ForumResult,
 )
+from resource_server.repositories.posts import PostRepository, PostResult
 from resource_server.repositories.user import UserRepository, UserResult
 from resource_server.request_dependencies import (
     cursor_preprocessor,
@@ -59,11 +61,6 @@ from resource_server.request_dependencies import (
     preprocess_timeframe,
     validate_access_token,
 )
-from resource_server.repositories.anime import AnimeRepository, AnimeResult
-from resource_server.repositories.posts import PostRepository, PostResult
-from resource_server.event_streamer import EventStreamer
-from resource_server.models.database_enums import AdminRoles
-from resource_server.models.admin_permissions import AdminPermissions, check_permission
 from resource_server.utils.typing import StandardAccessTokenClaims
 
 FORUMS: Final[APIRouter] = APIRouter()

@@ -1,24 +1,22 @@
 from datetime import datetime, timedelta
 from typing import Annotated, Final
 
+import jwt
+from auxillary.utils import from_base64url
 from fastapi import Depends, Query, Request
 from fastapi.exceptions import HTTPException
-
-import jwt
-from jwt.exceptions import PyJWTError, ExpiredSignatureError
-
-from auxillary.utils import from_base64url
+from jwt.exceptions import ExpiredSignatureError, PyJWTError
 
 from resource_server.config.app_config import AppConfig
-from resource_server.dependencies import get_app_config, get_key_manager, get_genres
+from resource_server.datastructures.requests import (
+    TIMEFRAMES,
+    SortOption,
+    TimeFrameOption,
+)
+from resource_server.dependencies import get_app_config, get_genres, get_key_manager
 from resource_server.key_manager import KeyManager
 from resource_server.models.database import Genre
 from resource_server.utils.typing import StandardAccessTokenClaims
-from resource_server.datastructures.requests import (
-    SortOption,
-    TIMEFRAMES,
-    TimeFrameOption,
-)
 
 
 async def validate_access_token(

@@ -2,15 +2,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, ClassVar, Mapping, Self
 
+from auxillary.singleton import SingletonMetaclass
 from sqlalchemy import Row, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
 from resource_server.datastructures.requests import SortOption
-from auxillary.singleton import SingletonMetaclass
-from resource_server.repositories.result_protocol import AbstractDTO
 from resource_server.models.database import Post, PostReport, PostSave, PostVote, User
 from resource_server.models.database_enums import ReportTags
+from resource_server.repositories.result_protocol import AbstractDTO
 
 
 @dataclass(slots=True, init=False)

@@ -1,8 +1,8 @@
 from typing import Mapping, Sequence
 
 from redis.asyncio import Redis
-
 from resource_auxillary.strings import StreamName
+
 from resource_database_workers.datastructures.redis import (
     XInfoGroupResponse,
     XPendingRangeResponse,

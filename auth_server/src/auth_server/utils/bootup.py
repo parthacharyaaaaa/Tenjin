@@ -1,18 +1,16 @@
-from sqlalchemy.sql import select
-from contextlib import asynccontextmanager
-from datetime import datetime
 import os
-from pathlib import Path
 import time
 import traceback
+from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
 from typing import AsyncGenerator, Final, Mapping, Sequence
 
+from auxillary.utils import generic_error_handler
 from fastapi import APIRouter, FastAPI
 from redis.asyncio import Redis
+from sqlalchemy.sql import select
 
-from auxillary.utils import generic_error_handler
-
-from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import (
     get_app_config,
@@ -20,16 +18,17 @@ from auth_server.dependencies import (
     get_synced_store_client,
     get_token_manager,
 )
+from auth_server.models.database import KeyData
+from auth_server.repositories.keydata import KeydataRepository
+from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
 from auth_server.security.key_container import KeyMetadata
 from auth_server.security.keygen import (
     initialize_active_key,
-    write_ecdsa_pair,
     initialize_jwks,
+    write_ecdsa_pair,
 )
-from auth_server.models.database import KeyData
-from auth_server.repositories.keydata import KeydataRepository
-from auth_server.strings import SyncedStoreStrings
 from auth_server.security.token_manager import TokenManager
+from auth_server.strings import SyncedStoreStrings
 
 # TODO: Remove magic numbers in lifespan and master_bootup (lock and flag TTLs)
 

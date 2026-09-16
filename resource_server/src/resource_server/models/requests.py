@@ -2,21 +2,21 @@ from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, BeforeValidator, Field, model_validator
 
-from resource_server.models.annotations import (
-    username_annotation,
-    user_password_annotation,
-    email_annotation,
-    strong_entity_pk_annotation,
-    forum_name_annotation,
-    forum_description_annotation,
-    post_title_annotation,
-    post_body_annotation,
-    post_report_tag_annotation,
-    post_report_description_annotation,
-)
 from resource_server.config.database_constants import (
     CommentConstants,
     UserTicketConstants,
+)
+from resource_server.models.annotations import (
+    email_annotation,
+    forum_description_annotation,
+    forum_name_annotation,
+    post_body_annotation,
+    post_report_description_annotation,
+    post_report_tag_annotation,
+    post_title_annotation,
+    strong_entity_pk_annotation,
+    user_password_annotation,
+    username_annotation,
 )
 from resource_server.models.database import AdminRoles
 

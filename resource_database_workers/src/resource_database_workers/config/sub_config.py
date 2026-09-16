@@ -1,11 +1,11 @@
 from ipaddress import ip_address
 from typing import Annotated
 
+from auxillary.mixins.cache_config import BasicCacheTTLConfig, BasicNegativeCacheConfig
 from auxillary.mixins.db_config import (
     BasicConnectionPoolConfigMixin,
     BasicPostgresDatabaseConfigMixin,
 )
-from auxillary.mixins.cache_config import BasicCacheTTLConfig, BasicNegativeCacheConfig
 from auxillary.mixins.redis_config import BasicRedisConfigMixin
 from pydantic import (
     BaseModel,
@@ -15,7 +15,6 @@ from pydantic import (
 )
 
 from resource_auxillary import config_mixins
-
 from resource_database_workers.config.constants import DOMAIN_REGEX
 
 

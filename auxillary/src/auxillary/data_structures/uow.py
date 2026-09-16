@@ -1,8 +1,8 @@
-from contextlib import asynccontextmanager, AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from auxillary.data_structures.repository import (
-    AbstractWorkRepository,
     AbstractRepository,
+    AbstractWorkRepository,
 )
 
 

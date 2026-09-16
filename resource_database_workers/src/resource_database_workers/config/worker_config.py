@@ -1,5 +1,5 @@
-from collections import defaultdict
 import tomllib
+from collections import defaultdict
 from typing import (
     Annotated,
     Any,
@@ -9,9 +9,8 @@ from typing import (
     Self,
 )
 
-from resource_auxillary.strings import EventName, StreamName
-
 from pydantic import BaseModel, Field, model_validator
+from resource_auxillary.strings import EventName, StreamName
 
 # Strings mapping to key names in config TOML file
 STREAM_KEY: Final[LiteralString] = "STREAMS"

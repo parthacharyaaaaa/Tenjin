@@ -1,28 +1,31 @@
-from resource_database_workers.datastructures.queues import EventQueueRegistry
-from resource_database_workers.dependencies.injections import get_stream_manager
-from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
-from resource_database_workers.dependencies.indicator import Inject
-from resource_auxillary.datastructures.database import StrongEntity
-from resource_auxillary.strings import StreamName
-from resource_auxillary.datastructures.status_indicator import StatusProxy
-from resource_database_workers.utils.typing import t_action_literal
 import asyncio
-from resource_auxillary.events import StreamedEvent
+from typing import Annotated, Final, LiteralString
+
 from psycopg_pool.pool_async import AsyncConnectionPool
-from resource_database_workers.datastructures.queues import EventQueueRegistryContainer
+from redis.asyncio.client import Redis
+from resource_auxillary.datastructures.database import StrongEntity
+from resource_auxillary.datastructures.status_indicator import StatusProxy
+from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
+from resource_auxillary.events import StreamedEvent
+from resource_auxillary.strings import StreamName
+
+from resource_database_workers.config.config import AppConfig
+from resource_database_workers.datastructures.queues import (
+    EventQueueRegistry,
+    EventQueueRegistryContainer,
+)
+from resource_database_workers.dependencies.indicator import Inject
 from resource_database_workers.dependencies.injections import (
-    get_queue_registry,
-    get_internal_redis,
     get_app_redis,
     get_config,
     get_connection_pool,
     get_consumer_id,
     get_dead_letter_queue_name,
+    get_internal_redis,
+    get_queue_registry,
+    get_stream_manager,
 )
-from redis.asyncio.client import Redis
-from typing import LiteralString, Final
-from resource_database_workers.config.config import AppConfig
-from typing import Annotated
+from resource_database_workers.utils.typing import t_action_literal
 
 _DEFAULT_METADATA_STRING: Final[LiteralString] = "DI Annotation"
 

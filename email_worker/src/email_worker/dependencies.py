@@ -1,16 +1,15 @@
-from functools import lru_cache
 import os
+from functools import lru_cache
+from ssl import Purpose, create_default_context
 from typing import Final
 
 from aiosmtplib import SMTP
-from ssl import create_default_context, Purpose
-
 from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
 
+from email_worker.config.db_config import DatabaseConfig
 from email_worker.config.email_config import EmailConfig
 from email_worker.config.redis_config import RedisConfig
-from email_worker.config.db_config import DatabaseConfig
 from email_worker.datastructures.queue_registry import QueueRegistry
 
 

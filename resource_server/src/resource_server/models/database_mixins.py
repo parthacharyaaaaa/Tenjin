@@ -1,18 +1,16 @@
-from sqlalchemy.orm import declared_attr
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import text, ForeignKey, Index
-from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.dialects.postgresql import BIGINT, BOOLEAN, TIMESTAMP, TEXT, JSONB
-
 from resource_auxillary.datastructures.database import (
     DeletionColumnLiteral,
+    EventLiteral,
     EventMetadataLiteral,
     SideEffectsLiteral,
-    EventLiteral,
 )
 from resource_auxillary.strings import EventName
+from sqlalchemy import ForeignKey, Index, text
+from sqlalchemy.dialects.postgresql import BIGINT, BOOLEAN, JSONB, TEXT, TIMESTAMP
+from sqlalchemy.orm import Mapped, declared_attr, mapped_column
 
 from resource_server.models.database_enums import EVENT_NAME
 

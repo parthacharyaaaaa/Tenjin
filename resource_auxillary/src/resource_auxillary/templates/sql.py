@@ -1,15 +1,16 @@
 """SQL templates and composed strings"""
 
-from resource_auxillary.datastructures.database import SideEffectsLiteral
-from resource_auxillary.datastructures.database import SideEffectsTables
 from datetime import datetime
 from typing import Final, Literal, Sequence
 
-from psycopg.sql import SQL, Composed, Identifier, Literal as SQL_Literal
+from psycopg.sql import SQL, Composed, Identifier
+from psycopg.sql import Literal as SQL_Literal
 
 from resource_auxillary.datastructures.database import (
     EventLiteral,
     EventMetadataLiteral,
+    SideEffectsLiteral,
+    SideEffectsTables,
 )
 from resource_auxillary.strings import EventName
 

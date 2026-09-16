@@ -1,10 +1,9 @@
 from psycopg import AsyncConnection
-
 from resource_auxillary.datastructures.database import ForeignKeyColumnLiteral
 
 from resource_database_workers.utils.sql_templates import (
-    prepare_deltas_selection,
     prepare_cache_invalidation_entries_selection,
+    prepare_deltas_selection,
 )
 
 

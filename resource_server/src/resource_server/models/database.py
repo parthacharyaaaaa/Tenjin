@@ -1,45 +1,44 @@
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from resource_auxillary.datastructures.database import (
+    AssociationColumnLiteral,
+    DeadLetterQueueLiteral,
+    EventLiteral,
+    ForeignKeyColumnLiteral,
+    GenericLiterals,
+    SideEffectsTables,
+    StrongEntity,
+)
 from sqlalchemy import (
-    ForeignKey,
     CheckConstraint,
+    ForeignKey,
     UniqueConstraint,
     and_,
     or_,
 )
+from sqlalchemy.dialects.postgresql import BYTEA, JSONB, TIMESTAMP
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy.sql import text, func
-from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, BYTEA
-from sqlalchemy.types import INTEGER, SMALLINT, BOOLEAN, VARCHAR, BIGINT, TEXT
-
-from datetime import datetime
-from typing import Any
-from dataclasses import dataclass
-
-from resource_auxillary.datastructures.database import (
-    StrongEntity,
-    EventLiteral,
-    DeadLetterQueueLiteral,
-    ForeignKeyColumnLiteral,
-    AssociationColumnLiteral,
-    GenericLiterals,
-    SideEffectsTables,
-)
+from sqlalchemy.sql import func, text
+from sqlalchemy.types import BIGINT, BOOLEAN, INTEGER, SMALLINT, TEXT, VARCHAR
 
 from resource_server.config import database_constants
 from resource_server.config.constants import EMAIL_PATTERN
 from resource_server.models.database_enums import (
+    ADMIN_ROLES,
+    REPORT_TAGS,
     AdminRoles,
     ReportTags,
-    REPORT_TAGS,
-    ADMIN_ROLES,
 )
 from resource_server.models.database_mixins import (
+    EventSideEffectsTableMixin,
+    EventTableMixin,
     SaveAssociationMixin,
     SoftDeletionMixin,
     SoftEventDeletionMixin,
     SubAssociationMixin,
     VoteAssociationMixin,
-    EventTableMixin,
-    EventSideEffectsTableMixin,
 )
 
 __all__ = (

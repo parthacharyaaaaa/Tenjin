@@ -2,14 +2,14 @@
 
 from typing import Sequence
 
-from resource_auxillary.events import StreamedEvent
-from resource_auxillary.strings import StreamName
-from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
+from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
 from resource_auxillary.event_processing.qos import (
     dlq_aware_process_events,
     execute_with_redis_retries,
 )
-from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
+from resource_auxillary.events import StreamedEvent
+from resource_auxillary.strings import StreamName
+from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 
 
 async def declare_dead_with_retries(

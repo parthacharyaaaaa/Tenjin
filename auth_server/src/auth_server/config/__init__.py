@@ -1,15 +1,15 @@
 """Auth Server Configurations"""
 
+from auth_server.config.app_config import AppConfig
 from auth_server.config.sub_config import (
+    AdminConfigModel,
     CoreConfigModel,
+    DatabaseConfigModel,
     JWKSConfigModel,
     KeyConfigModel,
-    AdminConfigModel,
-    SAConfigModel,
-    DatabaseConfigModel,
     RedisConfigModel,
+    SAConfigModel,
 )
-from auth_server.config.app_config import AppConfig
 
 __all__ = (
     "AppConfig",

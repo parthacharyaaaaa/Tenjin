@@ -2,9 +2,9 @@ from typing import Final
 
 from aiosmtplib.errors import (
     SMTPException,
-    SMTPTimeoutError,
     SMTPReadTimeoutError,
     SMTPServerDisconnected,
+    SMTPTimeoutError,
 )
 
 UNSAFE_SMTP_NETWORK_ERRORS: Final[tuple[type[SMTPException], ...]] = (

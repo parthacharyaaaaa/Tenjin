@@ -2,16 +2,14 @@ from datetime import datetime
 from functools import partial
 from typing import Annotated, Final
 
-from fastapi import APIRouter, Depends, HTTPException, Path
-from fastapi.responses import JSONResponse
-
 from auxillary.utils import (
-    bcrypt_hash_password,
     bcrypt_check_password,
+    bcrypt_hash_password,
     json_repr,
     to_base64url,
 )
-
+from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (
     create_intent_flag,
     derive_cache_key,
@@ -20,24 +18,26 @@ from resource_auxillary.datastructures.payloads.standalone import UserCleanup
 from resource_auxillary.events import (
     CacheUpdate,
     Event,
-    IntentUpdate,
-    EventSideEffects,
     EventName,
+    EventSideEffects,
+    IntentUpdate,
 )
-from resource_auxillary.strings import EventName, IntentFlag, Action, StreamName
+from resource_auxillary.strings import Action, EventName, IntentFlag, StreamName
 
-from resource_server.config.app_config import AppConfig
 from resource_server.cache_manager import CacheManager
+from resource_server.config.app_config import AppConfig
+from resource_server.config.database_constants import UserConstants
 from resource_server.datastructures.requests import SortOption
 from resource_server.dependencies import (
-    get_app_config,
-    get_forum_repository,
-    get_post_repository,
     get_anime_repository,
+    get_app_config,
     get_cache_manager,
     get_event_streamer,
+    get_forum_repository,
+    get_post_repository,
     get_user_repository,
 )
+from resource_server.event_streamer import EventStreamer
 from resource_server.models.requests import (
     GenericUserIdentificationModel,
     UserCreationModel,
@@ -45,22 +45,20 @@ from resource_server.models.requests import (
     UserPasswordModel,
 )
 from resource_server.repositories.anime import AnimeRepository, AnimeResult
+from resource_server.repositories.forum import ForumRepository, ForumResult
 from resource_server.repositories.posts import PostRepository, PostResult
-from resource_server.request_dependencies import (
-    cursor_preprocessor,
-    preprocess_sort_option,
-    validate_access_token,
-)
 from resource_server.repositories.user import (
     PrivateUserResult,
     UserRepository,
     UserResult,
 )
-from resource_server.repositories.forum import ForumRepository, ForumResult
-from resource_server.config.database_constants import UserConstants
+from resource_server.request_dependencies import (
+    cursor_preprocessor,
+    preprocess_sort_option,
+    validate_access_token,
+)
 from resource_server.utils.helpers import generate_url_token
 from resource_server.utils.typing import StandardAccessTokenClaims
-from resource_server.event_streamer import EventStreamer
 
 USERS: Final[APIRouter] = APIRouter()
 

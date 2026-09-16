@@ -1,24 +1,21 @@
-from resource_database_workers.dependencies.annotations import (
-    DEAD_LETTER_QUEUE_REGISTRY,
-    STREAM_NAME,
-)
-from collections.abc import Sequence
-from typing import Any
-from resource_database_workers.datastructures.queues import EventQueueRegistry
 import asyncio
 from collections import defaultdict
-from typing import Literal
+from collections.abc import Sequence
+from typing import Any, Literal
 
-from resource_auxillary.strings import EventName, StreamName
 from resource_auxillary.events import StreamedEvent
+from resource_auxillary.strings import EventName, StreamName
 
+from resource_database_workers.datastructures.queues import EventQueueRegistry
 from resource_database_workers.dependencies.annotations import (
     APP_CONFIG,
-    DEAD_LETTER_STREAM_NAME,
-    GROUP_NAME,
     CONSUMER_ID,
-    UPSTREAM_QUEUE_REGISTRY,
+    DEAD_LETTER_QUEUE_REGISTRY,
+    DEAD_LETTER_STREAM_NAME,
     EVENT_STREAM_MANAGER,
+    GROUP_NAME,
+    STREAM_NAME,
+    UPSTREAM_QUEUE_REGISTRY,
 )
 
 

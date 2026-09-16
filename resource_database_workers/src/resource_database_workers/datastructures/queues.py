@@ -1,10 +1,9 @@
 import asyncio
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import override, Literal, overload, TypeVar, Generic
+from typing import Generic, Literal, TypeVar, overload, override
 
 from auxillary.singleton import SingletonMetaclass
-
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import EventName
 

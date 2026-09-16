@@ -1,7 +1,6 @@
 from psycopg import AsyncConnection
+from psycopg.errors import Error, InternalError, LockNotAvailable, OperationalError
 from psycopg.sql import Composed
-from psycopg.errors import OperationalError, LockNotAvailable, InternalError, Error
-
 from resource_auxillary.datastructures.database import (
     GenericLiterals,
 )

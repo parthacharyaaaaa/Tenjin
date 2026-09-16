@@ -1,15 +1,12 @@
-from logging.config import fileConfig
 import os
+from logging.config import fileConfig
 from pathlib import Path
 
-from auth_server.config.app_config import AppConfig
-from dotenv import load_dotenv
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool, MetaData
-
-from auth_server.dependencies import get_app_config
-
 from alembic import context
+from auth_server.config.app_config import AppConfig
+from auth_server.dependencies import get_app_config
+from dotenv import load_dotenv
+from sqlalchemy import MetaData, engine_from_config, pool
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

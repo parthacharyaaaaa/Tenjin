@@ -1,51 +1,45 @@
+from functools import partial
+from typing import Final
+
+from resource_auxillary.constants import POTENTIAL_TRANSIENT_ERRORS
+from resource_auxillary.coordination import exponential_jittered_backoff
+from resource_auxillary.datastructures.database import SideEffectsTables, StrongEntity
+from resource_auxillary.event_processing.db_qos import (
+    db_execute_with_retries,
+)
+from resource_auxillary.event_processing.qos import execute_with_redis_retries
+
 from resource_database_workers.datastructures.side_effects import (
     DownstreamCacheInvalidationPayload,
+    DownstreamDecrementPayload,
+    DownstreamDeletionPayload,
 )
-from resource_auxillary.datastructures.database import StrongEntity
-from resource_database_workers.tasks.selections import select_cache_invalidation_entries
-from resource_database_workers.workers.redis.downstream_post_processing import (
-    fetch_event_processing_checkpoint,
-)
-from typing import Final
-from functools import partial
-from resource_auxillary.event_processing.qos import execute_with_redis_retries
-from resource_database_workers.workers.redis.downstream_post_processing import (
-    clear_downstream_checkpoint,
-)
-from resource_database_workers.workers.redis.downstream_post_processing import (
-    set_downstream_checkpoint,
-)
-from resource_database_workers.utils.db import side_effects_processing_context
-from resource_database_workers.workers.redis.downstream_post_processing import (
-    register_counter_decrement_updates,
-    register_cache_invalidation_updates,
-)
-from resource_auxillary.datastructures.database import SideEffectsTables
 from resource_database_workers.dependencies.annotations import (
-    STATUS_PROXY,
-    DEAD_LETTER_STREAM_NAME,
-    INTERNAL_REDIS,
-    CONNECTION_POOL,
     APP_CONFIG,
+    CONNECTION_POOL,
+    DEAD_LETTER_STREAM_NAME,
     EVENT_STREAM_MANAGER,
+    INTERNAL_REDIS,
+    STATUS_PROXY,
 )
 from resource_database_workers.tasks.deletions import (
     downstream_soft_delete_strong_entity,
 )
-
-
-from resource_auxillary.coordination import exponential_jittered_backoff
-from resource_auxillary.constants import POTENTIAL_TRANSIENT_ERRORS
-
-from resource_auxillary.event_processing.db_qos import (
-    db_execute_with_retries,
+from resource_database_workers.tasks.selections import (
+    select_cache_invalidation_entries,
+    select_decrement_deltas,
 )
-from resource_database_workers.tasks.selections import select_decrement_deltas
-from resource_database_workers.datastructures.side_effects import (
-    DownstreamDeletionPayload,
-    DownstreamDecrementPayload,
+from resource_database_workers.utils.db import (
+    get_side_effect_row,
+    side_effects_processing_context,
 )
-from resource_database_workers.utils.db import get_side_effect_row
+from resource_database_workers.workers.redis.downstream_post_processing import (
+    clear_downstream_checkpoint,
+    fetch_event_processing_checkpoint,
+    register_cache_invalidation_updates,
+    register_counter_decrement_updates,
+    set_downstream_checkpoint,
+)
 
 
 async def downstream_deletion_worker(

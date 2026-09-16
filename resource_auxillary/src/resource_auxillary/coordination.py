@@ -1,8 +1,8 @@
 """Common coordination utilities"""
 
-from datetime import timedelta
 import asyncio
 import random
+from datetime import timedelta
 
 
 def calculate_exponential_backoff_time(

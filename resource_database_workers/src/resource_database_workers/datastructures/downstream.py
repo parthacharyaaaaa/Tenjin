@@ -3,8 +3,8 @@ from typing import Mapping, TypedDict
 
 from resource_auxillary.cache import derive_hashmap_name
 from resource_auxillary.datastructures.database import (
-    StrongEntity,
     ForeignKeyColumnLiteral,
+    StrongEntity,
 )
 
 

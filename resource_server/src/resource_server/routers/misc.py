@@ -1,26 +1,24 @@
-from resource_auxillary.strings import StreamName
-from resource_auxillary.events import EventSideEffects
-from resource_auxillary.strings import EventName
-from resource_auxillary.events import Event
-from resource_auxillary.strings import Action
-from resource_server.dependencies import get_cache_manager
-from resource_server.cache_manager import CacheManager
-from resource_server.dependencies import get_event_streamer
-from resource_server.event_streamer import EventStreamer
-from typing import Annotated, Final
-from datetime import datetime
 import hashlib
+from datetime import datetime
+from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-
 from redis.asyncio import Redis
+from resource_auxillary.datastructures.payloads.standalone import UserTicket
+from resource_auxillary.events import Event, EventSideEffects
+from resource_auxillary.strings import Action, EventName, StreamName
 
-from resource_server.dependencies import get_genres, get_app_redis_client
+from resource_server.cache_manager import CacheManager
+from resource_server.dependencies import (
+    get_app_redis_client,
+    get_cache_manager,
+    get_event_streamer,
+    get_genres,
+)
+from resource_server.event_streamer import EventStreamer
 from resource_server.models.database import Genre
 from resource_server.models.requests import UserTicketModel
-
-from resource_auxillary.datastructures.payloads.standalone import UserTicket
 
 MISC: Final[APIRouter] = APIRouter()
 

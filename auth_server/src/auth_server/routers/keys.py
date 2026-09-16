@@ -1,49 +1,47 @@
-from auth_server.dependencies import get_repository_work_coordinator
-from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
-from auth_server.dependencies import get_suspicious_activity_repository
-from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
-from auth_server.dependencies import get_admin_repository
-from auth_server.repositories.admin import AdminRepository
-from auth_server.strings import SelectionLockOption
-from auth_server.repositories.keydata import KeyPrivateDataResult
-from auth_server.repositories.keydata import KeyPublicDataResult
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Final
+
 import ecdsa
 import orjson
-
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import JSONResponse
-
-from redis.asyncio import Redis
-
-from sqlalchemy.exc import SQLAlchemyError
-
+from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auxillary.utils import (
     json_repr,
     to_base64url,
 )
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
+from sqlalchemy.exc import SQLAlchemyError
 
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import (
+    get_admin_repository,
     get_app_config,
     get_keydata_repository,
+    get_repository_work_coordinator,
+    get_suspicious_activity_repository,
     get_synced_store_client,
     get_token_manager,
 )
 from auth_server.models.session import AdminSession
-from auth_server.repositories.keydata import KeydataRepository
+from auth_server.repositories.admin import AdminRepository
+from auth_server.repositories.keydata import (
+    KeydataRepository,
+    KeyPrivateDataResult,
+    KeyPublicDataResult,
+)
+from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.security.admin_roles import AdminRole
 from auth_server.security.key_container import KeyMetadata
 from auth_server.security.keygen import (
     generate_ecdsa_pair,
-    write_ecdsa_pair,
     update_jwks,
+    write_ecdsa_pair,
 )
-from auth_server.strings import SyncedStoreStrings
 from auth_server.security.permissions import Permission
 from auth_server.security.token_manager import TokenManager
+from auth_server.strings import SelectionLockOption, SyncedStoreStrings
 from auth_server.utils.auth_auxillary import report_suspicious_activity
 from auth_server.utils.dependencies import require_permissions
 

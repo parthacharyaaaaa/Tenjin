@@ -1,5 +1,5 @@
-from argparse import ArgumentParser, Namespace
 import os
+from argparse import ArgumentParser, Namespace
 from typing import Iterable
 
 

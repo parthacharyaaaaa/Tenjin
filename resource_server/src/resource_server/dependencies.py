@@ -3,13 +3,12 @@ from functools import lru_cache
 from typing import AsyncGenerator, Final
 
 from redis.asyncio import Redis
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
-    create_async_engine,
-    async_sessionmaker,
-    AsyncSession,
     AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
 )
 
 from resource_server.cache_manager import CacheManager

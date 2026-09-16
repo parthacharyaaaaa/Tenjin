@@ -1,39 +1,31 @@
-from auth_server.dependencies import get_repository_work_coordinator
-from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
-from auth_server.dependencies import get_suspicious_activity_repository
-from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
-from auxillary.utils import json_repr
-from auth_server.repositories.admin import AdminPublicResult
-from auth_server.repositories.admin import AdminRepository
-from auth_server.repositories.admin import AdminPrivateResult
 import base64
 from datetime import datetime
 from typing import Annotated, Final
 
-from fastapi import APIRouter, Depends
-from fastapi.exceptions import HTTPException
-from fastapi.responses import JSONResponse
-from fastapi.requests import Request
-
 import orjson
-
-from redis.asyncio import Redis
-from redis.exceptions import RedisError
-
-from sqlalchemy.exc import SQLAlchemyError
-
+from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auxillary.utils import (
     bcrypt_check_password,
     bcrypt_hash_password,
     genericDBFetchException,
+    json_repr,
 )
+from fastapi import APIRouter, Depends
+from fastapi.exceptions import HTTPException
+from fastapi.requests import Request
+from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
+from sqlalchemy.exc import SQLAlchemyError
 
 from auth_server.config.app_config import AppConfig
 from auth_server.config.constants import REVIVAL_DIGEST_LENGTH
 from auth_server.dependencies import (
-    get_app_config,
-    get_synced_store_client,
     get_admin_repository,
+    get_app_config,
+    get_repository_work_coordinator,
+    get_suspicious_activity_repository,
+    get_synced_store_client,
 )
 from auth_server.models.cmd_requests import (
     AdminAuthenticationModel,
@@ -41,13 +33,19 @@ from auth_server.models.cmd_requests import (
     AdminRefreshModel,
 )
 from auth_server.models.session import AdminSession
+from auth_server.repositories.admin import (
+    AdminPrivateResult,
+    AdminPublicResult,
+    AdminRepository,
+)
+from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.security.admin_roles import AdminRole
 from auth_server.security.keygen import generate_ecdsa_pair
 from auth_server.security.permissions import Permission
 from auth_server.strings import AdminStrings
 from auth_server.utils.auth_auxillary import (
-    report_suspicious_activity,
     create_admin_session,
+    report_suspicious_activity,
     sign_session,
 )
 from auth_server.utils.dependencies import require_permissions, validate_admin_session

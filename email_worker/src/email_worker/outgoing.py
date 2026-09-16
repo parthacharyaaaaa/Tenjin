@@ -1,16 +1,14 @@
 """Outgoing emailiing logic"""
 
 import time
+from email.message import EmailMessage
 from typing import MutableSequence, Sequence
 
 from aiosmtplib import SMTP, SMTPServerDisconnected
 from aiosmtplib.errors import SMTPException, SMTPTimeoutError
-
-from email.message import EmailMessage
-
+from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
-from resource_auxillary.coordination import exponential_jittered_backoff
 
 from email_worker.config.email_config import EmailConfig
 from email_worker.constants import (

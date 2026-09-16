@@ -5,7 +5,6 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-
 from resource_auxillary.cache import (
     create_intent_flag,
     derive_cache_key,
@@ -23,36 +22,36 @@ from resource_auxillary.events import (
     CacheUpdate,
     CounterUpdate,
     Event,
-    IntentUpdate,
-    EventSideEffects,
     EventName,
+    EventSideEffects,
+    IntentUpdate,
 )
 from resource_auxillary.strings import (
     NAME_SEPERATOR,
+    Action,
     EventName,
     IntentFlag,
-    Action,
     StreamName,
 )
 
 from resource_server.cache_manager import CacheManager
 from resource_server.dependencies import (
+    get_cache_manager,
     get_comment_repository,
+    get_event_streamer,
     get_forum_repository,
     get_post_repository,
-    get_cache_manager,
-    get_event_streamer,
 )
+from resource_server.event_streamer import EventStreamer
+from resource_server.models.admin_permissions import AdminPermissions, check_permission
+from resource_server.models.database import CommentVote
 from resource_server.models.requests import CommentModel, ReportModel, VoteModel
 from resource_server.repositories.comment import CommentRepository, CommentResult
-from resource_server.repositories.posts import PostRepository, PostResult
-from resource_server.request_dependencies import validate_access_token
-from resource_server.models.database import CommentVote
-from resource_server.repositories.user import UserResult
 from resource_server.repositories.forum import ForumAdminResult, ForumRepository
-from resource_server.models.admin_permissions import AdminPermissions, check_permission
+from resource_server.repositories.posts import PostRepository, PostResult
+from resource_server.repositories.user import UserResult
+from resource_server.request_dependencies import validate_access_token
 from resource_server.utils.typing import StandardAccessTokenClaims
-from resource_server.event_streamer import EventStreamer
 
 COMMENTS: Final[APIRouter] = APIRouter()
 

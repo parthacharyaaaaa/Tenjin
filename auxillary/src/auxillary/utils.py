@@ -1,21 +1,19 @@
 """Helper functions"""
 
+import base64
 import datetime
 import hashlib
 import os
 import traceback
-from typing import Final, Literal, Mapping, Callable, Any
 from types import NoneType
-import base64
+from typing import Any, Callable, Final, Literal, Mapping
 
 import bcrypt
-
-from fastapi import Request, Response, HTTPException
+from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+from redis.typing import EncodableT, FieldT
 
-from redis.typing import FieldT, EncodableT
-
-from auxillary.typing_utils import SupportsJSON, SupportsCache
+from auxillary.typing_utils import SupportsCache, SupportsJSON
 
 
 def generic_error_handler(r: Request, e: Exception) -> Response:

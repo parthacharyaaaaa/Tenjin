@@ -1,6 +1,6 @@
+from enum import Enum
 from types import MappingProxyType
 from typing import Final, TypedDict
-from enum import Enum
 
 __all__ = (
     "TokenType",

@@ -1,32 +1,30 @@
 from datetime import datetime
-from resource_database_workers.utils.sql_templates import (
-    DLQ_INSERTION_COMPOSED_STATEMENT,
-)
-from resource_database_workers.dependencies.annotations import ISOLATED_EVENT_QUEUE
 from typing import Any, Sequence
 
+from auxillary.utils import json_repr
 from psycopg import AsyncConnection
 from psycopg.sql import Composed
-
-from auxillary.utils import json_repr
-
-from resource_auxillary.events import (
-    StreamedEvent,
-)
 from resource_auxillary.event_processing.db_qos import (
     db_execute_with_retries,
     dedup_insert_event,
 )
 from resource_auxillary.event_processing.qos import execute_with_redis_retries
+from resource_auxillary.events import (
+    StreamedEvent,
+)
 from resource_auxillary.strings import EventName
 
 from resource_database_workers.dependencies.annotations import (
     APP_CONFIG,
-    DEAD_LETTER_STREAM_NAME,
     CONNECTION_POOL,
-    GROUP_NAME,
-    STATUS_PROXY,
+    DEAD_LETTER_STREAM_NAME,
     EVENT_STREAM_MANAGER,
+    GROUP_NAME,
+    ISOLATED_EVENT_QUEUE,
+    STATUS_PROXY,
+)
+from resource_database_workers.utils.sql_templates import (
+    DLQ_INSERTION_COMPOSED_STATEMENT,
 )
 
 

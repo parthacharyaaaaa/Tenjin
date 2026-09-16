@@ -1,8 +1,9 @@
 from typing import Annotated, Final, TypeAlias
+
 from pydantic import BaseModel, BeforeValidator, Field
 
 from auth_server.config import constants
-from auth_server.config.utils import IDENTITY_PATTERN, EMAIL_PATTERN
+from auth_server.config.utils import EMAIL_PATTERN, IDENTITY_PATTERN
 
 type username_annotation = Annotated[
     str,

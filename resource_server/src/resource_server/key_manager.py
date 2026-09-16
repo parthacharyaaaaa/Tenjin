@@ -5,15 +5,13 @@ from typing import Final
 
 import ecdsa
 import httpx
-
+from auxillary.singleton import SingletonMetaclass
+from auxillary.utils import from_base64url
 from redis.asyncio import Redis
 from redis.asyncio.client import PubSub
 
-from auxillary.utils import from_base64url
-
 from resource_server.config.app_config import AppConfig
 from resource_server.config.constants import RedisConstants
-from auxillary.singleton import SingletonMetaclass
 from resource_server.utils.typing import JWKSEntry
 
 

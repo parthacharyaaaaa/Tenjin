@@ -10,23 +10,21 @@
 - forum_admins (`owner` as **Tenjin superuser**)
 """
 
-from dotenv import load_dotenv
 import os
+import time
+import warnings
+from argparse import ArgumentParser, Namespace
+from datetime import datetime
 from traceback import format_exc
 from typing import Final, Generator, Optional
-from datetime import datetime
-import time
-from argparse import ArgumentParser, Namespace
-import warnings
 
+import httpx
+from auxillary.utils import bcrypt_hash_password
+from dotenv import load_dotenv
 from psycopg import Connection, connect
 from psycopg import errors as pg_errors
 from psycopg.conninfo import make_conninfo
 from psycopg.sql import SQL, Identifier
-
-import httpx
-from auxillary.utils import bcrypt_hash_password
-
 from resource_server.config.app_config import AppConfig
 from resource_server.dependencies import get_app_config
 

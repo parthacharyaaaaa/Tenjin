@@ -1,16 +1,16 @@
+import os
+from functools import lru_cache
+
+from psycopg_pool import AsyncConnectionPool
+from redis.asyncio import Redis
 from resource_auxillary.event_processing.event_stream_manager import (
     EventStreamManager,
     RedisStreamManager,
 )
-from resource_database_workers.datastructures.queues import EventQueueRegistryContainer
 from resource_auxillary.strings import StreamName
-from functools import lru_cache
-import os
-
-from psycopg_pool import AsyncConnectionPool
-from redis.asyncio import Redis
 
 from resource_database_workers.config.config import AppConfig
+from resource_database_workers.datastructures.queues import EventQueueRegistryContainer
 
 
 @lru_cache(maxsize=1)

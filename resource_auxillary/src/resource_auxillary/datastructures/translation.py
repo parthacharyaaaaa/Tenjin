@@ -1,9 +1,8 @@
 from types import MappingProxyType
 from typing import Final
 
+from resource_auxillary.datastructures.payloads import assosciation, standalone
 from resource_auxillary.events import EventName
-from resource_auxillary.datastructures.payloads import assosciation
-from resource_auxillary.datastructures.payloads import standalone
 
 type t_event_payload_mapping = MappingProxyType[EventName, type]
 type t_event_db_metadata_mapping = MappingProxyType[

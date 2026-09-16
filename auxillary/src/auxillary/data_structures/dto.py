@@ -1,10 +1,9 @@
-from datetime import datetime
 from dataclasses import dataclass, fields
-from types import NoneType, MappingProxyType
-from typing import Any, ClassVar, Mapping, Self, Final, Callable
+from datetime import datetime
+from types import MappingProxyType, NoneType
+from typing import Any, Callable, ClassVar, Final, Mapping, Self
 
-from redis.typing import FieldT, EncodableT
-
+from redis.typing import EncodableT, FieldT
 from sqlalchemy.orm import DeclarativeBase
 
 type t_dto_casting_map = MappingProxyType[type, Callable[[Any], Any]]
