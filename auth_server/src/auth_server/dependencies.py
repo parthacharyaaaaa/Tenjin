@@ -1,3 +1,4 @@
+from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.repositories.admin import AdminRepository
 import os
@@ -57,7 +58,7 @@ def get_database_session_maker() -> async_sessionmaker[AsyncSession]:
     engine: Final[AsyncEngine] = create_async_engine(URI)
 
     session_maker: Final[async_sessionmaker[AsyncSession]] = async_sessionmaker(
-        bind=engine, autocommit=False, autoflush=False, expire_on_commit=False
+        bind=engine, autocommit=False, autoflush=False, expire_on_commit=True
     )
 
     return session_maker
@@ -72,19 +73,20 @@ async def get_database_session() -> AsyncGenerator[AsyncSession, None]:
         await session.close()
 
 
-@lru_cache(maxsize=1)
 def get_keydata_repository() -> KeydataRepository:
     return KeydataRepository(get_database_session_maker())
 
 
-@lru_cache(maxsize=1)
 def get_admin_repository() -> AdminRepository:
     return AdminRepository(get_database_session_maker())
 
 
-@lru_cache(maxsize=1)
 def get_suspicious_activity_repository() -> SuspiciousActivityRepository:
     return SuspiciousActivityRepository(get_database_session_maker())
+
+
+def get_repository_work_coordinator() -> MultiRepositoryWorkCoordinator:
+    return MultiRepositoryWorkCoordinator(get_database_session_maker())
 
 
 @lru_cache(maxsize=1)

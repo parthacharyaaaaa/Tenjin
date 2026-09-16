@@ -1,3 +1,9 @@
+from auth_server.dependencies import get_repository_work_coordinator
+from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
+from auth_server.dependencies import get_suspicious_activity_repository
+from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
+from auth_server.dependencies import get_admin_repository
+from auth_server.repositories.admin import AdminRepository
 from auth_server.strings import SelectionLockOption
 from auth_server.repositories.keydata import KeyPrivateDataResult
 from auth_server.repositories.keydata import KeyPublicDataResult
@@ -12,7 +18,6 @@ from fastapi.responses import JSONResponse
 
 from redis.asyncio import Redis
 
-from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 
 from auxillary.utils import (
@@ -25,7 +30,6 @@ from auth_server.dependencies import (
     get_app_config,
     get_keydata_repository,
     get_synced_store_client,
-    get_database_session,
     get_token_manager,
 )
 from auth_server.models.session import AdminSession
@@ -76,9 +80,15 @@ async def invalidate_key(
     ],
     config: Annotated[AppConfig, Depends(get_app_config)],
     token_manager: Annotated[TokenManager, Depends(get_token_manager)],
-    session: Annotated[AsyncSession, Depends(get_database_session)],
     keydata_repository: Annotated[KeydataRepository, Depends(get_keydata_repository)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+    suspicious_activity_repository: Annotated[
+        SuspiciousActivityRepository, Depends(get_suspicious_activity_repository)
+    ],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
+    repository_coordinator: Annotated[
+        MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
+    ],
 ) -> JSONResponse:
     """Invalidate a given key"""
     key_lock: Final[str] = f"INVALIDATE_KEY:{kid}"
@@ -123,11 +133,13 @@ async def invalidate_key(
             if not target_key.rotated_out_at:
                 # Key is active, cannot expire directly
                 await report_suspicious_activity(
-                    session,
                     config,
                     synced_store_client,
                     admin_session.admin_id,
                     f"Invaldiation attempt on active key {kid}",
+                    suspicious_activity_repository,
+                    admin_repository,
+                    repository_coordinator,
                 )
                 raise HTTPException(
                     409,
@@ -337,10 +349,16 @@ async def rotate_keys(
         AdminSession, Depends(require_permissions(Permission.ROTATE_KEY))
     ],
     config: Annotated[AppConfig, Depends(get_app_config)],
-    session: Annotated[AsyncSession, Depends(get_database_session)],
     keydata_repository: Annotated[KeydataRepository, Depends(get_keydata_repository)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
     token_manager: Annotated[TokenManager, Depends(get_token_manager)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+    suspicious_activity_repository: Annotated[
+        SuspiciousActivityRepository, Depends(get_suspicious_activity_repository)
+    ],
+    repository_coordinator: Annotated[
+        MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
+    ],
 ) -> JSONResponse:
     """Trigger a key rotation sequence"""
     # Check for concurrent worker performing a key rotation
@@ -362,11 +380,13 @@ async def rotate_keys(
     cooldown_flag: str = await synced_store_client.get(SyncedStoreStrings.KEY_ROTATION_COOLDOWN)  # type: ignore[reportAssignmentType]
     if cooldown_flag and admin_session.role == AdminRole.STAFF:
         await report_suspicious_activity(
-            session,
             config,
             synced_store_client,
             admin_session.admin_id,
             "Attempt to perform key rotation during cooldown",
+            suspicious_activity_repository,
+            admin_repository,
+            repository_coordinator,
         )
         raise HTTPException(
             409,

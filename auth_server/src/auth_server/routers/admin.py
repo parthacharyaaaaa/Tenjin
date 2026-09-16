@@ -1,3 +1,7 @@
+from auth_server.dependencies import get_repository_work_coordinator
+from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
+from auth_server.dependencies import get_suspicious_activity_repository
+from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auxillary.utils import json_repr
 from auth_server.repositories.admin import AdminPublicResult
 from auth_server.repositories.admin import AdminRepository
@@ -16,7 +20,6 @@ import orjson
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 
 from auxillary.utils import (
@@ -30,7 +33,6 @@ from auth_server.config.constants import REVIVAL_DIGEST_LENGTH
 from auth_server.dependencies import (
     get_app_config,
     get_synced_store_client,
-    get_database_session,
     get_admin_repository,
 )
 from auth_server.models.cmd_requests import (
@@ -59,8 +61,13 @@ async def admin_login(
     auth_model: AdminAuthenticationModel,
     config: Annotated[AppConfig, Depends(get_app_config)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
-    session: Annotated[AsyncSession, Depends(get_database_session)],
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+    suspicious_activity_repository: Annotated[
+        SuspiciousActivityRepository, Depends(get_suspicious_activity_repository)
+    ],
+    repository_coordinator: Annotated[
+        MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
+    ],
 ) -> JSONResponse:
     admin: AdminPrivateResult | None = None
     try:
@@ -78,11 +85,13 @@ async def admin_login(
 
         if admin.locked:
             await report_suspicious_activity(
-                session,
                 config,
                 synced_store_client,
                 admin.id_,
                 "Attempt to log into a locked account",
+                suspicious_activity_repository,
+                admin_repository,
+                repository_coordinator,
                 force_logout=False,
             )
             raise HTTPException(
@@ -94,11 +103,13 @@ async def admin_login(
 
     if not bcrypt_check_password(auth_model.password, admin.password_hash):
         await report_suspicious_activity(
-            session,
             config,
             synced_store_client,
             admin.id_,
             "Incorrect password",
+            suspicious_activity_repository,
+            admin_repository,
+            repository_coordinator,
             force_logout=False,
         )
         raise HTTPException(401, "Incorrect passwword")
@@ -106,7 +117,7 @@ async def admin_login(
     # Exists in DB, check synced_store_client to see if session is already active
     session_key: Final[str] = f"admin:{admin.id_}"
     try:
-        admin_session: dict[str, str] = synced_store_client.hgetall(
+        admin_session: dict[str, str] = await synced_store_client.hgetall(
             session_key
         )  # pyrefly: ignore[bad-assignment]
 
@@ -114,11 +125,13 @@ async def admin_login(
         if admin_session:
             synced_store_client.delete(session_key)
             await report_suspicious_activity(
-                session,
                 config,
                 synced_store_client,
                 admin.id_,
                 "Session already active",
+                suspicious_activity_repository,
+                admin_repository,
+                repository_coordinator,
                 force_logout=False,
             )
             raise HTTPException(
@@ -199,9 +212,14 @@ async def admin_refresh(
     refresh_model: AdminRefreshModel,
     admin_session: Annotated[AdminSession, Depends(validate_admin_session)],
     config: Annotated[AppConfig, Depends(get_app_config)],
-    session: Annotated[AsyncSession, Depends(get_database_session)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+    suspicious_activity_repository: Annotated[
+        SuspiciousActivityRepository, Depends(get_suspicious_activity_repository)
+    ],
+    repository_coordinator: Annotated[
+        MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
+    ],
 ) -> JSONResponse:
     """
     Refresh an admin's session and enforce a maximum number of times
@@ -234,11 +252,13 @@ async def admin_refresh(
 
     if actual_digest_bytes.decode() != refresh_model.refresh_digest:
         await report_suspicious_activity(
-            session,
             config,
             synced_store_client,
             refresh_model.id_,
             "Invalid session revival digest",
+            suspicious_activity_repository,
+            admin_repository,
+            repository_coordinator,
         )
         raise HTTPException(403, "Invalid revival digest provided")
 
