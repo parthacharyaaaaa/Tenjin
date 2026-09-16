@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Final
 
@@ -27,20 +28,36 @@ class AbstractRepository(StrictAbstractMixin, abstract=True):
 
 @dataclass(slots=True, weakref_slot=False)
 class AbstractWorkRepository(AbstractRepository, AntiSingletonMixin, abstract=True):
-    _work_session: AsyncSession | None = field(init=False, default=None)
+    _work_session: ContextVar[AsyncSession | None] = field(
+        init=False,
+        default_factory=lambda: ContextVar[AsyncSession | None](
+            "repo_work_session", default=None
+        ),
+    )
+
+    @asynccontextmanager
+    async def _unit_of_work(self, session: AsyncSession, autocommit: bool):
+        token: Final[Token[AsyncSession | None]] = self._work_session.set(session)
+        try:
+            yield
+        except Exception:
+            raise
+        else:
+            if autocommit:
+                await session.commit()
+        finally:
+            self._work_session.reset(token)
 
     @asynccontextmanager
     async def unit_of_work(self):
         async with self.session_maker() as session:
-            self._work_session = session
-            try:
+            async with self._unit_of_work(session, True):
                 yield
-            except Exception:
-                raise
-            else:
-                await session.commit()
-            finally:
-                self._work_session = None
+
+    @asynccontextmanager
+    async def external_unit_of_work(self, session: AsyncSession):
+        async with self._unit_of_work(session, False):
+            yield
 
     @asynccontextmanager
     async def _work_scoped_session(self):
