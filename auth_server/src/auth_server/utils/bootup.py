@@ -38,7 +38,7 @@ def register_routers(
     url_prefix_mapping: Mapping[RouterName, tuple[APIRouter, tuple[URLPrefix, ...]]],
     common_prefix: str = "",
 ) -> None:
-    for _name, (router, url_prefixes) in url_prefix_mapping.items():
+    for router, url_prefixes in url_prefix_mapping.values():
         app.include_router(
             router, prefix="/".join((common_prefix, *[u.value for u in url_prefixes]))
         )
