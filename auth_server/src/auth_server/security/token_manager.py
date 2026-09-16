@@ -169,7 +169,9 @@ class TokenManager:
     ) -> str:
         if family_id:
             # Check for replay attack
-            key: bytes | None = await self._token_store_client.lindex(f"FID:{family_id}", 0)  # type: ignore[reportAssignmentType]
+            key: bytes | None = await self._token_store_client.lindex(
+                f"FID:{family_id}", 0
+            )  # type: ignore[reportAssignmentType]
             if not key:
                 await self.invalidate_family(family_id)
                 raise ValueError(f"Token family {family_id} is invalid or empty")
@@ -242,7 +244,9 @@ class TokenManager:
                 return
 
             if llen >= self.max_llen:
-                await self._token_store_client.rpop(f"FID:{fID}", max(1, llen - self.max_llen))  # type: ignore[reportGeneralTypeIssues]
+                await self._token_store_client.rpop(
+                    f"FID:{fID}", max(1, llen - self.max_llen)
+                )  # type: ignore[reportGeneralTypeIssues]
         except Exception as e:
             raise RuntimeError("Failed to perform operation on token store") from e
 
@@ -273,7 +277,9 @@ class TokenManager:
         Returns:
             Fetched key casted to KeyMetadata, None if not found"""
         # Check synced store for an invalid key announcement for this key
-        invalidKey: bytes | None = await self.synced_store_client.get(f"invalid_key:{kid}")  # type: ignore[reportAssignmentType]
+        invalidKey: bytes | None = await self.synced_store_client.get(
+            f"invalid_key:{kid}"
+        )  # type: ignore[reportAssignmentType]
         if invalidKey:
             return None
 
@@ -304,7 +310,9 @@ class TokenManager:
         """Check synced store to keep local keys updated with global keys. Intended to be run as a non-blocking, background task upon instantiation"""
         while True:
             try:
-                valid_keys: list[bytes] | None = await self.synced_store_client.lrange(SyncedStoreStrings.VALID_KEYS, 0, -1)  # type: ignore[reportAssignmentType]
+                valid_keys: list[bytes] | None = await self.synced_store_client.lrange(
+                    SyncedStoreStrings.VALID_KEYS, 0, -1
+                )  # type: ignore[reportAssignmentType]
 
                 if not valid_keys:
                     raise RuntimeError("Valid keys list empty or not found")

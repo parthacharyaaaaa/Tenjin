@@ -216,19 +216,15 @@ async def delete_post(
     ) as latest_intent:
         intent_id: Final[str] = uuid4().hex
         if access_token["sid"] != post.author_id:
-            forum_admin: ForumAdminResult | None = (
-                await cache_manager.distributed_get_or_load(
-                    derive_cache_key(
-                        ForumAdminResult.resource_name,
-                        NAME_SEPERATOR.join(
-                            (str(post.forum_id), str(access_token["sid"]))
-                        ),
-                    ),
-                    partial(
-                        forum_repo.get_forum_admin, post.forum_id, access_token["sid"]
-                    ),
-                    ForumAdminResult,
-                )
+            forum_admin: (
+                ForumAdminResult | None
+            ) = await cache_manager.distributed_get_or_load(
+                derive_cache_key(
+                    ForumAdminResult.resource_name,
+                    NAME_SEPERATOR.join((str(post.forum_id), str(access_token["sid"]))),
+                ),
+                partial(forum_repo.get_forum_admin, post.forum_id, access_token["sid"]),
+                ForumAdminResult,
             )
             if not forum_admin:
                 raise HTTPException(403, "Only author and admins can delete post")
@@ -351,7 +347,9 @@ async def vote_post(
         )
 
         payload: PostVoteAssosciation = PostVoteAssosciation(
-            user_id=access_token["sid"], post_id=post_id, vote=delta  # pyrefly: ignore
+            user_id=access_token["sid"],
+            post_id=post_id,
+            vote=delta,  # pyrefly: ignore
         )
 
         vote_event: Event = Event(
@@ -441,7 +439,9 @@ async def unvote_post(
         )
 
         payload: PostVoteAssosciation = PostVoteAssosciation(
-            user_id=access_token["sid"], post_id=post_id, vote=delta  # type: ignore
+            user_id=access_token["sid"],
+            post_id=post_id,
+            vote=delta,  # type: ignore
         )
         unvote_event: Event = Event(
             name=EventName.POST_UNVOTE,

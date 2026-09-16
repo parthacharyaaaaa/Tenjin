@@ -117,9 +117,7 @@ async def admin_login(
     # Exists in DB, check synced_store_client to see if session is already active
     session_key: Final[str] = f"admin:{admin.id_}"
     try:
-        admin_session: dict[str, str] = await synced_store_client.hgetall(
-            session_key
-        )  # pyrefly: ignore[bad-assignment]
+        admin_session: dict[str, str] = await synced_store_client.hgetall(session_key)  # pyrefly: ignore[not-async]
 
         # Single sign-in policy, invalidate existing session and add entry in logs
         if admin_session:
@@ -239,7 +237,9 @@ async def admin_refresh(
             ),
         )
 
-    actual_digest_bytes: bytes = await synced_store_client.hget(admin_key, "revival_digest")  # type: ignore[reportAssignmentType]
+    actual_digest_bytes: bytes = await synced_store_client.hget(
+        admin_key, "revival_digest"
+    )  # pyrefly: ignore
     if not actual_digest_bytes:
         await synced_store_client.delete(admin_key)
         raise HTTPException(
@@ -409,9 +409,9 @@ async def create_admin(
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
 ) -> JSONResponse:
     try:
-        existing_admin: AdminPublicResult | None = (
-            await admin_repository.get_admin_by_username(admin_model.identity)
-        )
+        existing_admin: (
+            AdminPublicResult | None
+        ) = await admin_repository.get_admin_by_username(admin_model.identity)
     except SQLAlchemyError:
         genericDBFetchException()
     if existing_admin:

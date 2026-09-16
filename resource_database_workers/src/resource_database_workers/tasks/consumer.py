@@ -69,8 +69,8 @@ async def user_orphan_consumer(
             )
 
             # Implicit events not in the network payload (downstream deletion only in this case)
-            downstream_deletion_outbox_callable = (
-                lambda: insert_downstream_deletion_outbox_entries(
+            downstream_deletion_outbox_callable = lambda: (
+                insert_downstream_deletion_outbox_entries(
                     conn, batch, StrongEntity.USER, GenericLiterals.ID
                 )
             )

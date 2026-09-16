@@ -153,7 +153,7 @@ def main(
                         jsonified_response: dict[str, str | int] = response.json()
                         _log_error(
                             logs_fpath,
-                            f'Anime: {anime_id} - Code: {response.status_code}, Message: {jsonified_response.get("message", "N/A")}\n',
+                            f"Anime: {anime_id} - Code: {response.status_code}, Message: {jsonified_response.get('message', 'N/A')}\n",
                         )
                     time.sleep(fetch_timeout)
                     continue

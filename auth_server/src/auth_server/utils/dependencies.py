@@ -121,10 +121,8 @@ async def validate_admin_session(
         await synced_store_client.delete(admin_context.session.session_key)
         raise HTTPException(401, "Session expired")
 
-    server_session_mapping: dict[bytes, Any] = (
-        await synced_store_client.hgetall(  # pyrefly: ignore[not-async]
-            admin_context.session.session_key
-        )
+    server_session_mapping: dict[bytes, Any] = await synced_store_client.hgetall(  # pyrefly: ignore[not-async]
+        admin_context.session.session_key
     )
     if not server_session_mapping:
         err_msg: str = "Missing server-side session"

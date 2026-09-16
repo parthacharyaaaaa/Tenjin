@@ -84,13 +84,13 @@ async def tasks_wrapper(
         if not task.cancelled() and (exception := task.exception()) is not None
     )
     forced_cancellation_info_string = "\n\n".join(
-        (f"Task: {task.get_name()}\n" f"Result: {type(result).__name__}: {result}")
+        (f"Task: {task.get_name()}\nResult: {type(result).__name__}: {result}")
         for task, result in zip(pending, forced_cancellation_results)
     )
 
     exception = Exception("Worker tasks terminated unexpectedly")
     exception.add_note(
-        f"Failed tasks ({len(failed)}):\n" f"{failed_tasks_info_string or '<none>'}"
+        f"Failed tasks ({len(failed)}):\n{failed_tasks_info_string or '<none>'}"
     )
     exception.add_note(
         f"Forced-cancelled tasks ({len(pending)}):\n"

@@ -60,9 +60,9 @@ async def get_key(
     public: bool = True,
 ) -> JSONResponse:
     try:
-        key: KeyPublicDataResult | KeyPrivateDataResult | None = (
-            await keydata_repository.get_keydata(kid, public_only=public)
-        )
+        key: (
+            KeyPublicDataResult | KeyPrivateDataResult | None
+        ) = await keydata_repository.get_keydata(kid, public_only=public)
 
         if not key:
             raise HTTPException(404, "No key with this ID found")
@@ -182,7 +182,9 @@ async def invalidate_key(
     token_manager.invalidate_key(kid)
 
     # Update global
-    raw_valid_keys: list[bytes] = synced_store_client.lrange(SyncedStoreStrings.VALID_KEYS, 0, -1)  # type: ignore[reportAssignmentType]
+    raw_valid_keys: list[bytes] = synced_store_client.lrange(
+        SyncedStoreStrings.VALID_KEYS, 0, -1
+    )  # type: ignore[reportAssignmentType]
     if not raw_valid_keys or kid.encode("utf-8") not in raw_valid_keys:
         # Should never happen, but in case it does we fall back and regenerate the entire list
         additional_kw["keylist_integrity_warning"] = (
@@ -251,7 +253,7 @@ async def clean_keystore(
     pem_mappings: dict[str, bytes] = {}
     for keydata in old_jwks:
         pem_mappings[keydata["kid"]] = config.JWKS.PUBLIC_PEM_DIRECTORY.joinpath(
-            f'public_{keydata["kid"]}_key.pem'
+            f"public_{keydata['kid']}_key.pem"
         ).read_bytes()
 
     # At this stage, we have all the old data saved for a rollback.
@@ -260,10 +262,10 @@ async def clean_keystore(
     async with keydata_repository.unit_of_work():
         try:
             # Fetch and lock all keys that have been rotated out, but not expired
-            valid_inactive_keys: list[KeyPublicDataResult] = (
-                await keydata_repository.get_valid_inactive_keys(
-                    lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ)
-                )
+            valid_inactive_keys: list[
+                KeyPublicDataResult
+            ] = await keydata_repository.get_valid_inactive_keys(
+                lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ)
             )
 
             # Update and set as invalid, hence these keys can no longer be used for verification either
@@ -272,9 +274,9 @@ async def clean_keystore(
             )
 
             # Fetch latest KID to prune JWKS and PEM files accordingly
-            active_key: KeyPublicDataResult | None = (
-                await keydata_repository.get_active_key()
-            )
+            active_key: (
+                KeyPublicDataResult | None
+            ) = await keydata_repository.get_active_key()
             if not active_key:  # Violates business invariant, should never happen
                 raise HTTPException(500, "Invalid keystore state!")
 
@@ -367,7 +369,9 @@ async def rotate_keys(
     )
     if not lock:
         # Another worker is performing this action, reject this request >:(
-        adminID: bytes = await ynced_store_client.get(SyncedStoreStrings.KEY_ROTATION_LOCK)  # type: ignore[reportAssignmentType]
+        adminID: bytes = await ynced_store_client.get(
+            SyncedStoreStrings.KEY_ROTATION_LOCK
+        )  # type: ignore[reportAssignmentType]
         return JSONResponse(
             {
                 "message": "There is an active key rotation being performed, your request has been rejected",
@@ -377,7 +381,9 @@ async def rotate_keys(
         )
 
     # Check for cooldown, must be global for all staff admins
-    cooldown_flag: str = await synced_store_client.get(SyncedStoreStrings.KEY_ROTATION_COOLDOWN)  # type: ignore[reportAssignmentType]
+    cooldown_flag: str = await synced_store_client.get(
+        SyncedStoreStrings.KEY_ROTATION_COOLDOWN
+    )  # type: ignore[reportAssignmentType]
     if cooldown_flag and admin_session.role == AdminRole.STAFF:
         await report_suspicious_activity(
             config,
@@ -409,9 +415,9 @@ async def rotate_keys(
     async with keydata_repository.unit_of_work():
         try:
             # Update currently active key
-            previous_key: KeyPublicDataResult | None = (
-                await keydata_repository.get_active_key()
-            )
+            previous_key: (
+                KeyPublicDataResult | None
+            ) = await keydata_repository.get_active_key()
             if not previous_key:
                 raise HTTPException(500, "Invalid key state!")
 

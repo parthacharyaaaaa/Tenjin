@@ -64,10 +64,10 @@ async def report_suspicious_activity(
     async with coordinator.multirepo_work_context(
         suspicious_activity_repository, admin_repository
     ):
-        activities: list[SuspiciousActivityResult] = (
-            await suspicious_activity_repository.get_activity_log(
-                admin_id, config.ADMIN.MAX_ACTIVITY_LIMIT
-            )
+        activities: list[
+            SuspiciousActivityResult
+        ] = await suspicious_activity_repository.get_activity_log(
+            admin_id, config.ADMIN.MAX_ACTIVITY_LIMIT
         )
         if force_logout and (
             (len(activities) > config.ADMIN.MAX_ACTIVITY_LIMIT)

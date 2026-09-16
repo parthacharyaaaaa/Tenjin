@@ -77,7 +77,7 @@ async def validate_access_token(
 
 
 def cursor_preprocessor(
-    raw_cursor: str | None = Query(default=None, alias="cursor")
+    raw_cursor: str | None = Query(default=None, alias="cursor"),
 ) -> int:
     if not raw_cursor:
         return 0
@@ -86,7 +86,7 @@ def cursor_preprocessor(
 
 
 def search_param_preprocessor(
-    raw_search_param: str | None = Query(default=None, alias="search")
+    raw_search_param: str | None = Query(default=None, alias="search"),
 ) -> str | None:
     if not raw_search_param:
         return None
@@ -95,7 +95,7 @@ def search_param_preprocessor(
 
 
 async def anime_genres_preprocessor(
-    raw_genres: list[str] | None = Query(default=None, alias="genre")
+    raw_genres: list[str] | None = Query(default=None, alias="genre"),
 ) -> list[Genre] | None:
     if not raw_genres:
         return None
@@ -125,7 +125,7 @@ async def anime_genres_preprocessor(
 
 
 def preprocess_sort_option(
-    raw_sort_option: str | None = Query(default=None, alias="cursor")
+    raw_sort_option: str | None = Query(default=None, alias="cursor"),
 ) -> SortOption:
     if not raw_sort_option:
         return SortOption.DESCENDING
@@ -136,7 +136,7 @@ def preprocess_sort_option(
 
 
 def preprocess_timeframe(
-    raw_timeframe_option: str | None = Query(default=None, alias="timeframe")
+    raw_timeframe_option: str | None = Query(default=None, alias="timeframe"),
 ) -> tuple[TimeFrameOption, datetime]:
     if not raw_timeframe_option:
         return TimeFrameOption.ALL_TIME, TIMEFRAMES[TimeFrameOption.ALL_TIME](

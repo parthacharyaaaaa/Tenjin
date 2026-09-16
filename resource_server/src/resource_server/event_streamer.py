@@ -13,7 +13,6 @@ from resource_auxillary.strings import StreamName
 
 @dataclass(slots=True, weakref_slot=True)
 class EventStreamer(metaclass=SingletonMetaclass):
-
     redis_client: Redis
     cache_config: CacheConfig
 

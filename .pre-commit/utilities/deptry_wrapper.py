@@ -41,9 +41,7 @@ def main() -> int:
                         package_name,
                     ],
                     stderr=output_logfile,
-                ).wait(
-                    timeout=5
-                )  # Arbitrary 5 second value
+                ).wait(timeout=5)  # Arbitrary 5 second value
 
             if return_code == 0:
                 os.unlink(output_filename)

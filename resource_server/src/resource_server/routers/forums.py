@@ -278,15 +278,15 @@ async def add_admin(
             403, f"Insufficient permissions to add an admin of role {admin_model.role}"
         )
 
-    existing_admin: ForumAdminResult | None = (
-        await cache_manager.distributed_get_or_load(
-            derive_cache_key(
-                ForumAdmin.__tablename__,
-                NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
-            ),
-            partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
-            ForumAdminResult,
-        )
+    existing_admin: (
+        ForumAdminResult | None
+    ) = await cache_manager.distributed_get_or_load(
+        derive_cache_key(
+            ForumAdmin.__tablename__,
+            NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
+        ),
+        partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
+        ForumAdminResult,
     )
     if existing_admin:
         raise HTTPException(
@@ -340,15 +340,15 @@ async def remove_admin(
     if not forum_admin:
         raise HTTPException(403, f"You are not an admin for forum: {forum.name_}")
 
-    existing_admin: ForumAdminResult | None = (
-        await cache_manager.distributed_get_or_load(
-            derive_cache_key(
-                ForumAdmin.__tablename__,
-                NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
-            ),
-            partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
-            ForumAdminResult,
-        )
+    existing_admin: (
+        ForumAdminResult | None
+    ) = await cache_manager.distributed_get_or_load(
+        derive_cache_key(
+            ForumAdmin.__tablename__,
+            NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
+        ),
+        partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
+        ForumAdminResult,
     )
     if not existing_admin:
         raise HTTPException(404, "Admin does not exist")
@@ -404,15 +404,15 @@ async def edit_admin_permissions(
     if not forum_admin:
         raise HTTPException(403, f"You are not an admin for forum: {forum.name_}")
 
-    existing_admin: ForumAdminResult | None = (
-        await cache_manager.distributed_get_or_load(
-            derive_cache_key(
-                ForumAdmin.__tablename__,
-                NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
-            ),
-            partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
-            ForumAdminResult,
-        )
+    existing_admin: (
+        ForumAdminResult | None
+    ) = await cache_manager.distributed_get_or_load(
+        derive_cache_key(
+            ForumAdmin.__tablename__,
+            NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
+        ),
+        partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
+        ForumAdminResult,
     )
     if not existing_admin:
         raise HTTPException(404, "Admin does not exist")

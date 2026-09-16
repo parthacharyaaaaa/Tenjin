@@ -222,9 +222,7 @@ async def insert_downstream_deletion_outbox_entries(
                         )
                     )
 
-                    downstream_cache_invalidation_payload: (
-                        DownstreamCacheInvalidationPayload
-                    ) = DownstreamCacheInvalidationPayload(
+                    downstream_cache_invalidation_payload: DownstreamCacheInvalidationPayload = DownstreamCacheInvalidationPayload(
                         downstream_table=child_deletion_data["orphan_table"]
                     )
 

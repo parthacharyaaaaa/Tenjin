@@ -76,8 +76,8 @@ async def downstream_deletion_worker(
                 )
                 del raw_payload
 
-                downstream_deletion_callable = (
-                    lambda: downstream_soft_delete_strong_entity(
+                downstream_deletion_callable = lambda: (
+                    downstream_soft_delete_strong_entity(
                         conn,
                         event_id,
                         payload.foreign_key,
@@ -133,15 +133,15 @@ async def downstream_decrement_worker(
                         results: list[tuple[str, int]] = [("", 0)]
                         while results:
                             # Fetch subset of counter deltas
-                            results: list[tuple[str, int]] = (
-                                await select_decrement_deltas(
-                                    conn,
-                                    payload.foreign_key_column,
-                                    limit,
-                                    offset,
-                                    payload.orphaned_table,
-                                    event_id,
-                                )
+                            results: list[
+                                tuple[str, int]
+                            ] = await select_decrement_deltas(
+                                conn,
+                                payload.foreign_key_column,
+                                limit,
+                                offset,
+                                payload.orphaned_table,
+                                event_id,
                             )
                             offset += limit
 

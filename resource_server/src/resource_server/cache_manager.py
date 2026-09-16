@@ -46,7 +46,6 @@ type pagination_database_fallback_callable = Callable[
 
 @dataclass(init=False, slots=True, weakref_slot=True)
 class CacheManager(metaclass=SingletonMetaclass):
-
     redis_client: SupportsAsyncRedis
     cache_config: CacheConfig
 
@@ -311,9 +310,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                     if await self.redis_client.get(lock_name):
                         await asyncio.sleep(
                             self.cache_config.FETCH_WAITING_INITIAL_INTERVAL
-                            * randint(
-                                1, self.cache_config.FETCH_WAITING_JITTER
-                            )  # nosec
+                            * randint(1, self.cache_config.FETCH_WAITING_JITTER)  # nosec
                             ** self.cache_config.FETCH_WAITING_EXPONENT
                         )
                         continue
@@ -431,10 +428,13 @@ class CacheManager(metaclass=SingletonMetaclass):
         *,
         element_dtype: Literal["mapping", "string"] = "mapping",
     ) -> tuple[tuple[DTO_T | None, ...] | None, str | None]:
-        page_ttl, keys, paginated_entries, cursor = (
-            await self._primitive_pagination_get_from_cache(
-                page_key, return_dto.counter_fields_map, dtype=element_dtype
-            )
+        (
+            page_ttl,
+            keys,
+            paginated_entries,
+            cursor,
+        ) = await self._primitive_pagination_get_from_cache(
+            page_key, return_dto.counter_fields_map, dtype=element_dtype
         )
 
         if all(i[0] for i in paginated_entries):
@@ -499,9 +499,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                     if await self.redis_client.get(lock_name):
                         await asyncio.sleep(
                             self.cache_config.FETCH_WAITING_INITIAL_INTERVAL
-                            * randint(
-                                1, self.cache_config.FETCH_WAITING_JITTER
-                            )  # nosec
+                            * randint(1, self.cache_config.FETCH_WAITING_JITTER)  # nosec
                             ** self.cache_config.FETCH_WAITING_EXPONENT
                         )
                         continue
@@ -515,7 +513,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                     return (
                         list(
                             map(
-                                lambda x: (return_dto.construct_from_cache(x)),
+                                lambda x: return_dto.construct_from_cache(x),
                                 (r[0] for r in res if r[0]),
                             )
                         ),

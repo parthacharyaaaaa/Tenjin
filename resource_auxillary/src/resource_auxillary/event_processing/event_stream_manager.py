@@ -17,7 +17,6 @@ T = TypeVar("T", bound=HasEventID)
 
 
 class EventStreamManager(Protocol):
-
     @staticmethod
     def timedelta_to_broker_units(t: timedelta) -> int: ...
 
@@ -78,19 +77,17 @@ class RedisStreamManager:
         batch_size: int,
         timeout: timedelta | None,
     ) -> tuple[list[StreamedEvent], list[StreamedEvent]]:
-        result: list[list[list[tuple[str, dict[str, str]]]]] = (
-            await self.redis_client.xreadgroup(
-                groupname=consumer_group,
-                consumername=consumer,
-                streams={stream.value: offset},
-                count=batch_size,
-                noack=False,
-                block=(
-                    timeout
-                    if timeout is None
-                    else self.timedelta_to_broker_units(timeout)
-                ),
-            )
+        result: list[
+            list[list[tuple[str, dict[str, str]]]]
+        ] = await self.redis_client.xreadgroup(
+            groupname=consumer_group,
+            consumername=consumer,
+            streams={stream.value: offset},
+            count=batch_size,
+            noack=False,
+            block=(
+                timeout if timeout is None else self.timedelta_to_broker_units(timeout)
+            ),
         )
         malformed_events: list[StreamedEvent] = []
 

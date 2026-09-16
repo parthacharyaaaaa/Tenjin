@@ -148,21 +148,21 @@ async def delete_comment(
         raise HTTPException(404, "Comment not found")
     if comment.author_id != access_token["sid"]:
         # Check for forum admin
-        forum_admin: ForumAdminResult | None = (
-            await cache_manager.distributed_get_or_load(
-                derive_cache_key(
-                    ForumAdminResult.resource_name,
-                    NAME_SEPERATOR.join(
-                        (str(comment.parent_forum), str(access_token["sid"]))
-                    ),
+        forum_admin: (
+            ForumAdminResult | None
+        ) = await cache_manager.distributed_get_or_load(
+            derive_cache_key(
+                ForumAdminResult.resource_name,
+                NAME_SEPERATOR.join(
+                    (str(comment.parent_forum), str(access_token["sid"]))
                 ),
-                partial(
-                    forum_repo.get_forum_admin,
-                    comment.parent_forum,
-                    access_token["sid"],
-                ),
-                ForumAdminResult,
-            )
+            ),
+            partial(
+                forum_repo.get_forum_admin,
+                comment.parent_forum,
+                access_token["sid"],
+            ),
+            ForumAdminResult,
         )
         if not forum_admin:
             raise HTTPException(403, "Only author and admins can delete comments")
@@ -217,7 +217,8 @@ async def delete_comment(
             name=EventName.COMMENT_DELETE,
             payload=payload,  # type: ignore
             side_effects=EventSideEffects(
-                counter_updates=counter_updates, intent_updates=intent_updates  # type: ignore[reportCallIssue]
+                counter_updates=counter_updates,
+                intent_updates=intent_updates,  # type: ignore[reportCallIssue]
             ),
         )
 

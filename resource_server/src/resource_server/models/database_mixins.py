@@ -110,8 +110,6 @@ class EventSideEffectsTableMixin(EventReferrerTableMixin):
             Index(
                 f"{cls.__tablename__}_{SideEffectsLiteral.NON_EMITTED_EVENTS_INDEX}",
                 cls.event_id,
-                postgresql_where=(
-                    ~cls.side_effects_emitted
-                ),  # pyrefly: ignore[deprecated]
+                postgresql_where=(~cls.side_effects_emitted),  # pyrefly: ignore[deprecated]
             ),
         )
