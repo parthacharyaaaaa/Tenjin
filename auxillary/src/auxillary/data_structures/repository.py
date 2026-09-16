@@ -5,6 +5,7 @@ from typing import Final
 from sqlalchemy.ext.asyncio.session import async_sessionmaker, AsyncSession
 
 from auxillary.mixins.abstract import StrictAbstractMixin
+from auxillary.mixins.metaclass import AntiSingletonMixin
 
 
 @dataclass(slots=True, weakref_slot=False)
@@ -18,14 +19,14 @@ class AbstractRepository(StrictAbstractMixin, abstract=True):
 
 ### NOTE ###
 # AbstractWorkRepository should never be made into a singleton
-# (such as through functools.lru_cache or a metaclass),
+# (such as through functools.lru_cache, __new__, or a metaclass),
 # since they make use of instance-level state to make decisions
 # on session commitment
 ### END ###
 
 
 @dataclass(slots=True, weakref_slot=False)
-class AbstractWorkRepository(AbstractRepository, abstract=True):
+class AbstractWorkRepository(AbstractRepository, AntiSingletonMixin, abstract=True):
     _work_session: AsyncSession | None = field(init=False, default=None)
 
     @asynccontextmanager
