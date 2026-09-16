@@ -1,3 +1,5 @@
+from auth_server.dependencies import get_repository_work_coordinator
+from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auth_server.dependencies import get_suspicious_activity_repository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auxillary.utils import json_repr
@@ -63,6 +65,9 @@ async def admin_login(
     suspicious_activity_repository: Annotated[
         SuspiciousActivityRepository, Depends(get_suspicious_activity_repository)
     ],
+    repository_coordinator: Annotated[
+        MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
+    ],
 ) -> JSONResponse:
     admin: AdminPrivateResult | None = None
     try:
@@ -86,6 +91,7 @@ async def admin_login(
                 "Attempt to log into a locked account",
                 suspicious_activity_repository,
                 admin_repository,
+                repository_coordinator,
                 force_logout=False,
             )
             raise HTTPException(
@@ -103,6 +109,7 @@ async def admin_login(
             "Incorrect password",
             suspicious_activity_repository,
             admin_repository,
+            repository_coordinator,
             force_logout=False,
         )
         raise HTTPException(401, "Incorrect passwword")
@@ -124,6 +131,7 @@ async def admin_login(
                 "Session already active",
                 suspicious_activity_repository,
                 admin_repository,
+                repository_coordinator,
                 force_logout=False,
             )
             raise HTTPException(
@@ -209,6 +217,9 @@ async def admin_refresh(
     suspicious_activity_repository: Annotated[
         SuspiciousActivityRepository, Depends(get_suspicious_activity_repository)
     ],
+    repository_coordinator: Annotated[
+        MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
+    ],
 ) -> JSONResponse:
     """
     Refresh an admin's session and enforce a maximum number of times
@@ -247,6 +258,7 @@ async def admin_refresh(
             "Invalid session revival digest",
             suspicious_activity_repository,
             admin_repository,
+            repository_coordinator,
         )
         raise HTTPException(403, "Invalid revival digest provided")
 

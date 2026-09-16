@@ -1,3 +1,5 @@
+from auth_server.dependencies import get_repository_work_coordinator
+from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auth_server.dependencies import get_suspicious_activity_repository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.dependencies import get_admin_repository
@@ -84,6 +86,9 @@ async def invalidate_key(
         SuspiciousActivityRepository, Depends(get_suspicious_activity_repository)
     ],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
+    repository_coordinator: Annotated[
+        MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
+    ],
 ) -> JSONResponse:
     """Invalidate a given key"""
     key_lock: Final[str] = f"INVALIDATE_KEY:{kid}"
@@ -134,6 +139,7 @@ async def invalidate_key(
                     f"Invaldiation attempt on active key {kid}",
                     suspicious_activity_repository,
                     admin_repository,
+                    repository_coordinator,
                 )
                 raise HTTPException(
                     409,
@@ -350,6 +356,9 @@ async def rotate_keys(
     suspicious_activity_repository: Annotated[
         SuspiciousActivityRepository, Depends(get_suspicious_activity_repository)
     ],
+    repository_coordinator: Annotated[
+        MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
+    ],
 ) -> JSONResponse:
     """Trigger a key rotation sequence"""
     # Check for concurrent worker performing a key rotation
@@ -377,6 +386,7 @@ async def rotate_keys(
             "Attempt to perform key rotation during cooldown",
             suspicious_activity_repository,
             admin_repository,
+            repository_coordinator,
         )
         raise HTTPException(
             409,

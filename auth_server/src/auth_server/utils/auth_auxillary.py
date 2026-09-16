@@ -1,3 +1,4 @@
+from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auth_server.repositories.suspicious_activity import SuspiciousActivityResult
 from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
@@ -55,24 +56,29 @@ async def report_suspicious_activity(
     desc: str,
     suspicious_activity_repository: SuspiciousActivityRepository,
     admin_repository: AdminRepository,
+    coordinator: MultiRepositoryWorkCoordinator,
     force_logout: bool = True,
 ) -> None:
     await suspicious_activity_repository.insert_activity(admin_id, desc)
     current_time: datetime = datetime.now()
-    activities: list[SuspiciousActivityResult] = (
-        await suspicious_activity_repository.get_activity_log(
-            admin_id, config.ADMIN.MAX_ACTIVITY_LIMIT
-        )
-    )
-    if force_logout and (
-        (len(activities) > config.ADMIN.MAX_ACTIVITY_LIMIT)
-        or (
-            activities[-1].time_logged
-            > current_time - timedelta(seconds=config.ADMIN.SUSPICIOUS_LOOKBACK_TIME)
-        )
+    async with coordinator.multirepo_work_context(
+        suspicious_activity_repository, admin_repository
     ):
-        await admin_repository.set_admin_locked(admin_id, locked=True)
-        await synced_store_client.delete(f"admin:{admin_id}")
+        activities: list[SuspiciousActivityResult] = (
+            await suspicious_activity_repository.get_activity_log(
+                admin_id, config.ADMIN.MAX_ACTIVITY_LIMIT
+            )
+        )
+        if force_logout and (
+            (len(activities) > config.ADMIN.MAX_ACTIVITY_LIMIT)
+            or (
+                activities[-1].time_logged
+                > current_time
+                - timedelta(seconds=config.ADMIN.SUSPICIOUS_LOOKBACK_TIME)
+            )
+        ):
+            await admin_repository.set_admin_locked(admin_id, locked=True)
+            await synced_store_client.delete(f"admin:{admin_id}")
 
 
 # TODO: Swap this out with KeydataRepository/s equivalent method
