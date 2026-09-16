@@ -21,6 +21,7 @@ dependencies = [
     "psycopg>=3.3.4",
     "sqlalchemy>=2.0.51",
     "httpx>=0.28.1",
+    "types-aiofiles>=25.1.0.20260518",
 ]
 
 [tool.setuptools.packages.find]
@@ -41,7 +42,7 @@ python-dotenv = "dotenv"
 pyjwt = "jwt"
 
 [tool.deptry.per_rule_ignores]
-DEP002 = ["psycopg", "mako", "cryptography"]
+DEP002 = ["psycopg", "mako", "cryptography", "types-aiofiles"]
 
 [tool.pyrefly]
 project-excludes=[

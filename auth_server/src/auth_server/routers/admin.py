@@ -1,3 +1,7 @@
+from auxillary.utils import json_repr
+from auth_server.repositories.admin import AdminPublicResult
+from auth_server.repositories.admin import AdminRepository
+from auth_server.repositories.admin import AdminPrivateResult
 import base64
 from datetime import datetime
 from typing import Annotated, Final
@@ -12,10 +16,8 @@ import orjson
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
-from sqlalchemy import select, update, insert
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.sql import and_
 
 from auxillary.utils import (
     bcrypt_check_password,
@@ -29,13 +31,13 @@ from auth_server.dependencies import (
     get_app_config,
     get_synced_store_client,
     get_database_session,
+    get_admin_repository,
 )
 from auth_server.models.cmd_requests import (
     AdminAuthenticationModel,
     AdminIdentificationModel,
     AdminRefreshModel,
 )
-from auth_server.models.database import Admin
 from auth_server.models.session import AdminSession
 from auth_server.security.admin_roles import AdminRole
 from auth_server.security.keygen import generate_ecdsa_pair
@@ -58,22 +60,21 @@ async def admin_login(
     config: Annotated[AppConfig, Depends(get_app_config)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
     session: Annotated[AsyncSession, Depends(get_database_session)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
 ) -> JSONResponse:
-    admin: Admin | None = None
+    admin: AdminPrivateResult | None = None
     try:
-        admin = (
-            await session.execute(
-                select(Admin).where(
-                    and_(
-                        Admin.username == auth_model.identity,
-                        Admin.time_deleted == None,
-                    )
-                )
-            )
-        ).scalar_one_or_none()
+        admin = await admin_repository.get_admin_by_username(
+            auth_model.identity, public_data_only=False, include_deleted=True
+        )
 
         if not admin:
-            raise HTTPException(404, "No admin with these credentials found")
+            raise HTTPException(
+                404, f"No admin with identity {auth_model.identity} found"
+            )
+
+        if admin.time_deleted is not None:
+            raise HTTPException(410, f"Admin {admin.username} has been deleted")
 
         if admin.locked:
             await report_suspicious_activity(
@@ -89,7 +90,7 @@ async def admin_login(
                 "This account is currently locked on grounds of suspicious activities",
             )
     except SQLAlchemyError:
-        raise Exception
+        raise HTTPException(500, "Failed to fetch admin information")
 
     if not bcrypt_check_password(auth_model.password, admin.password_hash):
         await report_suspicious_activity(
@@ -105,7 +106,9 @@ async def admin_login(
     # Exists in DB, check synced_store_client to see if session is already active
     session_key: Final[str] = f"admin:{admin.id_}"
     try:
-        admin_session: dict[str, str] = synced_store_client.hgetall(session_key)  # type: ignore[reportAssignmentType]
+        admin_session: dict[str, str] = synced_store_client.hgetall(
+            session_key
+        )  # pyrefly: ignore[bad-assignment]
 
         # Single sign-in policy, invalidate existing session and add entry in logs
         if admin_session:
@@ -126,7 +129,7 @@ async def admin_login(
         raise HTTPException(500, "An error occured when validating session integrity")
 
     try:
-        await session.execute(update(Admin).values(last_login=datetime.now()))
+        await admin_repository.update_last_login(admin.id_)
     except SQLAlchemyError:
         raise HTTPException(500, "An error occured when logging you in")
 
@@ -160,33 +163,35 @@ async def admin_delete(
     admin_session: Annotated[
         AdminSession, Depends(require_permissions(Permission.DELETE_ADMIN))
     ],
-    session: Annotated[AsyncSession, Depends(get_database_session)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
 ) -> JSONResponse:
     try:
-        admin: Admin | None = (
-            await session.execute(
-                select(Admin).where(
-                    (Admin.id_ == deletion_model.id_) & (Admin.time_deleted == None)
-                )
-            )
-        ).scalar_one_or_none()
-        if not admin:
-            raise HTTPException(404, f"No admin with ID {deletion_model.id_} found")
-
+        admin: AdminPublicResult | None = await admin_repository.get_admin(
+            deletion_model.id_, include_deleted=True
+        )
     except SQLAlchemyError:
         genericDBFetchException()
-
-    try:
-        await session.execute(
-            update(Admin)
-            .where(Admin.id_ == deletion_model.id_)
-            .values(time_deleted=datetime.now())
+    if not admin:
+        raise HTTPException(404, f"No admin with ID {deletion_model.id_} found")
+    elif admin.time_deleted:
+        raise HTTPException(
+            410, f"Admin {admin.username} (ID: {admin.id_}) already deleted"
         )
-        await session.commit()
+
+    deletion_time: datetime = datetime.now()
+    try:
+        await admin_repository.delete_admin(deletion_model.id_, deletion_time)
     except:
         raise HTTPException(500, "Failed to delete admin account")
 
-    return JSONResponse({"message": "Admin deleted"})
+    return JSONResponse(
+        {
+            "message": "Admin deleted",
+            "admin_id": admin.id_,
+            "admin_username": admin.username,
+            "time_deleted": deletion_time,
+        }
+    )
 
 
 @ADMIN.post("/admins/refresh")
@@ -196,11 +201,15 @@ async def admin_refresh(
     config: Annotated[AppConfig, Depends(get_app_config)],
     session: Annotated[AsyncSession, Depends(get_database_session)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
 ) -> JSONResponse:
-    """Refresh an admin's session and enforce a maximum number of times a session can be refreshed before requiring reauthentication"""
+    """
+    Refresh an admin's session and enforce a maximum number of times
+    a session can be refreshed before requiring reauthentication
+    """
     admin_key: Final[str] = f"admin:{refresh_model.id_}"
     if admin_session.iteration >= config.ADMIN.MAX_SESSION_ITERATIONS:
-        synced_store_client.delete(admin_key)
+        await synced_store_client.delete(admin_key)
         raise HTTPException(
             409,
             " ".join(
@@ -212,15 +221,15 @@ async def admin_refresh(
             ),
         )
 
-    actual_digest_bytes: bytes = synced_store_client.hget(admin_key, "revival_digest")  # type: ignore[reportAssignmentType]
+    actual_digest_bytes: bytes = await synced_store_client.hget(admin_key, "revival_digest")  # type: ignore[reportAssignmentType]
     if not actual_digest_bytes:
-        synced_store_client.delete(admin_key)
+        await synced_store_client.delete(admin_key)
         raise HTTPException(
             500, "An error occured in verifying revival digests. Please reuthenticate"
         )
 
     if actual_digest_bytes == AdminStrings.NO_REFRESH_SENTINEL:
-        synced_store_client.delete(admin_key)
+        await synced_store_client.delete(admin_key)
         raise HTTPException(409, "Maximum session reiterations reached")
 
     if actual_digest_bytes.decode() != refresh_model.refresh_digest:
@@ -234,11 +243,14 @@ async def admin_refresh(
         raise HTTPException(403, "Invalid revival digest provided")
 
     try:
-        signing_key: Final[bytes] = (
-            await session.execute(
-                select(Admin.signing_key).where(Admin.id_ == admin_session.admin_id)
-            )
-        ).scalar_one()
+        _admin_data: AdminPrivateResult | None = await admin_repository.get_admin(
+            refresh_model.id_, public_data_only=False
+        )
+        if not _admin_data:
+            await synced_store_client.delete(admin_key)
+            raise HTTPException(500, "Session invalid")
+        signing_key: Final[bytes] = _admin_data.signing_key
+        del _admin_data
     except SQLAlchemyError as e:
         raise HTTPException(500) from e
 
@@ -252,7 +264,7 @@ async def admin_refresh(
     )
 
     # type ignore for TypedDict, which behaves as dict at runtime
-    synced_store_client.hset(session_key, mapping=session_mapping)  # type: ignore[reportArgumentType]
+    await synced_store_client.hset(session_key, mapping=session_mapping)  # type: ignore[reportArgumentType]
     revival_digest: str = session_mapping.pop("revival_digest")  # type: ignore[reportAssignmentType]
     if session_mapping["session_iteration"] == config.ADMIN.MAX_SESSION_ITERATIONS:
         revival_digest = AdminStrings.NO_REFRESH_SENTINEL
@@ -270,11 +282,11 @@ async def admin_refresh(
 
 
 @ADMIN.patch("/admins/logout")
-def admin_logout(
+async def admin_logout(
     identification_model: AdminIdentificationModel,
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
 ) -> JSONResponse:
-    synced_store_client.delete(f"admin:{identification_model.id_}")
+    await synced_store_client.delete(f"admin:{identification_model.id_}")
     return JSONResponse({"message": "Logout successful"})
 
 
@@ -282,51 +294,43 @@ def admin_logout(
 async def admin_lock(
     request: Request,
     identification_model: AdminIdentificationModel,
-    session: Annotated[AsyncSession, Depends(get_database_session)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+    synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
 ) -> JSONResponse:
     """Lock a staff admin's account"""
     try:
-        admin: Admin | None = (
-            await session.execute(
-                select(Admin)
-                .where(Admin.id_ == identification_model.id_)
-                .with_for_update(key_share=True)
-            )
-        ).scalar_one_or_none()
-
-        if not admin:
-            raise HTTPException(
-                404, f"No admin with id {identification_model.id_} could be found"
-            )
-        if admin.locked:
-            conflict: HTTPException = HTTPException(
-                409, "Admin account is already locked"
-            )
-            setattr(
-                conflict,
-                "kwargs",
-                {
-                    "links": {
-                        "unlock admin account": {
-                            "_href": request.url_for("admin_unlock")
-                        }
-                    }
-                },
-            )
-            raise conflict
-
-        await session.execute(
-            update(Admin)
-            .where(Admin.id_ == identification_model.id_)
-            .values(locked=True)
+        admin: AdminPublicResult | None = await admin_repository.get_admin(
+            identification_model.id_
         )
-        await session.commit()
     except SQLAlchemyError:
-        raise Exception
+        genericDBFetchException()
+
+    if not admin:
+        raise HTTPException(
+            404, f"No admin with id {identification_model.id_} could be found"
+        )
+    if admin.locked:
+        conflict: HTTPException = HTTPException(409, "Admin account is already locked")
+        setattr(
+            conflict,
+            "kwargs",
+            {
+                "links": {
+                    "unlock admin account": {"_href": request.url_for("admin_unlock")}
+                }
+            },
+        )
+        raise conflict
+
+    try:
+        await admin_repository.set_admin_locked(admin.id_, True)
+    except SQLAlchemyError:
+        raise HTTPException(
+            500, f"Failed to lock admin {admin.username} (ID: {admin.id_})"
+        )
 
     # Log out the target admin
-    synced_store_client: Final[Redis] = get_synced_store_client()
-    synced_store_client.delete(f"admin:{identification_model.id_}")
+    await synced_store_client.delete(f"admin:{identification_model.id_}")
 
     return JSONResponse({"message": "Admin locked succesfully"})
 
@@ -335,45 +339,43 @@ async def admin_lock(
 async def admin_unlock(
     request: Request,
     identification_model: AdminIdentificationModel,
-    session: Annotated[AsyncSession, Depends(get_database_session)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+    synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
 ) -> JSONResponse:
     """Unlock a staff admin's account"""
     try:
-        admin: Admin | None = (
-            await session.execute(
-                select(Admin)
-                .where(Admin.id_ == identification_model.id_)
-                .with_for_update()
-            )
-        ).scalar_one_or_none()
-
-        if not admin:
-            raise HTTPException(
-                404, f"No admin with id {identification_model.id_} could be found"
-            )
-        if not admin.locked:
-            conflict: HTTPException = HTTPException(
-                409, "Admin account is already unlocked"
-            )
-            setattr(
-                conflict,
-                "kwargs",
-                {
-                    "links": {
-                        "lock admin account": {"_href": request.url_for("admin_lock")}
-                    }
-                },
-            )
-            raise conflict
-
-        await session.execute(
-            update(Admin)
-            .where(Admin.id_ == identification_model.id_)
-            .values(locked=False)
+        admin: AdminPublicResult | None = await admin_repository.get_admin(
+            identification_model.id_
         )
-        await session.commit()
     except SQLAlchemyError:
         genericDBFetchException()
+
+    if not admin:
+        raise HTTPException(
+            404, f"No admin with id {identification_model.id_} could be found"
+        )
+    if admin.locked:
+        conflict: HTTPException = HTTPException(409, "Admin account is already locked")
+        setattr(
+            conflict,
+            "kwargs",
+            {
+                "links": {
+                    "unlock admin account": {"_href": request.url_for("admin_unlock")}
+                }
+            },
+        )
+        raise conflict
+
+    try:
+        await admin_repository.set_admin_locked(admin.id_, False)
+    except SQLAlchemyError:
+        raise HTTPException(
+            500, f"Failed to unlock admin {admin.username} (ID: {admin.id_})"
+        )
+
+    # Log out the target admin
+    await synced_store_client.delete(f"admin:{identification_model.id_}")
 
     return JSONResponse({"message": "Admin unlocked succesfully"})
 
@@ -384,37 +386,33 @@ async def create_admin(
     admin_session: Annotated[
         AdminSession, Depends(require_permissions(Permission.CREATE_ADMIN))
     ],
-    session: Annotated[AsyncSession, Depends(get_database_session)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
 ) -> JSONResponse:
     try:
-        existing_admin_id: int | None = (
-            await session.execute(
-                select(Admin.id_).where(Admin.username == admin_model.identity)
-            )
-        ).scalar_one_or_none()
-
-        if existing_admin_id:
-            raise HTTPException(409, "An admin with this suername already exists")
+        existing_admin: AdminPublicResult | None = (
+            await admin_repository.get_admin_by_username(admin_model.identity)
+        )
     except SQLAlchemyError:
         genericDBFetchException()
+    if existing_admin:
+        raise HTTPException(
+            409, f"Admin with username {admin_model.identity} already exists"
+        )
 
-    pw_hash: bytes = bcrypt_hash_password(admin_model.password)
+    pw_hash: Final[bytes] = bcrypt_hash_password(admin_model.password)
     _, signing_key, verification_key = generate_ecdsa_pair()
     try:
-        await session.execute(
-            insert(Admin).values(
-                username=admin_model.identity,
-                password_hash=pw_hash,
-                role=AdminRole.STAFF.value,
-                created_by=admin_session.admin_id,
-                signing_key=signing_key.to_pem(),
-                verification_key=verification_key.to_pem(),
-            )
+        admin: AdminPublicResult = await admin_repository.create_admin(
+            username=admin_model.identity,
+            password_hash=pw_hash,
+            role=AdminRole.STAFF,
+            creation_author=admin_session.admin_id,
+            signing_key=signing_key.to_pem(),
+            verification_key=verification_key.to_pem(),
+            returning=True,
+            public_data_only=True,
         )
-        await session.commit()
-    except SQLAlchemyError:
-        raise HTTPException(
-            500, "Failed to create a new admin, this is not from an erroneous input"
-        )
+    except SQLAlchemyError as e:
+        raise HTTPException(500, "Failed to create a new admin") from e
 
-    return JSONResponse({"message": "Admin created"}, 202)
+    return JSONResponse({"message": "Admin created", "admin": json_repr(admin)}, 202)

@@ -11,3 +11,12 @@ class SyncedStoreStrings(StrEnum):
     ABORT = "ABORT"
     AUTH_BOOTUP_MASTER = "AUTH_BOOTUP_MASTER"
     VALID_KEYS = "VALID_KEYS"
+    KEY_ROTATION_LOCK = "KEY_ROTATION_LOCK"
+    KEY_ROTATION_COOLDOWN = "KEY_ROTATION_COOLDOWN"
+
+
+class SelectionLockOption(StrEnum):
+    NOWAIT = "nowait"
+    SKIP_LOCKED = "skip_locked"
+    KEY_SHARE = "key_share"
+    READ = "read"

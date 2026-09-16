@@ -1,3 +1,4 @@
+from sqlalchemy.sql import select
 from contextlib import asynccontextmanager
 from datetime import datetime
 import os
@@ -106,9 +107,18 @@ async def master_bootup(
     failed: bool = False
 
     try:
-        keydata: list[KeyData] = await keydata_repository.get_relevant_keydata(
-            limit=None
-        )
+        async with keydata_repository.session_maker() as session:
+            keydata: list[KeyData] = list(
+                (
+                    await session.execute(
+                        select(KeyData)
+                        .where(KeyData.expired_at.is_(None))
+                        .order_by(KeyData.epoch.desc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
 
         if not keydata:
             # No valid keys in DB, master must create new pair
@@ -137,7 +147,7 @@ async def master_bootup(
 
             # Atleast 1 non-expired key exists in DB
             if len(keydata) > config.JWKS.JWKS_CAP:
-                await keydata_repository.expire_keydata(
+                await keydata_repository.expire_keydata_with_threshold(
                     keydata[config.JWKS.JWKS_CAP - (1 + missing_active)].epoch
                 )
                 keydata = keydata[: config.JWKS.JWKS_CAP]

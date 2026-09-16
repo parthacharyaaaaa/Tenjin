@@ -7,18 +7,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resource_server.models.database import Comment, CommentReport, CommentVote, User
 from resource_server.models.database_enums import ReportTags
-from resource_server.repositories.result_protocol import AbstractResult
+from resource_server.repositories.result_protocol import AbstractDTO
 from auxillary.singleton import SingletonMetaclass
 
 type t_comment_result = Row[tuple[Comment, int, str]]
 
 
 @dataclass(slots=True, init=False)
-class CommentResult(AbstractResult):
+class CommentResult(AbstractDTO):
     id_: int
     author_id: int
     author_username: str
-    parent_forum: int  # XXX: Unneeded much?
+    parent_forum: int
     parent_post: int
 
     time_created: datetime

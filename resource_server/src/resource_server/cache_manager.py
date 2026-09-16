@@ -30,19 +30,17 @@ from resource_server.datastructures.exceptions import (
     ConflictingIntentException,
     DuplicateRequestException,
 )
-from resource_server.repositories.result_protocol import AbstractResult
+from resource_server.repositories.result_protocol import AbstractDTO
 
 from resource_auxillary.strings import Action, IntentFlag, NAME_SEPERATOR
 from resource_auxillary.cache import create_intent_flag
 
-DTO_T = TypeVar("DTO_T", bound=AbstractResult)
+DTO_T = TypeVar("DTO_T", bound=AbstractDTO)
 
-type database_fallback_callable = Callable[
-    [], Coroutine[Any, Any, AbstractResult | None]
-]
+type database_fallback_callable = Callable[[], Coroutine[Any, Any, AbstractDTO | None]]
 
 type pagination_database_fallback_callable = Callable[
-    [], Coroutine[Any, Any, Sequence[AbstractResult]]
+    [], Coroutine[Any, Any, Sequence[AbstractDTO]]
 ]
 
 
@@ -295,7 +293,7 @@ class CacheManager(metaclass=SingletonMetaclass):
             )
             if leader:
                 try:
-                    result_dto: AbstractResult | None = await fallback_coroutine()
+                    result_dto: AbstractDTO | None = await fallback_coroutine()
                     if not result_dto:
                         if fetch_dtype == "mapping":
                             await self.set_negative_mapping(key)
@@ -487,7 +485,7 @@ class CacheManager(metaclass=SingletonMetaclass):
             )
             if leader:
                 try:
-                    results: list[AbstractResult] = list(await fallback_coroutine())
+                    results: list[AbstractDTO] = list(await fallback_coroutine())
                     await self.cache_grouped_resource(
                         page_key,
                         {getattr(i, member_identifier): i for i in results},
