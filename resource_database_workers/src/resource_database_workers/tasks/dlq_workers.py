@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Sequence
 
 from auxillary.utils import json_repr
@@ -38,7 +38,7 @@ def get_dlq_insertion_parameters(
         (
             event.creation_time
             if event.name in (EventName.DLQ_COUNTER, EventName.DLQ_SIDE_EFFECTS)
-            else datetime.now()
+            else datetime.now(UTC)
         ),
     )
 

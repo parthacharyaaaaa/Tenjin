@@ -1,5 +1,5 @@
 import base64
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Final
 
 import orjson
@@ -187,7 +187,7 @@ async def admin_delete(
             410, f"Admin {admin.username} (ID: {admin.id_}) already deleted"
         )
 
-    deletion_time: datetime = datetime.now()
+    deletion_time: datetime = datetime.now(UTC)
     try:
         await admin_repository.delete_admin(deletion_model.id_, deletion_time)
     except Exception as e:

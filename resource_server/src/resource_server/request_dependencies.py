@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Final
 
 import jwt
@@ -137,7 +137,7 @@ def preprocess_timeframe(
 ) -> tuple[TimeFrameOption, datetime]:
     if not raw_timeframe_option:
         return TimeFrameOption.ALL_TIME, TIMEFRAMES[TimeFrameOption.ALL_TIME](
-            datetime.now()
+            datetime.now(UTC)
         )
     try:
         timeframe_option = TimeFrameOption(raw_timeframe_option.strip().lower())
@@ -146,4 +146,4 @@ def preprocess_timeframe(
 
     func = TIMEFRAMES.get(timeframe_option, TIMEFRAMES[TimeFrameOption.ALL_TIME])
 
-    return timeframe_option, func(datetime.now())
+    return timeframe_option, func(datetime.now(UTC))

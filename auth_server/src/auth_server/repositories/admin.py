@@ -2,7 +2,7 @@
 
 from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, overload
 
 from auxillary.data_structures.dto import AbstractResult
@@ -241,7 +241,7 @@ class AdminRepository(AbstractWorkRepository):
             await session.execute(
                 update(Admin)
                 .where(Admin.id_ == admin_id)
-                .values(last_login=login_time or datetime.now())
+                .values(last_login=login_time or datetime.now(UTC))
             )
 
     @overload
@@ -287,7 +287,7 @@ class AdminRepository(AbstractWorkRepository):
                 await session.execute(
                     update(Admin)
                     .where((Admin.id_ == admin_id) & (Admin.time_deleted.is_(None)))
-                    .values(time_deleted=deletion_time or datetime.now())
+                    .values(time_deleted=deletion_time or datetime.now(UTC))
                     .returning(Admin)
                 )
             ).scalar_one_or_none()

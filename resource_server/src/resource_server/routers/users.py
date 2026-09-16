@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Final
 
@@ -127,7 +127,7 @@ async def delete_user(
         raise HTTPException(409, "Account already queued for deletion")
 
     await cache_manager.set_negative_mapping(user_cache_key)
-    deletion_time: datetime = datetime.now()
+    deletion_time: datetime = datetime.now(UTC)
     await user_repo.delete_user(user.id_, deletion_time=deletion_time)
 
     payload: UserCleanup = UserCleanup(user_id=user.id_, time_deleted=deletion_time)
@@ -173,7 +173,7 @@ async def recover_password(
 
     url_token: Final[str] = generate_url_token()
     await user_repo.set_password_recovery_token(
-        user.id_, url_token, datetime.now() + app_config.BUSINESS.PASSWORD_TOKEN_MAX_AGE
+        user.id_, url_token, datetime.now(UTC) + app_config.BUSINESS.PASSWORD_TOKEN_MAX_AGE
     )
 
     # TODO: Enqueue email
@@ -202,7 +202,7 @@ async def update_password(
         raise HTTPException(404, "No password recovery token found")
     if url != temp_url:
         raise HTTPException(403, "Invalid url")
-    if expiry > datetime.now():  # type: ignore[reportOptionalOperand]
+    if expiry > datetime.now(UTC):  # type: ignore[reportOptionalOperand]
         raise HTTPException(403, "Token expired")
 
     pw_hash: Final[bytes] = bcrypt_hash_password(password_model.password)
@@ -392,7 +392,7 @@ async def login(
     if not bcrypt_check_password(user_model.password, password_hash):
         raise HTTPException(403, "Incorrect password")
 
-    login_time = datetime.now()
+    login_time = datetime.now(UTC)
     # TODO: Add event to update user login time
     return JSONResponse(
         {

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
@@ -109,7 +109,7 @@ async def comment_on_post(
         parent_forum=post.forum_id,
         parent_post=post.id_,
         body=comment_model.body,
-        time_created=datetime.now(),
+        time_created=datetime.now(UTC),
     )
 
     deletion_event: Event = Event(
@@ -494,7 +494,7 @@ async def report_comment(
             user_id=access_token["sid"],
             report_tag=report_model.tag,
             report_description=report_model.description,
-            report_time=datetime.now(),
+            report_time=datetime.now(UTC),
         )
 
         report_event: Event = Event(

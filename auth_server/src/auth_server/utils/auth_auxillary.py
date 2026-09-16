@@ -1,6 +1,6 @@
 import secrets
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Final, Sequence
 from uuid import uuid4
 
@@ -60,7 +60,7 @@ async def report_suspicious_activity(
     force_logout: bool = True,
 ) -> None:
     await suspicious_activity_repository.insert_activity(admin_id, desc)
-    current_time: datetime = datetime.now()
+    current_time: datetime = datetime.now(UTC)
     async with coordinator.multirepo_work_context(
         suspicious_activity_repository, admin_repository
     ):

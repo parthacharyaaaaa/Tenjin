@@ -1,5 +1,5 @@
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Final
 
 from fastapi import APIRouter, Depends
@@ -37,7 +37,7 @@ async def issue_ticket(
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
 ) -> JSONResponse:
-    time_raised: datetime = datetime.now()
+    time_raised: datetime = datetime.now(UTC)
 
     description_identifier: Final[str] = hashlib.sha1(
         request_model.description.encode("utf-8"), usedforsecurity=False

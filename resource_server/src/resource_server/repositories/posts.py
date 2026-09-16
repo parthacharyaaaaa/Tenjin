@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, ClassVar, Mapping, Self
 
 from auxillary.singleton import SingletonMetaclass
@@ -101,7 +101,7 @@ class PostRepository(metaclass=SingletonMetaclass):
         sort_option: SortOption = SortOption.DESCENDING,
         datetime_bound: datetime | None = None,
     ) -> list[PostResult]:
-        datetime_bound = datetime_bound or datetime.min
+        datetime_bound = datetime_bound or datetime.min.replace(tzinfo=UTC)
         match sort_option:
             case SortOption.DESCENDING:
                 order_clause = Post.time_posted.desc

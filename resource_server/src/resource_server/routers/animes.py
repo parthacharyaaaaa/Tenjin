@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
@@ -143,7 +143,7 @@ async def sub_anime(
         payload = AnimeSubscriptionAssosciation(
             anime_id=anime_id,
             user_id=access_token["sid"],
-            time_subscribed=datetime.now(),
+            time_subscribed=datetime.now(UTC),
         )
 
         subscription_event: Event = Event(
@@ -226,7 +226,7 @@ async def unsub_anime(
         payload = AnimeSubscriptionAssosciation(
             anime_id=anime_id,
             user_id=access_token["sid"],
-            time_subscribed=datetime.now(),
+            time_subscribed=datetime.now(UTC),
         )
 
         subscription_event: Event = Event(

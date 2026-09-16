@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
@@ -113,7 +113,7 @@ async def create_post(
             "forum_id": forum.id_,
             "title": post_model.title,
             "body_text": post_model.body,
-            "time_posted": datetime.now().isoformat(),
+            "time_posted": datetime.now(UTC).isoformat(),
         }
 
         post_event: Event = Event(
@@ -684,7 +684,7 @@ async def report_post(
         user_id=access_token["sid"],
         report_tag=report_model.tag,
         report_description=report_model.description,
-        report_time=datetime.now(),
+        report_time=datetime.now(UTC),
     )
 
     report_event: Event = Event(

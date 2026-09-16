@@ -1,5 +1,5 @@
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
@@ -304,7 +304,7 @@ async def add_admin(
         {
             "message": "Admin added",
             "role": admin_model.role,
-            "time_added": datetime.now().isoformat(),
+            "time_added": datetime.now(UTC).isoformat(),
         },
         201,
     )
@@ -369,7 +369,7 @@ async def remove_admin(
         {
             "message": "Admin removed",
             "role": existing_admin.role,
-            "time_removed": datetime.now().isoformat(),
+            "time_removed": datetime.now(UTC).isoformat(),
         }
     )
 
@@ -557,7 +557,7 @@ async def subscribe_forum(
         payload: ForumSubscriptionAssosciation = ForumSubscriptionAssosciation(
             user_id=access_token["sid"],
             forum_id=forum_id,
-            time_subscribed=datetime.now(),
+            time_subscribed=datetime.now(UTC),
         )
 
         subscription_event: Event = Event(
@@ -659,7 +659,7 @@ async def unsubscribe_forum(
         payload: ForumSubscriptionAssosciation = ForumSubscriptionAssosciation(
             user_id=access_token["sid"],
             forum_id=forum_id,
-            time_subscribed=datetime.now(),
+            time_subscribed=datetime.now(UTC),
         )
         unsubscription_event: Event = Event(
             name=EventName.FORUM_UNSUB,

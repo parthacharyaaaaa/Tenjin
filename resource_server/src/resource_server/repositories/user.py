@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, ClassVar, Mapping, Never, Self
 
 from auxillary.singleton import SingletonMetaclass
@@ -204,7 +204,7 @@ class UserRepository(metaclass=SingletonMetaclass):
     async def delete_user(
         self, user_id: int, *, deletion_time: datetime | None = None
     ) -> None:
-        deletion_time = deletion_time or datetime.now()
+        deletion_time = deletion_time or datetime.now(UTC)
         async with self.session_maker() as session:
             await session.execute(
                 update(User)

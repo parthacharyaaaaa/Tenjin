@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Callable, Coroutine, Iterable, TypeVar
 from uuid import uuid4
 
@@ -70,7 +70,7 @@ async def batch_dedup_insert_events(
     event_name: EventName,
     acknowledgement_time: datetime | None = None,
 ) -> tuple[int, ...]:
-    acknowledgement_time = acknowledgement_time or datetime.now()
+    acknowledgement_time = acknowledgement_time or datetime.now(UTC)
     temp_table_name: str = f"_temp_{uuid4().hex}_{acknowledgement_time.isoformat()}"
 
     await conn.execute(

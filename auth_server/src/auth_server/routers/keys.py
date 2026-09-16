@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Final
 
@@ -405,7 +405,7 @@ async def rotate_keys(
 
     # Server is ready for a key rotation
     kid, signing_key, verification_key = generate_ecdsa_pair()
-    generation_epoch: Final[datetime] = datetime.now()
+    generation_epoch: Final[datetime] = datetime.now(UTC)
 
     # Update DB first, then perform JWKS and PEM writes
     overflow: bool = False

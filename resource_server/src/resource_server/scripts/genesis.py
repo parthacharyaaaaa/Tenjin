@@ -14,7 +14,7 @@ import os
 import time
 import warnings
 from argparse import ArgumentParser, Namespace
-from datetime import datetime
+from datetime import UTC, datetime
 from traceback import format_exc
 from typing import Final, Generator, Optional
 
@@ -119,7 +119,7 @@ def main(
                         VALUES (1, 'TENJIN', 'TENJIN@tenjin.org', %s, %s)""",
                 (
                     pw_hash,
-                    datetime.now(),
+                    datetime.now(UTC),
                 ),
             )
             connection.commit()
@@ -225,7 +225,7 @@ def main(
                             anime_info["title"],
                             anime_id,
                             f"auto-generated forum by Tenjin for {anime_info['title']}".capitalize(),
-                            datetime.now(),
+                            datetime.now(UTC),
                         ),
                     )
 
@@ -248,7 +248,7 @@ def main(
                 ) as e:
                     print("Connection Failure, terminating script...")
                     with open("error_logs.txt", "a+") as logfile:
-                        logfile.write(f"{datetime.now()}: {e.__class__.__name__}")
+                        logfile.write(f"{datetime.now(UTC)}: {e.__class__.__name__}")
                         exit(200)
 
                 except Exception as e:
