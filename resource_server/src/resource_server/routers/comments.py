@@ -265,8 +265,8 @@ async def vote_comment(
             existing_vote: bool | None = await comment_repo.get_vote(
                 post_id, access_token["sid"]
             )
-            if (existing_vote == True and vote_model.vote == 1) or (
-                existing_vote == False and vote_model.vote == -1
+            if (existing_vote is True and vote_model.vote == 1) or (
+                existing_vote is False and vote_model.vote == -1
             ):
                 await cache_manager.set_intent(
                     intent_id,
@@ -361,7 +361,7 @@ async def unvote_comment(
             existing_vote: bool | None = await comment_repo.get_vote(
                 post_id, access_token["sid"]
             )
-            if not existing_vote:
+            if existing_vote is None:
                 await cache_manager.set_intent(
                     intent_id,
                     str(access_token["sid"]),
@@ -371,7 +371,7 @@ async def unvote_comment(
                     IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
                 )
                 raise HTTPException(409, conflict_message)
-            if existing_vote == False:  # downvote
+            if existing_vote is False:  # downvote
                 delta = -1
 
         counter_updates: tuple[CounterUpdate, ...] = (

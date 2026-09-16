@@ -151,7 +151,7 @@ async def admin_login(
     )
 
     # type ignore for TypedDict, which behaves as dict at runtime
-    synced_store_client.hset(session_key, mapping=session_mapping) # pyrefly: ignore[ bad-argument-type]
+    synced_store_client.hset(session_key, mapping=session_mapping)  # pyrefly: ignore[ bad-argument-type]
     revival_digest: Final[str] = session_mapping.pop("revival_digest")
     encoded_session_token: bytes = base64.urlsafe_b64encode(
         orjson.dumps(session_mapping)
@@ -190,8 +190,8 @@ async def admin_delete(
     deletion_time: datetime = datetime.now()
     try:
         await admin_repository.delete_admin(deletion_model.id_, deletion_time)
-    except:
-        raise HTTPException(500, "Failed to delete admin account")
+    except Exception as e:
+        raise HTTPException(500, "Failed to delete admin account") from e
 
     return JSONResponse(
         {
@@ -283,7 +283,7 @@ async def admin_refresh(
 
     # type ignore for TypedDict, which behaves as dict at runtime
     session_key: Final[str] = f"admin:{admin_session.id_}"
-    await synced_store_client.hset(session_key, mapping=session_mapping)    # pyrefly: ignore[bad-argument-type, not-async]
+    await synced_store_client.hset(session_key, mapping=session_mapping)  # pyrefly: ignore[bad-argument-type, not-async]
     revival_digest: str = session_mapping.pop("revival_digest")
     if session_mapping["session_iteration"] == config.ADMIN.MAX_SESSION_ITERATIONS:
         revival_digest = AdminStrings.NO_REFRESH_SENTINEL

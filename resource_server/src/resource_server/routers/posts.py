@@ -300,8 +300,8 @@ async def vote_post(
             existing_vote: bool | None = await post_repo.get_vote(
                 post_id, access_token["sid"]
             )
-            if (existing_vote == True and vote_model.vote == 1) or (
-                existing_vote == False and vote_model.vote == -1
+            if (existing_vote is True and vote_model.vote == 1) or (
+                existing_vote is False and vote_model.vote == -1
             ):
                 await cache_manager.set_intent(
                     intent_id,
@@ -405,7 +405,7 @@ async def unvote_post(
                     IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
                 )
                 raise HTTPException(409, conflicting_message)
-            if existing_vote == False:  # downvote
+            if existing_vote is False:  # downvote
                 delta = -1
 
         counter_updates: tuple[CounterUpdate, ...] = (

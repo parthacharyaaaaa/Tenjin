@@ -5,6 +5,7 @@ from pathlib import Path
 from alembic import context
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import get_app_config
+from auth_server.models.database import Base
 from dotenv import load_dotenv
 from sqlalchemy import MetaData, engine_from_config, pool
 
@@ -21,7 +22,6 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
-from auth_server.models.database import Base
 
 target_metadata: MetaData = Base.metadata
 

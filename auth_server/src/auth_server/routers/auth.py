@@ -196,7 +196,7 @@ async def purge_family(
             options={"verify_nbf": False},
         )
         await token_manager.invalidate_family(refresh_token["fid"])
-    except:
-        raise HTTPException(401, "Failed to validate this refresh token")
+    except Exception as e:
+        raise HTTPException(401, "Failed to validate this refresh token") from e
 
     return JSONResponse({"message": "Token Revoked"})

@@ -431,7 +431,7 @@ class KeydataRepository(AbstractWorkRepository):
     ) -> list[KeyPublicDataResult] | list[KeyPrivateDataResult]:
         statement = (
             select(KeyData)
-            .where((KeyData.expired_at == None) & (KeyData.rotated_out_at.isnot(None)))
+            .where((KeyData.expired_at.is_(None)) & (KeyData.rotated_out_at.isnot(None)))
             .limit(limit)
         )
         if lock_args:

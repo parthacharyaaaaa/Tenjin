@@ -5,7 +5,7 @@ from typing import Sequence
 from auxillary.utils import json_repr
 from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
 from resource_auxillary.event_processing.qos import execute_with_redis_retries
-from resource_auxillary.events import Event, StreamedEvent, EventSideEffects
+from resource_auxillary.events import Event, EventSideEffects, StreamedEvent
 from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
 from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 
