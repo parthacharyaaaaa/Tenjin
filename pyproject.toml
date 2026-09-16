@@ -89,11 +89,12 @@ select = [
 ]
 
 ignore = [
-    "B008", "B009", "B010", "B013", "B019", "B043"
+    "B008", "B009", "B010", "B013", "B019", "B043", "E741", "E731"
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["F401"]
+"**/gunicorn.conf.py" = ["N999"]
 
 [tool.ruff.format]
 quote-style = "double"
