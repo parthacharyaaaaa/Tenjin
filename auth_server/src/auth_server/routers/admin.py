@@ -371,7 +371,7 @@ async def admin_unlock(
         await admin_repository.set_admin_locked(admin.id_, False)
     except SQLAlchemyError:
         raise HTTPException(
-            500, f"Failed to lock admin {admin.username} (ID: {admin.id_})"
+            500, f"Failed to unlock admin {admin.username} (ID: {admin.id_})"
         )
 
     # Log out the target admin

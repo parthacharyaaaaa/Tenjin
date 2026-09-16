@@ -1,14 +1,15 @@
 """Data access repository for Keydata SA model"""
 
-from auth_server.models.database import SuspiciousActivity
 from dataclasses import dataclass
 from datetime import datetime
 from typing import ClassVar
 
-from auxillary.data_structures.dto import AbstractResult
-
 from sqlalchemy import insert, select
-from sqlalchemy.ext.asyncio.session import AsyncSession, async_sessionmaker
+
+from auxillary.data_structures.dto import AbstractResult
+from auxillary.data_structures.repository import AbstractWorkRepository
+
+from auth_server.models.database import SuspiciousActivity
 
 
 @dataclass(slots=True, init=False)
@@ -25,14 +26,12 @@ class SuspiciousActivityResult(AbstractResult):
     description: str
 
 
-@dataclass(frozen=True, slots=True, weakref_slot=True)
-class SuspiciousActivityRepository:
-    session_maker: async_sessionmaker[AsyncSession]
-
+@dataclass(slots=True)
+class SuspiciousActivityRepository(AbstractWorkRepository):
     async def get_activity_log(
         self, admin_id: int, limit: int | None = None
     ) -> list[SuspiciousActivityResult]:
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             results: list[SuspiciousActivity] = list(
                 (
                     await session.execute(
@@ -51,10 +50,9 @@ class SuspiciousActivityRepository:
     async def insert_activity(
         self, admin_id: int, description: str, *, time_logged: datetime | None = None
     ) -> None:
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             await session.execute(
                 insert(SuspiciousActivity).values(
                     suspect=admin_id, description=description, time_logged=time_logged
                 )
             )
-            await session.commit()

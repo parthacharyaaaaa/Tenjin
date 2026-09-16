@@ -1,23 +1,20 @@
 """Data access repository for Keydata SA model"""
 
-from auth_server.strings import SelectionLockOption
-from collections.abc import Sequence
-from collections.abc import MutableMapping
-from redis.typing import EncodableT
-from redis.typing import FieldT
+from collections.abc import Sequence, MutableMapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, ClassVar, Literal, overload
 
 import ecdsa
+from redis.typing import EncodableT, FieldT
 
 from auxillary.data_structures.dto import AbstractResult
+from auxillary.data_structures.repository import AbstractWorkRepository
 
 from sqlalchemy import insert, select, update
-from sqlalchemy.ext.asyncio.session import AsyncSession, async_sessionmaker
 
+from auth_server.strings import SelectionLockOption
 from auth_server.models.database import KeyData
-from auxillary.singleton import SingletonMetaclass
 
 
 @dataclass(slots=True, init=False)
@@ -66,10 +63,8 @@ class KeyPrivateDataResult(KeyPublicDataResult):
     private_pem: bytes
 
 
-@dataclass(frozen=True, slots=True, weakref_slot=True)
-class KeydataRepository(metaclass=SingletonMetaclass):
-    session_maker: async_sessionmaker[AsyncSession]
-
+@dataclass(slots=True)
+class KeydataRepository(AbstractWorkRepository):
     @overload
     async def get_keydata(
         self,
@@ -100,7 +95,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
             statement = statement.with_for_update(
                 **{lock_arg: True for lock_arg in lock_args}  # pyrefly: ignore
             )
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             keydata = (await session.execute(statement)).scalar_one_or_none()
             if not keydata:
                 return
@@ -148,7 +143,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
                 **{lock_arg: True for lock_arg in lock_args}  # pyrefly: ignore
             )
 
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             keydata: list[KeyData] = list(
                 (await session.execute(statement)).scalars().all()
             )
@@ -195,7 +190,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
         *,
         returning: bool = False,
     ) -> KeyPrivateDataResult | None:
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             keydata: KeyData = (
                 await session.execute(
                     insert(KeyData)
@@ -210,8 +205,6 @@ class KeydataRepository(metaclass=SingletonMetaclass):
                     .returning(KeyData)
                 )
             ).scalar_one()
-
-            await session.commit()
 
             if returning:
                 return KeyPrivateDataResult.construct_from_orm(keydata)
@@ -252,7 +245,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
         return_expired: bool = False,
         public_data_only: bool = True,
     ) -> list[KeyPublicDataResult] | list[KeyPrivateDataResult] | None:
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             expired_keys: list[KeyData] = list(
                 (
                     await session.execute(
@@ -265,8 +258,6 @@ class KeydataRepository(metaclass=SingletonMetaclass):
                 .scalars()
                 .all()
             )
-
-            await session.commit()
 
             if return_expired:
                 if public_data_only:
@@ -311,7 +302,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
         return_expired: bool = False,
         public_data_only: bool = True,
     ) -> KeyPublicDataResult | KeyPrivateDataResult | None:
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             expired_key: KeyData | None = (
                 await session.execute(
                     update(KeyData)
@@ -324,12 +315,70 @@ class KeydataRepository(metaclass=SingletonMetaclass):
             if not expired_key:
                 return
 
-            await session.commit()
-
             if return_expired:
                 if public_data_only:
                     return KeyPublicDataResult.construct_from_orm(expired_key)
                 return KeyPrivateDataResult.construct_from_orm(expired_key)
+
+    @overload
+    async def batch_expire_keydata(
+        self,
+        kids: Sequence[str],
+        expiry_time: datetime | None = None,
+        *,
+        return_expired: Literal[False] = False,
+        public_data_only: bool = True,
+    ) -> None: ...
+    @overload
+    async def batch_expire_keydata(
+        self,
+        kids: Sequence[str],
+        expiry_time: datetime | None = None,
+        *,
+        return_expired: Literal[True] = True,
+        public_data_only: Literal[True] = True,
+    ) -> list[KeyPublicDataResult]: ...
+    @overload
+    async def batch_expire_keydata(
+        self,
+        kids: Sequence[str],
+        expiry_time: datetime | None = None,
+        *,
+        return_expired: Literal[True] = True,
+        public_data_only: Literal[False] = False,
+    ) -> list[KeyPrivateDataResult]: ...
+
+    async def batch_expire_keydata(
+        self,
+        kids: Sequence[str],
+        expiry_time: datetime | None = None,
+        *,
+        return_expired: bool = False,
+        public_data_only: bool = True,
+    ) -> list[KeyPublicDataResult] | list[KeyPrivateDataResult] | None:
+        async with self._work_scoped_session() as session:
+            expired_keys: list[KeyData] = list(
+                (
+                    await session.execute(
+                        update(KeyData)
+                        .where(KeyData.kid.in_(kids))
+                        .values(expired_at=expiry_time or datetime.now())
+                        .returning(KeyData)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            if not expired_keys:
+                return [] if return_expired else None
+
+            if return_expired:
+                if public_data_only:
+                    return list(
+                        map(KeyPublicDataResult.construct_from_orm, expired_keys)
+                    )
+                return list(map(KeyPrivateDataResult.construct_from_orm, expired_keys))
 
     @overload
     async def get_expired_keys(
@@ -343,7 +392,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
     async def get_expired_keys(
         self, *, public_data_only: bool = True
     ) -> list[KeyPublicDataResult] | list[KeyPrivateDataResult]:
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             expired_keys: list[KeyData] = list(
                 (
                     await session.execute(
@@ -391,7 +440,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
             statement = statement.with_for_update(
                 **{i: True for i in lock_args}  # pyrefly: ignore
             )
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             keys: list[KeyData] = list(
                 (await session.execute(statement)).scalars().all()
             )
@@ -426,7 +475,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
                 **{i: True for i in lock_args}  # pyrefly: ignore
             )
 
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             active_key: KeyData | None = (
                 await session.execute(statement)
             ).scalar_one_or_none()
@@ -452,7 +501,7 @@ class KeydataRepository(metaclass=SingletonMetaclass):
         epoch = epoch or datetime.now()
         previous_key_rotation_time = previous_key_rotation_time or epoch
 
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             await session.execute(
                 update(KeyData)
                 .where(KeyData.kid == previous_key_id)
@@ -473,5 +522,3 @@ class KeydataRepository(metaclass=SingletonMetaclass):
                     alg=alg,
                 )
             )
-
-            await session.commit()

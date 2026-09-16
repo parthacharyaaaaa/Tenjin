@@ -12,7 +12,6 @@ from fastapi.responses import JSONResponse
 
 from redis.asyncio import Redis
 
-from sqlalchemy import update
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -29,7 +28,6 @@ from auth_server.dependencies import (
     get_database_session,
     get_token_manager,
 )
-from auth_server.models.database import KeyData
 from auth_server.models.session import AdminSession
 from auth_server.repositories.keydata import KeydataRepository
 from auth_server.security.admin_roles import AdminRole
@@ -86,7 +84,7 @@ async def invalidate_key(
     key_lock: Final[str] = f"INVALIDATE_KEY:{kid}"
     if not synced_store_client.set(key_lock, admin_session.admin_id, ex=300, nx=True):
         # Another worker is performing clean operation, reject this request
-        adminID: bytes = synced_store_client.get(key_lock)  # type: ignore[reportAssignmentType]
+        adminID: bytes = await synced_store_client.get(key_lock)  # type: ignore[reportAssignmentType]
         return JSONResponse(
             {
                 "message": "There is an active keystore clean being performed, your request has been rejected",
@@ -107,46 +105,52 @@ async def invalidate_key(
 
     target_key: KeyPrivateDataResult | None = None
     try:
-        # Select and lock key if exists
-        target_key = await keydata_repository.get_keydata(kid, public_only=False)
-
-        # Key exists
-        if not target_key:
-            raise HTTPException(404, f"No key with ID {kid} found")
-
-        # Key is inactive
-        if not target_key.rotated_out_at:
-            # Key is active, cannot expire directly
-            await report_suspicious_activity(
-                session,
-                config,
-                synced_store_client,
-                admin_session.admin_id,
-                f"Invaldiation attempt on active key {kid}",
-            )
-            raise HTTPException(
-                409, f"Active key {kid} must be rotated out before being invalidated"
+        async with keydata_repository.unit_of_work():
+            # Select and lock key if exists
+            # Weaker, shared FOR KEY SHARE lock acquired since contention is
+            # handled above DB, and we only need to prevent DELETE and key-UPDATEs
+            target_key = await keydata_repository.get_keydata(
+                kid,
+                public_only=False,
+                lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ),
             )
 
-        # Key is still valid for verification
-        if target_key.expired_at:
-            raise HTTPException(409, f"Key {kid} has already been expired")
+            # Key exists
+            if not target_key:
+                raise HTTPException(404, f"No key with ID {kid} found")
 
-        # Before persisting to DB, delete public PEM file, and update JWKS
-        updated_jwks = [mapping for mapping in original_jwks if mapping["kid"] != kid]
-        with open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
-            jwks_file.write(
-                orjson.dumps({"keys": updated_jwks}, option=orjson.OPT_INDENT_2)
-            )
-        # Delete public PEM file
-        public_pem_fpath.unlink(missing_ok=True)
+            # Key is inactive
+            if not target_key.rotated_out_at:
+                # Key is active, cannot expire directly
+                await report_suspicious_activity(
+                    session,
+                    config,
+                    synced_store_client,
+                    admin_session.admin_id,
+                    f"Invaldiation attempt on active key {kid}",
+                )
+                raise HTTPException(
+                    409,
+                    f"Active key {kid} must be rotated out before being invalidated",
+                )
 
-        # File I/O done, commit DB
-        await keydata_repository.expire_keydata(kid)
+            # Key is still valid for verification
+            if target_key.expired_at:
+                raise HTTPException(409, f"Key {kid} has already been expired")
+
+            await keydata_repository.expire_keydata(kid)
+
+            # Before persisting to DB, delete public PEM file, and update JWKS
+            updated_jwks = [
+                mapping for mapping in original_jwks if mapping["kid"] != kid
+            ]
+            with open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
+                jwks_file.write(
+                    orjson.dumps({"keys": updated_jwks}, option=orjson.OPT_INDENT_2)
+                )
+            # Delete public PEM file
+            public_pem_fpath.unlink(missing_ok=True)
     except (SQLAlchemyError, OSError) as exc:
-        # Rollback DB
-        await session.rollback()
-
         # Revert JWKS state
         with open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
             jwks_file.write(
@@ -206,17 +210,16 @@ async def clean_keystore(
         AdminSession, Depends(require_permissions(Permission.CLEAN_KEYSTORE))
     ],
     config: Annotated[AppConfig, Depends(get_app_config)],
-    session: Annotated[AsyncSession, Depends(get_database_session)],
     keydata_repository: Annotated[KeydataRepository, Depends(get_keydata_repository)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
 ) -> JSONResponse:
     """Invalidate all keys except for the currently active key"""
     # Check whether another worker is performing this action
-    if not synced_store_client.set(
+    if not await synced_store_client.set(
         "CLEAN_KEYSTORE_LOCK", admin_session.admin_id, ex=300, nx=True
     ):
         # Another worker is performing clean operation, reject this request
-        adminID: bytes = synced_store_client.get("CLEAN_KEYSTORE_LOCK")  # type: ignore[reportAssignmentType]
+        adminID: bytes = await synced_store_client.get("CLEAN_KEYSTORE_LOCK")  # type: ignore[reportAssignmentType]
         return JSONResponse(
             {
                 "message": "There is an active keystore clean being performed, your request has been rejected",
@@ -242,83 +245,78 @@ async def clean_keystore(
     # At this stage, we have all the old data saved for a rollback.
     # JWKS can be restored, and any PEM files deleted in an erroneous transaction
     # can be regenerated safely
-    try:
-        # Fetch and lock all keys that have been rotated out, but not expired
-
-        valid_inactive_keys: list[KeyPublicDataResult] = (
-            await keydata_repository.get_valid_inactive_keys(
-                lock_args=(SelectionLockOption.KEY_SHARE,)
-            )
-        )
-
-        # Update and set as invalid, hence these keys can no longer be used for verification either
-        await session.execute(
-            update(KeyData)
-            .where(KeyData.kid.in_(valid_inactive_keys))
-            .values(expired_at=datetime.now())
-        )
-
-        # Fetch latest KID to prune JWKS and PEM files accordingly
-        active_key: KeyPublicDataResult | None = (
-            await keydata_repository.get_active_key()
-        )
-        if not active_key:  # Violates business invariant, should never happen
-            raise HTTPException(500, "Invalid keystore state!")
-
-        verification_key: ecdsa.VerifyingKey = ecdsa.VerifyingKey.from_pem(
-            active_key.public_pem.decode()
-        )
-        # ecdsa.VerifyingKey.pubkey is hinted as being None,
-        # thanks to its constructor,
-        # but actually does return a valid type
-        active_key_mapping: dict[str, Any] = {
-            "kty": "EC",
-            "alg": "ECDSA",
-            "crv": str(ecdsa.SECP256k1),
-            "use": "sig",
-            "kid": active_key.kid,
-            "x": to_base64url(int(verification_key.pubkey.point.x())),  # type: ignore[reportAttributeAccessIssue]
-            "y": to_base64url(int(verification_key.pubkey.point.y())),  # type: ignore[reportAttributeAccessIssue]
-        }
-
-        with open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
-            jwks_file.write(
-                orjson.dumps({"keys": [active_key_mapping]}, option=orjson.OPT_INDENT_2)
+    async with keydata_repository.unit_of_work():
+        try:
+            # Fetch and lock all keys that have been rotated out, but not expired
+            valid_inactive_keys: list[KeyPublicDataResult] = (
+                await keydata_repository.get_valid_inactive_keys(
+                    lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ)
+                )
             )
 
-        # Purge all public PEM files for invalid keys
-        for keyID in valid_inactive_keys:
-            (
-                config.JWKS.PUBLIC_PEM_DIRECTORY.joinpath(
-                    f"public_{keyID}_key.pem"
-                ).unlink(missing_ok=True)
+            # Update and set as invalid, hence these keys can no longer be used for verification either
+            await keydata_repository.batch_expire_keydata(
+                tuple(k.kid for k in valid_inactive_keys)
             )
 
-        await session.commit()  # Finally persist this transaction at the most important layer i.e. DB
-    except Exception as exc:
-        # Perform full rollback
-        # DB
-        await session.rollback()
-
-        # JWKS
-        with open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
-            jwks_file.write(
-                orjson.dumps({"keys": old_jwks}, option=orjson.OPT_INDENT_2)
+            # Fetch latest KID to prune JWKS and PEM files accordingly
+            active_key: KeyPublicDataResult | None = (
+                await keydata_repository.get_active_key()
             )
+            if not active_key:  # Violates business invariant, should never happen
+                raise HTTPException(500, "Invalid keystore state!")
 
-        # PEM files
-        for kid, public_pem in pem_mappings.items():
-            fpath: Path = config.JWKS.PUBLIC_PEM_DIRECTORY / f"public_{kid}_key.pem"
-            # Regenerate public PEM file in case of deletion
-            if not fpath.exists():
-                fpath.write_bytes(public_pem)
+            verification_key: ecdsa.VerifyingKey = ecdsa.VerifyingKey.from_pem(
+                active_key.public_pem.decode()
+            )
+            # ecdsa.VerifyingKey.pubkey is hinted as being None,
+            # thanks to its constructor,
+            # but actually does return a valid type
+            active_key_mapping: dict[str, Any] = {
+                "kty": "EC",
+                "alg": "ECDSA",
+                "crv": str(ecdsa.SECP256k1),
+                "use": "sig",
+                "kid": active_key.kid,
+                "x": to_base64url(int(verification_key.pubkey.point.x())),  # type: ignore[reportAttributeAccessIssue]
+                "y": to_base64url(int(verification_key.pubkey.point.y())),  # type: ignore[reportAttributeAccessIssue]
+            }
 
-        # All rollbacks performed, crash and burn
-        raise HTTPException(500, "Failed to perform clean operation") from exc
-    finally:
-        synced_store_client.delete("CLEAN_KEYSTORE_LOCK")
+            with open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
+                jwks_file.write(
+                    orjson.dumps(
+                        {"keys": [active_key_mapping]}, option=orjson.OPT_INDENT_2
+                    )
+                )
 
-    # Update global state, no need to fetch current list of keys anyways since as of this operation only a single active key would be valid throughout
+            # Purge all public PEM files for invalid keys
+            for keyID in valid_inactive_keys:
+                (
+                    config.JWKS.PUBLIC_PEM_DIRECTORY.joinpath(
+                        f"public_{keyID}_key.pem"
+                    ).unlink(missing_ok=True)
+                )
+        except Exception as exc:
+            # JWKS
+            with open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
+                jwks_file.write(
+                    orjson.dumps({"keys": old_jwks}, option=orjson.OPT_INDENT_2)
+                )
+
+            # PEM files
+            for kid, public_pem in pem_mappings.items():
+                fpath: Path = config.JWKS.PUBLIC_PEM_DIRECTORY / f"public_{kid}_key.pem"
+                # Regenerate public PEM file in case of deletion
+                if not fpath.exists():
+                    fpath.write_bytes(public_pem)
+
+            # All rollbacks performed, crash and burn
+            raise HTTPException(500, "Failed to perform clean operation") from exc
+        finally:
+            synced_store_client.delete("CLEAN_KEYSTORE_LOCK")
+
+    # Update global state, no need to fetch current list of keys
+    # anyways since as of this operation only a single active key would be valid throughout
     async with synced_store_client.pipeline() as pipe:
         pipe.delete(SyncedStoreStrings.VALID_KEYS)
         pipe.lpush(SyncedStoreStrings.VALID_KEYS, active_key.kid)
@@ -346,12 +344,12 @@ async def rotate_keys(
 ) -> JSONResponse:
     """Trigger a key rotation sequence"""
     # Check for concurrent worker performing a key rotation
-    lock = synced_store_client.set(
+    lock = await synced_store_client.set(
         SyncedStoreStrings.KEY_ROTATION_LOCK, admin_session.admin_id, ex=300, nx=True
     )
     if not lock:
         # Another worker is performing this action, reject this request >:(
-        adminID: bytes = synced_store_client.get(SyncedStoreStrings.KEY_ROTATION_LOCK)  # type: ignore[reportAssignmentType]
+        adminID: bytes = await ynced_store_client.get(SyncedStoreStrings.KEY_ROTATION_LOCK)  # type: ignore[reportAssignmentType]
         return JSONResponse(
             {
                 "message": "There is an active key rotation being performed, your request has been rejected",
@@ -361,7 +359,7 @@ async def rotate_keys(
         )
 
     # Check for cooldown, must be global for all staff admins
-    cooldown_flag: str = synced_store_client.get(SyncedStoreStrings.KEY_ROTATION_COOLDOWN)  # type: ignore[reportAssignmentType]
+    cooldown_flag: str = await synced_store_client.get(SyncedStoreStrings.KEY_ROTATION_COOLDOWN)  # type: ignore[reportAssignmentType]
     if cooldown_flag and admin_session.role == AdminRole.STAFF:
         await report_suspicious_activity(
             session,
@@ -388,45 +386,46 @@ async def rotate_keys(
     # Update DB first, then perform JWKS and PEM writes
     overflow: bool = False
     target_id: str | None = None
-    try:
-        # Update currently active key
-        previous_key: KeyPublicDataResult | None = (
-            await keydata_repository.get_active_key()
-        )
-        if not previous_key:
-            raise HTTPException(500, "Invalid key state!")
-
-        # Reflect rotation in DB
-        await keydata_repository.rotate_key(
-            previous_key.kid,
-            kid,
-            new_key_public_pem=verification_key.to_pem(),
-            new_key_private_pem=signing_key.to_pem(),
-            rotation_author=admin_session.admin_id,
-            epoch=generation_epoch,
-        )
-
-        # Check whether max capacity has been reached. If so, purge oldest key
-        valid_inactive_key_data: list[tuple[str, datetime]] = [
-            (i.kid, i.rotated_out_at)
-            for i in (
-                await keydata_repository.get_valid_inactive_keys(
-                    lock_args=(SelectionLockOption.READ, SelectionLockOption.KEY_SHARE)
-                )
+    async with keydata_repository.unit_of_work():
+        try:
+            # Update currently active key
+            previous_key: KeyPublicDataResult | None = (
+                await keydata_repository.get_active_key()
             )
-        ]
+            if not previous_key:
+                raise HTTPException(500, "Invalid key state!")
 
-        if len(valid_inactive_key_data) > config.KEYS.MAX_VALID_KEYS:
-            overflow = True
+            # Reflect rotation in DB
+            await keydata_repository.rotate_key(
+                previous_key.kid,
+                kid,
+                new_key_public_pem=verification_key.to_pem(),
+                new_key_private_pem=signing_key.to_pem(),
+                rotation_author=admin_session.admin_id,
+                epoch=generation_epoch,
+            )
 
-            target_id = sorted(valid_inactive_key_data, key=lambda x: x[1])[0][0]
-            await keydata_repository.expire_keydata(target_id)
-    except SQLAlchemyError:
-        await session.rollback()
-        synced_store_client.delete(SyncedStoreStrings.KEY_ROTATION_LOCK)
-        raise HTTPException(
-            500, "An error occured in performing key rotation (Database level)"
-        )
+            # Check whether max capacity has been reached. If so, purge oldest key
+            valid_inactive_key_data: list[tuple[str, datetime]] = [
+                (i.kid, i.rotated_out_at)
+                for i in (
+                    await keydata_repository.get_valid_inactive_keys(
+                        lock_args=(
+                            SelectionLockOption.READ,
+                            SelectionLockOption.KEY_SHARE,
+                        )
+                    )
+                )
+            ]
+
+            if len(valid_inactive_key_data) > config.KEYS.MAX_VALID_KEYS:
+                overflow = True
+
+                target_id = sorted(valid_inactive_key_data, key=lambda x: x[1])[0][0]
+                await keydata_repository.expire_keydata(target_id)
+        except SQLAlchemyError:
+            await synced_store_client.delete(SyncedStoreStrings.KEY_ROTATION_LOCK)
+            raise HTTPException(500, "An error occured in performing key rotation")
 
     # Update files
     update_jwks(

@@ -1,6 +1,5 @@
 """Data access repository for Keydata SA model"""
 
-from auth_server.security.admin_roles import AdminRole
 from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -8,13 +7,14 @@ from typing import Any, ClassVar, Literal, overload
 
 from redis.typing import EncodableT, FieldT
 
-from auxillary.data_structures.dto import AbstractResult
-from auxillary.singleton import SingletonMetaclass
-from auth_server.models.database import Admin
-from auth_server.strings import SelectionLockOption
-
 from sqlalchemy import insert, select, update
-from sqlalchemy.ext.asyncio.session import AsyncSession, async_sessionmaker
+
+from auxillary.data_structures.dto import AbstractResult
+from auxillary.data_structures.repository import AbstractWorkRepository
+
+from auth_server.models.database import Admin
+from auth_server.security.admin_roles import AdminRole
+from auth_server.strings import SelectionLockOption
 
 
 @dataclass(slots=True, init=False)
@@ -66,10 +66,8 @@ class AdminPrivateResult(AdminPublicResult):
     signing_key: bytes
 
 
-@dataclass(frozen=True, slots=True, weakref_slot=True)
-class AdminRepository(metaclass=SingletonMetaclass):
-    session_maker: async_sessionmaker[AsyncSession]
-
+@dataclass(slots=True)
+class AdminRepository(AbstractWorkRepository):
     @overload
     async def get_admin(
         self,
@@ -106,7 +104,7 @@ class AdminRepository(metaclass=SingletonMetaclass):
                 **{lock_arg: True for lock_arg in lock_args}  # pyrefly: ignore
             )
 
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             admin: Admin | None = (
                 await session.execute(statement)
             ).scalar_one_or_none()
@@ -152,7 +150,7 @@ class AdminRepository(metaclass=SingletonMetaclass):
                 **{lock_arg: True for lock_arg in lock_args}  # pyrefly: ignore
             )
 
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             admin: Admin | None = (
                 await session.execute(statement)
             ).scalar_one_or_none()
@@ -216,7 +214,7 @@ class AdminRepository(metaclass=SingletonMetaclass):
         returning: bool = False,
         public_data_only: bool = True,
     ) -> AdminPublicResult | AdminPrivateResult | None:
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             admin: Admin = (
                 await session.execute(
                     insert(Admin)
@@ -231,7 +229,6 @@ class AdminRepository(metaclass=SingletonMetaclass):
                     .returning(Admin)
                 )
             ).scalar_one()
-            await session.commit()
 
             if returning:
                 if public_data_only:
@@ -242,13 +239,12 @@ class AdminRepository(metaclass=SingletonMetaclass):
     async def update_last_login(
         self, admin_id: int, login_time: datetime | None = None
     ) -> None:
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             await session.execute(
                 update(Admin)
                 .where(Admin.id_ == admin_id)
                 .values(last_login=login_time or datetime.now())
             )
-            await session.commit()
 
     @overload
     async def delete_admin(
@@ -288,7 +284,7 @@ class AdminRepository(metaclass=SingletonMetaclass):
         returning: bool = False,
         public_data_only: bool = True,
     ) -> AdminPublicResult | AdminPrivateResult | None:
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             admin: Admin | None = (
                 await session.execute(
                     update(Admin)
@@ -297,7 +293,6 @@ class AdminRepository(metaclass=SingletonMetaclass):
                     .returning(Admin)
                 )
             ).scalar_one_or_none()
-            await session.commit()
 
             if returning and admin:
                 if public_data_only:
@@ -343,7 +338,7 @@ class AdminRepository(metaclass=SingletonMetaclass):
         returning: bool = False,
         public_data_only: bool = True,
     ) -> AdminPublicResult | AdminPrivateResult | None:
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             admin: Admin | None = (
                 await session.execute(
                     update(Admin)
@@ -352,7 +347,6 @@ class AdminRepository(metaclass=SingletonMetaclass):
                     .returning(Admin)
                 )
             ).scalar_one_or_none()
-            await session.commit()
 
             if returning and admin:
                 if public_data_only:
@@ -414,7 +408,7 @@ class AdminRepository(metaclass=SingletonMetaclass):
         returning: bool = False,
         public_data_only: bool = True,
     ) -> AdminPublicResult | AdminPrivateResult | None:
-        async with self.session_maker() as session:
+        async with self._work_scoped_session() as session:
             admin: Admin = (
                 await session.execute(
                     insert(Admin)
@@ -429,7 +423,6 @@ class AdminRepository(metaclass=SingletonMetaclass):
                     .returning(Admin)
                 )
             ).scalar_one()
-            await session.commit()
 
             if not returning:
                 return
