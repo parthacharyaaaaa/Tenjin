@@ -1,21 +1,10 @@
 repos:
-  - repo: https://github.com/psf/black-pre-commit-mirror
-    rev: 26.3.1
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.7
     hooks:
-      - id: black
-        name: black
-        entry: black
-        language: python
-        language_version: python3.13
-        types_or: [python, pyi]
-
-  - repo: local
-    hooks:
-      - id: autoflake
-        name: autoflake
-        language: python
-        types_or: [python, pyi]
-        entry: .pre-commit/autoflake_runner.bash
+      # - id: ruff-check
+        # args: [--fix]
+      - id: ruff-format
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
