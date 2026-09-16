@@ -452,19 +452,18 @@ async def report_comment(
         intent_conflict_message=conflict_message,
     ) as latest_intent:
         intent_id: Final[str] = uuid4().hex
-        if not latest_intent:
-            if await comment_repo.check_reported(
-                comment_id, access_token["sid"], report_model.tag
-            ):
-                await cache_manager.set_intent(
-                    intent_id,
-                    str(access_token["sid"]),
-                    str(comment_id),
-                    resource_name,
-                    Action.REPORT,
-                    IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-                )
-                raise HTTPException(409, conflict_message)
+        if not latest_intent and await comment_repo.check_reported(
+            comment_id, access_token["sid"], report_model.tag
+        ):
+            await cache_manager.set_intent(
+                intent_id,
+                str(access_token["sid"]),
+                str(comment_id),
+                resource_name,
+                Action.REPORT,
+                IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+            )
+            raise HTTPException(409, conflict_message)
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(

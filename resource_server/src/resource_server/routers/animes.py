@@ -188,17 +188,18 @@ async def unsub_anime(
         intent_conflict_message=conflict_message,
     ) as latest_intent:
         intent_id: Final[str] = uuid4().hex
-        if not latest_intent:
-            if await anime_repo.check_subscription(anime_id, access_token["sid"]):
-                await cache_manager.set_intent(
-                    intent_id,
-                    str(access_token["sid"]),
-                    str(anime_id),
-                    AnimeSubscription.__tablename__,
-                    Action.UNSUB,
-                    IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-                )
-                raise HTTPException(409, conflict_message)
+        if not latest_intent and await anime_repo.check_subscription(
+            anime_id, access_token["sid"]
+        ):
+            await cache_manager.set_intent(
+                intent_id,
+                str(access_token["sid"]),
+                str(anime_id),
+                AnimeSubscription.__tablename__,
+                Action.UNSUB,
+                IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+            )
+            raise HTTPException(409, conflict_message)
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(

@@ -67,27 +67,17 @@ select = [
     "F",
     "I",
     "N",
-    # "B0",
+    "B0",
     "DTZ",
-    # "RET",
-    # "ASYNC",
-    # "PERF101",
-    # "PERF102",
-    # "PERF401"
-    # "PERF402",
-    # "PERF403",
-    # "SIM101",
-    # "SIM102",
-    # "SIM109",
-    # "SIM110",
-    # "SIM114",
-    # "SIM115",
-    # "SIM300",
-    # "SIM401"
+    "RET",
+    "ASYNC",
+    "PERF101", "PERF102", "PERF401", "PERF402", "PERF403",
+    "SIM101", "SIM102", "SIM109", "SIM110","SIM114", "SIM115", "SIM300", "SIM401"
 ]
 
 ignore = [
-    "B008", "B009", "B010", "B013", "B019", "B043", "E741", "E731"
+    "B008", "B009", "B010", "B013", "B019", "B043", "E741", "E731",
+    "RET503"
 ]
 
 [tool.ruff.lint.per-file-ignores]

@@ -478,17 +478,18 @@ async def save_post(
         intent_conflict_message=conflicting_message,
     ) as latest_intent:
         intent_id: Final[str] = uuid4().hex
-        if not latest_intent:
-            if await post_repo.check_saved(post_id, access_token["sid"]):
-                await cache_manager.set_intent(
-                    intent_id,
-                    str(access_token["sid"]),
-                    str(post_id),
-                    PostResult.resource_name,
-                    Action.SAVE,
-                    IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-                )
-                raise HTTPException(409, conflicting_message)
+        if not latest_intent and await post_repo.check_saved(
+            post_id, access_token["sid"]
+        ):
+            await cache_manager.set_intent(
+                intent_id,
+                str(access_token["sid"]),
+                str(post_id),
+                PostResult.resource_name,
+                Action.SAVE,
+                IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+            )
+            raise HTTPException(409, conflicting_message)
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -559,17 +560,18 @@ async def unsave_post(
         intent_conflict_message=conflicting_message,
     ) as latest_intent:
         intent_id: Final[str] = uuid4().hex
-        if not latest_intent:
-            if not (await post_repo.check_saved(post_id, access_token["sid"])):
-                await cache_manager.set_intent(
-                    intent_id,
-                    str(access_token["sid"]),
-                    str(post_id),
-                    PostResult.resource_name,
-                    Action.SAVE,
-                    IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-                )
-                raise HTTPException(409, "Post not saved")
+        if not (
+            latest_intent or await post_repo.check_saved(post_id, access_token["sid"])
+        ):
+            await cache_manager.set_intent(
+                intent_id,
+                str(access_token["sid"]),
+                str(post_id),
+                PostResult.resource_name,
+                Action.SAVE,
+                IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+            )
+            raise HTTPException(409, "Post not saved")
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
