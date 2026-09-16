@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from functools import partial
 from typing import Any, Sequence
 
 from auxillary.utils import json_repr
@@ -70,20 +71,32 @@ async def dlq_consumer(
                 # Retry, but appending back to DLQ is pointless in a DLQ worker
                 await execute_with_redis_retries(
                     config.WORKER,
-                    lambda: event_stream_manager.acknowledge_events(
-                        (dlq_event,), stream_name, group_name
+                    partial(
+                        event_stream_manager.acknowledge_events,
+                        (dlq_event,),
+                        stream_name,
+                        group_name,
                     ),
                 )
 
             # !duplicate event
             insertion_params: tuple[Any, ...] = get_dlq_insertion_parameters(dlq_event)
-            db_coroutine = lambda: _insert_dlq_record(
-                conn, DLQ_INSERTION_COMPOSED_STATEMENT, insertion_params
+            await db_execute_with_retries(
+                config.WORKER,
+                conn,
+                partial(
+                    _insert_dlq_record,
+                    conn,
+                    DLQ_INSERTION_COMPOSED_STATEMENT,
+                    insertion_params,
+                ),
             )
-            await db_execute_with_retries(config.WORKER, conn, db_coroutine)
             await execute_with_redis_retries(
                 config.WORKER,
-                lambda: event_stream_manager.acknowledge_events(
-                    (dlq_event,), stream_name, group_name
+                partial(
+                    event_stream_manager.acknowledge_events,
+                    (dlq_event,),
+                    stream_name,
+                    group_name,
                 ),
             )

@@ -49,13 +49,14 @@ async def downstream_deletion_worker(
     dead_letter_stream_name: DEAD_LETTER_STREAM_NAME,
     status_proxy: STATUS_PROXY,
 ) -> None:
-    side_effects_retrieval_coroutine = lambda: get_side_effect_row(
-        conn, SideEffectsTables.DOWNSTREAM_DELETION
-    )
     while status_proxy.status_ok:
         async with pool.connection() as conn:
             event_id, raw_payload = await db_execute_with_retries(
-                config.WORKER, conn, side_effects_retrieval_coroutine
+                config.WORKER,
+                conn,
+                partial(
+                    get_side_effect_row, conn, SideEffectsTables.DOWNSTREAM_DELETION
+                ),
             )
             async with side_effects_processing_context(
                 conn,
@@ -70,19 +71,18 @@ async def downstream_deletion_worker(
                 )
                 del raw_payload
 
-                downstream_deletion_callable = lambda: (
-                    downstream_soft_delete_strong_entity(
+                await db_execute_with_retries(
+                    config.WORKER,
+                    conn,
+                    partial(
+                        downstream_soft_delete_strong_entity,
                         conn,
                         event_id,
                         payload.foreign_key,
                         payload.orphan_table,
                         payload.foreign_key_column,
                         payload.deleted_at,
-                    )
-                )
-
-                await db_execute_with_retries(
-                    config.WORKER, conn, downstream_deletion_callable
+                    ),
                 )
 
 
@@ -96,11 +96,12 @@ async def downstream_decrement_worker(
 ) -> None:
     while status_proxy.status_ok:
         async with pool.connection() as conn:
-            side_effects_retrieval_coroutine = lambda: get_side_effect_row(
-                conn, SideEffectsTables.DOWNSTREAM_DECREMENT
-            )
             event_id, raw_payload = await db_execute_with_retries(
-                config.WORKER, conn, side_effects_retrieval_coroutine
+                config.WORKER,
+                conn,
+                partial(
+                    get_side_effect_row, conn, SideEffectsTables.DOWNSTREAM_DECREMENT
+                ),
             )
             async with side_effects_processing_context(
                 conn,
@@ -190,11 +191,14 @@ async def downstream_cache_invalidation_worker(
 ) -> None:
     while status_proxy.status_ok:
         async with pool.connection() as conn:
-            side_effects_retrieval_coroutine = lambda: get_side_effect_row(
-                conn, SideEffectsTables.DOWNSTREAM_CACHE_INVALIDATION
-            )
             event_id, raw_payload = await db_execute_with_retries(
-                config.WORKER, conn, side_effects_retrieval_coroutine
+                config.WORKER,
+                conn,
+                partial(
+                    get_side_effect_row,
+                    conn,
+                    SideEffectsTables.DOWNSTREAM_CACHE_INVALIDATION,
+                ),
             )
             async with side_effects_processing_context(
                 conn,

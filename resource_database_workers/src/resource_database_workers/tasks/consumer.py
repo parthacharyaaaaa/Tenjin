@@ -66,15 +66,19 @@ async def user_orphan_consumer(
                 batch, fresh_event_ids, stream_name, group_name
             )
 
-            # Implicit events not in the network payload (downstream deletion only in this case)
-            downstream_deletion_outbox_callable = lambda: (
-                insert_downstream_deletion_outbox_entries(
-                    conn, batch, StrongEntity.USER, GenericLiterals.ID
-                )
-            )
             try:
+                # Implicit events not in the network payload
+                # (downstream deletion only in this case)
                 await db_execute_with_retries(
-                    config.WORKER, conn, downstream_deletion_outbox_callable
+                    config.WORKER,
+                    conn,
+                    partial(
+                        insert_downstream_deletion_outbox_entries,
+                        conn,
+                        batch,
+                        StrongEntity.USER,
+                        GenericLiterals.ID,
+                    ),
                 )
             except Exception:
                 await declare_dead_with_retries(
@@ -130,19 +134,21 @@ async def queue_insertion_consumer(
                 continue
 
             inserted_ids: list[int] = []  # Populated in-place by batch_function
-            insertion_callable = lambda: batch_insert_with_isolation(
-                conn, batch, inserted_ids, action
-            )
             try:
-                await db_execute_with_retries(config.WORKER, conn, insertion_callable)
+                await db_execute_with_retries(
+                    config.WORKER,
+                    conn,
+                    partial(
+                        batch_insert_with_isolation, conn, batch, inserted_ids, action
+                    ),
+                )
                 successful_events: tuple[StreamedEvent, ...] = tuple(
                     event for event in batch if event.event_id in inserted_ids
                 )
-                outbox_insertion_callable = lambda: outbox_insertion(
-                    conn, successful_events
-                )
                 await db_execute_with_retries(
-                    config.WORKER, conn, outbox_insertion_callable
+                    config.WORKER,
+                    conn,
+                    partial(outbox_insertion, conn, successful_events),
                 )
                 await conn.commit()
             except Exception:  # Entire batch failed
@@ -226,10 +232,9 @@ async def queue_deletion_consumer(
                         deletion_data,
                     ),
                 )
-                # outbox_insertion_callable = lambda: outbox_insertion(conn, batch)
-                # await db_execute_with_retries(
-                #     config.WORKER, conn, outbox_insertion_callable
-                # )
+                await db_execute_with_retries(
+                    config.WORKER, conn, partial(outbox_insertion, conn, batch)
+                )
 
                 # Implicit events not in the network payload (downstream deletion only in this case)
                 await db_execute_with_retries(
