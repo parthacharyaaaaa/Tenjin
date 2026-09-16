@@ -115,7 +115,6 @@ class RedisStreamManager:
         event_stream_name: StreamName,
         group_name: str,
     ) -> None:
-        self.redis_client
         async with self.redis_client.pipeline(transaction=True) as pipeline:
             for event in events:
                 pipeline.xack(event_stream_name, group_name, event.event_id)

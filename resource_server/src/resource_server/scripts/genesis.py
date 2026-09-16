@@ -87,6 +87,7 @@ def main(
         warnings.warn(
             "max_iterations set below anime_count, incrementing...",
             category=UserWarning,
+            stacklevel=2,
         )
         max_iterations = anime_count
 
@@ -285,6 +286,7 @@ if __name__ == "__main__":
         warnings.warn(
             "TENNIN superuser password being passed as CLI argument may not be safe!",
             category=UserWarning,
+            stacklevel=2,
         )
 
     main(**dict(args._get_kwargs()))

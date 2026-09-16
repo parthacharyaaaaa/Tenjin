@@ -119,7 +119,7 @@ class KeyManager(metaclass=SingletonMetaclass):
 
         # Wait for current worker and then read global key mapping
         if not res:
-            for i in range(self.app_config.JWKS.MAX_GLOBAL_MAPPING_POLLS):
+            for _ in range(self.app_config.JWKS.MAX_GLOBAL_MAPPING_POLLS):
                 if await self.app_redis_client.get(RedisConstants.JWKS_POLL_LOCK):
                     await asyncio.sleep(
                         self.app_config.JWKS.GLOBAL_MAPPING_POLL_INTERVAL * 2
@@ -127,7 +127,7 @@ class KeyManager(metaclass=SingletonMetaclass):
                 break
 
             global_mapping: dict[str, bytes] = {}
-            for t in range(self.app_config.JWKS.MAX_GLOBAL_MAPPING_POLLS):
+            for _ in range(self.app_config.JWKS.MAX_GLOBAL_MAPPING_POLLS):
                 global_mapping = await self.get_global_key_mapping()
                 if global_mapping:
                     self.current_mapping = global_mapping

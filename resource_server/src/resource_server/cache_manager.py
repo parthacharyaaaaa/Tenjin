@@ -280,7 +280,7 @@ class CacheManager(metaclass=SingletonMetaclass):
 
         # Upon cache miss, elect a leader to actually talk to DB
         lock_name: Final[str] = self.derive_lock_key(key)
-        for leader_attempt in range(self.cache_config.FETCH_MAX_RETRIES):
+        for _leader_attempt in range(self.cache_config.FETCH_MAX_RETRIES):
             leader: bool = False
             leader = bool(
                 await self.redis_client.set(
@@ -303,7 +303,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                 finally:
                     await self.redis_client.delete(lock_name)
             else:
-                for i in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
+                for _ in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
                     if await self.redis_client.get(lock_name):
                         await asyncio.sleep(
                             self.cache_config.FETCH_WAITING_INITIAL_INTERVAL
@@ -473,7 +473,7 @@ class CacheManager(metaclass=SingletonMetaclass):
 
         # Upon cache miss, elect a leader to actually talk to DB
         lock_name: Final[str] = self.derive_lock_key(page_key)
-        for leader_attempt in range(self.cache_config.FETCH_MAX_RETRIES):
+        for _leader_attempt in range(self.cache_config.FETCH_MAX_RETRIES):
             leader: bool = False
             leader = bool(
                 await self.redis_client.set(
@@ -492,7 +492,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                 finally:
                     await self.redis_client.delete(lock_name)
             else:
-                for i in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
+                for _ in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
                     if await self.redis_client.get(lock_name):
                         await asyncio.sleep(
                             self.cache_config.FETCH_WAITING_INITIAL_INTERVAL

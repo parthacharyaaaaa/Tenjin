@@ -34,7 +34,7 @@ class TokenManager:
         access_lifetime: int = 60 * 30,
         alg: str = "ES256",
         typ: str = "JWT",
-        universal_claims: dict = {},
+        universal_claims: dict | None = None,
         universal_headers: dict | None = None,
         leeway: int = 180,
         max_tokens_per_fid: int = 3,
@@ -63,7 +63,7 @@ class TokenManager:
         self.universal_headers = universal_headers
         # Initialize universal claims, common to all tokens issued in any context.
         # These should at the very least contain registered claims like "exp"
-        self.universal_claims = universal_claims
+        self.universal_claims = universal_claims or {}
 
         self.refresh_lifetime = refresh_lifetime
         self.access_lifetime = access_lifetime

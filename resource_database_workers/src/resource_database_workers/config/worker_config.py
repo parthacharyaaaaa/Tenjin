@@ -74,7 +74,7 @@ class StreamWorkersConfig(BaseModel):
                 except ValueError as e:
                     raise ValueError(f"Invalid stream name: {_stream_name}") from e
 
-                for event_name, worker_count in worker_count_data.items():
+                for event_name in worker_count_data.keys():
                     try:
                         worker_mapping[stream_name][EventName(event_name)] = count
                     except ValueError as e:
