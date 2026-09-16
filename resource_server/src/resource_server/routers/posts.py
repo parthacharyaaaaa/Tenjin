@@ -22,7 +22,6 @@ from resource_auxillary.datastructures.payloads.standalone import PostDeletion
 from resource_auxillary.events import (
     CounterUpdate,
     Event,
-    EventName,
     EventSideEffects,
     IntentUpdate,
 )
@@ -211,7 +210,7 @@ async def delete_post(
         Action.DELETE,
         conflicting_intent=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
         intent_conflict_message=conflicting_message,
-    ) as latest_intent:
+    ):
         intent_id: Final[str] = uuid4().hex
         if access_token["sid"] != post.author_id:
             forum_admin: (
@@ -646,9 +645,7 @@ async def report_post(
 
     if latest_intent:
         raise HTTPException(409, "Post already reported")
-    if await post_repo.check_reported(
-        post_id, access_token["sid"], report_model.tag
-    ):
+    if await post_repo.check_reported(post_id, access_token["sid"], report_model.tag):
         await cache_manager.set_intent(
             intent_id,
             str(access_token["sid"]),

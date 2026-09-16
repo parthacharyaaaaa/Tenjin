@@ -103,7 +103,7 @@ class EventSideEffectsTableMixin(EventReferrerTableMixin):
             )
 
     @declared_attr.directive
-    def __table_args__(cls):    # noqa
+    def __table_args__(cls):  # noqa
         return (
             Index(
                 f"{cls.__tablename__}_{SideEffectsLiteral.NON_EMITTED_EVENTS_INDEX}",

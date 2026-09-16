@@ -21,7 +21,6 @@ from resource_auxillary.datastructures.payloads.standalone import (
 from resource_auxillary.events import (
     CounterUpdate,
     Event,
-    EventName,
     EventSideEffects,
     IntentUpdate,
 )

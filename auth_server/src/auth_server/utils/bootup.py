@@ -103,7 +103,6 @@ async def master_bootup(
     active_kid: str | None = None
     active_keydata: KeyMetadata | None = None
     rotated_verifying_keys: dict[str, KeyMetadata] | None = None
-    failed: bool = False
 
     try:
         async with keydata_repository.session_maker() as session:
@@ -218,7 +217,6 @@ async def master_bootup(
         token_manager.set_key_state(active_kid, active_keydata, rotated_verifying_keys)
         print(f"[AUTH {process_id}] Master process bootup complete!")
     except Exception as e:
-        failed = True
         print(
             f"[AUTH {process_id}] Master worker has encountered an irrecoverable error, details: "
         )

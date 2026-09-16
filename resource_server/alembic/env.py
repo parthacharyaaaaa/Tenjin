@@ -1,7 +1,7 @@
-from typing import Final
 import os
 from logging.config import fileConfig
 from pathlib import Path
+from typing import Final
 
 from alembic import context
 from dotenv import load_dotenv

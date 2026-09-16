@@ -151,8 +151,8 @@ async def admin_login(
     )
 
     # type ignore for TypedDict, which behaves as dict at runtime
-    synced_store_client.hset(session_key, mapping=session_mapping)  # type: ignore[reportArgumentType]
-    revival_digest: Final[str] = session_mapping.pop("revival_digest")  # type: ignore[reportAssignmentType]
+    synced_store_client.hset(session_key, mapping=session_mapping) # pyrefly: ignore[ bad-argument-type]
+    revival_digest: Final[str] = session_mapping.pop("revival_digest")
     encoded_session_token: bytes = base64.urlsafe_b64encode(
         orjson.dumps(session_mapping)
     )
@@ -282,8 +282,9 @@ async def admin_refresh(
     )
 
     # type ignore for TypedDict, which behaves as dict at runtime
-    await synced_store_client.hset(session_key, mapping=session_mapping)  # type: ignore[reportArgumentType]
-    revival_digest: str = session_mapping.pop("revival_digest")  # type: ignore[reportAssignmentType]
+    session_key: Final[str] = f"admin:{admin_session.id_}"
+    await synced_store_client.hset(session_key, mapping=session_mapping)    # pyrefly: ignore[bad-argument-type, not-async]
+    revival_digest: str = session_mapping.pop("revival_digest")
     if session_mapping["session_iteration"] == config.ADMIN.MAX_SESSION_ITERATIONS:
         revival_digest = AdminStrings.NO_REFRESH_SENTINEL
     encoded_session_token: bytes = base64.urlsafe_b64encode(

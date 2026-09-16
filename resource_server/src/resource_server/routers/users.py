@@ -16,7 +16,6 @@ from resource_auxillary.cache import (
 from resource_auxillary.datastructures.payloads.standalone import UserCleanup
 from resource_auxillary.events import (
     Event,
-    EventName,
     EventSideEffects,
 )
 from resource_auxillary.strings import Action, EventName, IntentFlag, StreamName

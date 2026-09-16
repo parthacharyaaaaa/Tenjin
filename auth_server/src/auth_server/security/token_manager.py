@@ -131,7 +131,9 @@ class TokenManager:
                 )
             raise ValueError("Invalid Token") from e
         except KeyError as e:
-            raise jwt_exceptions.InvalidTokenError("Token headers missing key ID") from e
+            raise jwt_exceptions.InvalidTokenError(
+                "Token headers missing key ID"
+            ) from e
 
     async def reissue_token_pair(self, refresh_token: str) -> TokenPair:
         decoded_token: StandardRefreshTokenClaims = await self.decode_token(
