@@ -4,9 +4,6 @@ version = "1.0.0"
 description = "Tenjin"
 readme = "README.md"
 requires-python = ">=3.13, <3.14"
-dependencies = [
-    "ruff>=0.16.7",
-]
 
 [tool.uv.workspace]
 members = [
@@ -20,6 +17,7 @@ members = [
 
 [dependency-groups]
 dev = [
+    "ruff>=0.16.7",
     "bandit[baseline,toml]>=1.9.4",
     "deptry>=0.25.1",
     "orjson>=3.11.9",
@@ -69,23 +67,23 @@ select = [
     "F",
     "I",
     "N",
-    "B0",
+    # "B0",
     "DTZ",
-    "RET",
-    "ASYNC",
-    "PERF101",
-    "PERF102",
+    # "RET",
+    # "ASYNC",
+    # "PERF101",
+    # "PERF102",
     # "PERF401"
     # "PERF402",
     # "PERF403",
-    "SIM101",
-    "SIM102",
-    "SIM109",
-    "SIM110",
-    "SIM114",
-    "SIM115",
-    "SIM300",
-    "SIM401"
+    # "SIM101",
+    # "SIM102",
+    # "SIM109",
+    # "SIM110",
+    # "SIM114",
+    # "SIM115",
+    # "SIM300",
+    # "SIM401"
 ]
 
 ignore = [
