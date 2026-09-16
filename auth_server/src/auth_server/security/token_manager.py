@@ -1,18 +1,16 @@
-from typing import Any
 import asyncio
 import time
-from traceback import format_exc
 import uuid
-from typing import Final, Optional, Literal, TypeAlias, overload
+from traceback import format_exc
+from typing import Any, Final, Literal, Optional, TypeAlias, overload
 
 import jwt
-import jwt.exceptions as JWTexc
-
+import jwt.exceptions as jwt_exceptions
 from redis.asyncio import Redis
 
-from auth_server.security.key_container import KeyMetadata
 from auth_server.models.database import KeyData
 from auth_server.repositories.keydata import KeydataRepository
+from auth_server.security.key_container import KeyMetadata
 from auth_server.security.tokens import (
     StandardAccessTokenClaims,
     StandardRefreshTokenClaims,
@@ -21,7 +19,7 @@ from auth_server.security.tokens import (
 from auth_server.strings import SyncedStoreStrings
 
 # Type aliases
-tokenPair: TypeAlias = tuple[str, str]
+TokenPair: TypeAlias = tuple[str, str]
 
 
 class TokenManager:
@@ -36,7 +34,7 @@ class TokenManager:
         access_lifetime: int = 60 * 30,
         alg: str = "ES256",
         typ: str = "JWT",
-        universal_claims: dict = {},
+        universal_claims: dict | None = None,
         universal_headers: dict | None = None,
         leeway: int = 180,
         max_tokens_per_fid: int = 3,
@@ -65,7 +63,7 @@ class TokenManager:
         self.universal_headers = universal_headers
         # Initialize universal claims, common to all tokens issued in any context.
         # These should at the very least contain registered claims like "exp"
-        self.universal_claims = universal_claims
+        self.universal_claims = universal_claims or {}
 
         self.refresh_lifetime = refresh_lifetime
         self.access_lifetime = access_lifetime
@@ -108,7 +106,7 @@ class TokenManager:
         try:
             kid: int = jwt.get_unverified_header(token)["kid"]
             if kid not in self.key_mapping:
-                raise JWTexc.InvalidKeyError(
+                raise jwt_exceptions.InvalidKeyError(
                     "This key is not recognised, meaning it is possibly tampered, forged, or simply expired a long time ago."
                 )
 
@@ -123,9 +121,9 @@ class TokenManager:
                 return StandardAccessTokenClaims(**decoded_token)
             return StandardRefreshTokenClaims(**decoded_token)
         except (
-            JWTexc.ImmatureSignatureError,
-            JWTexc.InvalidIssuedAtError,
-            JWTexc.InvalidIssuerError,
+            jwt_exceptions.ImmatureSignatureError,
+            jwt_exceptions.InvalidIssuedAtError,
+            jwt_exceptions.InvalidIssuerError,
         ) as e:
             if token_type == TokenType.StandardRefresh:
                 await self.invalidate_family(
@@ -133,14 +131,16 @@ class TokenManager:
                 )
             raise ValueError("Invalid Token") from e
         except KeyError as e:
-            raise JWTexc.InvalidTokenError("Token headers missing key ID") from e
+            raise jwt_exceptions.InvalidTokenError(
+                "Token headers missing key ID"
+            ) from e
 
-    async def reissue_token_pair(self, refresh_token: str) -> tokenPair:
+    async def reissue_token_pair(self, refresh_token: str) -> TokenPair:
         decoded_token: StandardRefreshTokenClaims = await self.decode_token(
             refresh_token, token_type=TokenType.StandardRefresh
         )
 
-        refreshToken = await self.issue_refresh_token(
+        refresh_token = await self.issue_refresh_token(
             decoded_token["sub"],
             decoded_token["sid"],
             jti=decoded_token["jti"],
@@ -150,13 +150,13 @@ class TokenManager:
 
         await self.shift_token_window(decoded_token["fid"])
 
-        accessToken: str = self.issue_access_token(
+        access_token: str = self.issue_access_token(
             decoded_token["sub"],
             decoded_token["sid"],
             decoded_token["fid"],
         )
 
-        return refreshToken, accessToken
+        return refresh_token, access_token
 
     async def issue_refresh_token(
         self,
@@ -169,7 +169,9 @@ class TokenManager:
     ) -> str:
         if family_id:
             # Check for replay attack
-            key: bytes | None = await self._token_store_client.lindex(f"FID:{family_id}", 0)  # type: ignore[reportAssignmentType]
+            key: bytes | None = await self._token_store_client.lindex(
+                f"FID:{family_id}", 0
+            )  # type: ignore[reportAssignmentType]
             if not key:
                 await self.invalidate_family(family_id)
                 raise ValueError(f"Token family {family_id} is invalid or empty")
@@ -233,37 +235,39 @@ class TokenManager:
             headers=self.universal_headers | {"kid": self.active_key},
         )
 
-    async def shift_token_window(self, fID: str) -> None:
+    async def shift_token_window(self, family_id: str) -> None:
         """Revokes the oldest refresh token from a family if capacity is reached, without invalidating the entire family"""
         try:
-            llen: int = await self._token_store_client.llen(f"FID:{fID}")  # type: ignore[reportAssignmentType]
+            llen: int = await self._token_store_client.llen(f"FID:{family_id}")  # type: ignore[reportAssignmentType]
 
             if llen == 0:
                 return
 
             if llen >= self.max_llen:
-                await self._token_store_client.rpop(f"FID:{fID}", max(1, llen - self.max_llen))  # type: ignore[reportGeneralTypeIssues]
+                await self._token_store_client.rpop(
+                    f"FID:{family_id}", max(1, llen - self.max_llen)
+                )  # type: ignore[reportGeneralTypeIssues]
         except Exception as e:
             raise RuntimeError("Failed to perform operation on token store") from e
 
-    async def invalidate_family(self, fID: str) -> None:
+    async def invalidate_family(self, family_id: str) -> None:
         """Remove entire token family from revocation list and token store"""
         try:
-            if await self._token_store_client.lrange(f"FID:{fID}", 0, -1):  # type: ignore[reportGeneralTypeIssues]
-                await self._token_store_client.delete(f"FID:{fID}")
+            if await self._token_store_client.lrange(f"FID:{family_id}", 0, -1):  # type: ignore[reportGeneralTypeIssues]
+                await self._token_store_client.delete(f"FID:{family_id}")
             else:
                 print("No Family Found")
         except Exception as e:
             raise RuntimeError("Failed to perform operation on token store") from e
 
     def update_keydata(
-        self, kid: str, newKeyData: KeyMetadata, active: bool = True
+        self, kid: str, new_keydata: KeyMetadata, active: bool = True
     ) -> None:
         """Update key mapping on key rotation"""
         if active:
             self.active_key = kid
 
-        self.key_mapping[kid] = newKeyData
+        self.key_mapping[kid] = new_keydata
 
     async def fetch_unexpired_key(self, kid: str) -> KeyMetadata | None:
         """Fetch a non-expired key from the database
@@ -273,8 +277,10 @@ class TokenManager:
         Returns:
             Fetched key casted to KeyMetadata, None if not found"""
         # Check synced store for an invalid key announcement for this key
-        invalidKey: bytes | None = await self.synced_store_client.get(f"invalid_key:{kid}")  # type: ignore[reportAssignmentType]
-        if invalidKey:
+        invalid_key: bytes | None = await self.synced_store_client.get(
+            f"invalid_key:{kid}"
+        )  # type: ignore[reportAssignmentType]
+        if invalid_key:
             return None
 
         # Try to fetch a valid key with this KID
@@ -304,7 +310,9 @@ class TokenManager:
         """Check synced store to keep local keys updated with global keys. Intended to be run as a non-blocking, background task upon instantiation"""
         while True:
             try:
-                valid_keys: list[bytes] | None = await self.synced_store_client.lrange(SyncedStoreStrings.VALID_KEYS, 0, -1)  # type: ignore[reportAssignmentType]
+                valid_keys: list[bytes] | None = await self.synced_store_client.lrange(
+                    SyncedStoreStrings.VALID_KEYS, 0, -1
+                )  # type: ignore[reportAssignmentType]
 
                 if not valid_keys:
                     raise RuntimeError("Valid keys list empty or not found")
@@ -342,7 +350,7 @@ class TokenManager:
                     print(f"[BACKGROUND POLLER]: Invalidated local key {expired_key}")
 
             except Exception:
-                print(f"[BACKGROUND POLLER]: Exception encountered. Traceback:")
+                print("[BACKGROUND POLLER]: Exception encountered. Traceback:")
                 print(format_exc())
             finally:
                 await asyncio.sleep(interval)

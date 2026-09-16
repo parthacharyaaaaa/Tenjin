@@ -1,9 +1,9 @@
-from redis.typing import EncodableT
+import random
 import time
 from typing import Final, LiteralString
 
+from redis.typing import EncodableT
 from resource_auxillary.strings import NAME_SEPERATOR, StreamName
-import random
 
 INTERNAL_NAME_SEPERATOR: Final[LiteralString] = "-"
 assert INTERNAL_NAME_SEPERATOR != NAME_SEPERATOR  # nosec
@@ -79,8 +79,7 @@ def generate_worker_name(
 ) -> str:
     if base_name:
         return INTERNAL_NAME_SEPERATOR.join((base_name, task_name, str(index)))
-    else:
-        return INTERNAL_NAME_SEPERATOR.join((task_name, str(index)))
+    return INTERNAL_NAME_SEPERATOR.join((task_name, str(index)))
 
 
 def generate_checkpoint_name(prefix: str, event_id: EncodableT) -> str:

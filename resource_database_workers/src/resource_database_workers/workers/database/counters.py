@@ -1,15 +1,14 @@
 from psycopg import AsyncConnection
+from psycopg.errors import Error, InternalError, LockNotAvailable, OperationalError
 from psycopg.sql import Composed
-from psycopg.errors import OperationalError, LockNotAvailable, InternalError, Error
-
 from resource_auxillary.datastructures.database import (
     GenericLiterals,
 )
 from resource_auxillary.strings import NAME_SEPERATOR
 
 from resource_database_workers.datastructures.exceptions import (
-    RecoverableDatabaseException,
-    UnrecoverableDatabaseException,
+    RecoverableDatabaseError,
+    UnrecoverableDatabaseError,
 )
 from resource_database_workers.utils.sql_templates import prepare_updation_sql
 
@@ -29,7 +28,7 @@ async def flush_counter_updates(
             await conn.commit()
         except (OperationalError, LockNotAvailable, InternalError):
             # Transient, possibly recoverable errors
-            raise RecoverableDatabaseException()
+            raise RecoverableDatabaseError()
         except Error:
             # Unrecoverable databse errors
-            raise UnrecoverableDatabaseException()
+            raise UnrecoverableDatabaseError()

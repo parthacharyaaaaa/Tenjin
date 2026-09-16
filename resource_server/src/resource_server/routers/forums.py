@@ -1,15 +1,12 @@
 import time
+from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Final
-from datetime import datetime
 from uuid import uuid4
 
+from auxillary.utils import cache_repr, json_repr, to_base64url
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-
-
-from auxillary.utils import cache_repr, json_repr, to_base64url
-
 from resource_auxillary.cache import (
     Action,
     create_intent_flag,
@@ -22,9 +19,9 @@ from resource_auxillary.datastructures.payloads.assosciation import (
 from resource_auxillary.datastructures.payloads.standalone import ForumDeletion
 from resource_auxillary.events import (
     CounterUpdate,
-    IntentUpdate,
-    EventSideEffects,
     Event,
+    EventSideEffects,
+    IntentUpdate,
 )
 from resource_auxillary.strings import NAME_SEPERATOR, EventName, IntentFlag, StreamName
 
@@ -34,24 +31,29 @@ from resource_server.datastructures.requests import SortOption, TimeFrameOption
 from resource_server.dependencies import (
     get_anime_repository,
     get_app_config,
+    get_cache_manager,
     get_event_streamer,
     get_forum_repository,
-    get_cache_manager,
     get_post_repository,
     get_user_repository,
 )
-from resource_server.models.database import Forum, ForumAdmin, Post, Anime
+from resource_server.event_streamer import EventStreamer
+from resource_server.models.admin_permissions import AdminPermissions, check_permission
+from resource_server.models.database import Anime, Forum, ForumAdmin, Post
+from resource_server.models.database_enums import AdminRoles
 from resource_server.models.requests import (
+    AdminAddModel,
     ForumCreationModel,
     ForumUpdationModel,
-    AdminAddModel,
     GenericAdminModel,
 )
+from resource_server.repositories.anime import AnimeRepository, AnimeResult
 from resource_server.repositories.forum import (
     ForumAdminResult,
     ForumRepository,
     ForumResult,
 )
+from resource_server.repositories.posts import PostRepository, PostResult
 from resource_server.repositories.user import UserRepository, UserResult
 from resource_server.request_dependencies import (
     cursor_preprocessor,
@@ -59,11 +61,6 @@ from resource_server.request_dependencies import (
     preprocess_timeframe,
     validate_access_token,
 )
-from resource_server.repositories.anime import AnimeRepository, AnimeResult
-from resource_server.repositories.posts import PostRepository, PostResult
-from resource_server.event_streamer import EventStreamer
-from resource_server.models.database_enums import AdminRoles
-from resource_server.models.admin_permissions import AdminPermissions, check_permission
 from resource_server.utils.typing import StandardAccessTokenClaims
 
 FORUMS: Final[APIRouter] = APIRouter()
@@ -278,15 +275,15 @@ async def add_admin(
             403, f"Insufficient permissions to add an admin of role {admin_model.role}"
         )
 
-    existing_admin: ForumAdminResult | None = (
-        await cache_manager.distributed_get_or_load(
-            derive_cache_key(
-                ForumAdmin.__tablename__,
-                NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
-            ),
-            partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
-            ForumAdminResult,
-        )
+    existing_admin: (
+        ForumAdminResult | None
+    ) = await cache_manager.distributed_get_or_load(
+        derive_cache_key(
+            ForumAdmin.__tablename__,
+            NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
+        ),
+        partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
+        ForumAdminResult,
     )
     if existing_admin:
         raise HTTPException(
@@ -307,7 +304,7 @@ async def add_admin(
         {
             "message": "Admin added",
             "role": admin_model.role,
-            "time_added": datetime.now().isoformat(),
+            "time_added": datetime.now(UTC).isoformat(),
         },
         201,
     )
@@ -340,15 +337,15 @@ async def remove_admin(
     if not forum_admin:
         raise HTTPException(403, f"You are not an admin for forum: {forum.name_}")
 
-    existing_admin: ForumAdminResult | None = (
-        await cache_manager.distributed_get_or_load(
-            derive_cache_key(
-                ForumAdmin.__tablename__,
-                NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
-            ),
-            partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
-            ForumAdminResult,
-        )
+    existing_admin: (
+        ForumAdminResult | None
+    ) = await cache_manager.distributed_get_or_load(
+        derive_cache_key(
+            ForumAdmin.__tablename__,
+            NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
+        ),
+        partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
+        ForumAdminResult,
     )
     if not existing_admin:
         raise HTTPException(404, "Admin does not exist")
@@ -372,7 +369,7 @@ async def remove_admin(
         {
             "message": "Admin removed",
             "role": existing_admin.role,
-            "time_removed": datetime.now().isoformat(),
+            "time_removed": datetime.now(UTC).isoformat(),
         }
     )
 
@@ -404,15 +401,15 @@ async def edit_admin_permissions(
     if not forum_admin:
         raise HTTPException(403, f"You are not an admin for forum: {forum.name_}")
 
-    existing_admin: ForumAdminResult | None = (
-        await cache_manager.distributed_get_or_load(
-            derive_cache_key(
-                ForumAdmin.__tablename__,
-                NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
-            ),
-            partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
-            ForumAdminResult,
-        )
+    existing_admin: (
+        ForumAdminResult | None
+    ) = await cache_manager.distributed_get_or_load(
+        derive_cache_key(
+            ForumAdmin.__tablename__,
+            NAME_SEPERATOR.join((str(forum_id), str(admin_model.user_id))),
+        ),
+        partial(forum_repo.get_forum_admin, forum_id, admin_model.user_id),
+        ForumAdminResult,
     )
     if not existing_admin:
         raise HTTPException(404, "Admin does not exist")
@@ -421,7 +418,7 @@ async def edit_admin_permissions(
 
     if admin_model.role == existing_admin.role:
         raise HTTPException(409, "Previous and new roles identical")
-    elif existing_admin.role == forum_admin.role:
+    if existing_admin.role == forum_admin.role:
         raise HTTPException(403, "Cannot change roles of peer admins")
 
     # Very brittle logic, but I can't see adding more admin roles anytime soon
@@ -560,7 +557,7 @@ async def subscribe_forum(
         payload: ForumSubscriptionAssosciation = ForumSubscriptionAssosciation(
             user_id=access_token["sid"],
             forum_id=forum_id,
-            time_subscribed=datetime.now(),
+            time_subscribed=datetime.now(UTC),
         )
 
         subscription_event: Event = Event(
@@ -662,7 +659,7 @@ async def unsubscribe_forum(
         payload: ForumSubscriptionAssosciation = ForumSubscriptionAssosciation(
             user_id=access_token["sid"],
             forum_id=forum_id,
-            time_subscribed=datetime.now(),
+            time_subscribed=datetime.now(UTC),
         )
         unsubscription_event: Event = Event(
             name=EventName.FORUM_UNSUB,
@@ -704,7 +701,7 @@ async def edit_forum(
 
     if not admin_role:
         raise HTTPException(403, "You are not an admin for this forum")
-    elif admin_role.role == "staff":  # TODO: Replace with StrEnum
+    if admin_role.role == "staff":  # TODO: Replace with StrEnum
         raise HTTPException(403, "You do not have access rights to edit this forum")
 
     updated_forum: ForumResult = await forum_repo.update_forum(

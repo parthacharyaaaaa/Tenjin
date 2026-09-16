@@ -1,6 +1,6 @@
 from enum import StrEnum
-from typing import Final
 from types import MappingProxyType
+from typing import Final
 
 from resource_server.models.database_enums import AdminRoles
 

@@ -1,10 +1,10 @@
-from resource_database_workers.tasks.stream_readers import dlq_dispatcher
 from types import MappingProxyType
 from typing import Callable, Final
 
 from resource_auxillary.strings import EventName, StreamName
 
 from resource_database_workers.tasks.stream_readers import (
+    dlq_dispatcher,
     upstream_dispatcher,
 )
 

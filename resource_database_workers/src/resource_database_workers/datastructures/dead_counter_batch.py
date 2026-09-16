@@ -1,9 +1,9 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Mapping, Self
 
 import orjson
-from redis.typing import FieldT, EncodableT
+from redis.typing import EncodableT, FieldT
 
 
 @dataclass(slots=True, init=False)
@@ -40,7 +40,7 @@ class DeadCounterBatch:
         instance.table = table
         instance.column = column
         instance.counters = dict(counters)
-        instance.failure_time = failure_time or datetime.now()
+        instance.failure_time = failure_time or datetime.now(UTC)
         return instance
 
     def __cache_repr__(self) -> dict[FieldT, EncodableT]:

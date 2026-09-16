@@ -4,11 +4,8 @@ import asyncio
 import time
 
 from aiosmtplib import SMTP, SMTPException
-
 from psycopg_pool import AsyncConnectionPool
-
 from redis.asyncio import Redis
-
 from resource_auxillary.datastructures.status_indicator import StatusProxy
 from resource_auxillary.event_processing.db_qos import batch_dedup_insert_events
 from resource_auxillary.event_processing.pre_processing import (
@@ -16,16 +13,16 @@ from resource_auxillary.event_processing.pre_processing import (
     trim_duplicate_events,
 )
 from resource_auxillary.event_processing.wrappers import (
-    declare_dead_with_retries,
     commit_processed_events,
+    declare_dead_with_retries,
 )
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import StreamName
 
 from email_worker.config.email_config import EmailConfig
-from email_worker.utilities.qos import clean_user_email_payloads
 from email_worker.dependencies import get_fresh_smtp_client
 from email_worker.outgoing import batch_send_emails
+from email_worker.utilities.qos import clean_user_email_payloads
 
 
 async def email_dispatcher(

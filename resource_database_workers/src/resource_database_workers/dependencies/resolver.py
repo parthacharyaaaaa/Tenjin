@@ -1,8 +1,6 @@
-from functools import partial
-from resource_database_workers.dependencies.indicator import Inject
-from typing import Annotated
 from collections.abc import Callable, Mapping
-from typing import Any, get_type_hints, get_origin, get_args
+from functools import partial
+from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
 from resource_auxillary.strings import EventName
 
@@ -10,6 +8,7 @@ from resource_database_workers.dependencies.event_dependencies import (
     EVENT_WORKER_DATA_MAPPING,
     t_event_worker_data,
 )
+from resource_database_workers.dependencies.indicator import Inject
 
 
 def inject_stream_worker_dependencies(

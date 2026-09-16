@@ -3,21 +3,19 @@ from dataclasses import dataclass
 from typing import Any, Callable, ClassVar, Mapping, Self, Sequence
 
 import orjson
-
-from redis.typing import FieldT, EncodableT
+from auxillary.singleton import SingletonMetaclass
+from redis.typing import EncodableT, FieldT
+from sqlalchemy import ColumnElement, Row, UnaryExpression, and_, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resource_server.datastructures.requests import SortOption
-from sqlalchemy import Row, UnaryExpression, and_, select, ColumnElement
-from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
-
 from resource_server.models.database import (
     Anime,
-    AnimeSubscription,
-    StreamLink,
-    Genre,
     AnimeGenre,
+    AnimeSubscription,
+    Genre,
+    StreamLink,
 )
-from auxillary.singleton import SingletonMetaclass
 from resource_server.repositories.result_protocol import AbstractDTO
 
 
@@ -251,13 +249,12 @@ class AnimeRepository(metaclass=SingletonMetaclass):
                     )
                     for anime in animes
                 ]
-            else:
-                return [
-                    AnimeResult.construct_from_orm(
-                        anime, anime_genres[anime.id_], anime_stream_links[anime.id_]
-                    )
-                    for anime in animes
-                ]
+            return [
+                AnimeResult.construct_from_orm(
+                    anime, anime_genres[anime.id_], anime_stream_links[anime.id_]
+                )
+                for anime in animes
+            ]
 
     async def get_user_animes(
         self,

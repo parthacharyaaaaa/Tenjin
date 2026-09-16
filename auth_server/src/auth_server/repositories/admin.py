@@ -2,15 +2,13 @@
 
 from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, overload
-
-from redis.typing import EncodableT, FieldT
-
-from sqlalchemy import insert, select, update
 
 from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
+from redis.typing import EncodableT, FieldT
+from sqlalchemy import insert, select, update
 
 from auth_server.models.database import Admin
 from auth_server.security.admin_roles import AdminRole
@@ -243,7 +241,7 @@ class AdminRepository(AbstractWorkRepository):
             await session.execute(
                 update(Admin)
                 .where(Admin.id_ == admin_id)
-                .values(last_login=login_time or datetime.now())
+                .values(last_login=login_time or datetime.now(UTC))
             )
 
     @overload
@@ -289,7 +287,7 @@ class AdminRepository(AbstractWorkRepository):
                 await session.execute(
                     update(Admin)
                     .where((Admin.id_ == admin_id) & (Admin.time_deleted.is_(None)))
-                    .values(time_deleted=deletion_time or datetime.now())
+                    .values(time_deleted=deletion_time or datetime.now(UTC))
                     .returning(Admin)
                 )
             ).scalar_one_or_none()
@@ -425,7 +423,7 @@ class AdminRepository(AbstractWorkRepository):
             ).scalar_one()
 
             if not returning:
-                return
+                return None
             if public_data_only:
                 return AdminPublicResult.construct_from_orm(admin)
             return AdminPrivateResult.construct_from_orm(admin)

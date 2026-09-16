@@ -4,10 +4,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import ClassVar
 
-from sqlalchemy import insert, select
-
 from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
+from sqlalchemy import insert, select
 
 from auth_server.models.database import SuspiciousActivity
 

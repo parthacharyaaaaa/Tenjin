@@ -2,14 +2,13 @@ from datetime import timedelta
 from ipaddress import ip_address
 from typing import Annotated, Self
 
+import jwt
+from auxillary.mixins.cache_config import BasicCacheTTLConfig, BasicNegativeCacheConfig
 from auxillary.mixins.db_config import (
     BasicPostgresDatabaseConfigMixin,
     BasicSQLAlchemyConfigMixin,
 )
-from auxillary.mixins.cache_config import BasicCacheTTLConfig, BasicNegativeCacheConfig
 from auxillary.mixins.redis_config import BasicRedisConfigMixin
-import jwt
-
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -91,7 +90,7 @@ class CacheConfig(BasicCacheTTLConfig, BasicNegativeCacheConfig, BaseModel):
                 )
             )
 
-        if self.TTL_FETCH_LOCK < max_waiting_time:
+        if max_waiting_time > self.TTL_FETCH_LOCK:
             raise ValueError(
                 " ".join(
                     (

@@ -1,25 +1,25 @@
-from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
-from auth_server.repositories.suspicious_activity import SuspiciousActivityResult
-from auth_server.repositories.admin import AdminRepository
-from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 import secrets
 import time
+from datetime import UTC, datetime, timedelta
 from typing import Final, Sequence
 from uuid import uuid4
 
 import ecdsa
-
-from redis.asyncio import Redis
-
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio.session import AsyncSession
-from datetime import datetime, timedelta
+from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from fastapi import Response
 from fastapi.datastructures import URL
+from redis.asyncio import Redis
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio.session import AsyncSession
 
 from auth_server.config.app_config import AppConfig
 from auth_server.models.database import (
     KeyData,
+)
+from auth_server.repositories.admin import AdminRepository
+from auth_server.repositories.suspicious_activity import (
+    SuspiciousActivityRepository,
+    SuspiciousActivityResult,
 )
 from auth_server.security.admin_roles import AdminRole
 from auth_server.utils.typing import AdminSessionDict, HashFunc
@@ -60,14 +60,14 @@ async def report_suspicious_activity(
     force_logout: bool = True,
 ) -> None:
     await suspicious_activity_repository.insert_activity(admin_id, desc)
-    current_time: datetime = datetime.now()
+    current_time: datetime = datetime.now(UTC)
     async with coordinator.multirepo_work_context(
         suspicious_activity_repository, admin_repository
     ):
-        activities: list[SuspiciousActivityResult] = (
-            await suspicious_activity_repository.get_activity_log(
-                admin_id, config.ADMIN.MAX_ACTIVITY_LIMIT
-            )
+        activities: list[
+            SuspiciousActivityResult
+        ] = await suspicious_activity_repository.get_activity_log(
+            admin_id, config.ADMIN.MAX_ACTIVITY_LIMIT
         )
         if force_logout and (
             (len(activities) > config.ADMIN.MAX_ACTIVITY_LIMIT)

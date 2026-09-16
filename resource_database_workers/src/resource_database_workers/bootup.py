@@ -1,54 +1,50 @@
-import traceback
-from resource_database_workers.dependencies.annotations import STREAM_NAME
-from resource_database_workers.dependencies.annotations import (
-    DEAD_LETTER_QUEUE_REGISTRY,
-)
-from resource_auxillary.strings import EventName
-from resource_database_workers.dependencies.annotations import UPSTREAM_QUEUE_REGISTRY
-from resource_auxillary.events import StreamedEvent
-from resource_database_workers.datastructures.queues import EventQueueRegistry
-from resource_database_workers.dependencies.annotations import BATCHED_EVENT_QUEUE
-from resource_database_workers.tasks.stream_readers import upstream_dispatcher
-from resource_database_workers.dependencies.injections import get_queue_registry
-from resource_database_workers.datastructures.queues import EventQueueRegistryContainer
-from resource_database_workers.config.sub_config import WorkerConfig
-from resource_database_workers.dependencies.resolver import (
-    inject_worker_dependencies,
-)
-from resource_database_workers.dependencies.annotations import (
-    GROUP_NAME,
-    STATUS_PROXY,
-)
-from resource_database_workers.dependencies.resolver import (
-    inject_stream_worker_dependencies,
-)
-from resource_database_workers.dependencies.event_dependencies import (
-    EVENT_WORKER_DATA_MAPPING,
-)
 import asyncio
+import traceback
 from typing import Any, Callable, Coroutine, Final, Mapping
 
-from resource_database_workers.datastructures.streams import (
-    STREAM_CONSUMER_MAPPING,
-)
-from resource_database_workers.config.worker_config import (
-    CounterWorkersConfig,
-    StreamWorkersConfig,
-)
 from resource_auxillary.datastructures.status_indicator import (
     StatusController,
     StatusProxy,
 )
+from resource_auxillary.events import StreamedEvent
+from resource_auxillary.strings import EventName
+
 from resource_database_workers.config.config import AppConfig
-from resource_database_workers.utils.strings import (
-    generate_worker_name,
+from resource_database_workers.config.sub_config import WorkerConfig
+from resource_database_workers.config.worker_config import (
+    CounterWorkersConfig,
+    StreamWorkersConfig,
 )
-from resource_database_workers.tasks.counters import (
-    batch_update_counters,
+from resource_database_workers.datastructures.queues import (
+    EventQueueRegistry,
+    EventQueueRegistryContainer,
+)
+from resource_database_workers.datastructures.streams import (
+    STREAM_CONSUMER_MAPPING,
+)
+from resource_database_workers.dependencies.annotations import (
+    BATCHED_EVENT_QUEUE,
+    DEAD_LETTER_QUEUE_REGISTRY,
+    GROUP_NAME,
+    STATUS_PROXY,
+    STREAM_NAME,
+    UPSTREAM_QUEUE_REGISTRY,
+)
+from resource_database_workers.dependencies.event_dependencies import (
+    EVENT_WORKER_DATA_MAPPING,
+)
+from resource_database_workers.dependencies.injections import get_queue_registry
+from resource_database_workers.dependencies.resolver import (
+    inject_stream_worker_dependencies,
+    inject_worker_dependencies,
 )
 from resource_database_workers.tasks.counters import (
     batch_update_counters,
     batch_update_retry_counters,
+)
+from resource_database_workers.tasks.stream_readers import upstream_dispatcher
+from resource_database_workers.utils.strings import (
+    generate_worker_name,
 )
 
 
@@ -84,13 +80,13 @@ async def tasks_wrapper(
         if not task.cancelled() and (exception := task.exception()) is not None
     )
     forced_cancellation_info_string = "\n\n".join(
-        (f"Task: {task.get_name()}\n" f"Result: {type(result).__name__}: {result}")
+        (f"Task: {task.get_name()}\nResult: {type(result).__name__}: {result}")
         for task, result in zip(pending, forced_cancellation_results)
     )
 
     exception = Exception("Worker tasks terminated unexpectedly")
     exception.add_note(
-        f"Failed tasks ({len(failed)}):\n" f"{failed_tasks_info_string or '<none>'}"
+        f"Failed tasks ({len(failed)}):\n{failed_tasks_info_string or '<none>'}"
     )
     exception.add_note(
         f"Forced-cancelled tasks ({len(pending)}):\n"

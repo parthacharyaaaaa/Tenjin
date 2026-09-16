@@ -1,20 +1,18 @@
 """Data access repository for Keydata SA model"""
 
-from collections.abc import Sequence, MutableMapping
+from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, overload
 
 import ecdsa
-from redis.typing import EncodableT, FieldT
-
 from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
-
+from redis.typing import EncodableT, FieldT
 from sqlalchemy import insert, select, update
 
-from auth_server.strings import SelectionLockOption
 from auth_server.models.database import KeyData
+from auth_server.strings import SelectionLockOption
 
 
 @dataclass(slots=True, init=False)
@@ -98,7 +96,7 @@ class KeydataRepository(AbstractWorkRepository):
         async with self._work_scoped_session() as session:
             keydata = (await session.execute(statement)).scalar_one_or_none()
             if not keydata:
-                return
+                return None
             if public_only:
                 return KeyPublicDataResult.construct_from_orm(keydata)
             return KeyPrivateDataResult.construct_from_orm(keydata)
@@ -198,7 +196,7 @@ class KeydataRepository(AbstractWorkRepository):
                         kid=key_id,
                         alg=alg,
                         curve=str(curve),
-                        epoch=epoch or datetime.now(),
+                        epoch=epoch or datetime.now(UTC),
                         private_pem=private_key.to_pem(),
                         public_pem=public_key.to_pem(),
                     )
@@ -251,7 +249,7 @@ class KeydataRepository(AbstractWorkRepository):
                     await session.execute(
                         update(KeyData)
                         .where(KeyData.epoch < threshold)
-                        .values(expired_at=expiry_time or datetime.now())
+                        .values(expired_at=expiry_time or datetime.now(UTC))
                         .returning(KeyData)
                     )
                 )
@@ -307,13 +305,13 @@ class KeydataRepository(AbstractWorkRepository):
                 await session.execute(
                     update(KeyData)
                     .where(KeyData.kid == kid)
-                    .values(expired_at=expiry_time or datetime.now())
+                    .values(expired_at=expiry_time or datetime.now(UTC))
                     .returning(KeyData)
                 )
             ).scalar_one_or_none()
 
             if not expired_key:
-                return
+                return None
 
             if return_expired:
                 if public_data_only:
@@ -362,7 +360,7 @@ class KeydataRepository(AbstractWorkRepository):
                     await session.execute(
                         update(KeyData)
                         .where(KeyData.kid.in_(kids))
-                        .values(expired_at=expiry_time or datetime.now())
+                        .values(expired_at=expiry_time or datetime.now(UTC))
                         .returning(KeyData)
                     )
                 )
@@ -433,7 +431,9 @@ class KeydataRepository(AbstractWorkRepository):
     ) -> list[KeyPublicDataResult] | list[KeyPrivateDataResult]:
         statement = (
             select(KeyData)
-            .where((KeyData.expired_at == None) & (KeyData.rotated_out_at.isnot(None)))
+            .where(
+                (KeyData.expired_at.is_(None)) & (KeyData.rotated_out_at.isnot(None))
+            )
             .limit(limit)
         )
         if lock_args:
@@ -480,7 +480,7 @@ class KeydataRepository(AbstractWorkRepository):
                 await session.execute(statement)
             ).scalar_one_or_none()
             if not active_key:
-                return
+                return None
             if public_data_only:
                 return KeyPublicDataResult.construct_from_orm(active_key)
             return KeyPrivateDataResult.construct_from_orm(active_key)
@@ -498,7 +498,7 @@ class KeydataRepository(AbstractWorkRepository):
         epoch: datetime | None = None,
         previous_key_rotation_time: datetime | None = None,
     ) -> None:
-        epoch = epoch or datetime.now()
+        epoch = epoch or datetime.now(UTC)
         previous_key_rotation_time = previous_key_rotation_time or epoch
 
         async with self._work_scoped_session() as session:
@@ -506,7 +506,7 @@ class KeydataRepository(AbstractWorkRepository):
                 update(KeyData)
                 .where(KeyData.kid == previous_key_id)
                 .values(
-                    rotated_out_at=datetime.now(),
+                    rotated_out_at=datetime.now(UTC),
                     manual_rotation=True,
                     rotated_by=rotation_author,
                 )

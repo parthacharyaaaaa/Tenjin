@@ -1,6 +1,5 @@
-from typing import TypeVar
-from datetime import datetime
-from typing import Any, Callable, Coroutine, Iterable
+from datetime import UTC, datetime
+from typing import Any, Callable, Coroutine, Iterable, TypeVar
 from uuid import uuid4
 
 from psycopg import AsyncConnection, sql
@@ -41,7 +40,7 @@ async def db_execute_with_retries(
                 _attempt,
                 exponential=retry_policy.BACKOFF_EXPONENTIAL,
             )
-        except Exception as e:
+        except Exception:
             await connection.rollback()
             raise
     raise AssertionError("Retry loop exited unexpectedly")
@@ -71,7 +70,7 @@ async def batch_dedup_insert_events(
     event_name: EventName,
     acknowledgement_time: datetime | None = None,
 ) -> tuple[int, ...]:
-    acknowledgement_time = acknowledgement_time or datetime.now()
+    acknowledgement_time = acknowledgement_time or datetime.now(UTC)
     temp_table_name: str = f"_temp_{uuid4().hex}_{acknowledgement_time.isoformat()}"
 
     await conn.execute(

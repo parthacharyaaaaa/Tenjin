@@ -1,24 +1,27 @@
-from resource_auxillary.templates.sql import prepare_fan_out_copy_insertion_sql
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
-from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
-from auxillary.typing_utils import SupportsMembershipCheck
-from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
-from resource_auxillary.strings import EventName, StreamName
-from resource_auxillary.events import Event, EventSideEffects
-from resource_auxillary.event_processing.qos import execute_with_redis_retries
-from resource_auxillary.event_processing.db_qos import db_execute_with_retries
-from resource_auxillary.templates.sql import prepare_side_effects_processing_sql
-from resource_auxillary.datastructures.database import SideEffectsLiteral
 from typing import Any, TypeVar
 
+from auxillary.typing_utils import SupportsMembershipCheck
 from psycopg.connection_async import AsyncConnection
 from psycopg.rows import dict_row
-
 from pydantic import BaseModel
-
-from resource_auxillary.datastructures.database import SideEffectsTables, EventLiteral
-from resource_auxillary.templates.sql import prepare_side_effects_read_sql
+from resource_auxillary.datastructures.database import (
+    EventLiteral,
+    SideEffectsLiteral,
+    SideEffectsTables,
+)
+from resource_auxillary.event_processing.db_qos import db_execute_with_retries
+from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
+from resource_auxillary.event_processing.qos import execute_with_redis_retries
+from resource_auxillary.events import Event, EventSideEffects
+from resource_auxillary.strings import EventName, StreamName
+from resource_auxillary.templates.sql import (
+    prepare_fan_out_copy_insertion_sql,
+    prepare_side_effects_processing_sql,
+    prepare_side_effects_read_sql,
+)
+from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 
 T = TypeVar("T", bound=BaseModel)
 

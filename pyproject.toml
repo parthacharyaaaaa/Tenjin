@@ -17,9 +17,8 @@ members = [
 
 [dependency-groups]
 dev = [
-    "autoflake>=2.3.3",
+    "ruff>=0.16.7",
     "bandit[baseline,toml]>=1.9.4",
-    "black>=26.3.1",
     "deptry>=0.25.1",
     "orjson>=3.11.9",
     "pre-commit>=4.6.0",
@@ -57,3 +56,37 @@ known_first_party=[
 project-excludes=[
     "**/alembic"
 ]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E4", "E7", "E9",
+    "F",
+    "I",
+    "N",
+    "B0",
+    "DTZ",
+    "RET",
+    "ASYNC",
+    "PERF101", "PERF102", "PERF401", "PERF402", "PERF403",
+    "SIM101", "SIM102", "SIM109", "SIM110","SIM114", "SIM115", "SIM300", "SIM401"
+]
+
+ignore = [
+    "B008", "B009", "B010", "B013", "B019", "B043", "E741", "E731",
+    "RET503"
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]
+"**/gunicorn.conf.py" = ["N999"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = false

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Iterable
 
 from psycopg import AsyncConnection
@@ -30,7 +30,7 @@ async def downstream_soft_delete_strong_entity(
     foreign_key_column: str,
     deletion_time: datetime | None = None,
 ) -> None:
-    deletion_time = deletion_time or datetime.now()
+    deletion_time = deletion_time or datetime.now(UTC)
     deletion_statement: Composed = prepare_orphan_deletion(
         orphan_table,
         foreign_key_column,

@@ -1,13 +1,11 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
 
+from auxillary.utils import cache_repr, json_repr, to_base64url
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-
-from auxillary.utils import cache_repr, json_repr, to_base64url
-
 from resource_auxillary.cache import (
     NAME_SEPERATOR,
     Action,
@@ -24,9 +22,8 @@ from resource_auxillary.datastructures.payloads.standalone import PostDeletion
 from resource_auxillary.events import (
     CounterUpdate,
     Event,
-    IntentUpdate,
     EventSideEffects,
-    EventName,
+    IntentUpdate,
 )
 from resource_auxillary.strings import EventName, IntentFlag, StreamName
 
@@ -41,12 +38,15 @@ from resource_server.dependencies import (
     get_post_repository,
 )
 from resource_server.event_streamer import EventStreamer
+from resource_server.models.admin_permissions import AdminPermissions, check_permission
+from resource_server.models.database import PostVote
 from resource_server.models.requests import (
     PostAmendmentModel,
     PostCreationModel,
     ReportModel,
     VoteModel,
 )
+from resource_server.repositories.comment import CommentRepository, CommentResult
 from resource_server.repositories.forum import (
     ForumAdminResult,
     ForumRepository,
@@ -58,9 +58,6 @@ from resource_server.request_dependencies import (
     cursor_preprocessor,
     validate_access_token,
 )
-from resource_server.models.admin_permissions import AdminPermissions, check_permission
-from resource_server.models.database import PostVote
-from resource_server.repositories.comment import CommentRepository, CommentResult
 from resource_server.utils.typing import StandardAccessTokenClaims
 from resource_server.utils.validation import validate_duplicate_amendment_contents
 
@@ -116,7 +113,7 @@ async def create_post(
             "forum_id": forum.id_,
             "title": post_model.title,
             "body_text": post_model.body,
-            "time_posted": datetime.now().isoformat(),
+            "time_posted": datetime.now(UTC).isoformat(),
         }
 
         post_event: Event = Event(
@@ -205,7 +202,7 @@ async def delete_post(
     if not post:
         raise HTTPException(404, f"No post with id {post_id} found")
 
-    conflicting_message: str = f"Post already deleted"
+    conflicting_message: str = "Post already deleted"
     async with cache_manager.guard_action(
         access_token["sid"],
         post_id,
@@ -213,22 +210,18 @@ async def delete_post(
         Action.DELETE,
         conflicting_intent=IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
         intent_conflict_message=conflicting_message,
-    ) as latest_intent:
+    ):
         intent_id: Final[str] = uuid4().hex
         if access_token["sid"] != post.author_id:
-            forum_admin: ForumAdminResult | None = (
-                await cache_manager.distributed_get_or_load(
-                    derive_cache_key(
-                        ForumAdminResult.resource_name,
-                        NAME_SEPERATOR.join(
-                            (str(post.forum_id), str(access_token["sid"]))
-                        ),
-                    ),
-                    partial(
-                        forum_repo.get_forum_admin, post.forum_id, access_token["sid"]
-                    ),
-                    ForumAdminResult,
-                )
+            forum_admin: (
+                ForumAdminResult | None
+            ) = await cache_manager.distributed_get_or_load(
+                derive_cache_key(
+                    ForumAdminResult.resource_name,
+                    NAME_SEPERATOR.join((str(post.forum_id), str(access_token["sid"]))),
+                ),
+                partial(forum_repo.get_forum_admin, post.forum_id, access_token["sid"]),
+                ForumAdminResult,
             )
             if not forum_admin:
                 raise HTTPException(403, "Only author and admins can delete post")
@@ -307,8 +300,8 @@ async def vote_post(
             existing_vote: bool | None = await post_repo.get_vote(
                 post_id, access_token["sid"]
             )
-            if (existing_vote == True and vote_model.vote == 1) or (
-                existing_vote == False and vote_model.vote == -1
+            if (existing_vote is True and vote_model.vote == 1) or (
+                existing_vote is False and vote_model.vote == -1
             ):
                 await cache_manager.set_intent(
                     intent_id,
@@ -319,7 +312,7 @@ async def vote_post(
                     intent,
                 )
                 raise HTTPException(409, "Same vote already casted")
-            elif existing_vote:
+            if existing_vote:
                 # Transitioning from upvote to downvote, or vice-versa
                 delta *= 2
 
@@ -351,7 +344,9 @@ async def vote_post(
         )
 
         payload: PostVoteAssosciation = PostVoteAssosciation(
-            user_id=access_token["sid"], post_id=post_id, vote=delta  # pyrefly: ignore
+            user_id=access_token["sid"],
+            post_id=post_id,
+            vote=delta,  # pyrefly: ignore
         )
 
         vote_event: Event = Event(
@@ -410,7 +405,7 @@ async def unvote_post(
                     IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
                 )
                 raise HTTPException(409, conflicting_message)
-            if existing_vote == False:  # downvote
+            if existing_vote is False:  # downvote
                 delta = -1
 
         counter_updates: tuple[CounterUpdate, ...] = (
@@ -441,7 +436,9 @@ async def unvote_post(
         )
 
         payload: PostVoteAssosciation = PostVoteAssosciation(
-            user_id=access_token["sid"], post_id=post_id, vote=delta  # type: ignore
+            user_id=access_token["sid"],
+            post_id=post_id,
+            vote=delta,  # type: ignore
         )
         unvote_event: Event = Event(
             name=EventName.POST_UNVOTE,
@@ -481,17 +478,18 @@ async def save_post(
         intent_conflict_message=conflicting_message,
     ) as latest_intent:
         intent_id: Final[str] = uuid4().hex
-        if not latest_intent:
-            if await post_repo.check_saved(post_id, access_token["sid"]):
-                await cache_manager.set_intent(
-                    intent_id,
-                    str(access_token["sid"]),
-                    str(post_id),
-                    PostResult.resource_name,
-                    Action.SAVE,
-                    IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-                )
-                raise HTTPException(409, conflicting_message)
+        if not latest_intent and await post_repo.check_saved(
+            post_id, access_token["sid"]
+        ):
+            await cache_manager.set_intent(
+                intent_id,
+                str(access_token["sid"]),
+                str(post_id),
+                PostResult.resource_name,
+                Action.SAVE,
+                IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+            )
+            raise HTTPException(409, conflicting_message)
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -562,17 +560,18 @@ async def unsave_post(
         intent_conflict_message=conflicting_message,
     ) as latest_intent:
         intent_id: Final[str] = uuid4().hex
-        if not latest_intent:
-            if not (await post_repo.check_saved(post_id, access_token["sid"])):
-                await cache_manager.set_intent(
-                    intent_id,
-                    str(access_token["sid"]),
-                    str(post_id),
-                    PostResult.resource_name,
-                    Action.SAVE,
-                    IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
-                )
-                raise HTTPException(409, "Post not saved")
+        if not (
+            latest_intent or await post_repo.check_saved(post_id, access_token["sid"])
+        ):
+            await cache_manager.set_intent(
+                intent_id,
+                str(access_token["sid"]),
+                str(post_id),
+                PostResult.resource_name,
+                Action.SAVE,
+                IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
+            )
+            raise HTTPException(409, "Post not saved")
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -648,21 +647,18 @@ async def report_post(
 
     if latest_intent:
         raise HTTPException(409, "Post already reported")
-    else:
-        if await post_repo.check_reported(
-            post_id, access_token["sid"], report_model.tag
-        ):
-            await cache_manager.set_intent(
-                intent_id,
-                str(access_token["sid"]),
-                str(post_id),
-                resource_name,
-                Action.REPORT,
-                IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-            )
-            raise HTTPException(
-                409, f"Post already reported for reason: {report_model.tag}"
-            )
+    if await post_repo.check_reported(post_id, access_token["sid"], report_model.tag):
+        await cache_manager.set_intent(
+            intent_id,
+            str(access_token["sid"]),
+            str(post_id),
+            resource_name,
+            Action.REPORT,
+            IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+        )
+        raise HTTPException(
+            409, f"Post already reported for reason: {report_model.tag}"
+        )
 
     counter_updates: tuple[CounterUpdate, ...] = (
         CounterUpdate(
@@ -690,7 +686,7 @@ async def report_post(
         user_id=access_token["sid"],
         report_tag=report_model.tag,
         report_description=report_model.description,
-        report_time=datetime.now(),
+        report_time=datetime.now(UTC),
     )
 
     report_event: Event = Event(

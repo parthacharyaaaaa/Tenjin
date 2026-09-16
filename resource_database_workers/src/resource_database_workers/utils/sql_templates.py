@@ -1,17 +1,14 @@
-from resource_auxillary.datastructures.database import GenericLiterals
-from resource_auxillary.datastructures.database import (
-    EventLiteral,
-    SideEffectsLiteral,
-    SideEffectsTables,
-)
 from datetime import datetime
 from typing import Final, Iterable, Mapping, Sequence
 
-from psycopg.sql import Literal, Identifier, SQL, Composed, Placeholder
-
+from psycopg.sql import SQL, Composed, Identifier, Literal, Placeholder
 from resource_auxillary.datastructures.database import (
-    DeletionColumnLiteral,
     DeadLetterQueueLiteral,
+    DeletionColumnLiteral,
+    EventLiteral,
+    GenericLiterals,
+    SideEffectsLiteral,
+    SideEffectsTables,
 )
 
 UPDATION_SQL: Final[SQL] = SQL("""UPDATE {table} t

@@ -1,43 +1,39 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Final
 
-from fastapi import APIRouter, Depends, HTTPException, Path
-from fastapi.responses import JSONResponse
-
 from auxillary.utils import (
-    bcrypt_hash_password,
     bcrypt_check_password,
+    bcrypt_hash_password,
     json_repr,
     to_base64url,
 )
-
+from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (
-    create_intent_flag,
     derive_cache_key,
 )
 from resource_auxillary.datastructures.payloads.standalone import UserCleanup
 from resource_auxillary.events import (
-    CacheUpdate,
     Event,
-    IntentUpdate,
     EventSideEffects,
-    EventName,
 )
-from resource_auxillary.strings import EventName, IntentFlag, Action, StreamName
+from resource_auxillary.strings import Action, EventName, IntentFlag, StreamName
 
-from resource_server.config.app_config import AppConfig
 from resource_server.cache_manager import CacheManager
+from resource_server.config.app_config import AppConfig
+from resource_server.config.database_constants import UserConstants
 from resource_server.datastructures.requests import SortOption
 from resource_server.dependencies import (
-    get_app_config,
-    get_forum_repository,
-    get_post_repository,
     get_anime_repository,
+    get_app_config,
     get_cache_manager,
     get_event_streamer,
+    get_forum_repository,
+    get_post_repository,
     get_user_repository,
 )
+from resource_server.event_streamer import EventStreamer
 from resource_server.models.requests import (
     GenericUserIdentificationModel,
     UserCreationModel,
@@ -45,22 +41,17 @@ from resource_server.models.requests import (
     UserPasswordModel,
 )
 from resource_server.repositories.anime import AnimeRepository, AnimeResult
+from resource_server.repositories.forum import ForumRepository, ForumResult
 from resource_server.repositories.posts import PostRepository, PostResult
-from resource_server.request_dependencies import (
-    cursor_preprocessor,
-    preprocess_sort_option,
-    validate_access_token,
-)
 from resource_server.repositories.user import (
-    PrivateUserResult,
     UserRepository,
     UserResult,
 )
-from resource_server.repositories.forum import ForumRepository, ForumResult
-from resource_server.config.database_constants import UserConstants
+from resource_server.request_dependencies import (
+    cursor_preprocessor,
+    preprocess_sort_option,
+)
 from resource_server.utils.helpers import generate_url_token
-from resource_server.utils.typing import StandardAccessTokenClaims
-from resource_server.event_streamer import EventStreamer
 
 USERS: Final[APIRouter] = APIRouter()
 
@@ -85,7 +76,7 @@ async def register(
                 409,
                 f"Username {user_model.username} and email {user_model.email} already taken",
             )
-        elif existing_users[0].username == user_model.username:
+        if existing_users[0].username == user_model.username:
             raise HTTPException(409, f"Username {user_model.username} already taken")
         raise HTTPException(409, f"Email {user_model.email} already taken")
 
@@ -136,7 +127,7 @@ async def delete_user(
         raise HTTPException(409, "Account already queued for deletion")
 
     await cache_manager.set_negative_mapping(user_cache_key)
-    deletion_time: datetime = datetime.now()
+    deletion_time: datetime = datetime.now(UTC)
     await user_repo.delete_user(user.id_, deletion_time=deletion_time)
 
     payload: UserCleanup = UserCleanup(user_id=user.id_, time_deleted=deletion_time)
@@ -182,7 +173,9 @@ async def recover_password(
 
     url_token: Final[str] = generate_url_token()
     await user_repo.set_password_recovery_token(
-        user.id_, url_token, datetime.now() + app_config.BUSINESS.PASSWORD_TOKEN_MAX_AGE
+        user.id_,
+        url_token,
+        datetime.now(UTC) + app_config.BUSINESS.PASSWORD_TOKEN_MAX_AGE,
     )
 
     # TODO: Enqueue email
@@ -206,12 +199,12 @@ async def update_password(
 ) -> JSONResponse:
     user, (url, expiry) = await user_repo.get_user_password_recovery_token(user_id)
     if not user:
-        raise HTTPException(404, f"User not found")
-    elif not url:
+        raise HTTPException(404, "User not found")
+    if not url:
         raise HTTPException(404, "No password recovery token found")
-    elif url != temp_url:
+    if url != temp_url:
         raise HTTPException(403, "Invalid url")
-    elif expiry > datetime.now():  # type: ignore[reportOptionalOperand]
+    if expiry > datetime.now(UTC):  # type: ignore[reportOptionalOperand]
         raise HTTPException(403, "Token expired")
 
     pw_hash: Final[bytes] = bcrypt_hash_password(password_model.password)
@@ -401,7 +394,7 @@ async def login(
     if not bcrypt_check_password(user_model.password, password_hash):
         raise HTTPException(403, "Incorrect password")
 
-    login_time = datetime.now()
+    login_time = datetime.now(UTC)
     # TODO: Add event to update user login time
     return JSONResponse(
         {

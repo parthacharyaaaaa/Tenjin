@@ -1,16 +1,16 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, ClassVar, Mapping, Self
 
+from auxillary.singleton import SingletonMetaclass
 from sqlalchemy import Row, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
 from resource_server.datastructures.requests import SortOption
-from auxillary.singleton import SingletonMetaclass
-from resource_server.repositories.result_protocol import AbstractDTO
 from resource_server.models.database import Post, PostReport, PostSave, PostVote, User
 from resource_server.models.database_enums import ReportTags
+from resource_server.repositories.result_protocol import AbstractDTO
 
 
 @dataclass(slots=True, init=False)
@@ -62,7 +62,7 @@ class PostRepository(metaclass=SingletonMetaclass):
                 await session.execute(
                     select(Post, User.username)
                     .join(User, User.id_ == Post.author_id)
-                    .where((Post.id_ == post_id) & (Post.deleted == False))
+                    .where((Post.id_ == post_id) & (Post.deleted.is_(False)))
                 )
             ).first()
             if not result:
@@ -101,7 +101,7 @@ class PostRepository(metaclass=SingletonMetaclass):
         sort_option: SortOption = SortOption.DESCENDING,
         datetime_bound: datetime | None = None,
     ) -> list[PostResult]:
-        datetime_bound = datetime_bound or datetime.min
+        datetime_bound = datetime_bound or datetime.min.replace(tzinfo=UTC)
         match sort_option:
             case SortOption.DESCENDING:
                 order_clause = Post.time_posted.desc

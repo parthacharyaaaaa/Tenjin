@@ -1,16 +1,14 @@
 """Outgoing emailiing logic"""
 
 import time
+from email.message import EmailMessage
 from typing import MutableSequence, Sequence
 
 from aiosmtplib import SMTP, SMTPServerDisconnected
 from aiosmtplib.errors import SMTPException, SMTPTimeoutError
-
-from email.message import EmailMessage
-
+from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
-from resource_auxillary.coordination import exponential_jittered_backoff
 
 from email_worker.config.email_config import EmailConfig
 from email_worker.constants import (
@@ -30,7 +28,7 @@ async def send_email(
     for i in range(1, attempts + 1):
         try:
             await smtp_client.send_message(email_messaage)
-            return
+            return None
         except SMTPTimeoutError as e:
             if i == attempts:
                 return e
@@ -69,15 +67,14 @@ async def batch_send_emails(
             i += 1
             successful_sends.append(events[i])
             continue
-        else:
-            if isinstance(e, SMTPServerDisconnected):
-                smtp_client = await get_fresh_smtp_client()
-            smtp_error_data.append((e, time.monotonic()))  # type: ignore
-            if determine_smtp_error_threshold_reached(
-                smtp_error_data,
-                email_config.WORKER.SMTP_NETWORK_ERROR_WINDOW,
-                email_config.WORKER.MAXIMUM_SMTP_REFRESHES,
-            ):
-                ...
+        if isinstance(e, SMTPServerDisconnected):
+            smtp_client = await get_fresh_smtp_client()
+        smtp_error_data.append((e, time.monotonic()))  # type: ignore
+        if determine_smtp_error_threshold_reached(
+            smtp_error_data,
+            email_config.WORKER.SMTP_NETWORK_ERROR_WINDOW,
+            email_config.WORKER.MAXIMUM_SMTP_REFRESHES,
+        ):
+            ...
 
     return tuple(successful_sends)

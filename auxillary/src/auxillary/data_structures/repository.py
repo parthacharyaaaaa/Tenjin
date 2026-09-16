@@ -3,7 +3,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import Final
 
-from sqlalchemy.ext.asyncio.session import async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio.session import AsyncSession, async_sessionmaker
 
 from auxillary.mixins.abstract import StrictAbstractMixin
 from auxillary.mixins.metaclass import AntiSingletonMixin

@@ -2,7 +2,7 @@ from datetime import datetime
 from types import MappingProxyType, NoneType
 from typing import Any, Callable, Final, LiteralString
 
-from resource_auxillary.strings import NAME_SEPERATOR, Action
+from resource_auxillary.strings import NAME_SEPERATOR
 
 type t_cache_casting_map = MappingProxyType[type, Callable[[Any], Any]]
 

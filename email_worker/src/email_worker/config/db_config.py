@@ -1,16 +1,15 @@
 from pathlib import Path
 from typing import ClassVar
 
+from auxillary.mixins.db_config import (
+    BasicConnectionPoolConfigMixin,
+    BasicPostgresDatabaseConfigMixin,
+)
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     TomlConfigSettingsSource,
-)
-
-from auxillary.mixins.db_config import (
-    BasicConnectionPoolConfigMixin,
-    BasicPostgresDatabaseConfigMixin,
 )
 
 

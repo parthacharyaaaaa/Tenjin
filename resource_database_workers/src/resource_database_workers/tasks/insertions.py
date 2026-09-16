@@ -1,50 +1,43 @@
-from resource_database_workers.utils.db import fan_out_side_effect
-from resource_database_workers.datastructures.side_effects import (
-    DownstreamCacheInvalidationPayload,
-)
-from resource_auxillary.templates.sql import prepare_side_effects_staging_table_sql
-from resource_database_workers.datastructures.side_effects import (
-    DownstreamDeletionPayload,
-)
-from resource_database_workers.datastructures.downstream import (
-    DOWNSTREAM_DELETION_ANONYMOUS_PAYLOAD_MAPPING,
-)
-from resource_database_workers.datastructures.downstream import (
-    AnonymousDownstreamDeletionData,
-)
-from resource_auxillary.datastructures.database import StrongEntity
-from resource_database_workers.utils.sql_templates import (
-    FORMATTED_CACHE_SIDE_EFFECTS_INSERTION_STATEMENT,
-)
-from auxillary.utils import json_repr
 from typing import Any, Final, Literal, MutableSequence, Sequence, get_type_hints
 from uuid import uuid4
 
+from auxillary.utils import json_repr
 from psycopg import AsyncConnection
 from psycopg.errors import IntegrityError
 from psycopg.sql import Composed
-
-from resource_auxillary.events import StreamedEvent
-from resource_auxillary.datastructures.translation import (
-    EVENT_PAYLOAD_TYPES,
-    ASSOCIATION_DB_METADATA,
-)
 from resource_auxillary.datastructures.casting import (
     CAST_MAPPING,
     default_serializer,
 )
 from resource_auxillary.datastructures.database import (
     EventLiteral,
-    SideEffectsTables,
     SideEffectsLiteral,
+    SideEffectsTables,
+    StrongEntity,
 )
+from resource_auxillary.datastructures.translation import (
+    ASSOCIATION_DB_METADATA,
+    EVENT_PAYLOAD_TYPES,
+)
+from resource_auxillary.events import StreamedEvent
 from resource_auxillary.templates.sql import (
+    prepare_side_effects_staging_table_sql,
     prepare_temp_table_sql,
     prepare_weak_insertion_copy_sql,
     prepare_weak_insertion_sql,
 )
 
+from resource_database_workers.datastructures.downstream import (
+    DOWNSTREAM_DELETION_ANONYMOUS_PAYLOAD_MAPPING,
+    AnonymousDownstreamDeletionData,
+)
+from resource_database_workers.datastructures.side_effects import (
+    DownstreamCacheInvalidationPayload,
+    DownstreamDeletionPayload,
+)
+from resource_database_workers.utils.db import fan_out_side_effect
 from resource_database_workers.utils.sql_templates import (
+    FORMATTED_CACHE_SIDE_EFFECTS_INSERTION_STATEMENT,
     format_strong_insertion_sql,
 )
 from resource_database_workers.utils.typing import t_action_literal
@@ -222,9 +215,7 @@ async def insert_downstream_deletion_outbox_entries(
                         )
                     )
 
-                    downstream_cache_invalidation_payload: (
-                        DownstreamCacheInvalidationPayload
-                    ) = DownstreamCacheInvalidationPayload(
+                    downstream_cache_invalidation_payload: DownstreamCacheInvalidationPayload = DownstreamCacheInvalidationPayload(
                         downstream_table=child_deletion_data["orphan_table"]
                     )
 

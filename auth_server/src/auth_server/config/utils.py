@@ -1,7 +1,7 @@
 """Config-related constants"""
 
-from typing import Final
 import re
+from typing import Final
 
 __all__ = ("APP_ROOT_PATTERN", "JWKS_NAME_PATTERN", "IDENTITY_PATTERN", "EMAIL_PATTERN")
 

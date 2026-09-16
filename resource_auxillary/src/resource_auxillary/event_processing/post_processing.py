@@ -1,11 +1,10 @@
 """Core worker utilities for stream-bound event processing"""
 
-from typing import Sequence, Iterable
+from typing import Iterable, Sequence
 
 import orjson
 from redis.asyncio import Redis
 from redis.asyncio.client import Pipeline
-
 
 from resource_auxillary.cache import NF_MAPPING
 from resource_auxillary.events import (

@@ -1,16 +1,16 @@
+import asyncio
+import os
+import secrets
+from hashlib import sha512
 from pathlib import Path
 from typing import Sequence
 
 import ecdsa
-from hashlib import sha512
-import os
-import secrets
-from auth_server.security.key_container import KeyMetadata
-from auth_server.repositories.keydata import KeydataRepository
-from auxillary.utils import to_base64url
 import orjson
+from auxillary.utils import to_base64url
 
 from auth_server.models.database import KeyData
+from auth_server.repositories.keydata import KeydataRepository
 
 
 def generate_ecdsa_pair() -> tuple[str, ecdsa.SigningKey, ecdsa.VerifyingKey]:
@@ -59,22 +59,22 @@ def update_jwks(
     # ecdsa.VerifyingKey.pubkey is hinted as being None thanks to its constructor
     # but actually does return a valid type
     point = vk.pubkey.point  # type: ignore[reportAttributeAccessIssue]
-    encodedX, encodedY = to_base64url(int(point.x())), to_base64url(int(point.y()))
-    keyMapping: dict[str, str | int] = {
+    encoded_x, encoded_y = to_base64url(int(point.x())), to_base64url(int(point.y()))
+    key_mapping: dict[str, str | int] = {
         "kty": "EC",
         "alg": "ECDSA",
         "crv": ecdsa.SECP256k1.__str__(),
         "use": "sig",
         "kid": kid,
-        "x": encodedX,
-        "y": encodedY,
+        "x": encoded_x,
+        "y": encoded_y,
     }
 
     with open(jwks_json_filepath, "r+") as jwks_json_file:
         jwks_contents: list[dict[str, str | int]] = orjson.loads(jwks_json_file.read())[
             "keys"
         ]
-        jwks_contents.append(keyMapping)
+        jwks_contents.append(key_mapping)
         length: int = len(jwks_contents)
 
         if enforce_capacity and length > capacity:
@@ -133,10 +133,10 @@ async def initialize_active_key(
 ) -> KeyData:
     active_kid, sk, vk = generate_ecdsa_pair()
 
-    if not private_directory.exists():
-        private_directory.mkdir(parents=True)
-    if not public_directory.exists():
-        public_directory.mkdir(parents=True)
+    if not await asyncio.to_thread(private_directory.exists):
+        await asyncio.to_thread(private_directory.mkdir, parents=True)
+    if not await asyncio.to_thread(public_directory.exists):
+        await asyncio.to_thread(public_directory.mkdir, parents=True)
 
     # Persist to PEM, and DB (JWKS done at end)
     write_ecdsa_pair(

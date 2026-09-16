@@ -1,11 +1,10 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
-
 from resource_auxillary.cache import (
     create_intent_flag,
     derive_cache_key,
@@ -20,39 +19,37 @@ from resource_auxillary.datastructures.payloads.standalone import (
     CommentDeletion,
 )
 from resource_auxillary.events import (
-    CacheUpdate,
     CounterUpdate,
     Event,
-    IntentUpdate,
     EventSideEffects,
-    EventName,
+    IntentUpdate,
 )
 from resource_auxillary.strings import (
     NAME_SEPERATOR,
+    Action,
     EventName,
     IntentFlag,
-    Action,
     StreamName,
 )
 
 from resource_server.cache_manager import CacheManager
 from resource_server.dependencies import (
+    get_cache_manager,
     get_comment_repository,
+    get_event_streamer,
     get_forum_repository,
     get_post_repository,
-    get_cache_manager,
-    get_event_streamer,
 )
+from resource_server.event_streamer import EventStreamer
+from resource_server.models.admin_permissions import AdminPermissions, check_permission
+from resource_server.models.database import CommentVote
 from resource_server.models.requests import CommentModel, ReportModel, VoteModel
 from resource_server.repositories.comment import CommentRepository, CommentResult
-from resource_server.repositories.posts import PostRepository, PostResult
-from resource_server.request_dependencies import validate_access_token
-from resource_server.models.database import CommentVote
-from resource_server.repositories.user import UserResult
 from resource_server.repositories.forum import ForumAdminResult, ForumRepository
-from resource_server.models.admin_permissions import AdminPermissions, check_permission
+from resource_server.repositories.posts import PostRepository, PostResult
+from resource_server.repositories.user import UserResult
+from resource_server.request_dependencies import validate_access_token
 from resource_server.utils.typing import StandardAccessTokenClaims
-from resource_server.event_streamer import EventStreamer
 
 COMMENTS: Final[APIRouter] = APIRouter()
 
@@ -112,7 +109,7 @@ async def comment_on_post(
         parent_forum=post.forum_id,
         parent_post=post.id_,
         body=comment_model.body,
-        time_created=datetime.now(),
+        time_created=datetime.now(UTC),
     )
 
     deletion_event: Event = Event(
@@ -148,21 +145,21 @@ async def delete_comment(
         raise HTTPException(404, "Comment not found")
     if comment.author_id != access_token["sid"]:
         # Check for forum admin
-        forum_admin: ForumAdminResult | None = (
-            await cache_manager.distributed_get_or_load(
-                derive_cache_key(
-                    ForumAdminResult.resource_name,
-                    NAME_SEPERATOR.join(
-                        (str(comment.parent_forum), str(access_token["sid"]))
-                    ),
+        forum_admin: (
+            ForumAdminResult | None
+        ) = await cache_manager.distributed_get_or_load(
+            derive_cache_key(
+                ForumAdminResult.resource_name,
+                NAME_SEPERATOR.join(
+                    (str(comment.parent_forum), str(access_token["sid"]))
                 ),
-                partial(
-                    forum_repo.get_forum_admin,
-                    comment.parent_forum,
-                    access_token["sid"],
-                ),
-                ForumAdminResult,
-            )
+            ),
+            partial(
+                forum_repo.get_forum_admin,
+                comment.parent_forum,
+                access_token["sid"],
+            ),
+            ForumAdminResult,
         )
         if not forum_admin:
             raise HTTPException(403, "Only author and admins can delete comments")
@@ -170,7 +167,7 @@ async def delete_comment(
             raise HTTPException(403, "Insufficient permissions to delete comment")
 
     intent_id: Final[str] = uuid4().hex
-    conflict_message: str = f"Already deleted comment"
+    conflict_message: str = "Already deleted comment"
     async with cache_manager.guard_action(
         access_token["sid"],
         comment_id,
@@ -217,7 +214,8 @@ async def delete_comment(
             name=EventName.COMMENT_DELETE,
             payload=payload,  # type: ignore
             side_effects=EventSideEffects(
-                counter_updates=counter_updates, intent_updates=intent_updates  # type: ignore[reportCallIssue]
+                counter_updates=counter_updates,
+                intent_updates=intent_updates,  # type: ignore[reportCallIssue]
             ),
         )
 
@@ -267,8 +265,8 @@ async def vote_comment(
             existing_vote: bool | None = await comment_repo.get_vote(
                 post_id, access_token["sid"]
             )
-            if (existing_vote == True and vote_model.vote == 1) or (
-                existing_vote == False and vote_model.vote == -1
+            if (existing_vote is True and vote_model.vote == 1) or (
+                existing_vote is False and vote_model.vote == -1
             ):
                 await cache_manager.set_intent(
                     intent_id,
@@ -279,7 +277,7 @@ async def vote_comment(
                     intent,
                 )
                 raise HTTPException(409, conflict_message)
-            elif existing_vote:
+            if existing_vote:
                 # Transitioning from upvote to downvote, or vice-versa
                 delta *= 2
 
@@ -363,7 +361,7 @@ async def unvote_comment(
             existing_vote: bool | None = await comment_repo.get_vote(
                 post_id, access_token["sid"]
             )
-            if not existing_vote:
+            if existing_vote is None:
                 await cache_manager.set_intent(
                     intent_id,
                     str(access_token["sid"]),
@@ -373,7 +371,7 @@ async def unvote_comment(
                     IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
                 )
                 raise HTTPException(409, conflict_message)
-            elif existing_vote == False:  # downvote
+            if existing_vote is False:  # downvote
                 delta = -1
 
         counter_updates: tuple[CounterUpdate, ...] = (
@@ -454,19 +452,18 @@ async def report_comment(
         intent_conflict_message=conflict_message,
     ) as latest_intent:
         intent_id: Final[str] = uuid4().hex
-        if not latest_intent:
-            if await comment_repo.check_reported(
-                comment_id, access_token["sid"], report_model.tag
-            ):
-                await cache_manager.set_intent(
-                    intent_id,
-                    str(access_token["sid"]),
-                    str(comment_id),
-                    resource_name,
-                    Action.REPORT,
-                    IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-                )
-                raise HTTPException(409, conflict_message)
+        if not latest_intent and await comment_repo.check_reported(
+            comment_id, access_token["sid"], report_model.tag
+        ):
+            await cache_manager.set_intent(
+                intent_id,
+                str(access_token["sid"]),
+                str(comment_id),
+                resource_name,
+                Action.REPORT,
+                IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+            )
+            raise HTTPException(409, conflict_message)
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -496,7 +493,7 @@ async def report_comment(
             user_id=access_token["sid"],
             report_tag=report_model.tag,
             report_description=report_model.description,
-            report_time=datetime.now(),
+            report_time=datetime.now(UTC),
         )
 
         report_event: Event = Event(

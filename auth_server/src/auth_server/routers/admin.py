@@ -1,39 +1,31 @@
-from auth_server.dependencies import get_repository_work_coordinator
-from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
-from auth_server.dependencies import get_suspicious_activity_repository
-from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
-from auxillary.utils import json_repr
-from auth_server.repositories.admin import AdminPublicResult
-from auth_server.repositories.admin import AdminRepository
-from auth_server.repositories.admin import AdminPrivateResult
 import base64
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Final
 
-from fastapi import APIRouter, Depends
-from fastapi.exceptions import HTTPException
-from fastapi.responses import JSONResponse
-from fastapi.requests import Request
-
 import orjson
-
-from redis.asyncio import Redis
-from redis.exceptions import RedisError
-
-from sqlalchemy.exc import SQLAlchemyError
-
+from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auxillary.utils import (
     bcrypt_check_password,
     bcrypt_hash_password,
-    genericDBFetchException,
+    generic_database_fetch_exception,
+    json_repr,
 )
+from fastapi import APIRouter, Depends
+from fastapi.exceptions import HTTPException
+from fastapi.requests import Request
+from fastapi.responses import JSONResponse
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
+from sqlalchemy.exc import SQLAlchemyError
 
 from auth_server.config.app_config import AppConfig
 from auth_server.config.constants import REVIVAL_DIGEST_LENGTH
 from auth_server.dependencies import (
-    get_app_config,
-    get_synced_store_client,
     get_admin_repository,
+    get_app_config,
+    get_repository_work_coordinator,
+    get_suspicious_activity_repository,
+    get_synced_store_client,
 )
 from auth_server.models.cmd_requests import (
     AdminAuthenticationModel,
@@ -41,13 +33,19 @@ from auth_server.models.cmd_requests import (
     AdminRefreshModel,
 )
 from auth_server.models.session import AdminSession
+from auth_server.repositories.admin import (
+    AdminPrivateResult,
+    AdminPublicResult,
+    AdminRepository,
+)
+from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.security.admin_roles import AdminRole
 from auth_server.security.keygen import generate_ecdsa_pair
 from auth_server.security.permissions import Permission
 from auth_server.strings import AdminStrings
 from auth_server.utils.auth_auxillary import (
-    report_suspicious_activity,
     create_admin_session,
+    report_suspicious_activity,
     sign_session,
 )
 from auth_server.utils.dependencies import require_permissions, validate_admin_session
@@ -117,9 +115,7 @@ async def admin_login(
     # Exists in DB, check synced_store_client to see if session is already active
     session_key: Final[str] = f"admin:{admin.id_}"
     try:
-        admin_session: dict[str, str] = await synced_store_client.hgetall(
-            session_key
-        )  # pyrefly: ignore[bad-assignment]
+        admin_session: dict[str, str] = await synced_store_client.hgetall(session_key)  # pyrefly: ignore[not-async]
 
         # Single sign-in policy, invalidate existing session and add entry in logs
         if admin_session:
@@ -155,8 +151,8 @@ async def admin_login(
     )
 
     # type ignore for TypedDict, which behaves as dict at runtime
-    synced_store_client.hset(session_key, mapping=session_mapping)  # type: ignore[reportArgumentType]
-    revival_digest: Final[str] = session_mapping.pop("revival_digest")  # type: ignore[reportAssignmentType]
+    synced_store_client.hset(session_key, mapping=session_mapping)  # pyrefly: ignore[ bad-argument-type]
+    revival_digest: Final[str] = session_mapping.pop("revival_digest")
     encoded_session_token: bytes = base64.urlsafe_b64encode(
         orjson.dumps(session_mapping)
     )
@@ -183,19 +179,19 @@ async def admin_delete(
             deletion_model.id_, include_deleted=True
         )
     except SQLAlchemyError:
-        genericDBFetchException()
+        generic_database_fetch_exception()
     if not admin:
         raise HTTPException(404, f"No admin with ID {deletion_model.id_} found")
-    elif admin.time_deleted:
+    if admin.time_deleted:
         raise HTTPException(
             410, f"Admin {admin.username} (ID: {admin.id_}) already deleted"
         )
 
-    deletion_time: datetime = datetime.now()
+    deletion_time: datetime = datetime.now(UTC)
     try:
         await admin_repository.delete_admin(deletion_model.id_, deletion_time)
-    except:
-        raise HTTPException(500, "Failed to delete admin account")
+    except Exception as e:
+        raise HTTPException(500, "Failed to delete admin account") from e
 
     return JSONResponse(
         {
@@ -239,7 +235,9 @@ async def admin_refresh(
             ),
         )
 
-    actual_digest_bytes: bytes = await synced_store_client.hget(admin_key, "revival_digest")  # type: ignore[reportAssignmentType]
+    actual_digest_bytes: bytes = await synced_store_client.hget(
+        admin_key, "revival_digest"
+    )  # pyrefly: ignore
     if not actual_digest_bytes:
         await synced_store_client.delete(admin_key)
         raise HTTPException(
@@ -284,8 +282,9 @@ async def admin_refresh(
     )
 
     # type ignore for TypedDict, which behaves as dict at runtime
-    await synced_store_client.hset(session_key, mapping=session_mapping)  # type: ignore[reportArgumentType]
-    revival_digest: str = session_mapping.pop("revival_digest")  # type: ignore[reportAssignmentType]
+    session_key: Final[str] = f"admin:{admin_session.id_}"
+    await synced_store_client.hset(session_key, mapping=session_mapping)  # pyrefly: ignore[bad-argument-type, not-async]
+    revival_digest: str = session_mapping.pop("revival_digest")
     if session_mapping["session_iteration"] == config.ADMIN.MAX_SESSION_ITERATIONS:
         revival_digest = AdminStrings.NO_REFRESH_SENTINEL
     encoded_session_token: bytes = base64.urlsafe_b64encode(
@@ -323,7 +322,7 @@ async def admin_lock(
             identification_model.id_
         )
     except SQLAlchemyError:
-        genericDBFetchException()
+        generic_database_fetch_exception()
 
     if not admin:
         raise HTTPException(
@@ -368,7 +367,7 @@ async def admin_unlock(
             identification_model.id_
         )
     except SQLAlchemyError:
-        genericDBFetchException()
+        generic_database_fetch_exception()
 
     if not admin:
         raise HTTPException(
@@ -409,11 +408,11 @@ async def create_admin(
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
 ) -> JSONResponse:
     try:
-        existing_admin: AdminPublicResult | None = (
-            await admin_repository.get_admin_by_username(admin_model.identity)
-        )
+        existing_admin: (
+            AdminPublicResult | None
+        ) = await admin_repository.get_admin_by_username(admin_model.identity)
     except SQLAlchemyError:
-        genericDBFetchException()
+        generic_database_fetch_exception()
     if existing_admin:
         raise HTTPException(
             409, f"Admin with username {admin_model.identity} already exists"

@@ -1,39 +1,36 @@
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from random import randint
-import time
 from typing import (
     Any,
     Callable,
-    LiteralString,
-    TypeVar,
     ClassVar,
     Coroutine,
     Final,
     Literal,
+    LiteralString,
     Mapping,
     Sequence,
+    TypeVar,
 )
 
 import orjson
-
-from redis.asyncio.client import Redis, Pipeline
-
+from auxillary.singleton import SingletonMetaclass
 from auxillary.typing_utils import SupportsAsyncRedis, SupportsCache
 from auxillary.utils import cache_repr
+from redis.asyncio.client import Pipeline, Redis
+from resource_auxillary.cache import create_intent_flag
+from resource_auxillary.strings import NAME_SEPERATOR, Action, IntentFlag
 
 from resource_server.config.sub_config import CacheConfig
-from auxillary.singleton import SingletonMetaclass
 from resource_server.datastructures.exceptions import (
-    CacheCoherenceException,
-    ConflictingIntentException,
-    DuplicateRequestException,
+    CacheCoherenceError,
+    ConflictingIntentError,
+    DuplicateRequestError,
 )
 from resource_server.repositories.result_protocol import AbstractDTO
-
-from resource_auxillary.strings import Action, IntentFlag, NAME_SEPERATOR
-from resource_auxillary.cache import create_intent_flag
 
 DTO_T = TypeVar("DTO_T", bound=AbstractDTO)
 
@@ -46,7 +43,6 @@ type pagination_database_fallback_callable = Callable[
 
 @dataclass(init=False, slots=True, weakref_slot=True)
 class CacheManager(metaclass=SingletonMetaclass):
-
     redis_client: SupportsAsyncRedis
     cache_config: CacheConfig
 
@@ -154,7 +150,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                 await pipe.execute()
             return True
 
-        elif dtype == "string" and cache_entry == self.cache_config.NF_SENTINEL_KEY:
+        if dtype == "string" and cache_entry == self.cache_config.NF_SENTINEL_KEY:
             await self.redis_client.set(
                 cache_key,
                 self.cache_config.NF_SENTINEL_KEY,
@@ -228,7 +224,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                 result_collections.append((None, member_ttl))
                 continue
 
-            elif isinstance(member_entry, dict):
+            if isinstance(member_entry, dict):
                 for idx, field in enumerate(counter_fields.keys()):
                     member_entry[field] += int(member_counters[idx] or 0)
                     result_collections.append((member_entry, member_ttl))
@@ -284,7 +280,7 @@ class CacheManager(metaclass=SingletonMetaclass):
 
         # Upon cache miss, elect a leader to actually talk to DB
         lock_name: Final[str] = self.derive_lock_key(key)
-        for leader_attempt in range(self.cache_config.FETCH_MAX_RETRIES):
+        for _leader_attempt in range(self.cache_config.FETCH_MAX_RETRIES):
             leader: bool = False
             leader = bool(
                 await self.redis_client.set(
@@ -307,13 +303,11 @@ class CacheManager(metaclass=SingletonMetaclass):
                 finally:
                     await self.redis_client.delete(lock_name)
             else:
-                for i in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
+                for _ in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
                     if await self.redis_client.get(lock_name):
                         await asyncio.sleep(
                             self.cache_config.FETCH_WAITING_INITIAL_INTERVAL
-                            * randint(
-                                1, self.cache_config.FETCH_WAITING_JITTER
-                            )  # nosec
+                            * randint(1, self.cache_config.FETCH_WAITING_JITTER)  # nosec
                             ** self.cache_config.FETCH_WAITING_EXPONENT
                         )
                         continue
@@ -332,7 +326,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                         return return_dto.construct_from_cache(cache_entry)
                     return return_dto.construct_from_cache(orjson.loads(cache_entry))
 
-        raise CacheCoherenceException(f"Failed to fetch {key}")
+        raise CacheCoherenceError(f"Failed to fetch {key}")
 
     async def fetch_indicators(
         self,
@@ -389,7 +383,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                 pipe.get(intent)
                 lock_set, intent = await pipe.execute()
             if not lock_set:
-                raise DuplicateRequestException(
+                raise DuplicateRequestError(
                     lock_conflict_message or "Detected duplicate request"
                 )
             if not intent:
@@ -397,7 +391,7 @@ class CacheManager(metaclass=SingletonMetaclass):
             intent_value: str = intent.split(NAME_SEPERATOR)[0]
 
             if conflicting_intent == intent_value:
-                raise ConflictingIntentException(
+                raise ConflictingIntentError(
                     intent_conflict_message or "Operation already performed"
                 )
             yield intent_value
@@ -431,10 +425,13 @@ class CacheManager(metaclass=SingletonMetaclass):
         *,
         element_dtype: Literal["mapping", "string"] = "mapping",
     ) -> tuple[tuple[DTO_T | None, ...] | None, str | None]:
-        page_ttl, keys, paginated_entries, cursor = (
-            await self._primitive_pagination_get_from_cache(
-                page_key, return_dto.counter_fields_map, dtype=element_dtype
-            )
+        (
+            page_ttl,
+            keys,
+            paginated_entries,
+            cursor,
+        ) = await self._primitive_pagination_get_from_cache(
+            page_key, return_dto.counter_fields_map, dtype=element_dtype
         )
 
         if all(i[0] for i in paginated_entries):
@@ -476,7 +473,7 @@ class CacheManager(metaclass=SingletonMetaclass):
 
         # Upon cache miss, elect a leader to actually talk to DB
         lock_name: Final[str] = self.derive_lock_key(page_key)
-        for leader_attempt in range(self.cache_config.FETCH_MAX_RETRIES):
+        for _leader_attempt in range(self.cache_config.FETCH_MAX_RETRIES):
             leader: bool = False
             leader = bool(
                 await self.redis_client.set(
@@ -495,13 +492,11 @@ class CacheManager(metaclass=SingletonMetaclass):
                 finally:
                     await self.redis_client.delete(lock_name)
             else:
-                for i in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
+                for _ in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
                     if await self.redis_client.get(lock_name):
                         await asyncio.sleep(
                             self.cache_config.FETCH_WAITING_INITIAL_INTERVAL
-                            * randint(
-                                1, self.cache_config.FETCH_WAITING_JITTER
-                            )  # nosec
+                            * randint(1, self.cache_config.FETCH_WAITING_JITTER)  # nosec
                             ** self.cache_config.FETCH_WAITING_EXPONENT
                         )
                         continue
@@ -515,14 +510,14 @@ class CacheManager(metaclass=SingletonMetaclass):
                     return (
                         list(
                             map(
-                                lambda x: (return_dto.construct_from_cache(x)),
+                                lambda x: return_dto.construct_from_cache(x),
                                 (r[0] for r in res if r[0]),
                             )
                         ),
                         next_cursor,
                     )
 
-        raise CacheCoherenceException(f"Failed to fetch {page_key}")
+        raise CacheCoherenceError(f"Failed to fetch {page_key}")
 
     async def _promote_paginated_result(
         self,

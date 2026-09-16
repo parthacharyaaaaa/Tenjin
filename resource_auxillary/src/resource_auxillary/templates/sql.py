@@ -1,15 +1,16 @@
 """SQL templates and composed strings"""
 
-from resource_auxillary.datastructures.database import SideEffectsLiteral
-from resource_auxillary.datastructures.database import SideEffectsTables
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Final, Literal, Sequence
 
-from psycopg.sql import SQL, Composed, Identifier, Literal as SQL_Literal
+from psycopg.sql import SQL, Composed, Identifier
+from psycopg.sql import Literal as SQL_Literal
 
 from resource_auxillary.datastructures.database import (
     EventLiteral,
     EventMetadataLiteral,
+    SideEffectsLiteral,
+    SideEffectsTables,
 )
 from resource_auxillary.strings import EventName
 
@@ -27,7 +28,7 @@ def prepare_single_dedup_sql(
         ack_time_col=Identifier(EventLiteral.EVENT_TIMESTAMP_COLUMN_NAME),
         event_name_col=Identifier(EventLiteral.EVENT_NAME_COLUMN_NAME),
         event_id=SQL_Literal(event_id),
-        acknowledgement_time=SQL_Literal(acknowledgement_time or datetime.now()),
+        acknowledgement_time=SQL_Literal(acknowledgement_time or datetime.now(UTC)),
         event_name=SQL_Literal(event_name),
     )
 

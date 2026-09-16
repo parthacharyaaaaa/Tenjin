@@ -5,15 +5,13 @@ from typing import Final
 
 import ecdsa
 import httpx
-
+from auxillary.singleton import SingletonMetaclass
+from auxillary.utils import from_base64url
 from redis.asyncio import Redis
 from redis.asyncio.client import PubSub
 
-from auxillary.utils import from_base64url
-
 from resource_server.config.app_config import AppConfig
 from resource_server.config.constants import RedisConstants
-from auxillary.singleton import SingletonMetaclass
 from resource_server.utils.typing import JWKSEntry
 
 
@@ -121,7 +119,7 @@ class KeyManager(metaclass=SingletonMetaclass):
 
         # Wait for current worker and then read global key mapping
         if not res:
-            for i in range(self.app_config.JWKS.MAX_GLOBAL_MAPPING_POLLS):
+            for _ in range(self.app_config.JWKS.MAX_GLOBAL_MAPPING_POLLS):
                 if await self.app_redis_client.get(RedisConstants.JWKS_POLL_LOCK):
                     await asyncio.sleep(
                         self.app_config.JWKS.GLOBAL_MAPPING_POLL_INTERVAL * 2
@@ -129,7 +127,7 @@ class KeyManager(metaclass=SingletonMetaclass):
                 break
 
             global_mapping: dict[str, bytes] = {}
-            for t in range(self.app_config.JWKS.MAX_GLOBAL_MAPPING_POLLS):
+            for _ in range(self.app_config.JWKS.MAX_GLOBAL_MAPPING_POLLS):
                 global_mapping = await self.get_global_key_mapping()
                 if global_mapping:
                     self.current_mapping = global_mapping
@@ -152,17 +150,17 @@ class KeyManager(metaclass=SingletonMetaclass):
             for expired_key in local_keys - global_valid_keys:
                 self.current_mapping.pop(expired_key)
 
-            for keyMetadata in new_mapping:
+            for key_metadata in new_mapping:
                 # New key found, welcome to the club >:3
-                if keyMetadata["kid"] not in self.current_mapping:
-                    x = from_base64url(keyMetadata["x"])
-                    y = from_base64url(keyMetadata["y"])
+                if key_metadata["kid"] not in self.current_mapping:
+                    x = from_base64url(key_metadata["x"])
+                    y = from_base64url(key_metadata["y"])
                     point = ecdsa.ellipticcurve.Point(ecdsa.SECP256k1.curve, x, y)  # type: ignore[reportAttributeAccessIssue]
                     vk = ecdsa.VerifyingKey.from_public_point(
                         point, curve=ecdsa.SECP256k1
                     )
 
-                    self.current_mapping[keyMetadata["kid"]] = vk.to_pem()
+                    self.current_mapping[key_metadata["kid"]] = vk.to_pem()
 
             # Update global list and values in Redis to inform other workers
             async with self.app_redis_client.pipeline() as pipe:

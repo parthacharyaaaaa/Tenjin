@@ -1,21 +1,19 @@
 """Helper functions"""
 
+import base64
 import datetime
 import hashlib
 import os
 import traceback
-from typing import Final, Literal, Mapping, Callable, Any
 from types import NoneType
-import base64
+from typing import Any, Callable, Final, Literal, Mapping
 
 import bcrypt
-
-from fastapi import Request, Response, HTTPException
+from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+from redis.typing import EncodableT, FieldT
 
-from redis.typing import FieldT, EncodableT
-
-from auxillary.typing_utils import SupportsJSON, SupportsCache
+from auxillary.typing_utils import SupportsCache, SupportsJSON
 
 
 def generic_error_handler(r: Request, e: Exception) -> Response:
@@ -56,8 +54,8 @@ def hash_password(password: str, salt: bytes | None = None) -> tuple[bytes, byte
     returns: tuple[password-hash, salt]"""
     if salt is None:
         salt = os.urandom(16)
-    passwordHash = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000)
-    return passwordHash, salt
+    password_hash = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000)
+    return password_hash, salt
 
 
 def bcrypt_hash_password(
@@ -90,7 +88,7 @@ def verify_password(password: str, password_hash: bytes, salt: bytes) -> bool:
 
 def rediserialize(
     mapping: dict,
-    typeMapping: Mapping[type, Callable] = {
+    type_mapping: Mapping[type, Callable] = {
         NoneType: lambda _: "",
         bool: lambda b: int(b),
         datetime.datetime: lambda dt: dt.isoformat(),
@@ -98,7 +96,7 @@ def rediserialize(
     },
 ) -> dict:
     """Serialize a Python dictionary to a Redis hashmap"""
-    return {k: typeMapping.get(type(v), lambda x: x)(v) for k, v in mapping.items()}
+    return {k: type_mapping.get(type(v), lambda x: x)(v) for k, v in mapping.items()}
 
 
 def pyserialize(
@@ -126,7 +124,7 @@ def pyserialize(
     }
 
 
-def genericDBFetchException():
+def generic_database_fetch_exception():
     """Generic fetch exception handler"""
     exc = Exception()
     exc.__setattr__("description", "An error occurred when fetching this resource")

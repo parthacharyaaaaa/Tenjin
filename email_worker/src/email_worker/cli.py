@@ -1,5 +1,5 @@
-from argparse import ArgumentParser
 import os
+from argparse import ArgumentParser
 
 
 def _validate_file_existence(arg: str) -> str:

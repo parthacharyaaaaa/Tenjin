@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, ClassVar, Literal, Mapping, Self, overload
 
-from resource_server.datastructures.requests import SortOption
+from auxillary.singleton import SingletonMetaclass
 from sqlalchemy import (
     ColumnElement,
     Row,
@@ -15,16 +15,16 @@ from sqlalchemy import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from resource_server.repositories.user import UserResult
-from auxillary.singleton import SingletonMetaclass
-from resource_server.repositories.result_protocol import AbstractDTO
+from resource_server.datastructures.requests import SortOption
 from resource_server.models.database import (
+    AdminRoles,
     Forum,
     ForumAdmin,
     ForumSubscription,
     User,
-    AdminRoles,
 )
+from resource_server.repositories.result_protocol import AbstractDTO
+from resource_server.repositories.user import UserResult
 
 
 @dataclass(slots=True, init=False)

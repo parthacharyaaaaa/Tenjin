@@ -1,14 +1,13 @@
 """Utility functions for declaring new events"""
 
-from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 from typing import Sequence
 
 from auxillary.utils import json_repr
-
-from resource_auxillary.events import Event, StreamedEvent
 from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
 from resource_auxillary.event_processing.qos import execute_with_redis_retries
+from resource_auxillary.events import Event, EventSideEffects, StreamedEvent
 from resource_auxillary.strings import NAME_SEPERATOR, EventName, StreamName
+from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 
 from resource_database_workers.datastructures.dead_counter_batch import DeadCounterBatch
 
@@ -27,7 +26,7 @@ async def declare_counters_event_dead(
     failure_event: Event = Event(
         name=EventName.DLQ_COUNTER,
         payload=json_repr(dlq_counters_batch),
-        side_effects=EventSideEffects(),  # type: ignore
+        side_effects=EventSideEffects(),
     )
 
     dlq_coroutine = lambda: stream_manager.stream_events(

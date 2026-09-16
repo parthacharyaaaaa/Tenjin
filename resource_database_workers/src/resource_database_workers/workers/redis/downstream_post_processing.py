@@ -1,12 +1,11 @@
-from redis.asyncio.client import Redis
-from resource_database_workers.utils.strings import generate_checkpoint_name
-from typing import Iterable, Callable, TypeVar
+from typing import Callable, Iterable, TypeVar
 
-from redis.asyncio.client import Pipeline
+from redis.asyncio.client import Pipeline, Redis
 from redis.typing import EncodableT
-
 from resource_auxillary.cache import derive_cache_key
 from resource_auxillary.datastructures.database import StrongEntity
+
+from resource_database_workers.utils.strings import generate_checkpoint_name
 
 T = TypeVar("T")
 

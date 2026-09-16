@@ -1,5 +1,5 @@
-from collections import defaultdict
 import tomllib
+from collections import defaultdict
 from typing import (
     Annotated,
     Any,
@@ -9,9 +9,8 @@ from typing import (
     Self,
 )
 
-from resource_auxillary.strings import EventName, StreamName
-
 from pydantic import BaseModel, Field, model_validator
+from resource_auxillary.strings import EventName, StreamName
 
 # Strings mapping to key names in config TOML file
 STREAM_KEY: Final[LiteralString] = "STREAMS"
@@ -75,7 +74,7 @@ class StreamWorkersConfig(BaseModel):
                 except ValueError as e:
                     raise ValueError(f"Invalid stream name: {_stream_name}") from e
 
-                for event_name, worker_count in worker_count_data.items():
+                for event_name in worker_count_data.keys():
                     try:
                         worker_mapping[stream_name][EventName(event_name)] = count
                     except ValueError as e:
@@ -113,7 +112,7 @@ class StreamWorkersConfig(BaseModel):
                 raise ValueError(
                     f"Orphaned writers found for stream: {stream_name}, context: {corresponding_write_data}"
                 )
-            elif reader_count != 0 and not all(corresponding_write_data.keys()):
+            if reader_count != 0 and not all(corresponding_write_data.keys()):
                 raise ValueError(
                     f"Event workers missing for stream: {stream_name}, context: {corresponding_write_data}"
                 )

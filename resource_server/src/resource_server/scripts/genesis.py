@@ -10,23 +10,21 @@
 - forum_admins (`owner` as **Tenjin superuser**)
 """
 
-from dotenv import load_dotenv
 import os
+import time
+import warnings
+from argparse import ArgumentParser, Namespace
+from datetime import UTC, datetime
 from traceback import format_exc
 from typing import Final, Generator, Optional
-from datetime import datetime
-import time
-from argparse import ArgumentParser, Namespace
-import warnings
 
+import httpx
+from auxillary.utils import bcrypt_hash_password
+from dotenv import load_dotenv
 from psycopg import Connection, connect
 from psycopg import errors as pg_errors
 from psycopg.conninfo import make_conninfo
 from psycopg.sql import SQL, Identifier
-
-import httpx
-from auxillary.utils import bcrypt_hash_password
-
 from resource_server.config.app_config import AppConfig
 from resource_server.dependencies import get_app_config
 
@@ -80,7 +78,7 @@ def main(
     if not load_dotenv(env_path):
         raise FileNotFoundError(env_path)
 
-    URL: Final[str] = "https://api.jikan.moe/v4/anime/{id}/full"
+    uri: Final[str] = "https://api.jikan.moe/v4/anime/{id}/full"
     exclude_genres = exclude_genres or []
     # Update max_iterations if needed
     if not max_iterations:
@@ -89,6 +87,7 @@ def main(
         warnings.warn(
             "max_iterations set below anime_count, incrementing...",
             category=UserWarning,
+            stacklevel=2,
         )
         max_iterations = anime_count
 
@@ -99,7 +98,7 @@ def main(
     conninfo = make_conninfo(
         user=os.environ["SUPERUSER_POSTGRES_USERNAME"],
         password=os.environ["SUPERUSER_POSTGRES_PASSWORD"],
-        host=str(config.DATABASE.POSTGRES_HOST),
+        host=config.DATABASE.POSTGRES_HOST,
         port=config.DATABASE.POSTGRES_PORT,
         dbname=config.DATABASE.POSTGRES_DATABASE,
     )
@@ -121,7 +120,7 @@ def main(
                         VALUES (1, 'TENJIN', 'TENJIN@tenjin.org', %s, %s)""",
                 (
                     pw_hash,
-                    datetime.now(),
+                    datetime.now(UTC),
                 ),
             )
             connection.commit()
@@ -145,36 +144,36 @@ def main(
                 if cursor.fetchone():
                     print(f"Anime with id {anime_id} already exists, skipping...")
                     continue
-                print(f"Fetching data for anime with ID:", anime_id)
+                print("Fetching data for anime with ID:", anime_id)
 
-                response: httpx.Response = http_client.get(URL.format(id=anime_id))
+                response: httpx.Response = http_client.get(uri.format(id=anime_id))
                 if response.is_error:
                     if debug:
                         jsonified_response: dict[str, str | int] = response.json()
                         _log_error(
                             logs_fpath,
-                            f'Anime: {anime_id} - Code: {response.status_code}, Message: {jsonified_response.get("message", "N/A")}\n',
+                            f"Anime: {anime_id} - Code: {response.status_code}, Message: {jsonified_response.get('message', 'N/A')}\n",
                         )
                     time.sleep(fetch_timeout)
                     continue
 
-                DATA: dict[str, dict] = response.json()
+                data: dict[str, dict] = response.json()
 
-                ANIME_INFO: dict[str, str | int | dict] = {
-                    "title": DATA["data"]["titles"][0]["title"],
+                anime_info: dict[str, str | int | dict] = {
+                    "title": data["data"]["titles"][0]["title"],
                     "members": 0,
-                    "synopsis": DATA["data"]["synopsis"],
+                    "synopsis": data["data"]["synopsis"],
                     "stream_links": {
-                        item["name"]: item["url"] for item in DATA["data"]["streaming"]
+                        item["name"]: item["url"] for item in data["data"]["streaming"]
                     },
                 }
 
                 # Make new genre if not exists
-                GENRES: list[str] = list(
-                    map(lambda x: x["name"], DATA["data"]["genres"])
+                genres: list[str] = list(
+                    map(lambda x: x["name"], data["data"]["genres"])
                 )
                 exclusion: bool = False
-                for genre in GENRES:
+                for genre in genres:
                     if genre in exclude_genres:
                         exclusion = True
                         break
@@ -195,7 +194,7 @@ def main(
 
                 stream_links: Generator[tuple[int, str, str], None, None] = (
                     (anime_id, url, website)
-                    for website, url in ANIME_INFO["stream_links"].items()  # type: ignore
+                    for website, url in anime_info["stream_links"].items()  # type: ignore
                 )
 
                 try:
@@ -203,9 +202,9 @@ def main(
                         "INSERT INTO animes (id_, title, members, synopsis) VALUES (%s, %s, %s, %s);",
                         (
                             anime_id,
-                            ANIME_INFO["title"],
-                            ANIME_INFO["members"],
-                            ANIME_INFO["synopsis"],
+                            anime_info["title"],
+                            anime_info["members"],
+                            anime_info["synopsis"],
                         ),
                     )
                     # Bulk insert stream links
@@ -224,10 +223,10 @@ def main(
                         """INSERT INTO forums (name_, parent_anime, description, created_at)
                                    VALUES (%s, %s, %s, %s) RETURNING id_;""",
                         (
-                            ANIME_INFO["title"],
+                            anime_info["title"],
                             anime_id,
-                            f"auto-generated forum by Tenjin for {ANIME_INFO['title']}".capitalize(),
-                            datetime.now(),
+                            f"auto-generated forum by Tenjin for {anime_info['title']}".capitalize(),
+                            datetime.now(UTC),
                         ),
                     )
 
@@ -248,9 +247,9 @@ def main(
                     pg_errors.ConnectionException,
                     pg_errors.ConnectionFailure,
                 ) as e:
-                    print(f"Connection Failure, terminating script...")
-                    with open("error_logs.txt", "a+") as logFile:
-                        logFile.write(f"{datetime.now()}: {e.__class__.__name__}")
+                    print("Connection Failure, terminating script...")
+                    with open("error_logs.txt", "a+") as logfile:
+                        logfile.write(f"{datetime.now(UTC)}: {e.__class__.__name__}")
                         exit(200)
 
                 except Exception as e:
@@ -258,7 +257,7 @@ def main(
                         ROLLBACK_SQL.format(Identifier(str(latest_valid_checkpoint)))
                     )
                     print(
-                        f"Failed to insert anime {ANIME_INFO['title']} with ID {anime_id}, exception: {e.__class__.__name__}"
+                        f"Failed to insert anime {anime_info['title']} with ID {anime_id}, exception: {e.__class__.__name__}"
                     )
                     if debug:
                         print()
@@ -287,6 +286,7 @@ if __name__ == "__main__":
         warnings.warn(
             "TENNIN superuser password being passed as CLI argument may not be safe!",
             category=UserWarning,
+            stacklevel=2,
         )
 
     main(**dict(args._get_kwargs()))

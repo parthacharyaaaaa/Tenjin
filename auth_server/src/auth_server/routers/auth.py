@@ -3,18 +3,16 @@ from hashlib import sha256
 from typing import Annotated, Final
 
 import aiofiles
-
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.requests import Request
-from fastapi.responses import Response, JSONResponse
-
-import httpx
+from fastapi.responses import JSONResponse, Response
 
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import get_app_config, get_token_manager
 from auth_server.models.auth_requests import AuthenticationModel, RegistrationModel
 from auth_server.security.token_manager import TokenManager
-from auth_server.security.tokens import TokenType, StandardRefreshTokenClaims
+from auth_server.security.tokens import StandardRefreshTokenClaims, TokenType
 from auth_server.utils.auth_auxillary import attach_tokens
 
 AUTH: Final[APIRouter] = APIRouter()
@@ -198,7 +196,7 @@ async def purge_family(
             options={"verify_nbf": False},
         )
         await token_manager.invalidate_family(refresh_token["fid"])
-    except:
-        raise HTTPException(401, "Failed to validate this refresh token")
+    except Exception as e:
+        raise HTTPException(401, "Failed to validate this refresh token") from e
 
     return JSONResponse({"message": "Token Revoked"})

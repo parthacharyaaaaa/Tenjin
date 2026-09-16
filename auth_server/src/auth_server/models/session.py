@@ -1,8 +1,9 @@
 from typing import Annotated, Self
 from uuid import uuid4
 
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
 from auth_server.security.admin_roles import AdminRole
-from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 class AdminSession(BaseModel):

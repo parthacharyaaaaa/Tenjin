@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Annotated, ClassVar
 
-from pydantic import Field, model_validator
+from pydantic import Field
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,

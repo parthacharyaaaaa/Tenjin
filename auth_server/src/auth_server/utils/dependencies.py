@@ -3,34 +3,27 @@ import time
 from typing import Annotated, Any, Final
 
 import ecdsa
-
+import orjson
+import pydantic
+from fastapi import Depends, HTTPException, Request
+from redis.asyncio import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-
-from auth_server.config.app_config import AppConfig
-from auth_server.security.admin_roles import ROLE_PERMISSIONS, AdminRole
-from auth_server.security.permissions import Permission
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from auth_server.models.session import AdminSession
-from auth_server.models.database import Admin
-from auth_server.utils.auth_auxillary import report_suspicious_activity
-from fastapi import Depends, HTTPException, Request
-
-import orjson
-
-import pydantic
-
-from redis.exceptions import RedisError
-from redis.asyncio import Redis
-
+from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import (
     get_app_config,
     get_database_session,
     get_synced_store_client,
 )
+from auth_server.models.database import Admin
+from auth_server.models.session import AdminSession
+from auth_server.security.admin_roles import ROLE_PERMISSIONS, AdminRole
+from auth_server.security.permissions import Permission
 from auth_server.strings import AdminStrings
-
+from auth_server.utils.auth_auxillary import report_suspicious_activity
 from auth_server.utils.datastructures import AdminContext
 
 
@@ -121,10 +114,8 @@ async def validate_admin_session(
         await synced_store_client.delete(admin_context.session.session_key)
         raise HTTPException(401, "Session expired")
 
-    server_session_mapping: dict[bytes, Any] = (
-        await synced_store_client.hgetall(  # pyrefly: ignore[not-async]
-            admin_context.session.session_key
-        )
+    server_session_mapping: dict[bytes, Any] = await synced_store_client.hgetall(  # pyrefly: ignore[not-async]
+        admin_context.session.session_key
     )
     if not server_session_mapping:
         err_msg: str = "Missing server-side session"

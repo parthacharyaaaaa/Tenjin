@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Callable
@@ -26,7 +26,7 @@ TIMEFRAMES: MappingProxyType[TimeFrameOption, Callable[[datetime], datetime]] = 
             TimeFrameOption.LAST_WEEK: lambda dt: dt - timedelta(weeks=1),
             TimeFrameOption.LAST_MONTH: lambda dt: dt - timedelta(days=30),
             TimeFrameOption.LAST_YEAR: lambda dt: dt - timedelta(days=364),
-            TimeFrameOption.ALL_TIME: lambda _: datetime.min,
+            TimeFrameOption.ALL_TIME: lambda _: datetime.min.replace(tzinfo=UTC),
         }
     )
 )

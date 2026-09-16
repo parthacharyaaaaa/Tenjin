@@ -1,6 +1,6 @@
-from argparse import ArgumentParser, Namespace
 import asyncio
 import sys
+from argparse import ArgumentParser, Namespace
 from typing import Sequence
 
 from email_worker.bootup import spawn_tasks

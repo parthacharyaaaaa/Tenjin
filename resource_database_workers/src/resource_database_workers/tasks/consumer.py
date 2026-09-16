@@ -1,31 +1,13 @@
-from functools import partial
-from resource_auxillary.datastructures.database import GenericLiterals
-from resource_database_workers.tasks.insertions import (
-    insert_downstream_deletion_outbox_entries,
-)
-from resource_database_workers.tasks.insertions import outbox_insertion
-from resource_database_workers.dependencies.annotations import (
-    ACTION_LITERAL,
-    BATCHED_EVENT_QUEUE,
-    STREAM_NAME,
-    IDENTIFIER_COLUMN,
-    TABLE,
-    STATUS_PROXY,
-    DEAD_LETTER_STREAM_NAME,
-    GROUP_NAME,
-    CONNECTION_POOL,
-    APP_CONFIG,
-    EVENT_STREAM_MANAGER,
-)
-from resource_database_workers.tasks.insertions import batch_insert_with_isolation
-from resource_database_workers.tasks.deletions import soft_delete_strong_entity
-from datetime import datetime
 import time
+from datetime import datetime
+from functools import partial
 from typing import Generator
 
-
-from resource_auxillary.datastructures.database import StrongEntity
-from resource_auxillary.events import StreamedEvent
+from resource_auxillary.datastructures.database import GenericLiterals, StrongEntity
+from resource_auxillary.event_processing.db_qos import (
+    batch_dedup_insert_events,
+    db_execute_with_retries,
+)
 from resource_auxillary.event_processing.pre_processing import (
     populate_events_batch_from_queue,
 )
@@ -33,10 +15,26 @@ from resource_auxillary.event_processing.wrappers import (
     ack_with_retries,
     declare_dead_with_retries,
 )
+from resource_auxillary.events import StreamedEvent
 
-from resource_auxillary.event_processing.db_qos import (
-    batch_dedup_insert_events,
-    db_execute_with_retries,
+from resource_database_workers.dependencies.annotations import (
+    ACTION_LITERAL,
+    APP_CONFIG,
+    BATCHED_EVENT_QUEUE,
+    CONNECTION_POOL,
+    DEAD_LETTER_STREAM_NAME,
+    EVENT_STREAM_MANAGER,
+    GROUP_NAME,
+    IDENTIFIER_COLUMN,
+    STATUS_PROXY,
+    STREAM_NAME,
+    TABLE,
+)
+from resource_database_workers.tasks.deletions import soft_delete_strong_entity
+from resource_database_workers.tasks.insertions import (
+    batch_insert_with_isolation,
+    insert_downstream_deletion_outbox_entries,
+    outbox_insertion,
 )
 
 
@@ -68,15 +66,19 @@ async def user_orphan_consumer(
                 batch, fresh_event_ids, stream_name, group_name
             )
 
-            # Implicit events not in the network payload (downstream deletion only in this case)
-            downstream_deletion_outbox_callable = (
-                lambda: insert_downstream_deletion_outbox_entries(
-                    conn, batch, StrongEntity.USER, GenericLiterals.ID
-                )
-            )
             try:
+                # Implicit events not in the network payload
+                # (downstream deletion only in this case)
                 await db_execute_with_retries(
-                    config.WORKER, conn, downstream_deletion_outbox_callable
+                    config.WORKER,
+                    conn,
+                    partial(
+                        insert_downstream_deletion_outbox_entries,
+                        conn,
+                        batch,
+                        StrongEntity.USER,
+                        GenericLiterals.ID,
+                    ),
                 )
             except Exception:
                 await declare_dead_with_retries(
@@ -132,19 +134,21 @@ async def queue_insertion_consumer(
                 continue
 
             inserted_ids: list[int] = []  # Populated in-place by batch_function
-            insertion_callable = lambda: batch_insert_with_isolation(
-                conn, batch, inserted_ids, action
-            )
             try:
-                await db_execute_with_retries(config.WORKER, conn, insertion_callable)
+                await db_execute_with_retries(
+                    config.WORKER,
+                    conn,
+                    partial(
+                        batch_insert_with_isolation, conn, batch, inserted_ids, action
+                    ),
+                )
                 successful_events: tuple[StreamedEvent, ...] = tuple(
                     event for event in batch if event.event_id in inserted_ids
                 )
-                outbox_insertion_callable = lambda: outbox_insertion(
-                    conn, successful_events
-                )
                 await db_execute_with_retries(
-                    config.WORKER, conn, outbox_insertion_callable
+                    config.WORKER,
+                    conn,
+                    partial(outbox_insertion, conn, successful_events),
                 )
                 await conn.commit()
             except Exception:  # Entire batch failed
@@ -228,10 +232,9 @@ async def queue_deletion_consumer(
                         deletion_data,
                     ),
                 )
-                # outbox_insertion_callable = lambda: outbox_insertion(conn, batch)
-                # await db_execute_with_retries(
-                #     config.WORKER, conn, outbox_insertion_callable
-                # )
+                await db_execute_with_retries(
+                    config.WORKER, conn, partial(outbox_insertion, conn, batch)
+                )
 
                 # Implicit events not in the network payload (downstream deletion only in this case)
                 await db_execute_with_retries(

@@ -1,16 +1,14 @@
-from logging.config import fileConfig
 import os
+from logging.config import fileConfig
 from pathlib import Path
+from typing import Final
 
+from alembic import context
 from dotenv import load_dotenv
 from resource_server.config.app_config import AppConfig
 from resource_server.dependencies import get_app_config
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
-
-from alembic import context
-
 from resource_server.models.database import Base
+from sqlalchemy import engine_from_config, pool
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -41,12 +39,12 @@ def _set_sqlalchemy_uri_config() -> None:
 
     app_config: AppConfig = get_app_config()
 
-    URI: str = app_config.DATABASE.derive_sqlalchemy_uri(
+    uri: Final[str] = app_config.DATABASE.derive_sqlalchemy_uri(
         username=os.environ["RESOURCE_SERVER_POSTGRES_USERNAME"],
         password=os.environ["RESOURCE_SERVER_POSTGRES_PASSWORD"],
     )
 
-    config.set_main_option("sqlalchemy.url", URI)
+    config.set_main_option("sqlalchemy.url", uri)
 
 
 def run_migrations_offline() -> None:

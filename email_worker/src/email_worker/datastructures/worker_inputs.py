@@ -4,22 +4,21 @@ from typing import Final, Mapping
 from uuid import uuid4
 
 from psycopg import AsyncConnection
-from psycopg_pool import AsyncConnectionPool
 from psycopg.rows import TupleRow
-
+from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
 from resource_auxillary.datastructures.status_indicator import StatusProxy
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import EventName, StreamName
 
 from email_worker.config.email_config import EmailConfig
+from email_worker.datastructures.queue_registry import QueueRegistry
 from email_worker.dependencies import (
     get_connection_pool,
     get_email_config,
     get_queue_registry,
     get_redis_client,
 )
-from email_worker.datastructures.queue_registry import QueueRegistry
 
 _QUEUE_REGISTRY: Final[QueueRegistry] = get_queue_registry()
 

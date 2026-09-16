@@ -1,5 +1,5 @@
-from typing import TypedDict, NotRequired, Protocol
 from collections.abc import Buffer
+from typing import NotRequired, Protocol, TypedDict
 
 
 class _SupportsDigest(Protocol):

@@ -1,18 +1,16 @@
-from sqlalchemy.sql import select
+import asyncio
+import os
+import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime
-import os
 from pathlib import Path
-import time
-import traceback
 from typing import AsyncGenerator, Final, Mapping, Sequence
 
+from auxillary.utils import generic_error_handler
 from fastapi import APIRouter, FastAPI
 from redis.asyncio import Redis
+from sqlalchemy.sql import select
 
-from auxillary.utils import generic_error_handler
-
-from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import (
     get_app_config,
@@ -20,16 +18,17 @@ from auth_server.dependencies import (
     get_synced_store_client,
     get_token_manager,
 )
+from auth_server.models.database import KeyData
+from auth_server.repositories.keydata import KeydataRepository
+from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
 from auth_server.security.key_container import KeyMetadata
 from auth_server.security.keygen import (
     initialize_active_key,
-    write_ecdsa_pair,
     initialize_jwks,
+    write_ecdsa_pair,
 )
-from auth_server.models.database import KeyData
-from auth_server.repositories.keydata import KeydataRepository
-from auth_server.strings import SyncedStoreStrings
 from auth_server.security.token_manager import TokenManager
+from auth_server.strings import SyncedStoreStrings
 
 # TODO: Remove magic numbers in lifespan and master_bootup (lock and flag TTLs)
 
@@ -39,7 +38,7 @@ def register_routers(
     url_prefix_mapping: Mapping[RouterName, tuple[APIRouter, tuple[URLPrefix, ...]]],
     common_prefix: str = "",
 ) -> None:
-    for name, (router, url_prefixes) in url_prefix_mapping.items():
+    for router, url_prefixes in url_prefix_mapping.values():
         app.include_router(
             router, prefix="/".join((common_prefix, *[u.value for u in url_prefixes]))
         )
@@ -50,18 +49,18 @@ async def _purge_expired_keys(
     private_pem_directory: Path,
     keydata_repository: KeydataRepository,
 ) -> None:
-    expiredKeys: list[str] = [
+    expired_keys: list[str] = [
         k.kid for k in await keydata_repository.get_expired_keys()
     ]
-    for expiredKey in expiredKeys:
+    for expired_key in expired_keys:
         (
-            public_pem_directory.joinpath(f"public_{expiredKey}_key.pem").unlink(
+            public_pem_directory.joinpath(f"public_{expired_key}_key.pem").unlink(
                 missing_ok=True
             )
         )
 
         (
-            private_pem_directory.joinpath(f"private_{expiredKey}_key.pem").unlink(
+            private_pem_directory.joinpath(f"private_{expired_key}_key.pem").unlink(
                 missing_ok=True
             )
         )
@@ -82,14 +81,14 @@ def _sync_file_system_key_state(
         active_key.kid,
     )
 
-    for keyData in rotated_keys:
+    for keydata in rotated_keys:
         private_pem_path: Path = (
-            private_pem_directory / f"private_{keyData.kid}_key.pem"
+            private_pem_directory / f"private_{keydata.kid}_key.pem"
         )
-        public_pem_path: Path = public_pem_directory / f"public_{keyData.kid}_key.pem"
+        public_pem_path: Path = public_pem_directory / f"public_{keydata.kid}_key.pem"
 
         # Ensure that only public pem file exists for verification keys
-        public_pem_path.write_bytes(keyData.public_pem)
+        public_pem_path.write_bytes(keydata.public_pem)
         private_pem_path.unlink(missing_ok=True)
 
 
@@ -104,7 +103,6 @@ async def master_bootup(
     active_kid: str | None = None
     active_keydata: KeyMetadata | None = None
     rotated_verifying_keys: dict[str, KeyMetadata] | None = None
-    failed: bool = False
 
     try:
         async with keydata_repository.session_maker() as session:
@@ -219,7 +217,6 @@ async def master_bootup(
         token_manager.set_key_state(active_kid, active_keydata, rotated_verifying_keys)
         print(f"[AUTH {process_id}] Master process bootup complete!")
     except Exception as e:
-        failed = True
         print(
             f"[AUTH {process_id}] Master worker has encountered an irrecoverable error, details: "
         )
@@ -238,8 +235,8 @@ async def slave_bootup(
     master_wait_interval: float = 1.0,
 ) -> None:
     # Wait for master worker to finish managing key synchronization and file I/O, and then proceed on the assumption that the JWKS file has been written into/validated.
-    while await synced_store_client.get(SyncedStoreStrings.AUTH_BOOTUP_MASTER):
-        time.sleep(master_wait_interval)
+    while await synced_store_client.get(SyncedStoreStrings.AUTH_BOOTUP_MASTER):  # noqa
+        await asyncio.sleep(master_wait_interval)  # noqa
 
     if await synced_store_client.get(SyncedStoreStrings.ABORT):
         print(
@@ -282,7 +279,7 @@ async def slave_bootup(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    PID: Final[int] = os.getpid()
+    pid: Final[int] = os.getpid()
 
     config: Final[AppConfig] = get_app_config()
     synced_store_client: Final[Redis] = get_synced_store_client()
@@ -301,14 +298,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     is_master: bool = bool(
         await synced_store_client.set(
-            SyncedStoreStrings.AUTH_BOOTUP_MASTER, PID, nx=True, ex=300
+            SyncedStoreStrings.AUTH_BOOTUP_MASTER, pid, nx=True, ex=300
         )
     )
 
     if is_master:
-        await master_bootup(config, synced_store_client, keydata_repository, PID)
+        await master_bootup(config, synced_store_client, keydata_repository, pid)
     else:
-        await slave_bootup(config, synced_store_client, keydata_repository, PID)
+        await slave_bootup(config, synced_store_client, keydata_repository, pid)
 
     register_routers(app, ROUTER_URL_MAPPING, config.CORE.APPLICATION_ROOT)
 

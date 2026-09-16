@@ -1,9 +1,9 @@
 import datetime
 from typing import Any
 
-from sqlalchemy import VARCHAR, INTEGER, TIMESTAMP, BOOLEAN, ForeignKey, text
-from sqlalchemy.orm import DeclarativeBase, mapped_column, Mapped
-from sqlalchemy.dialects.postgresql import ENUM, BYTEA
+from sqlalchemy import BOOLEAN, INTEGER, TIMESTAMP, VARCHAR, ForeignKey, text
+from sqlalchemy.dialects.postgresql import BYTEA, ENUM
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from auth_server.security.admin_roles import AdminRole
 from auth_server.security.permissions import Permission

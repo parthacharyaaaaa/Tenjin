@@ -1,19 +1,16 @@
 from dataclasses import dataclass
 
-from redis.asyncio.client import Redis, Pipeline
-
-from auxillary.utils import cache_repr
-
-from resource_server.config.sub_config import CacheConfig
 from auxillary.singleton import SingletonMetaclass
-
+from auxillary.utils import cache_repr
+from redis.asyncio.client import Pipeline, Redis
 from resource_auxillary.events import Event
 from resource_auxillary.strings import StreamName
+
+from resource_server.config.sub_config import CacheConfig
 
 
 @dataclass(slots=True, weakref_slot=True)
 class EventStreamer(metaclass=SingletonMetaclass):
-
     redis_client: Redis
     cache_config: CacheConfig
 

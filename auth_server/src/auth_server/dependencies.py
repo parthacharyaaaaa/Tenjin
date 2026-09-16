@@ -1,21 +1,20 @@
-from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
-from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
-from auth_server.repositories.admin import AdminRepository
 import os
 from functools import lru_cache
 from typing import AsyncGenerator, Final
 
-from auth_server.repositories.keydata import KeydataRepository
+from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from redis.asyncio import Redis
-
 from sqlalchemy.ext.asyncio import (
-    create_async_engine,
-    async_sessionmaker,
-    AsyncSession,
     AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
 )
 
 from auth_server.config import AppConfig
+from auth_server.repositories.admin import AdminRepository
+from auth_server.repositories.keydata import KeydataRepository
+from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.security.token_manager import TokenManager
 
 
@@ -50,12 +49,12 @@ def get_token_store_client() -> Redis:
 def get_database_session_maker() -> async_sessionmaker[AsyncSession]:
     config: Final[AppConfig] = get_app_config()
 
-    URI: Final[str] = config.DATABASE.derive_sqlalchemy_uri(
+    uri: Final[str] = config.DATABASE.derive_sqlalchemy_uri(
         username=os.environ["AUTH_WORKER_POSTGRES_USERNAME"],
         password=os.environ["AUTH_WORKER_POSTGRES_PASSWORD"],
     )
 
-    engine: Final[AsyncEngine] = create_async_engine(URI)
+    engine: Final[AsyncEngine] = create_async_engine(uri)
 
     session_maker: Final[async_sessionmaker[AsyncSession]] = async_sessionmaker(
         bind=engine, autocommit=False, autoflush=False, expire_on_commit=True

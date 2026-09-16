@@ -1,15 +1,13 @@
-from logging.config import fileConfig
 import os
+from logging.config import fileConfig
 from pathlib import Path
 
-from auth_server.config.app_config import AppConfig
-from dotenv import load_dotenv
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool, MetaData
-
-from auth_server.dependencies import get_app_config
-
 from alembic import context
+from auth_server.config.app_config import AppConfig
+from auth_server.dependencies import get_app_config
+from auth_server.models.database import Base
+from dotenv import load_dotenv
+from sqlalchemy import MetaData, engine_from_config, pool
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -24,7 +22,6 @@ if config.config_file_name is not None:
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
-from auth_server.models.database import Base
 
 target_metadata: MetaData = Base.metadata
 
@@ -42,12 +39,12 @@ def _set_sqlalchemy_uri_config() -> None:
 
     app_config: AppConfig = get_app_config()
 
-    URI: str = app_config.DATABASE.derive_sqlalchemy_uri(
+    uri: str = app_config.DATABASE.derive_sqlalchemy_uri(
         username=os.environ["AUTH_WORKER_POSTGRES_USERNAME"],
         password=os.environ["AUTH_WORKER_POSTGRES_PASSWORD"],
     )
 
-    config.set_main_option("sqlalchemy.url", URI)
+    config.set_main_option("sqlalchemy.url", uri)
 
 
 def run_migrations_offline() -> None:

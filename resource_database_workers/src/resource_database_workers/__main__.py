@@ -1,17 +1,17 @@
-from argparse import ArgumentParser, Namespace
 import asyncio
 import sys
+from argparse import ArgumentParser, Namespace
 from typing import Final, Sequence
 
 from dotenv import load_dotenv
 
 from resource_database_workers.bootup import spawn_tasks
 from resource_database_workers.cli import get_argument_parser, parse_args
-from resource_database_workers.config.worker_config import (
-    StreamWorkersConfig,
-    CounterWorkersConfig,
-)
 from resource_database_workers.config.config import AppConfig
+from resource_database_workers.config.worker_config import (
+    CounterWorkersConfig,
+    StreamWorkersConfig,
+)
 from resource_database_workers.dependencies.injections import get_config
 
 

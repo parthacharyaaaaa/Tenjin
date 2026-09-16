@@ -1,24 +1,22 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Final
 
+import jwt
+from auxillary.utils import from_base64url
 from fastapi import Depends, Query, Request
 from fastapi.exceptions import HTTPException
-
-import jwt
-from jwt.exceptions import PyJWTError, ExpiredSignatureError
-
-from auxillary.utils import from_base64url
+from jwt.exceptions import ExpiredSignatureError, PyJWTError
 
 from resource_server.config.app_config import AppConfig
-from resource_server.dependencies import get_app_config, get_key_manager, get_genres
+from resource_server.datastructures.requests import (
+    TIMEFRAMES,
+    SortOption,
+    TimeFrameOption,
+)
+from resource_server.dependencies import get_app_config, get_genres, get_key_manager
 from resource_server.key_manager import KeyManager
 from resource_server.models.database import Genre
 from resource_server.utils.typing import StandardAccessTokenClaims
-from resource_server.datastructures.requests import (
-    SortOption,
-    TIMEFRAMES,
-    TimeFrameOption,
-)
 
 
 async def validate_access_token(
@@ -54,30 +52,29 @@ async def validate_access_token(
 
             return StandardAccessTokenClaims(**decoded_token)  # type: ignore[reportArgumentType]
 
-        else:
-            # Update current mapping through global JWKS mapping
-            key_manager.current_mapping = await key_manager.get_global_key_mapping()
-            if key := key_manager.current_mapping.get(key_id):
-                decoded_token = jwt.decode(
-                    jwt=encoded_access_token,
-                    key=key,
-                    leeway=timedelta(minutes=app_config.JWKS.KEY_LEEWAY),
-                )
-
-                return StandardAccessTokenClaims(**decoded_token)  # type: ignore[reportArgumentType]
-
-            raise HTTPException(
-                401, "Invalid Key ID, no such key was found. Please login again"
+        # Update current mapping through global JWKS mapping
+        key_manager.current_mapping = await key_manager.get_global_key_mapping()
+        if key := key_manager.current_mapping.get(key_id):
+            decoded_token = jwt.decode(
+                jwt=encoded_access_token,
+                key=key,
+                leeway=timedelta(minutes=app_config.JWKS.KEY_LEEWAY),
             )
+
+            return StandardAccessTokenClaims(**decoded_token)  # type: ignore[reportArgumentType]
+
+        raise HTTPException(
+            401, "Invalid Key ID, no such key was found. Please login again"
+        )
 
     except ExpiredSignatureError:
         raise HTTPException(401, "JWT token expired, begin refresh issuance")
-    except PyJWTError as e:
+    except PyJWTError:
         raise HTTPException(401, "JWT token invalid")
 
 
 def cursor_preprocessor(
-    raw_cursor: str | None = Query(default=None, alias="cursor")
+    raw_cursor: str | None = Query(default=None, alias="cursor"),
 ) -> int:
     if not raw_cursor:
         return 0
@@ -86,7 +83,7 @@ def cursor_preprocessor(
 
 
 def search_param_preprocessor(
-    raw_search_param: str | None = Query(default=None, alias="search")
+    raw_search_param: str | None = Query(default=None, alias="search"),
 ) -> str | None:
     if not raw_search_param:
         return None
@@ -95,7 +92,7 @@ def search_param_preprocessor(
 
 
 async def anime_genres_preprocessor(
-    raw_genres: list[str] | None = Query(default=None, alias="genre")
+    raw_genres: list[str] | None = Query(default=None, alias="genre"),
 ) -> list[Genre] | None:
     if not raw_genres:
         return None
@@ -125,7 +122,7 @@ async def anime_genres_preprocessor(
 
 
 def preprocess_sort_option(
-    raw_sort_option: str | None = Query(default=None, alias="cursor")
+    raw_sort_option: str | None = Query(default=None, alias="cursor"),
 ) -> SortOption:
     if not raw_sort_option:
         return SortOption.DESCENDING
@@ -136,11 +133,11 @@ def preprocess_sort_option(
 
 
 def preprocess_timeframe(
-    raw_timeframe_option: str | None = Query(default=None, alias="timeframe")
+    raw_timeframe_option: str | None = Query(default=None, alias="timeframe"),
 ) -> tuple[TimeFrameOption, datetime]:
     if not raw_timeframe_option:
         return TimeFrameOption.ALL_TIME, TIMEFRAMES[TimeFrameOption.ALL_TIME](
-            datetime.now()
+            datetime.now(UTC)
         )
     try:
         timeframe_option = TimeFrameOption(raw_timeframe_option.strip().lower())
@@ -149,4 +146,4 @@ def preprocess_timeframe(
 
     func = TIMEFRAMES.get(timeframe_option, TIMEFRAMES[TimeFrameOption.ALL_TIME])
 
-    return timeframe_option, func(datetime.now())
+    return timeframe_option, func(datetime.now(UTC))

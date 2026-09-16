@@ -1,5 +1,6 @@
-import os
 import multiprocessing
+import os
+
 from dotenv import load_dotenv
 
 if not load_dotenv(

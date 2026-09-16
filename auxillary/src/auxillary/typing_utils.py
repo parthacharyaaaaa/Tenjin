@@ -1,7 +1,7 @@
-from typing import Any, Protocol, TypeVar, Generic
+from typing import Any, Generic, Protocol, TypeVar
 
 from redis.asyncio.client import Pipeline
-from redis.typing import FieldT, EncodableT
+from redis.typing import EncodableT, FieldT
 
 __all__ = (
     "SupportsJSON",

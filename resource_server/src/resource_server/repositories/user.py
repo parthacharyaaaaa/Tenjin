@@ -1,13 +1,13 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, ClassVar, Mapping, Never, Self
 
+from auxillary.singleton import SingletonMetaclass
 from sqlalchemy import ColumnElement, Row, and_, delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from resource_server.repositories.result_protocol import AbstractDTO
 from resource_server.models.database import PasswordRecoveryToken, User
-from auxillary.singleton import SingletonMetaclass
+from resource_server.repositories.result_protocol import AbstractDTO
 
 
 @dataclass(slots=True, init=False)
@@ -204,7 +204,7 @@ class UserRepository(metaclass=SingletonMetaclass):
     async def delete_user(
         self, user_id: int, *, deletion_time: datetime | None = None
     ) -> None:
-        deletion_time = deletion_time or datetime.now()
+        deletion_time = deletion_time or datetime.now(UTC)
         async with self.session_maker() as session:
             await session.execute(
                 update(User)

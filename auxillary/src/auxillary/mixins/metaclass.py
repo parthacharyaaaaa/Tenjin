@@ -6,6 +6,6 @@ class AntiSingletonMixin:
         super().__init_subclass__(**kwargs)
         if issubclass(type(cls), SingletonMetaclass):
             raise TypeError(
-                f"Singleton metaclass detected for non-singleton "
+                "Singleton metaclass detected for non-singleton "
                 "enforced class {cls.__name__}"
             )
