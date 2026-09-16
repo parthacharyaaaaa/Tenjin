@@ -173,7 +173,9 @@ async def recover_password(
 
     url_token: Final[str] = generate_url_token()
     await user_repo.set_password_recovery_token(
-        user.id_, url_token, datetime.now(UTC) + app_config.BUSINESS.PASSWORD_TOKEN_MAX_AGE
+        user.id_,
+        url_token,
+        datetime.now(UTC) + app_config.BUSINESS.PASSWORD_TOKEN_MAX_AGE,
     )
 
     # TODO: Enqueue email

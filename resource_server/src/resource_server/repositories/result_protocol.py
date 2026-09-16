@@ -7,6 +7,7 @@ from resource_auxillary.cache import NAME_SEPERATOR
 
 @dataclass(slots=True, init=False)
 class AbstractDTO(AbstractResult):
+    resource_name: ClassVar[str] = "__none__"
     _counter_fields: ClassVar[tuple[str, ...]] = tuple()
     counter_fields_map: ClassVar[Mapping[str, str]] = {}
 

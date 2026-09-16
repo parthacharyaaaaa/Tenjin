@@ -84,7 +84,9 @@ class ForumSubscription(SubAssociationMixin, Base):
         name=AssociationColumnLiteral.FORUM_ID,
     )
     time_subscribed: Mapped[datetime] = mapped_column(
-        TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
 
 
@@ -103,7 +105,9 @@ class AnimeSubscription(SubAssociationMixin, Base):
         name=AssociationColumnLiteral.ANIME_ID,
     )
     time_subscribed: Mapped[datetime] = mapped_column(
-        TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
 
 
@@ -157,7 +161,7 @@ class PostReport(Base):
         REPORT_TAGS, nullable=False, primary_key=True
     )
     report_time: Mapped[datetime] = mapped_column(
-        TIMESTAMP, default=text("CURRENT_TIMESTAMP")
+        TIMESTAMP(timezone=True), default=text("CURRENT_TIMESTAMP")
     )
     report_description: Mapped[str] = mapped_column(
         VARCHAR(database_constants.PostConstants.REPORT_DESCRIPTION_MAX_LENGTH),
@@ -190,7 +194,7 @@ class CommentReport(Base):
         REPORT_TAGS, nullable=False, primary_key=True
     )
     report_time: Mapped[datetime] = mapped_column(
-        TIMESTAMP, default=text("CURRENT_TIMESTAMP")
+        TIMESTAMP(timezone=True), default=text("CURRENT_TIMESTAMP")
     )
     report_description: Mapped[str] = mapped_column(VARCHAR(256), nullable=False)
 
@@ -296,9 +300,13 @@ class User(SoftDeletionMixin, Base):
         INTEGER, default=0, server_default=text("0")
     )
     time_joined: Mapped[datetime] = mapped_column(
-        TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
-    last_login: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=True)
+    last_login: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -322,7 +330,9 @@ class UserTicket(Base):
         VARCHAR(database_constants.UserConstants.EMAIL_MAX_LENGTH), nullable=False
     )
     time_raised: Mapped[datetime] = mapped_column(
-        TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     description: Mapped[str] = mapped_column(
         VARCHAR(database_constants.UserTicketConstants.DESCRIPTION_MAX_LENGTH),
@@ -347,7 +357,10 @@ class PasswordRecoveryToken(Base):
         primary_key=True,
     )
     expiry: Mapped[datetime] = mapped_column(
-        TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"), nullable=False, index=True
+        TIMESTAMP(timezone=True),
+        server_default=text("CURRENT_TIMESTAMP"),
+        nullable=False,
+        index=True,
     )
     url_hash: Mapped[str] = mapped_column(
         VARCHAR(database_constants.PasswordRecoveryConstants.URL_HASH_LENGTH),
@@ -431,7 +444,9 @@ class Forum(SoftEventDeletionMixin, Base):
         BIGINT, nullable=False, default=0, server_default=text("0")
     )
 
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
     admin_count: Mapped[int] = mapped_column(
         SMALLINT, default=1, server_default=text("1"), nullable=False
     )
@@ -479,7 +494,9 @@ class ForumRules(Base):
         INTEGER, ForeignKey(f"{StrongEntity.USER}.{GenericLiterals.ID}"), nullable=False
     )
 
-    time_created: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=False)
+    time_created: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -534,7 +551,9 @@ class Post(SoftEventDeletionMixin, Base):
         BOOLEAN, default=False, server_default=text("false")
     )
     time_posted: Mapped[datetime] = mapped_column(
-        TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     saves: Mapped[int] = mapped_column(
         INTEGER, default=0, server_default=text("0"), nullable=False
@@ -594,7 +613,9 @@ class Comment(SoftEventDeletionMixin, Base):
 
     # Comment details
     time_created: Mapped[datetime] = mapped_column(
-        TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     body: Mapped[str] = mapped_column(
         VARCHAR(database_constants.CommentConstants.COMMENT_MAX_LENGTH), nullable=False
@@ -619,7 +640,7 @@ class StreamEvent(EventTableMixin, Base):
     __tablename__ = EventLiteral.EVENTS_TABLE_NAME
 
     acknowledgement_time: Mapped[datetime] = mapped_column(
-        TIMESTAMP,
+        TIMESTAMP(timezone=True),
         server_default=text("CURRENT_TIMESTAMP"),
         index=True,
         name=EventLiteral.EVENT_TIMESTAMP_COLUMN_NAME,
@@ -650,7 +671,7 @@ class DeadLetterQueue(EventTableMixin, Base):
     )
 
     failure_time: Mapped[datetime] = mapped_column(
-        TIMESTAMP,
+        TIMESTAMP(timezone=True),
         nullable=False,
         index=True,
         server_default=text("CURRENT_TIMESTAMP"),
