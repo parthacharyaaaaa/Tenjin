@@ -40,7 +40,7 @@ async def db_execute_with_retries(
                 _attempt,
                 exponential=retry_policy.BACKOFF_EXPONENTIAL,
             )
-        except Exception as e:
+        except Exception:
             await connection.rollback()
             raise
     raise AssertionError("Retry loop exited unexpectedly")

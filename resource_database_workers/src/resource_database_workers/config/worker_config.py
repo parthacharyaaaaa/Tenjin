@@ -112,7 +112,7 @@ class StreamWorkersConfig(BaseModel):
                 raise ValueError(
                     f"Orphaned writers found for stream: {stream_name}, context: {corresponding_write_data}"
                 )
-            elif reader_count != 0 and not all(corresponding_write_data.keys()):
+            if reader_count != 0 and not all(corresponding_write_data.keys()):
                 raise ValueError(
                     f"Event workers missing for stream: {stream_name}, context: {corresponding_write_data}"
                 )

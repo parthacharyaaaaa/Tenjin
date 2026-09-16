@@ -92,11 +92,11 @@ async def invalidate_key(
     key_lock: Final[str] = f"INVALIDATE_KEY:{kid}"
     if not synced_store_client.set(key_lock, admin_session.admin_id, ex=300, nx=True):
         # Another worker is performing clean operation, reject this request
-        adminID: bytes = await synced_store_client.get(key_lock)  # type: ignore[reportAssignmentType]
+        admin_id: bytes = await synced_store_client.get(key_lock)  # type: ignore[reportAssignmentType]
         return JSONResponse(
             {
                 "message": "There is an active keystore clean being performed, your request has been rejected",
-                "admin_id": adminID.decode(),
+                "admin_id": admin_id.decode(),
             },
             status_code=409,
         )
@@ -180,7 +180,7 @@ async def invalidate_key(
     token_manager.invalidate_key(kid)
 
     # Update global
-    raw_valid_keys: list[bytes] = synced_store_client.lrange(
+    raw_valid_keys: list[bytes] = await synced_store_client.lrange(
         SyncedStoreStrings.VALID_KEYS, 0, -1
     )  # type: ignore[reportAssignmentType]
     if not raw_valid_keys or kid.encode("utf-8") not in raw_valid_keys:
@@ -231,11 +231,11 @@ async def clean_keystore(
         "CLEAN_KEYSTORE_LOCK", admin_session.admin_id, ex=300, nx=True
     ):
         # Another worker is performing clean operation, reject this request
-        adminID: bytes = await synced_store_client.get("CLEAN_KEYSTORE_LOCK")  # type: ignore[reportAssignmentType]
+        admin_id: bytes = await synced_store_client.get("CLEAN_KEYSTORE_LOCK")  # type: ignore[reportAssignmentType]
         return JSONResponse(
             {
                 "message": "There is an active keystore clean being performed, your request has been rejected",
-                "admin_id": adminID.decode(),
+                "admin_id": admin_id.decode(),
             },
             status_code=409,
         )
@@ -302,10 +302,10 @@ async def clean_keystore(
                 )
 
             # Purge all public PEM files for invalid keys
-            for keyID in valid_inactive_keys:
+            for key_id in valid_inactive_keys:
                 (
                     config.JWKS.PUBLIC_PEM_DIRECTORY.joinpath(
-                        f"public_{keyID}_key.pem"
+                        f"public_{key_id}_key.pem"
                     ).unlink(missing_ok=True)
                 )
         except Exception as exc:
@@ -367,13 +367,13 @@ async def rotate_keys(
     )
     if not lock:
         # Another worker is performing this action, reject this request >:(
-        adminID: bytes = await ynced_store_client.get(
+        admin_id: bytes = await synced_store_client.get(
             SyncedStoreStrings.KEY_ROTATION_LOCK
         )  # type: ignore[reportAssignmentType]
         return JSONResponse(
             {
                 "message": "There is an active key rotation being performed, your request has been rejected",
-                "admin_id": adminID.decode(),
+                "admin_id": admin_id.decode(),
             },
             status_code=409,
         )
@@ -477,12 +477,12 @@ async def rotate_keys(
         )
 
     # Update token manager's mapping to use this newly created ECDSA pair
-    newKeyData: KeyMetadata = KeyMetadata(
+    new_keydata: KeyMetadata = KeyMetadata(
         PUBLIC_PEM=verification_key.to_pem(),
         PRIVATE_PEM=signing_key.to_pem(),
         ALGORITHM="ES256",
     )
-    token_manager.update_keydata(kid, newKeyData)
+    token_manager.update_keydata(kid, new_keydata)
 
     raw_valid_keys: list[bytes] = synced_store_client.lrange("VALID_KEYS", 0, -1)  # type: ignore[reportAssignmentType]
     if not raw_valid_keys or kid.encode("utf-8") not in raw_valid_keys:
@@ -515,8 +515,8 @@ async def rotate_keys(
         {
             "message": "Key rotation successful",
             "kid": kid,
-            "public_pem": newKeyData.PUBLIC_PEM.decode(),
-            "epoch": newKeyData.EPOCH,
+            "public_pem": new_keydata.PUBLIC_PEM.decode(),
+            "epoch": new_keydata.EPOCH,
             "alg": "ES256",
             "previous_kid": previous_key.kid,
         },

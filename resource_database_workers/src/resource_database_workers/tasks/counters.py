@@ -10,7 +10,7 @@ from resource_auxillary.strings import NAME_SEPERATOR, StreamName
 
 from resource_database_workers.config.config import AppConfig
 from resource_database_workers.datastructures.exceptions import (
-    RecoverableDatabaseException,
+    RecoverableDatabaseError,
 )
 from resource_database_workers.dependencies.annotations import (
     APP_CONFIG,
@@ -173,7 +173,7 @@ async def batch_update_counter_group(
             try:
                 await flush_counter_updates(conn, batch_name, db_normalized_counters)
                 return counters
-            except RecoverableDatabaseException:
+            except RecoverableDatabaseError:
                 group_name, identifier, group_version = extract_batch_metadata(
                     batch_name
                 )

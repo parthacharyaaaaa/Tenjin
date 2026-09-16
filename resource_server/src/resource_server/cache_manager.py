@@ -26,9 +26,9 @@ from resource_auxillary.strings import NAME_SEPERATOR, Action, IntentFlag
 
 from resource_server.config.sub_config import CacheConfig
 from resource_server.datastructures.exceptions import (
-    CacheCoherenceException,
-    ConflictingIntentException,
-    DuplicateRequestException,
+    CacheCoherenceError,
+    ConflictingIntentError,
+    DuplicateRequestError,
 )
 from resource_server.repositories.result_protocol import AbstractDTO
 
@@ -150,7 +150,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                 await pipe.execute()
             return True
 
-        elif dtype == "string" and cache_entry == self.cache_config.NF_SENTINEL_KEY:
+        if dtype == "string" and cache_entry == self.cache_config.NF_SENTINEL_KEY:
             await self.redis_client.set(
                 cache_key,
                 self.cache_config.NF_SENTINEL_KEY,
@@ -224,7 +224,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                 result_collections.append((None, member_ttl))
                 continue
 
-            elif isinstance(member_entry, dict):
+            if isinstance(member_entry, dict):
                 for idx, field in enumerate(counter_fields.keys()):
                     member_entry[field] += int(member_counters[idx] or 0)
                     result_collections.append((member_entry, member_ttl))
@@ -326,7 +326,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                         return return_dto.construct_from_cache(cache_entry)
                     return return_dto.construct_from_cache(orjson.loads(cache_entry))
 
-        raise CacheCoherenceException(f"Failed to fetch {key}")
+        raise CacheCoherenceError(f"Failed to fetch {key}")
 
     async def fetch_indicators(
         self,
@@ -383,7 +383,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                 pipe.get(intent)
                 lock_set, intent = await pipe.execute()
             if not lock_set:
-                raise DuplicateRequestException(
+                raise DuplicateRequestError(
                     lock_conflict_message or "Detected duplicate request"
                 )
             if not intent:
@@ -391,7 +391,7 @@ class CacheManager(metaclass=SingletonMetaclass):
             intent_value: str = intent.split(NAME_SEPERATOR)[0]
 
             if conflicting_intent == intent_value:
-                raise ConflictingIntentException(
+                raise ConflictingIntentError(
                     intent_conflict_message or "Operation already performed"
                 )
             yield intent_value
@@ -517,7 +517,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                         next_cursor,
                     )
 
-        raise CacheCoherenceException(f"Failed to fetch {page_key}")
+        raise CacheCoherenceError(f"Failed to fetch {page_key}")
 
     async def _promote_paginated_result(
         self,

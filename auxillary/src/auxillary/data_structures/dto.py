@@ -33,7 +33,7 @@ class AbstractResult:
     def __init_subclass__(cls):
         cls._fields = tuple(f.name for f in fields(cls))
         if not hasattr(cls, "resource_name"):
-            raise ValueError(f"Missing class variable: resource_name")
+            raise ValueError("Missing class variable: resource_name")
 
     @classmethod
     def construct_from_cache(cls, mapping: Mapping[str, Any], *args, **kwargs) -> Self:

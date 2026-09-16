@@ -96,7 +96,7 @@ class KeydataRepository(AbstractWorkRepository):
         async with self._work_scoped_session() as session:
             keydata = (await session.execute(statement)).scalar_one_or_none()
             if not keydata:
-                return
+                return None
             if public_only:
                 return KeyPublicDataResult.construct_from_orm(keydata)
             return KeyPrivateDataResult.construct_from_orm(keydata)
@@ -311,7 +311,7 @@ class KeydataRepository(AbstractWorkRepository):
             ).scalar_one_or_none()
 
             if not expired_key:
-                return
+                return None
 
             if return_expired:
                 if public_data_only:
@@ -478,7 +478,7 @@ class KeydataRepository(AbstractWorkRepository):
                 await session.execute(statement)
             ).scalar_one_or_none()
             if not active_key:
-                return
+                return None
             if public_data_only:
                 return KeyPublicDataResult.construct_from_orm(active_key)
             return KeyPrivateDataResult.construct_from_orm(active_key)

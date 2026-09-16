@@ -49,12 +49,12 @@ def get_token_store_client() -> Redis:
 def get_database_session_maker() -> async_sessionmaker[AsyncSession]:
     config: Final[AppConfig] = get_app_config()
 
-    URI: Final[str] = config.DATABASE.derive_sqlalchemy_uri(
+    uri: Final[str] = config.DATABASE.derive_sqlalchemy_uri(
         username=os.environ["AUTH_WORKER_POSTGRES_USERNAME"],
         password=os.environ["AUTH_WORKER_POSTGRES_PASSWORD"],
     )
 
-    engine: Final[AsyncEngine] = create_async_engine(URI)
+    engine: Final[AsyncEngine] = create_async_engine(uri)
 
     session_maker: Final[async_sessionmaker[AsyncSession]] = async_sessionmaker(
         bind=engine, autocommit=False, autoflush=False, expire_on_commit=True

@@ -1,22 +1,22 @@
-class ResourceNotFoundException(Exception):
+class ResourceNotFoundError(Exception):
     pass
 
 
-class ResourceDeletedException(Exception):
+class ResourceDeletedError(Exception):
     pass
 
 
-class OperationUnderwayException(Exception):
+class OperationUnderwayError(Exception):
     pass
 
 
-class CacheCoherenceException(Exception):
+class CacheCoherenceError(Exception):
     pass
 
 
-class DuplicateRequestException(Exception):
+class DuplicateRequestError(Exception):
     pass
 
 
-class ConflictingIntentException(Exception):
+class ConflictingIntentError(Exception):
     pass

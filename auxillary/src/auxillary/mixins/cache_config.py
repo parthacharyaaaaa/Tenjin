@@ -42,5 +42,5 @@ class BasicNegativeCacheConfig:
     NF_SENTINEL_VALUE: str
 
     @property
-    def NF_MAPPING(self) -> dict[str, str]:
+    def NF_MAPPING(self) -> dict[str, str]:     # noqa: N802
         return {self.NF_SENTINEL_KEY: self.NF_SENTINEL_VALUE}

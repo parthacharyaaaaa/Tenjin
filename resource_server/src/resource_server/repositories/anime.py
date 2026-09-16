@@ -249,13 +249,12 @@ class AnimeRepository(metaclass=SingletonMetaclass):
                     )
                     for anime in animes
                 ]
-            else:
-                return [
-                    AnimeResult.construct_from_orm(
-                        anime, anime_genres[anime.id_], anime_stream_links[anime.id_]
-                    )
-                    for anime in animes
-                ]
+            return [
+                AnimeResult.construct_from_orm(
+                    anime, anime_genres[anime.id_], anime_stream_links[anime.id_]
+                )
+                for anime in animes
+            ]
 
     async def get_user_animes(
         self,

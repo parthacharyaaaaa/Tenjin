@@ -68,5 +68,5 @@ def get_dead_letter_queue_name() -> StreamName:
 @lru_cache(maxsize=1)
 def get_stream_manager() -> EventStreamManager:
     """Current Implementation: Redis Streams"""
-    redis_client = Redis = get_internal_redis()
+    redis_client: Redis = get_internal_redis()
     return RedisStreamManager(redis_client)

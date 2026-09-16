@@ -7,7 +7,7 @@ from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auxillary.utils import (
     bcrypt_check_password,
     bcrypt_hash_password,
-    genericDBFetchException,
+    generic_database_fetch_exception,
     json_repr,
 )
 from fastapi import APIRouter, Depends
@@ -179,10 +179,10 @@ async def admin_delete(
             deletion_model.id_, include_deleted=True
         )
     except SQLAlchemyError:
-        genericDBFetchException()
+        generic_database_fetch_exception()
     if not admin:
         raise HTTPException(404, f"No admin with ID {deletion_model.id_} found")
-    elif admin.time_deleted:
+    if admin.time_deleted:
         raise HTTPException(
             410, f"Admin {admin.username} (ID: {admin.id_}) already deleted"
         )
@@ -321,7 +321,7 @@ async def admin_lock(
             identification_model.id_
         )
     except SQLAlchemyError:
-        genericDBFetchException()
+        generic_database_fetch_exception()
 
     if not admin:
         raise HTTPException(
@@ -366,7 +366,7 @@ async def admin_unlock(
             identification_model.id_
         )
     except SQLAlchemyError:
-        genericDBFetchException()
+        generic_database_fetch_exception()
 
     if not admin:
         raise HTTPException(
@@ -411,7 +411,7 @@ async def create_admin(
             AdminPublicResult | None
         ) = await admin_repository.get_admin_by_username(admin_model.identity)
     except SQLAlchemyError:
-        genericDBFetchException()
+        generic_database_fetch_exception()
     if existing_admin:
         raise HTTPException(
             409, f"Admin with username {admin_model.identity} already exists"

@@ -54,8 +54,8 @@ def hash_password(password: str, salt: bytes | None = None) -> tuple[bytes, byte
     returns: tuple[password-hash, salt]"""
     if salt is None:
         salt = os.urandom(16)
-    passwordHash = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000)
-    return passwordHash, salt
+    password_hash = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000)
+    return password_hash, salt
 
 
 def bcrypt_hash_password(
@@ -88,7 +88,7 @@ def verify_password(password: str, password_hash: bytes, salt: bytes) -> bool:
 
 def rediserialize(
     mapping: dict,
-    typeMapping: Mapping[type, Callable] = {
+    type_mapping: Mapping[type, Callable] = {
         NoneType: lambda _: "",
         bool: lambda b: int(b),
         datetime.datetime: lambda dt: dt.isoformat(),
@@ -96,7 +96,7 @@ def rediserialize(
     },
 ) -> dict:
     """Serialize a Python dictionary to a Redis hashmap"""
-    return {k: typeMapping.get(type(v), lambda x: x)(v) for k, v in mapping.items()}
+    return {k: type_mapping.get(type(v), lambda x: x)(v) for k, v in mapping.items()}
 
 
 def pyserialize(
@@ -124,7 +124,7 @@ def pyserialize(
     }
 
 
-def genericDBFetchException():
+def generic_database_fetch_exception():
     """Generic fetch exception handler"""
     exc = Exception()
     exc.__setattr__("description", "An error occurred when fetching this resource")

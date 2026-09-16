@@ -90,7 +90,7 @@ class CacheConfig(BasicCacheTTLConfig, BasicNegativeCacheConfig, BaseModel):
                 )
             )
 
-        if self.TTL_FETCH_LOCK < max_waiting_time:
+        if max_waiting_time > self.TTL_FETCH_LOCK:
             raise ValueError(
                 " ".join(
                     (

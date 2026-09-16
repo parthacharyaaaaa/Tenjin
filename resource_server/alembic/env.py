@@ -1,3 +1,4 @@
+from typing import Final
 import os
 from logging.config import fileConfig
 from pathlib import Path
@@ -38,12 +39,12 @@ def _set_sqlalchemy_uri_config() -> None:
 
     app_config: AppConfig = get_app_config()
 
-    URI: str = app_config.DATABASE.derive_sqlalchemy_uri(
+    uri: Final[str] = app_config.DATABASE.derive_sqlalchemy_uri(
         username=os.environ["RESOURCE_SERVER_POSTGRES_USERNAME"],
         password=os.environ["RESOURCE_SERVER_POSTGRES_PASSWORD"],
     )
 
-    config.set_main_option("sqlalchemy.url", URI)
+    config.set_main_option("sqlalchemy.url", uri)
 
 
 def run_migrations_offline() -> None:

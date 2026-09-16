@@ -203,7 +203,7 @@ async def delete_post(
     if not post:
         raise HTTPException(404, f"No post with id {post_id} found")
 
-    conflicting_message: str = f"Post already deleted"
+    conflicting_message: str = "Post already deleted"
     async with cache_manager.guard_action(
         access_token["sid"],
         post_id,
@@ -313,7 +313,7 @@ async def vote_post(
                     intent,
                 )
                 raise HTTPException(409, "Same vote already casted")
-            elif existing_vote:
+            if existing_vote:
                 # Transitioning from upvote to downvote, or vice-versa
                 delta *= 2
 
@@ -646,21 +646,20 @@ async def report_post(
 
     if latest_intent:
         raise HTTPException(409, "Post already reported")
-    else:
-        if await post_repo.check_reported(
-            post_id, access_token["sid"], report_model.tag
-        ):
-            await cache_manager.set_intent(
-                intent_id,
-                str(access_token["sid"]),
-                str(post_id),
-                resource_name,
-                Action.REPORT,
-                IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
-            )
-            raise HTTPException(
-                409, f"Post already reported for reason: {report_model.tag}"
-            )
+    if await post_repo.check_reported(
+        post_id, access_token["sid"], report_model.tag
+    ):
+        await cache_manager.set_intent(
+            intent_id,
+            str(access_token["sid"]),
+            str(post_id),
+            resource_name,
+            Action.REPORT,
+            IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
+        )
+        raise HTTPException(
+            409, f"Post already reported for reason: {report_model.tag}"
+        )
 
     counter_updates: tuple[CounterUpdate, ...] = (
         CounterUpdate(

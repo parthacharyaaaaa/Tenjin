@@ -150,17 +150,17 @@ class KeyManager(metaclass=SingletonMetaclass):
             for expired_key in local_keys - global_valid_keys:
                 self.current_mapping.pop(expired_key)
 
-            for keyMetadata in new_mapping:
+            for key_metadata in new_mapping:
                 # New key found, welcome to the club >:3
-                if keyMetadata["kid"] not in self.current_mapping:
-                    x = from_base64url(keyMetadata["x"])
-                    y = from_base64url(keyMetadata["y"])
+                if key_metadata["kid"] not in self.current_mapping:
+                    x = from_base64url(key_metadata["x"])
+                    y = from_base64url(key_metadata["y"])
                     point = ecdsa.ellipticcurve.Point(ecdsa.SECP256k1.curve, x, y)  # type: ignore[reportAttributeAccessIssue]
                     vk = ecdsa.VerifyingKey.from_public_point(
                         point, curve=ecdsa.SECP256k1
                     )
 
-                    self.current_mapping[keyMetadata["kid"]] = vk.to_pem()
+                    self.current_mapping[key_metadata["kid"]] = vk.to_pem()
 
             # Update global list and values in Redis to inform other workers
             async with self.app_redis_client.pipeline() as pipe:

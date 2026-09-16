@@ -418,7 +418,7 @@ async def edit_admin_permissions(
 
     if admin_model.role == existing_admin.role:
         raise HTTPException(409, "Previous and new roles identical")
-    elif existing_admin.role == forum_admin.role:
+    if existing_admin.role == forum_admin.role:
         raise HTTPException(403, "Cannot change roles of peer admins")
 
     # Very brittle logic, but I can't see adding more admin roles anytime soon
@@ -701,7 +701,7 @@ async def edit_forum(
 
     if not admin_role:
         raise HTTPException(403, "You are not an admin for this forum")
-    elif admin_role.role == "staff":  # TODO: Replace with StrEnum
+    if admin_role.role == "staff":  # TODO: Replace with StrEnum
         raise HTTPException(403, "You do not have access rights to edit this forum")
 
     updated_forum: ForumResult = await forum_repo.update_forum(

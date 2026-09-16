@@ -19,7 +19,6 @@ from resource_auxillary.datastructures.payloads.standalone import (
     CommentDeletion,
 )
 from resource_auxillary.events import (
-    CacheUpdate,
     CounterUpdate,
     Event,
     EventName,
@@ -169,7 +168,7 @@ async def delete_comment(
             raise HTTPException(403, "Insufficient permissions to delete comment")
 
     intent_id: Final[str] = uuid4().hex
-    conflict_message: str = f"Already deleted comment"
+    conflict_message: str = "Already deleted comment"
     async with cache_manager.guard_action(
         access_token["sid"],
         comment_id,
@@ -279,7 +278,7 @@ async def vote_comment(
                     intent,
                 )
                 raise HTTPException(409, conflict_message)
-            elif existing_vote:
+            if existing_vote:
                 # Transitioning from upvote to downvote, or vice-versa
                 delta *= 2
 
@@ -373,7 +372,7 @@ async def unvote_comment(
                     IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
                 )
                 raise HTTPException(409, conflict_message)
-            elif existing_vote == False:  # downvote
+            if existing_vote == False:  # downvote
                 delta = -1
 
         counter_updates: tuple[CounterUpdate, ...] = (

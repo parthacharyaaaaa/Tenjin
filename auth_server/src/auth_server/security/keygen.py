@@ -10,7 +10,6 @@ from auxillary.utils import to_base64url
 
 from auth_server.models.database import KeyData
 from auth_server.repositories.keydata import KeydataRepository
-from auth_server.security.key_container import KeyMetadata
 
 
 def generate_ecdsa_pair() -> tuple[str, ecdsa.SigningKey, ecdsa.VerifyingKey]:
@@ -59,22 +58,22 @@ def update_jwks(
     # ecdsa.VerifyingKey.pubkey is hinted as being None thanks to its constructor
     # but actually does return a valid type
     point = vk.pubkey.point  # type: ignore[reportAttributeAccessIssue]
-    encodedX, encodedY = to_base64url(int(point.x())), to_base64url(int(point.y()))
-    keyMapping: dict[str, str | int] = {
+    encoded_x, encoded_y = to_base64url(int(point.x())), to_base64url(int(point.y()))
+    key_mapping: dict[str, str | int] = {
         "kty": "EC",
         "alg": "ECDSA",
         "crv": ecdsa.SECP256k1.__str__(),
         "use": "sig",
         "kid": kid,
-        "x": encodedX,
-        "y": encodedY,
+        "x": encoded_x,
+        "y": encoded_y,
     }
 
     with open(jwks_json_filepath, "r+") as jwks_json_file:
         jwks_contents: list[dict[str, str | int]] = orjson.loads(jwks_json_file.read())[
             "keys"
         ]
-        jwks_contents.append(keyMapping)
+        jwks_contents.append(key_mapping)
         length: int = len(jwks_contents)
 
         if enforce_capacity and length > capacity:

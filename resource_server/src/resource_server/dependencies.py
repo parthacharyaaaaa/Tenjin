@@ -33,7 +33,7 @@ def get_app_redis_client() -> Redis:
     config: Final[AppConfig] = get_app_config()
 
     return Redis(
-        host=str(config.REDIS.APP.HOST),
+        host=config.REDIS.APP.HOST,
         port=config.REDIS.APP.PORT,
         db=config.REDIS.APP.DB,
         # username=os.environ["RESOURCE_WORKER_REDIS_USERNAME"],
@@ -46,7 +46,7 @@ def get_auth_redis_client() -> Redis:
     config: Final[AppConfig] = get_app_config()
 
     return Redis(
-        host=str(config.REDIS.AUTH.HOST),
+        host=config.REDIS.AUTH.HOST,
         port=config.REDIS.AUTH.PORT,
         db=config.REDIS.AUTH.DB,
         # username=os.environ["RESOURCE_AUTH_WORKER_REDIS_USERNAME"],
@@ -73,12 +73,12 @@ def get_event_streamer() -> EventStreamer:
 def get_database_session_maker() -> async_sessionmaker[AsyncSession]:
     config: Final[AppConfig] = get_app_config()
 
-    URI: Final[str] = config.DATABASE.derive_sqlalchemy_uri(
+    uri: Final[str] = config.DATABASE.derive_sqlalchemy_uri(
         username=os.environ["RESOURCE_SERVER_POSTGRES_USERNAME"],
         password=os.environ["RESOURCE_SERVER_POSTGRES_PASSWORD"],
     )
 
-    engine: Final[AsyncEngine] = create_async_engine(URI)
+    engine: Final[AsyncEngine] = create_async_engine(uri)
 
     session_maker: Final[async_sessionmaker[AsyncSession]] = async_sessionmaker(
         bind=engine, autocommit=False, autoflush=False

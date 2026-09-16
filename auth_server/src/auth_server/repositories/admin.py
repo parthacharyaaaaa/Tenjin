@@ -423,7 +423,7 @@ class AdminRepository(AbstractWorkRepository):
             ).scalar_one()
 
             if not returning:
-                return
+                return None
             if public_data_only:
                 return AdminPublicResult.construct_from_orm(admin)
             return AdminPrivateResult.construct_from_orm(admin)

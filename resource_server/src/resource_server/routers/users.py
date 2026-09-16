@@ -11,16 +11,13 @@ from auxillary.utils import (
 from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (
-    create_intent_flag,
     derive_cache_key,
 )
 from resource_auxillary.datastructures.payloads.standalone import UserCleanup
 from resource_auxillary.events import (
-    CacheUpdate,
     Event,
     EventName,
     EventSideEffects,
-    IntentUpdate,
 )
 from resource_auxillary.strings import Action, EventName, IntentFlag, StreamName
 
@@ -48,17 +45,14 @@ from resource_server.repositories.anime import AnimeRepository, AnimeResult
 from resource_server.repositories.forum import ForumRepository, ForumResult
 from resource_server.repositories.posts import PostRepository, PostResult
 from resource_server.repositories.user import (
-    PrivateUserResult,
     UserRepository,
     UserResult,
 )
 from resource_server.request_dependencies import (
     cursor_preprocessor,
     preprocess_sort_option,
-    validate_access_token,
 )
 from resource_server.utils.helpers import generate_url_token
-from resource_server.utils.typing import StandardAccessTokenClaims
 
 USERS: Final[APIRouter] = APIRouter()
 
@@ -83,7 +77,7 @@ async def register(
                 409,
                 f"Username {user_model.username} and email {user_model.email} already taken",
             )
-        elif existing_users[0].username == user_model.username:
+        if existing_users[0].username == user_model.username:
             raise HTTPException(409, f"Username {user_model.username} already taken")
         raise HTTPException(409, f"Email {user_model.email} already taken")
 
@@ -204,12 +198,12 @@ async def update_password(
 ) -> JSONResponse:
     user, (url, expiry) = await user_repo.get_user_password_recovery_token(user_id)
     if not user:
-        raise HTTPException(404, f"User not found")
-    elif not url:
+        raise HTTPException(404, "User not found")
+    if not url:
         raise HTTPException(404, "No password recovery token found")
-    elif url != temp_url:
+    if url != temp_url:
         raise HTTPException(403, "Invalid url")
-    elif expiry > datetime.now():  # type: ignore[reportOptionalOperand]
+    if expiry > datetime.now():  # type: ignore[reportOptionalOperand]
         raise HTTPException(403, "Token expired")
 
     pw_hash: Final[bytes] = bcrypt_hash_password(password_model.password)

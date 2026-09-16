@@ -49,18 +49,18 @@ async def _purge_expired_keys(
     private_pem_directory: Path,
     keydata_repository: KeydataRepository,
 ) -> None:
-    expiredKeys: list[str] = [
+    expired_keys: list[str] = [
         k.kid for k in await keydata_repository.get_expired_keys()
     ]
-    for expiredKey in expiredKeys:
+    for expired_key in expired_keys:
         (
-            public_pem_directory.joinpath(f"public_{expiredKey}_key.pem").unlink(
+            public_pem_directory.joinpath(f"public_{expired_key}_key.pem").unlink(
                 missing_ok=True
             )
         )
 
         (
-            private_pem_directory.joinpath(f"private_{expiredKey}_key.pem").unlink(
+            private_pem_directory.joinpath(f"private_{expired_key}_key.pem").unlink(
                 missing_ok=True
             )
         )
@@ -81,14 +81,14 @@ def _sync_file_system_key_state(
         active_key.kid,
     )
 
-    for keyData in rotated_keys:
+    for keydata in rotated_keys:
         private_pem_path: Path = (
-            private_pem_directory / f"private_{keyData.kid}_key.pem"
+            private_pem_directory / f"private_{keydata.kid}_key.pem"
         )
-        public_pem_path: Path = public_pem_directory / f"public_{keyData.kid}_key.pem"
+        public_pem_path: Path = public_pem_directory / f"public_{keydata.kid}_key.pem"
 
         # Ensure that only public pem file exists for verification keys
-        public_pem_path.write_bytes(keyData.public_pem)
+        public_pem_path.write_bytes(keydata.public_pem)
         private_pem_path.unlink(missing_ok=True)
 
 
@@ -281,7 +281,7 @@ async def slave_bootup(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
-    PID: Final[int] = os.getpid()
+    pid: Final[int] = os.getpid()
 
     config: Final[AppConfig] = get_app_config()
     synced_store_client: Final[Redis] = get_synced_store_client()
@@ -300,14 +300,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     is_master: bool = bool(
         await synced_store_client.set(
-            SyncedStoreStrings.AUTH_BOOTUP_MASTER, PID, nx=True, ex=300
+            SyncedStoreStrings.AUTH_BOOTUP_MASTER, pid, nx=True, ex=300
         )
     )
 
     if is_master:
-        await master_bootup(config, synced_store_client, keydata_repository, PID)
+        await master_bootup(config, synced_store_client, keydata_repository, pid)
     else:
-        await slave_bootup(config, synced_store_client, keydata_repository, PID)
+        await slave_bootup(config, synced_store_client, keydata_repository, pid)
 
     register_routers(app, ROUTER_URL_MAPPING, config.CORE.APPLICATION_ROOT)
 
