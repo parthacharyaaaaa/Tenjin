@@ -4,6 +4,9 @@ version = "1.0.0"
 description = "Tenjin"
 readme = "README.md"
 requires-python = ">=3.13, <3.14"
+dependencies = [
+    "ruff>=0.16.7",
+]
 
 [tool.uv.workspace]
 members = [
@@ -17,9 +20,7 @@ members = [
 
 [dependency-groups]
 dev = [
-    "autoflake>=2.3.3",
     "bandit[baseline,toml]>=1.9.4",
-    "black>=26.3.1",
     "deptry>=0.25.1",
     "orjson>=3.11.9",
     "pre-commit>=4.6.0",
