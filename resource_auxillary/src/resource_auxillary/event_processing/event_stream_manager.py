@@ -24,7 +24,7 @@ class EventStreamManager(Protocol):
         consumer: str,
         offset: int | str,
         batch_size: int,
-        timeout: timedelta | None,
+        timeout: timedelta | None,  # noqa
     ) -> tuple[list[StreamedEvent], list[StreamedEvent]]: ...
 
     async def acknowledge_events(
@@ -72,7 +72,7 @@ class RedisStreamManager:
         consumer: str,
         offset: int | str,
         batch_size: int,
-        timeout: timedelta | None,
+        timeout: timedelta | None,  # noqa
     ) -> tuple[list[StreamedEvent], list[StreamedEvent]]:
         result: list[
             list[list[tuple[str, dict[str, str]]]]

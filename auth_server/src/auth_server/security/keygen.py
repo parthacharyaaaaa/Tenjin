@@ -1,3 +1,4 @@
+import asyncio
 import os
 import secrets
 from hashlib import sha512
@@ -132,10 +133,10 @@ async def initialize_active_key(
 ) -> KeyData:
     active_kid, sk, vk = generate_ecdsa_pair()
 
-    if not private_directory.exists():
-        private_directory.mkdir(parents=True)
-    if not public_directory.exists():
-        public_directory.mkdir(parents=True)
+    if not await asyncio.to_thread(private_directory.exists):
+        await asyncio.to_thread(private_directory.mkdir, parents=True)
+    if not await asyncio.to_thread(public_directory.exists):
+        await asyncio.to_thread(public_directory.mkdir, parents=True)
 
     # Persist to PEM, and DB (JWKS done at end)
     write_ecdsa_pair(

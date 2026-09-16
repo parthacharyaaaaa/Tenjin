@@ -1,7 +1,9 @@
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Final
 
+import aiofiles
 import ecdsa
 import orjson
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
@@ -105,8 +107,8 @@ async def invalidate_key(
     additional_kw: dict[str, str] = {}
     original_jwks: list[dict[str, Any]] = []
 
-    with open(config.JWKS.JWKS_FILEPATH, "r") as jwks_file:
-        original_jwks = orjson.loads(jwks_file.read())["keys"]
+    async with aiofiles.open(config.JWKS.JWKS_FILEPATH, "r") as jwks_file:
+        original_jwks = orjson.loads(await jwks_file.read())["keys"]
 
     if any(mapping["kid"] == kid for mapping in original_jwks):
         additional_kw["jwks_integrity_warning"] = "This key ID was not found in JWKS"
@@ -154,22 +156,22 @@ async def invalidate_key(
             updated_jwks = [
                 mapping for mapping in original_jwks if mapping["kid"] != kid
             ]
-            with open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
-                jwks_file.write(
+            async with aiofiles.open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
+                await jwks_file.write(
                     orjson.dumps({"keys": updated_jwks}, option=orjson.OPT_INDENT_2)
                 )
             # Delete public PEM file
-            public_pem_fpath.unlink(missing_ok=True)
+            await asyncio.to_thread(public_pem_fpath.unlink, missing_ok=True)
     except (SQLAlchemyError, OSError) as exc:
         # Revert JWKS state
-        with open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
-            jwks_file.write(
+        async with aiofiles.open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
+            await jwks_file.write(
                 orjson.dumps({"keys": original_jwks}, option=orjson.OPT_INDENT_2)
             )
 
         # Regenerate PEM file
-        if target_key and not public_pem_fpath.exists():
-            public_pem_fpath.write_bytes(target_key.public_pem)
+        if target_key and not await asyncio.to_thread(public_pem_fpath.exists):
+            await asyncio.to_thread(public_pem_fpath.write_bytes, target_key.public_pem)
 
         # State reverted, crash and burn
         error: HTTPException = HTTPException(500, f"Failed to invalidate key {kid}")
@@ -242,8 +244,8 @@ async def clean_keystore(
 
     # Before cleaning keystore, store all old data for rollbacks
     old_jwks: list[dict[str, Any]] = []
-    with open(config.JWKS.JWKS_FILEPATH) as jwks_file:
-        old_jwks = orjson.loads(jwks_file.read())["keys"]
+    async with aiofiles.open(config.JWKS.JWKS_FILEPATH) as jwks_file:
+        old_jwks = orjson.loads(await jwks_file.read())["keys"]
 
     if len(old_jwks) == 1:
         raise HTTPException(409, "No inactive keys present to invalidate")
@@ -294,8 +296,8 @@ async def clean_keystore(
                 "y": to_base64url(int(verification_key.pubkey.point.y())),  # type: ignore[reportAttributeAccessIssue]
             }
 
-            with open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
-                jwks_file.write(
+            async with aiofiles.open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
+                await jwks_file.write(
                     orjson.dumps(
                         {"keys": [active_key_mapping]}, option=orjson.OPT_INDENT_2
                     )
@@ -310,8 +312,8 @@ async def clean_keystore(
                 )
         except Exception as exc:
             # JWKS
-            with open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
-                jwks_file.write(
+            async with aiofiles.open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
+                await jwks_file.write(
                     orjson.dumps({"keys": old_jwks}, option=orjson.OPT_INDENT_2)
                 )
 
@@ -319,8 +321,8 @@ async def clean_keystore(
             for kid, public_pem in pem_mappings.items():
                 fpath: Path = config.JWKS.PUBLIC_PEM_DIRECTORY / f"public_{kid}_key.pem"
                 # Regenerate public PEM file in case of deletion
-                if not fpath.exists():
-                    fpath.write_bytes(public_pem)
+                if not await asyncio.to_thread(fpath.exists):
+                    await asyncio.to_thread(fpath.write_bytes, public_pem)
 
             # All rollbacks performed, crash and burn
             raise HTTPException(500, "Failed to perform clean operation") from exc

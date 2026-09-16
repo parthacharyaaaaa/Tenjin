@@ -1,5 +1,5 @@
+import asyncio
 import os
-import time
 import traceback
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -235,8 +235,8 @@ async def slave_bootup(
     master_wait_interval: float = 1.0,
 ) -> None:
     # Wait for master worker to finish managing key synchronization and file I/O, and then proceed on the assumption that the JWKS file has been written into/validated.
-    while await synced_store_client.get(SyncedStoreStrings.AUTH_BOOTUP_MASTER):
-        time.sleep(master_wait_interval)
+    while await synced_store_client.get(SyncedStoreStrings.AUTH_BOOTUP_MASTER):  # noqa
+        await asyncio.sleep(master_wait_interval)  # noqa
 
     if await synced_store_client.get(SyncedStoreStrings.ABORT):
         print(
