@@ -64,7 +64,33 @@ target-version = "py313"
 line-length = 88
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I"]
+select = [
+    "E4", "E7", "E9",
+    "F",
+    "I",
+    "N",
+    "B0",
+    "DTZ",
+    "RET",
+    "ASYNC",
+    "PERF101",
+    "PERF102",
+    # "PERF401"
+    # "PERF402",
+    # "PERF403",
+    "SIM101",
+    "SIM102",
+    "SIM109",
+    "SIM110",
+    "SIM114",
+    "SIM115",
+    "SIM300",
+    "SIM401"
+]
+
+ignore = [
+    "B008", "B009", "B010", "B013", "B019", "B043"
+]
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["F401"]
