@@ -1,3 +1,6 @@
+from auth_server.repositories.suspicious_activity import SuspiciousActivityResult
+from auth_server.repositories.admin import AdminRepository
+from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 import secrets
 import time
 from typing import Final, Sequence
@@ -7,7 +10,7 @@ import ecdsa
 
 from redis.asyncio import Redis
 
-from sqlalchemy import func, select, insert, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from datetime import datetime, timedelta
 from fastapi import Response
@@ -15,8 +18,6 @@ from fastapi.datastructures import URL
 
 from auth_server.config.app_config import AppConfig
 from auth_server.models.database import (
-    SuspiciousActivity,
-    Admin,
     KeyData,
 )
 from auth_server.security.admin_roles import AdminRole
@@ -48,42 +49,30 @@ def attach_tokens(
 
 
 async def report_suspicious_activity(
-    session: AsyncSession,
     config: AppConfig,
     synced_store_client: Redis,
-    adminID: int,
+    admin_id: int,
     desc: str,
+    suspicious_activity_repository: SuspiciousActivityRepository,
+    admin_repository: AdminRepository,
     force_logout: bool = True,
 ) -> None:
-    await session.execute(
-        insert(SuspiciousActivity).values(suspect=adminID, description=desc)
-    )
+    await suspicious_activity_repository.insert_activity(admin_id, desc)
     current_time: datetime = datetime.now()
-
-    stmt = (
-        select(func.count())
-        .select_from(SuspiciousActivity)
-        .where(
-            (SuspiciousActivity.suspect == adminID)
-            & (
-                SuspiciousActivity.time_logged.between(
-                    current_time
-                    - timedelta(seconds=config.ADMIN.SUSPICIOUS_LOOKBACK_TIME),
-                    current_time,
-                )
-            )
+    activities: list[SuspiciousActivityResult] = (
+        await suspicious_activity_repository.get_activity_log(
+            admin_id, config.ADMIN.MAX_ACTIVITY_LIMIT
         )
     )
-
-    if (
-        force_logout
-        and (await session.execute(stmt)).scalar_one()
-        >= config.ADMIN.MAX_ACTIVITY_LIMIT
+    if force_logout and (
+        (len(activities) > config.ADMIN.MAX_ACTIVITY_LIMIT)
+        or (
+            activities[-1].time_logged
+            > current_time - timedelta(seconds=config.ADMIN.SUSPICIOUS_LOOKBACK_TIME)
+        )
     ):
-        await session.execute(update(Admin).values(locked=True))
-        await synced_store_client.delete(f"admin:{adminID}")
-
-    await session.commit()
+        await admin_repository.set_admin_locked(admin_id, locked=True)
+        await synced_store_client.delete(f"admin:{admin_id}")
 
 
 # TODO: Swap this out with KeydataRepository/s equivalent method
