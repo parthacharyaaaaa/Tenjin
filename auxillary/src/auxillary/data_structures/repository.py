@@ -1,3 +1,4 @@
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
@@ -60,9 +61,9 @@ class AbstractWorkRepository(AbstractRepository, AntiSingletonMixin, abstract=Tr
             yield
 
     @asynccontextmanager
-    async def _work_scoped_session(self):
-        if self._work_session is not None:
-            yield self._work_session
+    async def _work_scoped_session(self) -> AsyncGenerator[AsyncSession]:
+        if (session := self._work_session.get()) is not None:
+            yield session
             return
 
         async with self.session_maker() as session:
