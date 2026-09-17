@@ -2,6 +2,7 @@ from enum import StrEnum
 from typing import Final, LiteralString
 
 GENERIC_SEPARATOR: Final[LiteralString] = ":"
+GENERIC_SESSION_SEPARATOR: Final[LiteralString] = "."
 
 
 class AdminStrings(StrEnum):
