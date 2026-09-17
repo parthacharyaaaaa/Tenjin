@@ -4,12 +4,20 @@ from pathlib import Path
 from typing import Annotated, Any, Final
 
 import aiofiles
-import ecdsa
 import orjson
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auxillary.utils import (
     json_repr,
     to_base64url,
+)
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+    PublicFormat,
+    load_pem_public_key,
 )
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -280,20 +288,24 @@ async def clean_keystore(
             if not active_key:  # Violates business invariant, should never happen
                 raise HTTPException(500, "Invalid keystore state!")
 
-            verification_key: ecdsa.VerifyingKey = ecdsa.VerifyingKey.from_pem(
-                active_key.public_pem.decode()
+            verification_key: PublicKeyTypes = load_pem_public_key(
+                active_key.public_pem
             )
-            # ecdsa.VerifyingKey.pubkey is hinted as being None,
-            # thanks to its constructor,
-            # but actually does return a valid type
+
+            # Should never happen
+            if not isinstance(verification_key, ec.EllipticCurvePublicKey):
+                raise HTTPException(500, "Invalid active key")
+            public_numbers: ec.EllipticCurvePublicNumbers = (
+                verification_key.public_numbers()
+            )
             active_key_mapping: dict[str, Any] = {
                 "kty": "EC",
                 "alg": "ECDSA",
-                "crv": str(ecdsa.SECP256k1),
+                "crv": ec.SECP256K1.name,
                 "use": "sig",
                 "kid": active_key.kid,
-                "x": to_base64url(int(verification_key.pubkey.point.x())),  # type: ignore[reportAttributeAccessIssue]
-                "y": to_base64url(int(verification_key.pubkey.point.y())),  # type: ignore[reportAttributeAccessIssue]
+                "x": to_base64url(public_numbers.x),
+                "y": to_base64url(public_numbers.y),
             }
 
             async with aiofiles.open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
@@ -408,6 +420,15 @@ async def rotate_keys(
     # Server is ready for a key rotation
     kid, signing_key, verification_key = generate_ecdsa_pair()
     generation_epoch: Final[datetime] = datetime.now(UTC)
+    private_pem: Final[bytes] = signing_key.private_bytes(
+        encoding=Encoding.PEM,
+        format=PrivateFormat.PKCS8,
+        encryption_algorithm=NoEncryption(),
+    )
+    public_pem: Final[bytes] = verification_key.public_bytes(
+        encoding=Encoding.PEM,
+        format=PublicFormat.SubjectPublicKeyInfo,
+    )
 
     # Update DB first, then perform JWKS and PEM writes
     overflow: bool = False
@@ -425,8 +446,8 @@ async def rotate_keys(
             await keydata_repository.rotate_key(
                 previous_key.kid,
                 kid,
-                new_key_public_pem=verification_key.to_pem(),
-                new_key_private_pem=signing_key.to_pem(),
+                new_key_public_pem=public_pem,
+                new_key_private_pem=private_pem,
                 rotation_author=admin_session.admin_id,
                 epoch=generation_epoch,
             )
@@ -480,8 +501,8 @@ async def rotate_keys(
 
     # Update token manager's mapping to use this newly created ECDSA pair
     new_keydata: KeyMetadata = KeyMetadata(
-        PUBLIC_PEM=verification_key.to_pem(),
-        PRIVATE_PEM=signing_key.to_pem(),
+        PUBLIC_PEM=public_pem,
+        PRIVATE_PEM=private_pem,
         ALGORITHM="ES256",
     )
     token_manager.update_keydata(kid, new_keydata)

@@ -4,8 +4,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Final, Sequence
 from uuid import uuid4
 
-import ecdsa
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from fastapi import Response
 from fastapi.datastructures import URL
 from redis.asyncio import Redis
@@ -22,7 +25,7 @@ from auth_server.repositories.suspicious_activity import (
     SuspiciousActivityResult,
 )
 from auth_server.security.admin_roles import AdminRole
-from auth_server.utils.typing import AdminSessionDict, HashFunc
+from auth_server.utils.typing import AdminSessionDict
 
 
 def attach_tokens(
@@ -115,9 +118,12 @@ def create_admin_session(
 
 
 def sign_session(
-    session_token: bytes | bytearray, signing_pem: bytes | bytearray, hashfunc: HashFunc
+    session_token: bytes | bytearray, signing_pem: bytes | bytearray
 ) -> bytes:
-    signing_key: ecdsa.SigningKey = ecdsa.SigningKey.from_pem(signing_pem)
-    signature: Final[bytes] = signing_key.sign_deterministic(session_token, hashfunc)
+    signiny_key: PrivateKeyTypes = load_pem_private_key(signing_pem, password=None)
+    if not isinstance(signiny_key, ec.EllipticCurvePrivateKey):
+        raise ValueError("Key not EC")
+
+    signature: Final[bytes] = signiny_key.sign(session_token, ec.ECDSA(hashes.SHA256()))
 
     return b".".join((session_token, signature))

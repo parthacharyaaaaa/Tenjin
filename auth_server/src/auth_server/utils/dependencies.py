@@ -2,24 +2,30 @@ import base64
 import time
 from typing import Annotated, Any, Final
 
-import ecdsa
 import orjson
 import pydantic
+from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey
+from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
 from fastapi import Depends, HTTPException, Request
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import (
+    get_admin_repository,
     get_app_config,
-    get_database_session,
+    get_repository_work_coordinator,
+    get_suspicious_activity_repository,
     get_synced_store_client,
 )
-from auth_server.models.database import Admin
 from auth_server.models.session import AdminSession
+from auth_server.repositories.admin import AdminPublicResult, AdminRepository
+from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.security.admin_roles import ROLE_PERMISSIONS, AdminRole
 from auth_server.security.permissions import Permission
 from auth_server.strings import AdminStrings
@@ -57,56 +63,81 @@ async def get_admin_session(request: Request) -> AdminContext:
 
 
 async def get_verification_key(
-    session: Annotated[AsyncSession, Depends(get_database_session)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
     admin_context: Annotated[AdminContext, Depends(get_admin_session)],
-) -> ecdsa.VerifyingKey:
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+) -> ec.EllipticCurvePublicKey:
     try:
         key_pem: bytes | None = await synced_store_client.hget(  # pyrefly: ignore
             AdminStrings.ADMIN_KEY_CACHE, str(admin_context.session.admin_id)
         )
 
         if key_pem:
-            return ecdsa.VerifyingKey.from_pem(key_pem)
+            key: PublicKeyTypes = serialization.load_pem_public_key(key_pem)
+            if not isinstance(key, EllipticCurvePublicKey):
+                await synced_store_client.hdel(  # pyrefly: ignore[not-async]
+                    AdminStrings.ADMIN_KEY_CACHE, str(admin_context.session.admin_id)
+                )
+                key_pem = None
+            else:
+                return key
     except RedisError:
         # TODO: Some logging
         pass
     try:
         # A None check would be redundant here, admin existence is known
-        key_pem = (
-            await session.execute(
-                select(Admin.verification_key).where(
-                    Admin.id_ == admin_context.session.admin_id
-                )
+        admin: AdminPublicResult | None = await admin_repository.get_admin(
+            admin_context.session.admin_id
+        )
+        if not admin:  # should never happen
+            await synced_store_client.hdel(  # pyrefly: ignore[not-async]
+                AdminStrings.ADMIN_KEY_CACHE, str(admin_context.session.admin_id)
             )
-        ).scalar_one()
+            raise HTTPException(401, "Invalid session")
 
-        return ecdsa.VerifyingKey.from_pem(key_pem)
+        key: PublicKeyTypes = serialization.load_pem_public_key(admin.verification_key)
+        if not isinstance(key, EllipticCurvePublicKey):
+            e = ValueError("Serialized key is not EC")
+            e.add_note(rf"key: {admin.verification_key}")
+            raise e
+        return key
     except SQLAlchemyError as e:
         raise HTTPException(500) from e
 
 
 async def validate_admin_session(
     config: Annotated[AppConfig, Depends(get_app_config)],
-    session: Annotated[AsyncSession, Depends(get_database_session)],
     admin_context: Annotated[AdminContext, Depends(get_admin_session)],
-    verification_key: Annotated[ecdsa.VerifyingKey, Depends(get_verification_key)],
+    verification_key: Annotated[
+        ec.EllipticCurvePublicKey, Depends(get_verification_key)
+    ],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
+    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+    suspicious_activity_repository: Annotated[
+        SuspiciousActivityRepository, Depends(get_suspicious_activity_repository)
+    ],
+    coordinator: Annotated[
+        MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
+    ],
 ) -> AdminSession:
 
-    signature: Final[str] = admin_context.session_token.split(".")[1]
+    bare_token, signature = admin_context.session_token.split(".")
     try:
         verification_key.verify(
-            verification_key, signature, config.ADMIN.SESSION_HASHFUNC
+            signature.encode("utf-8"),
+            bare_token.encode("utf-8"),
+            ec.ECDSA(hashes.SHA256()),
         )
-    except ecdsa.BadSignatureError:
+    except InvalidSignature:
         err_msg: str = "Tampered/invalid session"
         await report_suspicious_activity(
-            session,
             config,
             synced_store_client,
             admin_context.session.admin_id,
             err_msg,
+            suspicious_activity_repository,
+            admin_repository,
+            coordinator,
         )
         raise HTTPException(401, err_msg)
 
@@ -120,12 +151,13 @@ async def validate_admin_session(
     if not server_session_mapping:
         err_msg: str = "Missing server-side session"
         await report_suspicious_activity(
-            session,
             config,
             synced_store_client,
             admin_context.session.admin_id,
             err_msg,
-            force_logout=False,
+            suspicious_activity_repository,
+            admin_repository,
+            coordinator,
         )
         raise HTTPException(401, err_msg)
 

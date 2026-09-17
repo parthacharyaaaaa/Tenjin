@@ -5,9 +5,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, overload
 
-import ecdsa
 from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+    PublicFormat,
+)
 from redis.typing import EncodableT, FieldT
 from sqlalchemy import insert, select, update
 
@@ -155,10 +161,10 @@ class KeydataRepository(AbstractWorkRepository):
     async def insert_keydata(
         self,
         key_id: str,
-        private_key: ecdsa.SigningKey,
-        public_key: ecdsa.VerifyingKey,
+        private_key: ec.EllipticCurvePrivateKey,
+        public_key: ec.EllipticCurvePublicKey,
         alg: str,
-        curve: ecdsa.curves.Curve,
+        curve: ec.EllipticCurve,
         epoch: datetime | None = None,
         *,
         returning: Literal[False],
@@ -168,22 +174,23 @@ class KeydataRepository(AbstractWorkRepository):
     async def insert_keydata(
         self,
         key_id: str,
-        private_key: ecdsa.SigningKey,
-        public_key: ecdsa.VerifyingKey,
+        private_key: ec.EllipticCurvePrivateKey,
+        public_key: ec.EllipticCurvePublicKey,
         alg: str,
-        curve: ecdsa.curves.Curve,
+        curve: ec.EllipticCurve,
         epoch: datetime | None = None,
         *,
         returning: Literal[True],
     ) -> KeyPrivateDataResult: ...
 
+    # TODO: Decouple key serialization logic from repository
     async def insert_keydata(
         self,
         key_id: str,
-        private_key: ecdsa.SigningKey,
-        public_key: ecdsa.VerifyingKey,
+        private_key: ec.EllipticCurvePrivateKey,
+        public_key: ec.EllipticCurvePublicKey,
         alg: str,
-        curve: ecdsa.curves.Curve,
+        curve: ec.EllipticCurve,
         epoch: datetime | None = None,
         *,
         returning: bool = False,
@@ -195,10 +202,17 @@ class KeydataRepository(AbstractWorkRepository):
                     .values(
                         kid=key_id,
                         alg=alg,
-                        curve=str(curve),
+                        curve=curve.name,
                         epoch=epoch or datetime.now(UTC),
-                        private_pem=private_key.to_pem(),
-                        public_pem=public_key.to_pem(),
+                        private_pem=private_key.private_bytes(
+                            encoding=Encoding.PEM,
+                            format=PrivateFormat.PKCS8,
+                            encryption_algorithm=NoEncryption(),
+                        ),
+                        public_pem=public_key.public_bytes(
+                            encoding=Encoding.PEM,
+                            format=PublicFormat.SubjectPublicKeyInfo,
+                        ),
                     )
                     .returning(KeyData)
                 )
@@ -485,6 +499,7 @@ class KeydataRepository(AbstractWorkRepository):
                 return KeyPublicDataResult.construct_from_orm(active_key)
             return KeyPrivateDataResult.construct_from_orm(active_key)
 
+    # TODO: Make curve column an enum
     async def rotate_key(
         self,
         previous_key_id: str,
@@ -493,7 +508,7 @@ class KeydataRepository(AbstractWorkRepository):
         new_key_private_pem: bytes | bytearray,
         *,
         alg: str = "ES256",
-        curve: str = str(ecdsa.SECP256k1),
+        curve: str = ec.SECP256K1.name,
         rotation_author: int | None = None,
         epoch: datetime | None = None,
         previous_key_rotation_time: datetime | None = None,
