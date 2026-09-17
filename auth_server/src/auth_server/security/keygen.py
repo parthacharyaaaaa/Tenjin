@@ -1,38 +1,45 @@
 import asyncio
 import os
 import secrets
-from hashlib import sha512
 from pathlib import Path
 from typing import Sequence
 
-import ecdsa
 import orjson
 from auxillary.utils import to_base64url
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+    PublicFormat,
+    load_pem_public_key,
+)
 
 from auth_server.models.database import KeyData
 from auth_server.repositories.keydata import KeydataRepository
 
 
-def generate_ecdsa_pair() -> tuple[str, ecdsa.SigningKey, ecdsa.VerifyingKey]:
+def generate_ecdsa_pair() -> tuple[
+    str, ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey
+]:
     """Generate signing and verification ECDSA key pair"""
-    signing_key: ecdsa.SigningKey = ecdsa.SigningKey.generate(
-        curve=ecdsa.SECP256k1, hashfunc=sha512
-    )
-
-    # ecdsa.SigningKey.get_verifying_key() is typed to return None,
-    # but actually returns ecdsa.VerifyingKey :/
-    verify_key: ecdsa.VerifyingKey = signing_key.get_verifying_key()  # type: ignore[reportAssignmentType]
+    signing_key: ec.EllipticCurvePrivateKey = ec.generate_private_key(ec.SECP256K1())
+    verification_key: ec.EllipticCurvePublicKey = signing_key.public_key()
     kid: str = str(secrets.randbelow(10_000_000))
 
-    return kid, signing_key, verify_key
+    return kid, signing_key, verification_key
 
 
 def initialize_jwks(jwks_filepath: Path, keys: Sequence[KeyData]) -> None:
     jwks_contents: list[dict[str, str | int]] = []
     for key in keys:
-        # ecdsa.VerifyingKey.pubkey is hinted as being None thanks to its constructor
-        # but actually does return a valid type
-        point = ecdsa.VerifyingKey.from_pem(key.public_pem).pubkey.point  # type: ignore[reportAttributeAccessIssue]
+        verification_key: PublicKeyTypes = load_pem_public_key(key.public_pem)
+        if not isinstance(verification_key, ec.EllipticCurvePublicKey):
+            raise TypeError("Expected an elliptic-curve public key")
+        public_numbers: ec.EllipticCurvePublicNumbers = (
+            verification_key.public_numbers()
+        )
         jwks_contents.append(
             {
                 "kty": "EC",
@@ -40,8 +47,8 @@ def initialize_jwks(jwks_filepath: Path, keys: Sequence[KeyData]) -> None:
                 "crv": key.curve,
                 "use": "sig",
                 "kid": key.kid,
-                "x": to_base64url(int(point.x())),
-                "y": to_base64url(int(point.y())),
+                "x": to_base64url(public_numbers.x),
+                "y": to_base64url(public_numbers.y),
             }
         )
 
@@ -49,21 +56,22 @@ def initialize_jwks(jwks_filepath: Path, keys: Sequence[KeyData]) -> None:
 
 
 def update_jwks(
-    vk: ecdsa.VerifyingKey,
+    vk: ec.EllipticCurvePublicKey,
     kid: str,
     jwks_json_filepath: os.PathLike,
     enforce_capacity: bool = True,
     capacity: int = 3,
 ) -> None:
     """Updates the JWKS JSON file to include the given public key as the latest key"""
-    # ecdsa.VerifyingKey.pubkey is hinted as being None thanks to its constructor
-    # but actually does return a valid type
-    point = vk.pubkey.point  # type: ignore[reportAttributeAccessIssue]
-    encoded_x, encoded_y = to_base64url(int(point.x())), to_base64url(int(point.y()))
+    public_numbers: ec.EllipticCurvePublicNumbers = vk.public_numbers()
+    encoded_x, encoded_y = (
+        to_base64url(public_numbers.x),
+        to_base64url(public_numbers.y),
+    )
     key_mapping: dict[str, str | int] = {
         "kty": "EC",
         "alg": "ECDSA",
-        "crv": ecdsa.SECP256k1.__str__(),
+        "crv": ec.SECP256K1.name,
         "use": "sig",
         "kid": kid,
         "x": encoded_x,
@@ -88,8 +96,8 @@ def update_jwks(
 def write_ecdsa_pair(
     private_dir: Path,
     public_dir: Path,
-    private_key: ecdsa.SigningKey | bytes | bytearray,
-    public_key: ecdsa.VerifyingKey | bytes | bytearray,
+    private_key: ec.EllipticCurvePrivateKey | bytes | bytearray,
+    public_key: ec.EllipticCurvePublicKey | bytes | bytearray,
     key_id: int | str,
     fname_template: str = "{key_type}_{key_id}_key.pem",
 ) -> None:
@@ -104,13 +112,20 @@ def write_ecdsa_pair(
     fname_template: File naming template
     """
     private_buffer: bytes | bytearray = (
-        private_key.to_pem()
-        if isinstance(private_key, ecdsa.SigningKey)
+        private_key.private_bytes(
+            encoding=Encoding.PEM,
+            format=PrivateFormat.PKCS8,
+            encryption_algorithm=NoEncryption(),
+        )
+        if isinstance(private_key, ec.EllipticCurvePrivateKey)
         else private_key
     )
     public_buffer: bytes | bytearray = (
-        public_key.to_pem()
-        if isinstance(public_key, ecdsa.VerifyingKey)
+        public_key.public_bytes(
+            encoding=Encoding.PEM,
+            format=PublicFormat.SubjectPublicKeyInfo,
+        )
+        if isinstance(public_key, ec.EllipticCurvePublicKey)
         else public_key
     )
     private_pem_path: Path = private_dir.joinpath(
@@ -148,6 +163,6 @@ async def initialize_active_key(
     )
 
     active_key: KeyData = await keydata_repository.insert_keydata(
-        active_kid, sk, vk, "ES256", ecdsa.SECP256k1, returning=True
+        active_kid, sk, vk, "ES256", ec.SECP256K1(), returning=True
     )
     return active_key

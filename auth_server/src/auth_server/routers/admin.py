@@ -10,6 +10,12 @@ from auxillary.utils import (
     generic_database_fetch_exception,
     json_repr,
 )
+from cryptography.hazmat.primitives.serialization import (
+    Encoding,
+    NoEncryption,
+    PrivateFormat,
+    PublicFormat,
+)
 from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
 from fastapi.requests import Request
@@ -42,7 +48,7 @@ from auth_server.repositories.suspicious_activity import SuspiciousActivityRepos
 from auth_server.security.admin_roles import AdminRole
 from auth_server.security.keygen import generate_ecdsa_pair
 from auth_server.security.permissions import Permission
-from auth_server.strings import AdminStrings
+from auth_server.strings import AdminStrings, generate_admin_session_name
 from auth_server.utils.auth_auxillary import (
     create_admin_session,
     report_suspicious_activity,
@@ -113,13 +119,13 @@ async def admin_login(
         raise HTTPException(401, "Incorrect passwword")
 
     # Exists in DB, check synced_store_client to see if session is already active
-    session_key: Final[str] = f"admin:{admin.id_}"
+    session_name: Final[str] = generate_admin_session_name(admin.id_)
     try:
-        admin_session: dict[str, str] = await synced_store_client.hgetall(session_key)  # pyrefly: ignore[not-async]
+        admin_session: dict[str, str] = await synced_store_client.hgetall(session_name)  # pyrefly: ignore[not-async]
 
         # Single sign-in policy, invalidate existing session and add entry in logs
         if admin_session:
-            synced_store_client.delete(session_key)
+            synced_store_client.delete(session_name)
             await report_suspicious_activity(
                 config,
                 synced_store_client,
@@ -151,7 +157,7 @@ async def admin_login(
     )
 
     # type ignore for TypedDict, which behaves as dict at runtime
-    synced_store_client.hset(session_key, mapping=session_mapping)  # pyrefly: ignore[ bad-argument-type]
+    synced_store_client.hset(session_name, mapping=session_mapping)  # pyrefly: ignore[ bad-argument-type]
     revival_digest: Final[str] = session_mapping.pop("revival_digest")
     encoded_session_token: bytes = base64.urlsafe_b64encode(
         orjson.dumps(session_mapping)
@@ -282,8 +288,8 @@ async def admin_refresh(
     )
 
     # type ignore for TypedDict, which behaves as dict at runtime
-    session_key: Final[str] = f"admin:{admin_session.id_}"
-    await synced_store_client.hset(session_key, mapping=session_mapping)  # pyrefly: ignore[bad-argument-type, not-async]
+    session_name: Final[str] = generate_admin_session_name(admin_session.admin_id)
+    await synced_store_client.hset(session_name, mapping=session_mapping)  # pyrefly: ignore[bad-argument-type, not-async]
     revival_digest: str = session_mapping.pop("revival_digest")
     if session_mapping["session_iteration"] == config.ADMIN.MAX_SESSION_ITERATIONS:
         revival_digest = AdminStrings.NO_REFRESH_SENTINEL
@@ -426,8 +432,15 @@ async def create_admin(
             password_hash=pw_hash,
             role=AdminRole.STAFF,
             creation_author=admin_session.admin_id,
-            signing_key=signing_key.to_pem(),
-            verification_key=verification_key.to_pem(),
+            signing_key=signing_key.private_bytes(
+                encoding=Encoding.PEM,
+                format=PrivateFormat.PKCS8,
+                encryption_algorithm=NoEncryption(),
+            ),
+            verification_key=verification_key.public_bytes(
+                encoding=Encoding.PEM,
+                format=PublicFormat.SubjectPublicKeyInfo,
+            ),
             returning=True,
             public_data_only=True,
         )
