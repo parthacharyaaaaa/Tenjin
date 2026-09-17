@@ -1064,7 +1064,7 @@ version = "0.1.0"
 source = { virtual = "resource_server" }
 dependencies = [
     { name = "auxillary" },
-    { name = "ecdsa" },
+    { name = "cryptography" },
     { name = "fastapi", extra = ["standard"] },
     { name = "httpx" },
     { name = "orjson" },
@@ -1081,7 +1081,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "auxillary", editable = "auxillary" },
-    { name = "ecdsa", specifier = ">=0.19.2" },
+    { name = "cryptography", specifier = ">=50.0.0,<51" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.136.3" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "orjson", specifier = ">=3.11.9" },

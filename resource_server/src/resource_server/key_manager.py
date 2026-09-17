@@ -3,10 +3,11 @@ from dataclasses import dataclass, field
 from traceback import format_exc
 from typing import Final
 
-import ecdsa
 import httpx
 from auxillary.singleton import SingletonMetaclass
 from auxillary.utils import from_base64url
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from redis.asyncio import Redis
 from redis.asyncio.client import PubSub
 
@@ -155,12 +156,15 @@ class KeyManager(metaclass=SingletonMetaclass):
                 if key_metadata["kid"] not in self.current_mapping:
                     x = from_base64url(key_metadata["x"])
                     y = from_base64url(key_metadata["y"])
-                    point = ecdsa.ellipticcurve.Point(ecdsa.SECP256k1.curve, x, y)  # type: ignore[reportAttributeAccessIssue]
-                    vk = ecdsa.VerifyingKey.from_public_point(
-                        point, curve=ecdsa.SECP256k1
-                    )
+                    public_numbers = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256K1())
+                    verification_key = public_numbers.public_key()
 
-                    self.current_mapping[key_metadata["kid"]] = vk.to_pem()
+                    self.current_mapping[key_metadata["kid"]] = (
+                        verification_key.public_bytes(
+                            encoding=Encoding.PEM,
+                            format=PublicFormat.SubjectPublicKeyInfo,
+                        )
+                    )
 
             # Update global list and values in Redis to inform other workers
             async with self.app_redis_client.pipeline() as pipe:

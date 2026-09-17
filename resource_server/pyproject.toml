@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "auxillary>=0.1.0",
-    "ecdsa>=0.19.2",
+    "cryptography>=50.0.0,<51",
     "fastapi[standard]>=0.136.3",
     "httpx>=0.28.1",
     "orjson>=3.11.9",
