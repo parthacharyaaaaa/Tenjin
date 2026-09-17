@@ -1,14 +1,15 @@
-import hashlib
 import re
 from functools import cached_property
 from pathlib import Path
-from typing import Annotated, Callable, Literal, Self
+from typing import Annotated, Literal, Self
 
 from auxillary.mixins.db_config import (
     BasicPostgresDatabaseConfigMixin,
     BasicSQLAlchemyConfigMixin,
 )
 from auxillary.mixins.redis_config import BasicRedisConfigMixin
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.hashes import HashAlgorithm
 from pydantic import (
     BaseModel,
     BeforeValidator,
@@ -16,6 +17,7 @@ from pydantic import (
     computed_field,
     model_validator,
 )
+from pydantic.config import ConfigDict
 
 from auth_server.config import utils
 
@@ -156,11 +158,14 @@ class KeyConfigModel(BaseModel):
 
 
 class AdminConfigModel(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     SUSPICIOUS_LOOKBACK_TIME: Annotated[int, Field(ge=1)]
     MAX_ACTIVITY_LIMIT: Annotated[int, Field(ge=0)]
     MAX_SESSION_ITERATIONS: Annotated[int, Field(ge=1)]
     ADMIN_SESSION_DURATION: Annotated[int, Field(ge=0)]
-    SESSION_HASHFUNC: Annotated[Callable, Field(default=hashlib.sha256)]
+    SESSION_HASHFUNC: Annotated[HashAlgorithm, Field(default_factory=hashes.SHA256)]
+    REVIVAL_DIGEST_LENGTH: Annotated[int, Field(ge=1)]
 
 
 class SAConfigModel(BasicSQLAlchemyConfigMixin, BaseModel): ...
