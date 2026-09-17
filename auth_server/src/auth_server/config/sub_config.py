@@ -9,6 +9,7 @@ from auxillary.mixins.db_config import (
 )
 from auxillary.mixins.redis_config import BasicRedisConfigMixin
 from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.hashes import HashAlgorithm
 from pydantic import (
     BaseModel,
@@ -165,7 +166,13 @@ class AdminConfigModel(BaseModel):
     MAX_SESSION_ITERATIONS: Annotated[int, Field(ge=1)]
     ADMIN_SESSION_DURATION: Annotated[int, Field(ge=0)]
     SESSION_HASHFUNC: Annotated[HashAlgorithm, Field(default_factory=hashes.SHA256)]
+    SESSION_SIGNATURE_ALGORITHM: Annotated[type[ec.ECDSA], Field(default=ec.ECDSA)]
     REVIVAL_DIGEST_LENGTH: Annotated[int, Field(ge=1)]
+
+    @computed_field
+    @cached_property
+    def PREHASHED_SESSION_SIGNATURE_ALGORITHM(self) -> ec.ECDSA:  # noqa: N802
+        return self.SESSION_SIGNATURE_ALGORITHM(self.SESSION_HASHFUNC)
 
 
 class SAConfigModel(BasicSQLAlchemyConfigMixin, BaseModel): ...
