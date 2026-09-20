@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal, overload
 
+import pydantic
 from auxillary.singleton import SingletonMetaclass
 from redis.asyncio.client import Redis
 from sqlalchemy.util.typing import Final
@@ -41,15 +42,21 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
     async def get_admin_session(
         self, session_id: str, *, missing_ok: bool = True
     ) -> AdminSession | None:
+        session_name: Final[str] = self.generate_admin_session_name(session_id)
         admin_session_dict: dict[str, Any] = await self.session_store.hgetall(  # pyrefly: ignore[not-async]
-            self.generate_admin_session_name(session_id)
+            session_name
         )
 
         if not admin_session_dict:
             if missing_ok:
                 return None
             raise ValueError(f"No session found with ID: {session_id}")
-        return AdminSession.model_validate(**admin_session_dict)
+
+        try:
+            return AdminSession.model_validate(**admin_session_dict)
+        except pydantic.ValidationError as e:
+            await self.terminate_session(session_name)
+            raise ValueError("Invalid session, please login again") from e
 
     def derive_session_expiry(self, session_epoch: int) -> int:
         return session_epoch + self.admin_config.ADMIN_SESSION_DURATION
