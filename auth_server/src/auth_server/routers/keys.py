@@ -27,6 +27,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import (
     get_admin_repository,
+    get_admin_session_manager,
     get_app_config,
     get_keydata_repository,
     get_repository_work_coordinator,
@@ -43,6 +44,7 @@ from auth_server.repositories.keydata import (
 )
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.security.admin_roles import AdminRole
+from auth_server.security.admin_sessions import AdminSessionManager
 from auth_server.security.key_container import KeyMetadata
 from auth_server.security.keygen import (
     generate_ecdsa_pair,
@@ -97,6 +99,9 @@ async def invalidate_key(
     repository_coordinator: Annotated[
         MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
     ],
+    admin_session_manager: Annotated[
+        AdminSessionManager, Depends(get_admin_session_manager)
+    ],
 ) -> JSONResponse:
     """Invalidate a given key"""
     key_lock: Final[str] = f"INVALIDATE_KEY:{kid}"
@@ -142,12 +147,12 @@ async def invalidate_key(
                 # Key is active, cannot expire directly
                 await report_suspicious_activity(
                     config,
-                    synced_store_client,
                     admin_session.admin_id,
                     f"Invaldiation attempt on active key {kid}",
                     suspicious_activity_repository,
                     admin_repository,
                     repository_coordinator,
+                    admin_session_manager,
                 )
                 raise HTTPException(
                     409,
@@ -373,6 +378,9 @@ async def rotate_keys(
     repository_coordinator: Annotated[
         MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
     ],
+    admin_session_manager: Annotated[
+        AdminSessionManager, Depends(get_admin_session_manager)
+    ],
 ) -> JSONResponse:
     """Trigger a key rotation sequence"""
     # Check for concurrent worker performing a key rotation
@@ -399,12 +407,12 @@ async def rotate_keys(
     if cooldown_flag and admin_session.role == AdminRole.STAFF:
         await report_suspicious_activity(
             config,
-            synced_store_client,
             admin_session.admin_id,
             "Attempt to perform key rotation during cooldown",
             suspicious_activity_repository,
             admin_repository,
             repository_coordinator,
+            admin_session_manager,
         )
         raise HTTPException(
             409,

@@ -81,12 +81,12 @@ async def admin_login(
         if admin.locked:
             await report_suspicious_activity(
                 config,
-                synced_store_client,
                 admin.id_,
                 "Attempt to log into a locked account",
                 suspicious_activity_repository,
                 admin_repository,
                 repository_coordinator,
+                admin_session_manager,
                 force_logout=False,
             )
             raise HTTPException(
@@ -99,12 +99,12 @@ async def admin_login(
     if not bcrypt_check_password(auth_model.password, admin.password_hash):
         await report_suspicious_activity(
             config,
-            synced_store_client,
             admin.id_,
             "Incorrect password",
             suspicious_activity_repository,
             admin_repository,
             repository_coordinator,
+            admin_session_manager,
             force_logout=False,
         )
         raise HTTPException(401, "Incorrect passwword")
@@ -124,12 +124,12 @@ async def admin_login(
             # await admin_session_manager.terminate_session(existing_session.session_id, admin.id_)
             await report_suspicious_activity(
                 config,
-                synced_store_client,
                 admin.id_,
                 "Session already active",
                 suspicious_activity_repository,
                 admin_repository,
                 repository_coordinator,
+                admin_session_manager,
                 force_logout=False,
             )
             session_token, revival_digest = await admin_session_manager.refresh_session(
@@ -224,11 +224,11 @@ async def admin_refresh(
     ):
         await report_suspicious_activity(
             config,
-            synced_store_client,
             refresh_model.id_,
             "Invalid session revival digest",
             suspicious_activity_repository,
             admin_repository,
+            admin_session_manager,
             repository_coordinator,
         )
         raise HTTPException(403, "Invalid revival digest provided")

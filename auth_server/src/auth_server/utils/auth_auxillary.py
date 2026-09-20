@@ -11,7 +11,6 @@ from cryptography.hazmat.primitives.asymmetric.types import PrivateKeyTypes
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from fastapi import Response
 from fastapi.datastructures import URL
-from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio.session import AsyncSession
 
@@ -25,6 +24,7 @@ from auth_server.repositories.suspicious_activity import (
     SuspiciousActivityResult,
 )
 from auth_server.security.admin_roles import AdminRole
+from auth_server.security.admin_sessions import AdminSessionManager
 from auth_server.utils.typing import AdminSessionDict
 
 
@@ -54,12 +54,12 @@ def attach_tokens(
 
 async def report_suspicious_activity(
     config: AppConfig,
-    synced_store_client: Redis,
     admin_id: int,
     desc: str,
     suspicious_activity_repository: SuspiciousActivityRepository,
     admin_repository: AdminRepository,
     coordinator: MultiRepositoryWorkCoordinator,
+    admin_session_manager: AdminSessionManager,
     force_logout: bool = True,
 ) -> None:
     await suspicious_activity_repository.insert_activity(admin_id, desc)
@@ -81,7 +81,13 @@ async def report_suspicious_activity(
             )
         ):
             await admin_repository.set_admin_locked(admin_id, locked=True)
-            await synced_store_client.delete(f"admin:{admin_id}")
+            if (
+                existing_session
+                := await admin_session_manager.get_admin_session_via_admin_id(admin_id)
+            ):
+                await admin_session_manager.terminate_session_via_object(
+                    existing_session
+                )
 
 
 # TODO: Swap this out with KeydataRepository/s equivalent method
