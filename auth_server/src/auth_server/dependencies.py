@@ -15,6 +15,7 @@ from auth_server.config import AppConfig
 from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.keydata import KeydataRepository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
+from auth_server.security.admin_sessions import AdminSessionManager
 from auth_server.security.token_manager import TokenManager
 
 
@@ -86,6 +87,10 @@ def get_suspicious_activity_repository() -> SuspiciousActivityRepository:
 
 def get_repository_work_coordinator() -> MultiRepositoryWorkCoordinator:
     return MultiRepositoryWorkCoordinator(get_database_session_maker())
+
+
+def get_admin_session_manager() -> AdminSessionManager:
+    return AdminSessionManager(get_synced_store_client(), get_app_config().ADMIN)
 
 
 @lru_cache(maxsize=1)
