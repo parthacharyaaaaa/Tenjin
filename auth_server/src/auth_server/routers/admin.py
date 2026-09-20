@@ -1,20 +1,13 @@
-import base64
+import hmac
 from datetime import UTC, datetime
 from typing import Annotated, Final
 
-import orjson
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auxillary.utils import (
     bcrypt_check_password,
     bcrypt_hash_password,
     generic_database_fetch_exception,
     json_repr,
-)
-from cryptography.hazmat.primitives.serialization import (
-    Encoding,
-    NoEncryption,
-    PrivateFormat,
-    PublicFormat,
 )
 from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
@@ -25,9 +18,9 @@ from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
 
 from auth_server.config.app_config import AppConfig
-from auth_server.config.constants import REVIVAL_DIGEST_LENGTH
 from auth_server.dependencies import (
     get_admin_repository,
+    get_admin_session_manager,
     get_app_config,
     get_repository_work_coordinator,
     get_suspicious_activity_repository,
@@ -40,22 +33,18 @@ from auth_server.models.cmd_requests import (
 )
 from auth_server.models.session import AdminSession
 from auth_server.repositories.admin import (
-    AdminPrivateResult,
     AdminPublicResult,
     AdminRepository,
 )
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.security.admin_roles import AdminRole
+from auth_server.security.admin_sessions import AdminSessionManager
 from auth_server.security.keygen import generate_ecdsa_pair
 from auth_server.security.permissions import Permission
-from auth_server.strings import AdminStrings, generate_admin_session_name
 from auth_server.utils.auth_auxillary import (
-    create_admin_session,
     report_suspicious_activity,
-    sign_session,
 )
-from auth_server.utils.dependencies import require_permissions, validate_admin_session
-from auth_server.utils.typing import AdminSessionDict
+from auth_server.utils.dependencies import get_admin_session, require_permissions
 
 ADMIN: Final[APIRouter] = APIRouter()
 
@@ -72,11 +61,13 @@ async def admin_login(
     repository_coordinator: Annotated[
         MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
     ],
+    admin_session_manager: Annotated[
+        AdminSessionManager, Depends(get_admin_session_manager)
+    ],
 ) -> JSONResponse:
-    admin: AdminPrivateResult | None = None
     try:
-        admin = await admin_repository.get_admin_by_username(
-            auth_model.identity, public_data_only=False, include_deleted=True
+        admin: AdminPublicResult | None = await admin_repository.get_admin_by_username(
+            auth_model.identity, include_deleted=True
         )
 
         if not admin:
@@ -118,14 +109,19 @@ async def admin_login(
         )
         raise HTTPException(401, "Incorrect passwword")
 
-    # Exists in DB, check synced_store_client to see if session is already active
-    session_name: Final[str] = generate_admin_session_name(admin.id_)
     try:
-        admin_session: dict[str, str] = await synced_store_client.hgetall(session_name)  # pyrefly: ignore[not-async]
+        await admin_repository.update_last_login(admin.id_)
+    except SQLAlchemyError as e:
+        raise HTTPException(500, "An error occured when logging you in") from e
 
+    # Exists in DB, check synced_store_client to see if session is already active
+    try:
         # Single sign-in policy, invalidate existing session and add entry in logs
-        if admin_session:
-            synced_store_client.delete(session_name)
+        if (
+            existing_session
+            := await admin_session_manager.get_admin_session_via_admin_id(admin.id_)
+        ):
+            # await admin_session_manager.terminate_session(existing_session.session_id, admin.id_)
             await report_suspicious_activity(
                 config,
                 synced_store_client,
@@ -136,39 +132,21 @@ async def admin_login(
                 repository_coordinator,
                 force_logout=False,
             )
-            raise HTTPException(
-                409, "An admin session with these credentials is already active"
+            session_token, revival_digest = await admin_session_manager.refresh_session(
+                existing_session
             )
-
-    except RedisError:
-        raise HTTPException(500, "An error occured when validating session integrity")
-
-    try:
-        await admin_repository.update_last_login(admin.id_)
-    except SQLAlchemyError:
-        raise HTTPException(500, "An error occured when logging you in")
-
-    # Admin validated, create new session
-    session_mapping: Final[AdminSessionDict] = create_admin_session(
-        admin.id_,
-        config.ADMIN.ADMIN_SESSION_DURATION,
-        REVIVAL_DIGEST_LENGTH,
-        AdminRole(admin.role),
-    )
-
-    # type ignore for TypedDict, which behaves as dict at runtime
-    synced_store_client.hset(session_name, mapping=session_mapping)  # pyrefly: ignore[ bad-argument-type]
-    revival_digest: Final[str] = session_mapping.pop("revival_digest")
-    encoded_session_token: bytes = base64.urlsafe_b64encode(
-        orjson.dumps(session_mapping)
-    )
-
-    signed_token: Final[bytes] = sign_session(
-        encoded_session_token, admin.signing_key, config.ADMIN.SESSION_HASHFUNC
-    )
+        else:
+            (
+                session_token,
+                revival_digest,
+            ) = await admin_session_manager.initialize_session(
+                admin.id_, AdminRole(admin.role)
+            )
+    except RedisError as e:
+        raise HTTPException(500, "Failed to perform login") from e
 
     return JSONResponse(
-        {"session_token": signed_token, "revival_digest": revival_digest}
+        {"session_token": session_token, "revival_digest": revival_digest}
     )
 
 
@@ -212,7 +190,7 @@ async def admin_delete(
 @ADMIN.post("/admins/refresh")
 async def admin_refresh(
     refresh_model: AdminRefreshModel,
-    admin_session: Annotated[AdminSession, Depends(validate_admin_session)],
+    admin_session: Annotated[AdminSession, Depends(get_admin_session)],
     config: Annotated[AppConfig, Depends(get_app_config)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
@@ -222,14 +200,15 @@ async def admin_refresh(
     repository_coordinator: Annotated[
         MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
     ],
+    admin_session_manager: Annotated[
+        AdminSessionManager, Depends(get_admin_session_manager)
+    ],
 ) -> JSONResponse:
     """
     Refresh an admin's session and enforce a maximum number of times
     a session can be refreshed before requiring reauthentication
     """
-    admin_key: Final[str] = f"admin:{refresh_model.id_}"
     if admin_session.iteration >= config.ADMIN.MAX_SESSION_ITERATIONS:
-        await synced_store_client.delete(admin_key)
         raise HTTPException(
             409,
             " ".join(
@@ -240,21 +219,9 @@ async def admin_refresh(
                 )
             ),
         )
-
-    actual_digest_bytes: bytes = await synced_store_client.hget(
-        admin_key, "revival_digest"
-    )  # pyrefly: ignore
-    if not actual_digest_bytes:
-        await synced_store_client.delete(admin_key)
-        raise HTTPException(
-            500, "An error occured in verifying revival digests. Please reuthenticate"
-        )
-
-    if actual_digest_bytes == AdminStrings.NO_REFRESH_SENTINEL:
-        await synced_store_client.delete(admin_key)
-        raise HTTPException(409, "Maximum session reiterations reached")
-
-    if actual_digest_bytes.decode() != refresh_model.refresh_digest:
+    if not hmac.compare_digest(
+        admin_session.revival_digest, refresh_model.refresh_digest
+    ):
         await report_suspicious_activity(
             config,
             synced_store_client,
@@ -266,61 +233,36 @@ async def admin_refresh(
         )
         raise HTTPException(403, "Invalid revival digest provided")
 
-    try:
-        _admin_data: AdminPrivateResult | None = await admin_repository.get_admin(
-            refresh_model.id_, public_data_only=False
-        )
-        if not _admin_data:
-            await synced_store_client.delete(admin_key)
-            raise HTTPException(500, "Session invalid")
-        signing_key: Final[bytes] = _admin_data.signing_key
-        del _admin_data
-    except SQLAlchemyError as e:
-        raise HTTPException(500) from e
-
-    # Given digest matches revival digest. Refresh session and generate a new revival digest
-    session_mapping: Final[AdminSessionDict] = create_admin_session(
-        admin_session.admin_id,
-        config.ADMIN.ADMIN_SESSION_DURATION,
-        REVIVAL_DIGEST_LENGTH,
-        admin_session.role,
-        admin_session.iteration + 1,
-    )
-
-    # type ignore for TypedDict, which behaves as dict at runtime
-    session_name: Final[str] = generate_admin_session_name(admin_session.admin_id)
-    await synced_store_client.hset(session_name, mapping=session_mapping)  # pyrefly: ignore[bad-argument-type, not-async]
-    revival_digest: str = session_mapping.pop("revival_digest")
-    if session_mapping["session_iteration"] == config.ADMIN.MAX_SESSION_ITERATIONS:
-        revival_digest = AdminStrings.NO_REFRESH_SENTINEL
-    encoded_session_token: bytes = base64.urlsafe_b64encode(
-        orjson.dumps(session_mapping)
-    )
-
-    signed_token: Final[bytes] = sign_session(
-        encoded_session_token, signing_key, config.ADMIN.SESSION_HASHFUNC
+    session_token, revival_digest = await admin_session_manager.refresh_session(
+        admin_session
     )
 
     return JSONResponse(
-        {"session_token": signed_token, "revival_digest": revival_digest}
+        {"session_token": session_token, "revival_digest": revival_digest}
     )
 
 
 @ADMIN.patch("/admins/logout")
 async def admin_logout(
-    identification_model: AdminIdentificationModel,
-    synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
+    admin_session: Annotated[AdminSession, Depends(get_admin_session)],
+    admin_session_manager: Annotated[
+        AdminSessionManager, Depends(get_admin_session_manager)
+    ],
 ) -> JSONResponse:
-    await synced_store_client.delete(f"admin:{identification_model.id_}")
+    await admin_session_manager.terminate_session_via_object(admin_session)
     return JSONResponse({"message": "Logout successful"})
 
 
 @ADMIN.post("/admins/locks")
 async def admin_lock(
     request: Request,
+    admin_session: Annotated[AdminSession, Depends(get_admin_session)],
     identification_model: AdminIdentificationModel,
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
     synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
+    admin_session_manager: Annotated[
+        AdminSessionManager, Depends(get_admin_session_manager)
+    ],
 ) -> JSONResponse:
     """Lock a staff admin's account"""
     try:
@@ -354,9 +296,16 @@ async def admin_lock(
             500, f"Failed to lock admin {admin.username} (ID: {admin.id_})"
         )
 
-    # Log out the target admin
-    await synced_store_client.delete(f"admin:{identification_model.id_}")
-
+    try:
+        if (
+            existing_session
+            := await admin_session_manager.get_admin_session_via_admin_id(admin.id_)
+        ):
+            await admin_session_manager.terminate_session_via_object(existing_session)
+    except RedisError:
+        raise HTTPException(
+            500, f"Failed to delete active session for locked admin: {admin.username}"
+        )
     return JSONResponse({"message": "Admin locked succesfully"})
 
 
@@ -379,8 +328,10 @@ async def admin_unlock(
         raise HTTPException(
             404, f"No admin with id {identification_model.id_} could be found"
         )
-    if admin.locked:
-        conflict: HTTPException = HTTPException(409, "Admin account is already locked")
+    if not admin.locked:
+        conflict: HTTPException = HTTPException(
+            409, "Admin account is already unlocked"
+        )
         setattr(
             conflict,
             "kwargs",
@@ -398,9 +349,6 @@ async def admin_unlock(
         raise HTTPException(
             500, f"Failed to unlock admin {admin.username} (ID: {admin.id_})"
         )
-
-    # Log out the target admin
-    await synced_store_client.delete(f"admin:{identification_model.id_}")
 
     return JSONResponse({"message": "Admin unlocked succesfully"})
 
@@ -432,17 +380,7 @@ async def create_admin(
             password_hash=pw_hash,
             role=AdminRole.STAFF,
             creation_author=admin_session.admin_id,
-            signing_key=signing_key.private_bytes(
-                encoding=Encoding.PEM,
-                format=PrivateFormat.PKCS8,
-                encryption_algorithm=NoEncryption(),
-            ),
-            verification_key=verification_key.public_bytes(
-                encoding=Encoding.PEM,
-                format=PublicFormat.SubjectPublicKeyInfo,
-            ),
             returning=True,
-            public_data_only=True,
         )
     except SQLAlchemyError as e:
         raise HTTPException(500, "Failed to create a new admin") from e
