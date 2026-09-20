@@ -34,8 +34,6 @@ class AdminPublicResult(AbstractResult):
     locked: bool
     created_by: int
 
-    verification_key: bytes
-
     @staticmethod
     def stringify_binary_fields(
         d: MutableMapping[Any, Any], *, encoding: str = "utf-8"
@@ -55,45 +53,15 @@ class AdminPublicResult(AbstractResult):
         return cache_mapping
 
 
-@dataclass(slots=True, init=False)
-class AdminPrivateResult(AdminPublicResult):
-    """
-    DTO for an Admin ORM object, including the private signing key.
-    """
-
-    signing_key: bytes
-
-
 @dataclass(slots=True)
 class AdminRepository(AbstractWorkRepository):
-    @overload
     async def get_admin(
         self,
         admin_id: int,
         *,
-        public_data_only: Literal[True] = True,
         include_deleted: bool = False,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> AdminPublicResult | None: ...
-
-    @overload
-    async def get_admin(
-        self,
-        admin_id: int,
-        *,
-        public_data_only: Literal[False],
-        include_deleted: bool = False,
-        lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> AdminPrivateResult | None: ...
-
-    async def get_admin(
-        self,
-        admin_id: int,
-        *,
-        public_data_only: bool = True,
-        include_deleted: bool = False,
-        lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> AdminPublicResult | AdminPrivateResult | None:
+    ) -> AdminPublicResult | None:
         statement = select(Admin).where(Admin.id_ == admin_id)
         if not include_deleted:
             statement = statement.where(Admin.time_deleted.is_(None))
@@ -108,38 +76,15 @@ class AdminRepository(AbstractWorkRepository):
             ).scalar_one_or_none()
             if not admin:
                 return None
-            if public_data_only:
-                return AdminPublicResult.construct_from_orm(admin)
-            return AdminPrivateResult.construct_from_orm(admin)
-
-    @overload
-    async def get_admin_by_username(
-        self,
-        username: str,
-        *,
-        public_data_only: Literal[True] = True,
-        include_deleted: bool = False,
-        lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> AdminPublicResult | None: ...
-
-    @overload
-    async def get_admin_by_username(
-        self,
-        username: str,
-        *,
-        public_data_only: Literal[False],
-        include_deleted: bool = False,
-        lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> AdminPrivateResult | None: ...
+            return AdminPublicResult.construct_from_orm(admin)
 
     async def get_admin_by_username(
         self,
         username: str,
         *,
-        public_data_only: bool = True,
         include_deleted: bool = False,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> AdminPublicResult | AdminPrivateResult | None:
+    ) -> AdminPublicResult | None:
         statement = select(Admin).where(Admin.username == username)
         if not include_deleted:
             statement = statement.where(Admin.time_deleted.is_(None))
@@ -154,9 +99,7 @@ class AdminRepository(AbstractWorkRepository):
             ).scalar_one_or_none()
             if not admin:
                 return None
-            if public_data_only:
-                return AdminPublicResult.construct_from_orm(admin)
-            return AdminPrivateResult.construct_from_orm(admin)
+            return AdminPublicResult.construct_from_orm(admin)
 
     @overload
     async def insert_admin(
@@ -169,7 +112,6 @@ class AdminRepository(AbstractWorkRepository):
         verification_key: bytes,
         *,
         returning: Literal[False] = False,
-        public_data_only: bool = True,
     ) -> None: ...
 
     @overload
@@ -183,22 +125,7 @@ class AdminRepository(AbstractWorkRepository):
         verification_key: bytes,
         *,
         returning: Literal[True],
-        public_data_only: Literal[True] = True,
     ) -> AdminPublicResult: ...
-
-    @overload
-    async def insert_admin(
-        self,
-        username: str,
-        password_hash: bytes,
-        role: str,
-        created_by: int,
-        signing_key: bytes,
-        verification_key: bytes,
-        *,
-        returning: Literal[True],
-        public_data_only: Literal[False],
-    ) -> AdminPrivateResult: ...
 
     async def insert_admin(
         self,
@@ -210,8 +137,7 @@ class AdminRepository(AbstractWorkRepository):
         verification_key: bytes,
         *,
         returning: bool = False,
-        public_data_only: bool = True,
-    ) -> AdminPublicResult | AdminPrivateResult | None:
+    ) -> AdminPublicResult | None:
         async with self._work_scoped_session() as session:
             admin: Admin = (
                 await session.execute(
@@ -229,9 +155,7 @@ class AdminRepository(AbstractWorkRepository):
             ).scalar_one()
 
             if returning:
-                if public_data_only:
-                    return AdminPublicResult.construct_from_orm(admin)
-                return AdminPrivateResult.construct_from_orm(admin)
+                return AdminPublicResult.construct_from_orm(admin)
             return None
 
     async def update_last_login(
@@ -251,7 +175,6 @@ class AdminRepository(AbstractWorkRepository):
         deletion_time: datetime | None = None,
         *,
         returning: Literal[False] = False,
-        public_data_only: bool = True,
     ) -> None: ...
 
     @overload
@@ -261,18 +184,7 @@ class AdminRepository(AbstractWorkRepository):
         deletion_time: datetime | None = None,
         *,
         returning: Literal[True],
-        public_data_only: Literal[True] = True,
     ) -> AdminPublicResult | None: ...
-
-    @overload
-    async def delete_admin(
-        self,
-        admin_id: int,
-        deletion_time: datetime | None = None,
-        *,
-        returning: Literal[True],
-        public_data_only: Literal[False],
-    ) -> AdminPrivateResult | None: ...
 
     async def delete_admin(
         self,
@@ -280,8 +192,7 @@ class AdminRepository(AbstractWorkRepository):
         deletion_time: datetime | None = None,
         *,
         returning: bool = False,
-        public_data_only: bool = True,
-    ) -> AdminPublicResult | AdminPrivateResult | None:
+    ) -> AdminPublicResult | None:
         async with self._work_scoped_session() as session:
             admin: Admin | None = (
                 await session.execute(
@@ -293,9 +204,7 @@ class AdminRepository(AbstractWorkRepository):
             ).scalar_one_or_none()
 
             if returning and admin:
-                if public_data_only:
-                    return AdminPublicResult.construct_from_orm(admin)
-                return AdminPrivateResult.construct_from_orm(admin)
+                return AdminPublicResult.construct_from_orm(admin)
             return None
 
     @overload
@@ -305,7 +214,6 @@ class AdminRepository(AbstractWorkRepository):
         locked: bool,
         *,
         returning: Literal[False] = False,
-        public_data_only: bool = True,
     ) -> None: ...
 
     @overload
@@ -315,18 +223,7 @@ class AdminRepository(AbstractWorkRepository):
         locked: bool,
         *,
         returning: Literal[True],
-        public_data_only: Literal[True] = True,
     ) -> AdminPublicResult | None: ...
-
-    @overload
-    async def set_admin_locked(
-        self,
-        admin_id: int,
-        locked: bool,
-        *,
-        returning: Literal[True],
-        public_data_only: Literal[False],
-    ) -> AdminPrivateResult | None: ...
 
     async def set_admin_locked(
         self,
@@ -334,8 +231,7 @@ class AdminRepository(AbstractWorkRepository):
         locked: bool,
         *,
         returning: bool = False,
-        public_data_only: bool = True,
-    ) -> AdminPublicResult | AdminPrivateResult | None:
+    ) -> AdminPublicResult | None:
         async with self._work_scoped_session() as session:
             admin: Admin | None = (
                 await session.execute(
@@ -347,9 +243,7 @@ class AdminRepository(AbstractWorkRepository):
             ).scalar_one_or_none()
 
             if returning and admin:
-                if public_data_only:
-                    return AdminPublicResult.construct_from_orm(admin)
-                return AdminPrivateResult.construct_from_orm(admin)
+                return AdminPublicResult.construct_from_orm(admin)
             return None
 
     @overload
@@ -363,7 +257,6 @@ class AdminRepository(AbstractWorkRepository):
         role: AdminRole = AdminRole.STAFF,
         *,
         returning: Literal[False] = False,
-        public_data_only: bool = True,
     ) -> None: ...
 
     @overload
@@ -376,23 +269,8 @@ class AdminRepository(AbstractWorkRepository):
         verification_key: bytes | bytearray,
         role: AdminRole = AdminRole.STAFF,
         *,
-        returning: Literal[True] = True,
-        public_data_only: Literal[True] = True,
+        returning: Literal[True],
     ) -> AdminPublicResult: ...
-
-    @overload
-    async def create_admin(
-        self,
-        username: str,
-        password_hash: bytes | bytearray,
-        creation_author: int,
-        signing_key: bytes | bytearray,
-        verification_key: bytes | bytearray,
-        role: AdminRole = AdminRole.STAFF,
-        *,
-        returning: Literal[True] = True,
-        public_data_only: Literal[False] = False,
-    ) -> AdminPrivateResult: ...
 
     async def create_admin(
         self,
@@ -404,8 +282,7 @@ class AdminRepository(AbstractWorkRepository):
         role: AdminRole = AdminRole.STAFF,
         *,
         returning: bool = False,
-        public_data_only: bool = True,
-    ) -> AdminPublicResult | AdminPrivateResult | None:
+    ) -> AdminPublicResult | None:
         async with self._work_scoped_session() as session:
             admin: Admin = (
                 await session.execute(
@@ -422,8 +299,6 @@ class AdminRepository(AbstractWorkRepository):
                 )
             ).scalar_one()
 
-            if not returning:
-                return None
-            if public_data_only:
+            if returning:
                 return AdminPublicResult.construct_from_orm(admin)
-            return AdminPrivateResult.construct_from_orm(admin)
+            return None
