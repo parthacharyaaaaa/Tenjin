@@ -1,5 +1,4 @@
 from typing import Annotated, Any, Self
-from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from redis.typing import DecodedT, KeyT
@@ -11,7 +10,7 @@ from auth_server.security.admin_roles import AdminRole
 class AdminSession(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    session_id: Annotated[int, Field(ge=1, default_factory=lambda: uuid4().int)]
+    session_id: str
     admin_id: Annotated[int, Field(ge=1)]
     expiry_timestamp: Annotated[int, Field(ge=1)]
     revival_digest: str
@@ -51,11 +50,13 @@ class AdminSession(BaseModel):
     def construct_session_successor(
         cls,
         preceding_session: "AdminSession",
+        new_session_id: str,
         epoch_timestamp: float,
         expiry_timestamp: float,
         revival_digest: str,
     ) -> Self:
         return cls(
+            session_id=new_session_id,
             admin_id=preceding_session.admin_id,
             epoch_timestamp=epoch_timestamp,
             expiry_timestamp=expiry_timestamp,
