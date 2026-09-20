@@ -159,6 +159,9 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
                 pipeline.hdel(self.admin_session_reverse_mapping_name, str(admin_id))
             await pipeline.execute()
 
+    async def terminate_session_via_object(self, session: AdminSession) -> None:
+        return await self.terminate_session(session.session_id, session.admin_id)
+
     def generate_admin_session_name(self, session_id: str) -> str:
         return self.session_delimiter_symbol.join(
             (
