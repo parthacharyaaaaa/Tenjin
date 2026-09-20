@@ -3,7 +3,7 @@ import secrets
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
-from enum import IntFlag
+from enum import IntEnum, IntFlag
 from pathlib import Path
 from typing import Final, Protocol
 
@@ -20,9 +20,11 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
     load_pem_public_key,
 )
+from redis.asyncio.client import Redis
 
 from auth_server.config.sub_config import JWKSConfigModel, KeyConfigModel
 from auth_server.repositories.keydata import KeyPrivateDataResult
+from auth_server.strings import SyncedStoreStrings
 
 
 class KeyOperationLocks(IntFlag):
@@ -236,4 +238,92 @@ class FileSystemKeyManager(AntiSingletonMixin):
             private_key=sk,
             public_key=vk,
             key_id=int(active_kid),
+        )
+
+
+class LockTIme(IntEnum):
+    LOW = 10
+    LMEDIUM = 25
+    MEDIUM = 50
+    HMEDIUM = 75
+    HIGH = 100
+
+
+@dataclass(slots=True)
+class SyncedStoreKeyStateManager(AntiSingletonMixin):
+    synced_store_client: Redis
+
+    _valid_keys_view: list[str] = field(default_factory=list, init=False)
+    _operational_lock: str | None = field(default=None, init=False)
+    _operational_lock_duration: LockTIme = field(default=LockTIme.LOW, init=False)
+    _operational_cooldown_duration: int = field(default=0, init=False)
+    _in_transaction: bool = field(default=False, init=False)
+
+    _lock_value: str = field(default="LOCK", kw_only=True)
+
+    def define_transactional_lock(
+        self,
+        lock: SyncedStoreStrings,
+        *,
+        duration: LockTIme = LockTIme.LOW,
+        override: bool = True,
+    ) -> None:
+        if self._in_transaction:
+            raise ValueError("Cannot set lock inside an ongoing transaction")
+        if self._operational_lock and not override:
+            raise ValueError(f"Lock already exists: {self._operational_lock}")
+        self._operational_lock = lock
+        self._operational_lock_duration = duration
+
+    def define_cooldown_period(self, cooldown_period: int) -> None:
+        self._operational_cooldown_duration = cooldown_period
+
+    @asynccontextmanager
+    async def transactional_block(
+        self,
+    ) -> AsyncGenerator[None]:
+        self._valid_keys_view = await self.synced_store_client.lrange(  # pyrefly: ignore[not-async]
+            SyncedStoreStrings.VALID_KEYS, 0, -1
+        )
+        self._in_transaction = True
+        try:
+            if self._operational_lock:
+                await self.synced_store_client.set(
+                    self._operational_lock,
+                    self._lock_value,
+                    nx=True,
+                    ex=self._operational_lock_duration,
+                )
+            yield
+        except Exception:
+            async with self.synced_store_client.pipeline(transaction=True) as pipeline:
+                pipeline.delete(SyncedStoreStrings.VALID_KEYS)
+                pipeline.lpush(SyncedStoreStrings.VALID_KEYS, *self._valid_keys_view)
+                await pipeline.execute()
+        else:
+            if self._operational_cooldown_duration:
+                await self.synced_store_client.set(
+                    SyncedStoreStrings.KEY_ROTATION_COOLDOWN,
+                    1,
+                    ex=self._operational_lock_duration,
+                )
+        finally:
+            self._operational_cooldown_duration = 0
+            self._in_transaction = False
+            self._operational_lock_duration = LockTIme.LOW
+            self._valid_keys_view.clear()
+            if self._operational_lock:
+                try:
+                    await self.synced_store_client.delete(self._operational_lock)
+                finally:
+                    self._operational_lock = None
+
+    async def get_key_operational_cooldown(self) -> bool:
+        return bool(
+            await self.synced_store_client.get(SyncedStoreStrings.KEY_ROTATION_COOLDOWN)
+        )
+
+    async def get_valid_keys_ids(self) -> list[str]:
+        return await self.synced_store_client.lrange(  # pyrefly: ignore[not-async]
+            SyncedStoreStrings.VALID_KEYS, 0, -1
         )
