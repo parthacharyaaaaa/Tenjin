@@ -23,6 +23,9 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
         default=GENERIC_SESSION_SEPARATOR, kw_only=True
     )
     admin_session_name_prefix: str = field(default="admin", kw_only=True)
+    admin_session_reverse_mapping_name: str = field(
+        default="active_admins", kw_only=True
+    )
     string_encoding: str = field(default="ascii", init=False)
     session_identifier_byte_length: int = field(default=16)
 
@@ -55,8 +58,32 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
         try:
             return AdminSession.model_validate(**admin_session_dict)
         except pydantic.ValidationError as e:
-            await self.terminate_session(session_name)
+            await self.terminate_malformed_session(
+                session_name, admin_id=admin_session_dict.get("admin_id")
+            )
             raise ValueError("Invalid session, please login again") from e
+
+    @overload
+    async def get_admin_session_via_admin_id(
+        self, admin_id: int, *, missing_ok: Literal[False]
+    ) -> AdminSession: ...
+
+    @overload
+    async def get_admin_session_via_admin_id(
+        self, admin_id: int, *, missing_ok: Literal[True] = True
+    ) -> AdminSession | None: ...
+
+    async def get_admin_session_via_admin_id(
+        self, admin_id: int, *, missing_ok: bool = True
+    ) -> AdminSession | None:
+        session_id: str | None = await self.session_store.hget(  # pyrefly: ignore[not-async]
+            self.admin_session_reverse_mapping_name, str(admin_id)
+        )
+        if not session_id:
+            if missing_ok:
+                return None
+            raise ValueError(f"No session found for admin with ID: {admin_id}")
+        return await self.get_admin_session(session_id, missing_ok=missing_ok)
 
     def derive_session_expiry(self, session_epoch: int) -> int:
         return session_epoch + self.admin_config.ADMIN_SESSION_DURATION
@@ -75,7 +102,16 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
                 self.generate_admin_session_name(admin_session.session_id),
                 mapping=admin_session.model_dump_redis(),
             )
+            pipeline.hsetex(
+                self.admin_session_reverse_mapping_name,
+                str(admin_session.admin_id),
+                ex=self.admin_config.ADMIN_SESSION_DURATION
+                * self.admin_config.MAX_SESSION_ITERATIONS,
+            )
             if preceding_session_id is not None:
+                pipeline.hdel(
+                    self.admin_session_reverse_mapping_name, str(admin_session.admin_id)
+                )
                 pipeline.delete(preceding_session_id)
             await pipeline.execute()
 
@@ -108,8 +144,20 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
             admin_session, preceding_session_id=session.session_id
         )
 
-    async def terminate_session(self, session_id: str) -> None:
-        await self.session_store.delete(self.generate_admin_session_name(session_id))
+    async def terminate_session(self, session_id: str, admin_id: int) -> None:
+        async with self.session_store.pipeline() as pipeline:
+            pipeline.delete(self.generate_admin_session_name(session_id))
+            pipeline.hdel(self.admin_session_reverse_mapping_name, str(admin_id))
+            await pipeline.execute()
+
+    async def terminate_malformed_session(
+        self, session_id: str, *, admin_id: int | None = None
+    ) -> None:
+        async with self.session_store.pipeline() as pipeline:
+            pipeline.delete(self.generate_admin_session_name(session_id))
+            if admin_id:
+                pipeline.hdel(self.admin_session_reverse_mapping_name, str(admin_id))
+            await pipeline.execute()
 
     def generate_admin_session_name(self, session_id: str) -> str:
         return self.session_delimiter_symbol.join(

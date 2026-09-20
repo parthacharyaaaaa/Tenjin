@@ -252,8 +252,6 @@ class AdminRepository(AbstractWorkRepository):
         username: str,
         password_hash: bytes | bytearray,
         creation_author: int,
-        signing_key: bytes | bytearray,
-        verification_key: bytes | bytearray,
         role: AdminRole = AdminRole.STAFF,
         *,
         returning: Literal[False] = False,
@@ -265,8 +263,6 @@ class AdminRepository(AbstractWorkRepository):
         username: str,
         password_hash: bytes | bytearray,
         creation_author: int,
-        signing_key: bytes | bytearray,
-        verification_key: bytes | bytearray,
         role: AdminRole = AdminRole.STAFF,
         *,
         returning: Literal[True],
@@ -277,8 +273,6 @@ class AdminRepository(AbstractWorkRepository):
         username: str,
         password_hash: bytes | bytearray,
         creation_author: int,
-        signing_key: bytes | bytearray,
-        verification_key: bytes | bytearray,
         role: AdminRole = AdminRole.STAFF,
         *,
         returning: bool = False,
@@ -292,8 +286,6 @@ class AdminRepository(AbstractWorkRepository):
                         password_hash=password_hash,
                         role=role,
                         created_by=creation_author,
-                        signing_key=signing_key,
-                        verification_key=verification_key,
                     )
                     .returning(Admin)
                 )
