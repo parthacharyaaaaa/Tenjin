@@ -159,7 +159,7 @@ class KeyConfigModel(BaseModel):
 
 
 class AdminConfigModel(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     SUSPICIOUS_LOOKBACK_TIME: Annotated[int, Field(ge=1)]
     MAX_ACTIVITY_LIMIT: Annotated[int, Field(ge=0)]
