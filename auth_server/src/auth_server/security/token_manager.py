@@ -1,13 +1,16 @@
 import asyncio
 import time
 import uuid
+from dataclasses import dataclass, field
 from traceback import format_exc
-from typing import Any, Final, Literal, Optional, TypeAlias, overload
+from typing import Any, Literal, Optional, overload
 
 import jwt
 import jwt.exceptions as jwt_exceptions
 from redis.asyncio import Redis
 
+from auth_server.config.sub_config import KeyConfigModel, TokenManagerConfigModel
+from auth_server.dependencies import get_app_config, get_keydata_repository
 from auth_server.models.database import KeyData
 from auth_server.repositories.keydata import KeydataRepository
 from auth_server.security.key_container import KeyMetadata
@@ -19,61 +22,35 @@ from auth_server.security.tokens import (
 from auth_server.strings import SyncedStoreStrings
 
 # Type aliases
-TokenPair: TypeAlias = tuple[str, str]
+type TokenPair = tuple[str, str]
 
 
+@dataclass(slots=True)
 class TokenManager:
-    active_refresh_tokens: int = 0
+    _token_store_client: Redis
+    _synced_store_client: Redis
+    _keydata_repository: KeydataRepository = field(
+        default_factory=get_keydata_repository
+    )
+    key_config: KeyConfigModel = field(default_factory=lambda: get_app_config().KEYS)
+    token_manager_config: TokenManagerConfigModel = field(
+        default_factory=lambda: get_app_config().JWKS.TOKEN_MANAGER
+    )
+    universal_claims: dict[str, Any] = field(default_factory=dict)
+    universal_headers: dict[str, Any] = field(default_factory=dict)
+    _polling_task: asyncio.Task[None] = field(init=False)
+    _key_mapping: dict[str, KeyMetadata] = field(default_factory=dict, init=False)
+    _active_key: str = field(init=False, default="__UNINITIALIZED__")
 
-    def __init__(
-        self,
-        interface: Redis,
-        synced_store: Redis,
-        keydata_repository: KeydataRepository,
-        refresh_lifetime: int = 60 * 60 * 3,
-        access_lifetime: int = 60 * 30,
-        alg: str = "ES256",
-        universal_claims: dict | None = None,
-        universal_headers: dict | None = None,
-        leeway: int = 180,
-        max_tokens_per_fid: int = 3,
-        max_valid_keys: int = 3,
-        announcement_duration: int = 60 * 60 * 3,
-        poll_interval: int = 30,
-    ):
-        try:
-            self._token_store_client = interface
-            self.max_llen = max_tokens_per_fid
-        except Exception as e:
-            raise ValueError(
-                "Mandatory configurations missing for _token_store_client"
-            ) from e
-
-        self.announcement_duration = announcement_duration
-
-        self.synced_store_client = synced_store
-
-        self.keydata_repository = keydata_repository
-
+    def __post_init__(self):
         # Initialize universal headers, common to all tokens issued in any context
-        universal_headers = {"typ": "JWT", "alg": alg}
-        if universal_headers:
-            universal_headers.update(universal_headers)
-        self.universal_headers = universal_headers
-        # Initialize universal claims, common to all tokens issued in any context.
-        # These should at the very least contain registered claims like "exp"
-        self.universal_claims = universal_claims or {}
-
-        self.refresh_lifetime = refresh_lifetime
-        self.access_lifetime = access_lifetime
-
-        # Set leeway for time-related claims
-        self.leeway = leeway
-        self.max_valid_keys = max_valid_keys
-
-        # Start background thread for polling
-        self.polling_task: Final[asyncio.Task] = asyncio.create_task(
-            self.poll_store(poll_interval), name="polling_task"
+        self.universal_headers.update(
+            {"typ": "JWT", "alg": str(self.key_config.SIGNATURE_ALGORITHM)}
+        )
+        # Start background task for polling
+        self._polling_task = asyncio.create_task(
+            self.poll_store(self.token_manager_config.POLL_INTERVAL),
+            name="polling_task",
         )
 
     def set_key_state(
@@ -84,10 +61,10 @@ class TokenManager:
     ) -> None:
         if not verification_keys_mapping:
             verification_keys_mapping = {}
-        self.key_mapping: dict[str, KeyMetadata] = verification_keys_mapping | {
+        self._key_mapping: dict[str, KeyMetadata] = verification_keys_mapping | {
             active_kid: active_key_metadata
         }
-        self.active_key = active_kid
+        self._active_key = active_kid
 
     @overload
     async def decode_token(
@@ -104,16 +81,16 @@ class TokenManager:
     ) -> StandardAccessTokenClaims | StandardRefreshTokenClaims:
         try:
             kid: int = jwt.get_unverified_header(token)["kid"]
-            if kid not in self.key_mapping:
+            if kid not in self._key_mapping:
                 raise jwt_exceptions.InvalidKeyError(
                     "This key is not recognised, meaning it is possibly tampered, forged, or simply expired a long time ago."
                 )
 
             decoded_token: dict[str, Any] = jwt.decode(
                 jwt=token,
-                key=self.key_mapping[kid].PUBLIC_PEM,
-                algorithms=[self.key_mapping[kid].ALGORITHM],
-                leeway=self.leeway,
+                key=self._key_mapping[kid].PUBLIC_PEM,
+                algorithms=[self._key_mapping[kid].ALGORITHM],
+                leeway=self.token_manager_config.LEEWAY,
                 options=kwargs.get("options"),
             )
             if token_type == TokenType.StandardAccess:
@@ -189,13 +166,16 @@ class TokenManager:
         # All checks passed
         payload: dict = {
             "iat": time.time(),
-            "exp": time.time() + self.refresh_lifetime,
-            "nbf": time.time() + self.access_lifetime - self.leeway,
+            "exp": time.time() + self.token_manager_config.REFRESH_LIFETIME,
+            "nbf": time.time()
+            + self.token_manager_config.ACCESS_LIFETIME
+            - self.token_manager_config.LEEWAY,
             "fid": family_id,
             "sub": sub,
             "sid": sid,
             "jti": self.generate_unique_identifier(),
         }
+
         payload.update(self.universal_claims)
         if additional_claims:
             payload.update(additional_claims)
@@ -207,9 +187,9 @@ class TokenManager:
 
         return jwt.encode(
             payload=payload,
-            key=self.key_mapping[self.active_key].PRIVATE_PEM,
-            algorithm=self.key_mapping[self.active_key].ALGORITHM,
-            headers=self.universal_headers | {"kid": self.active_key},
+            key=self._key_mapping[self._active_key].PRIVATE_PEM,
+            algorithm=self._key_mapping[self._active_key].ALGORITHM,
+            headers=self.universal_headers | {"kid": self._active_key},
         )
 
     def issue_access_token(
@@ -217,7 +197,7 @@ class TokenManager:
     ) -> str:
         payload: dict = {
             "iat": time.time(),
-            "exp": time.time() + self.access_lifetime,
+            "exp": time.time() + self.token_manager_config.ACCESS_LIFETIME,
             "fid": family_id,
             "sub": sub,
             "sid": sid,
@@ -229,9 +209,9 @@ class TokenManager:
 
         return jwt.encode(
             payload=payload,
-            key=self.key_mapping[self.active_key].PRIVATE_PEM,
-            algorithm=self.key_mapping[self.active_key].ALGORITHM,
-            headers=self.universal_headers | {"kid": self.active_key},
+            key=self._key_mapping[self._active_key].PRIVATE_PEM,
+            algorithm=self._key_mapping[self._active_key].ALGORITHM,
+            headers=self.universal_headers | {"kid": self._active_key},
         )
 
     async def shift_token_window(self, family_id: str) -> None:
@@ -242,9 +222,10 @@ class TokenManager:
             if llen == 0:
                 return
 
-            if llen >= self.max_llen:
+            if llen >= self.token_manager_config.MAX_TOKENS_PER_FAMILY:
                 await self._token_store_client.rpop(  # pyrefly: ignore[not-async]
-                    f"FID:{family_id}", max(1, llen - self.max_llen)
+                    f"FID:{family_id}",
+                    max(1, llen - self.token_manager_config.MAX_TOKENS_PER_FAMILY),
                 )
         except Exception as e:
             raise RuntimeError("Failed to perform operation on token store") from e
@@ -264,9 +245,9 @@ class TokenManager:
     ) -> None:
         """Update key mapping on key rotation"""
         if active:
-            self.active_key = kid
+            self._active_key = kid
 
-        self.key_mapping[kid] = new_keydata
+        self._key_mapping[kid] = new_keydata
 
     async def fetch_unexpired_key(self, kid: str) -> KeyMetadata | None:
         """Fetch a non-expired key from the database
@@ -276,18 +257,18 @@ class TokenManager:
         Returns:
             Fetched key casted to KeyMetadata, None if not found"""
         # Check synced store for an invalid key announcement for this key
-        invalid_key: str | None = await self.synced_store_client.get(
+        invalid_key: str | None = await self._synced_store_client.get(
             f"invalid_key:{kid}"
         )
         if invalid_key:
             return None
 
         # Try to fetch a valid key with this KID
-        key: KeyData | None = await self.keydata_repository.get_keydata(kid)
+        key: KeyData | None = await self._keydata_repository.get_keydata(kid)
         if not key:
             # Announce non existence to other workers in case they also receive this invalid key
-            self.synced_store_client.set(
-                f"invalid_key:{kid}", 1, self.announcement_duration
+            self._synced_store_client.set(
+                f"invalid_key:{kid}", 1, self.token_manager_config.ANNOUNCEMENT_DURATION
             )
             return None
         return KeyMetadata(
@@ -300,16 +281,16 @@ class TokenManager:
 
     def invalidate_key(self, kid: str) -> None:
         """Invalidate a verification key"""
-        if self.active_key == kid:
+        if self._active_key == kid:
             raise RuntimeError("Cannot invalidate active signing key")
 
-        self.key_mapping.pop(kid, None)
+        self._key_mapping.pop(kid, None)
 
     async def poll_store(self, interval: int) -> None:
         """Check synced store to keep local keys updated with global keys. Intended to be run as a non-blocking, background task upon instantiation"""
         while True:
             try:
-                valid_keys: list[str] | None = await self.synced_store_client.lrange(  # pyrefly: ignore[not-async]
+                valid_keys: list[str] | None = await self._synced_store_client.lrange(  # pyrefly: ignore[not-async]
                     SyncedStoreStrings.VALID_KEYS, 0, -1
                 )
 
@@ -319,7 +300,7 @@ class TokenManager:
                 global_valid_keyset: frozenset[str] = frozenset(
                     key for key in valid_keys
                 )
-                local_valid_keyset: frozenset[str] = frozenset(self.key_mapping.keys())
+                local_valid_keyset: frozenset[str] = frozenset(self._key_mapping.keys())
 
                 new_valid_keys: frozenset[str] = (
                     global_valid_keyset - local_valid_keyset
