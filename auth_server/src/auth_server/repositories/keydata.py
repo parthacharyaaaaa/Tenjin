@@ -7,6 +7,7 @@ from typing import Any, ClassVar, Final, Literal, overload
 
 from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
+from auxillary.utils import cache_repr
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
@@ -65,6 +66,9 @@ class KeyPrivateDataResult(KeyPublicDataResult):
     """
 
     private_pem: bytes
+
+    def create_public_copy(self) -> KeyPublicDataResult:
+        return KeyPublicDataResult.construct_from_cache(cache_repr(self))  # pyrefly: ignore
 
 
 @dataclass(slots=True)
