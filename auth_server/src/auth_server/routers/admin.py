@@ -360,6 +360,7 @@ async def create_admin(
         AdminSession, Depends(require_permissions(Permission.CREATE_ADMIN))
     ],
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+    config: Annotated[AppConfig, Depends(get_app_config)],
 ) -> JSONResponse:
     try:
         existing_admin: (
@@ -373,7 +374,7 @@ async def create_admin(
         )
 
     pw_hash: Final[bytes] = bcrypt_hash_password(admin_model.password)
-    _, signing_key, verification_key = generate_ecdsa_pair()
+    _, signing_key, verification_key = generate_ecdsa_pair(config.KEYS)
     try:
         admin: AdminPublicResult = await admin_repository.create_admin(
             username=admin_model.identity,

@@ -1,5 +1,4 @@
 import asyncio
-import secrets
 from collections.abc import AsyncGenerator, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
@@ -29,6 +28,7 @@ from auth_server.repositories.keydata import (
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
+from auth_server.security.keygen import generate_ecdsa_pair
 from auth_server.security.token_manager import TokenManager
 from auth_server.strings import (
     GENERIC_SEPARATOR,
@@ -113,16 +113,6 @@ class FileSystemKeyManager(AntiSingletonMixin):
     def _insure_path_deletion(self, path: Path) -> None:
         self._deletion_buffer.append(path)
 
-    def generate_ecdsa_pair(
-        self,
-    ) -> tuple[str, ec.EllipticCurvePrivateKey, ec.EllipticCurvePublicKey]:
-        private_key: Final[ec.EllipticCurvePrivateKey] = ec.generate_private_key(
-            self.keys_config.EC_TYPE
-        )
-        public_key: Final[ec.EllipticCurvePublicKey] = private_key.public_key()
-        key_id: Final[str] = secrets.token_hex(self.keys_config.KEY_IDENTIFIER_LENGTH)
-        return key_id, private_key, public_key
-
     async def initialize_jwks(self, keys: Sequence[KeyPublicDataResult]) -> None:
         jwks_contents: list[dict[str, str | int]] = []
         for key in keys:
@@ -183,14 +173,9 @@ class FileSystemKeyManager(AntiSingletonMixin):
             length: int = len(jwks_contents)
 
             if enforce_capacity and length > self.keys_config.MAX_VALID_KEYS:
-                truncated_keys: list[dict[str, str]] = jwks_contents[
-                    : self.keys_config.MAX_VALID_KEYS
-                ]
                 jwks_contents: list[dict[str, str]] = jwks_contents[
                     -self.keys_config.MAX_VALID_KEYS :
                 ]
-
-                await self.delete_key_files(tuple(key["kid"] for key in truncated_keys))
 
             await jwks_json_file.truncate(0)
             await jwks_json_file.seek(0)
@@ -204,115 +189,18 @@ class FileSystemKeyManager(AntiSingletonMixin):
     ) -> None:
         self._insure_file_rewrite(self.jwks_config.JWKS_FILEPATH)
         async with aiofiles.open(self.jwks_config.JWKS_FILEPATH, "wb") as jwks_file:
-            await jwks_file.write(orjson.dumps(jwks_data))
-
-    async def delete_key_files(
-        self,
-        key_ids: Sequence[str],
-        *,
-        delete_private: bool = False,
-        delete_public: bool = True,
-    ):
-        if not (delete_public or delete_private):
-            raise ValueError("Atleast 1 deletion flag must be true")
-
-        deletion_paths: list[Path] = []
-        for key_id in key_ids:
-            if delete_public:
-                public_path: Path = self.jwks_config.PUBLIC_PEM_DIRECTORY.joinpath(
-                    self.pem_filename_template.format(key_id)
-                )
-                deletion_paths.append(public_path)
-                self._insure_file_rewrite(public_path)
-            if delete_private:
-                private_path: Path = self.jwks_config.PRIVATE_PEM_DIRECTORY.joinpath(
-                    self.pem_filename_template.format(key_id)
-                )
-                deletion_paths.append(private_path)
-                self._insure_file_rewrite(private_path)
-
-        await asyncio.gather(
-            *(
-                asyncio.to_thread(path.unlink, missing_ok=True)
-                for path in deletion_paths
-            )
-        )
+            await jwks_file.write(orjson.dumps({"keys": jwks_data}))
 
     async def invalidate_keys(self, keys: Sequence[str]) -> None:
         async with aiofiles.open(self.jwks_config.JWKS_FILEPATH, "rb") as jwks_file:
-            jwks_data: list[dict[str, str]] = orjson.loads(await jwks_file.read())
+            jwks_data: list[dict[str, str]] = orjson.loads(await jwks_file.read())[
+                "keys"
+            ]
         for i, key_data in enumerate(jwks_data.copy()):
             if key_data["kid"] in keys:
                 jwks_data.pop(i)
 
         await self.overwrite_jwks(jwks_data)
-        await self.delete_key_files(keys)
-
-    async def write_ecdsa_pair(
-        self,
-        private_key: ec.EllipticCurvePrivateKey | bytes | bytearray,
-        public_key: ec.EllipticCurvePublicKey | bytes | bytearray,
-        key_id: int | str,
-    ) -> None:
-        private_buffer: bytes | bytearray = (
-            private_key.private_bytes(
-                encoding=Encoding.PEM,
-                format=PrivateFormat.PKCS8,
-                encryption_algorithm=NoEncryption(),
-            )
-            if isinstance(private_key, ec.EllipticCurvePrivateKey)
-            else private_key
-        )
-        public_buffer: bytes | bytearray = (
-            public_key.public_bytes(
-                encoding=Encoding.PEM,
-                format=PublicFormat.SubjectPublicKeyInfo,
-            )
-            if isinstance(public_key, ec.EllipticCurvePublicKey)
-            else public_key
-        )
-        private_pem_path: Path = self.jwks_config.PRIVATE_PEM_DIRECTORY.joinpath(
-            self.pem_filename_template.format(key_id=key_id) + ".pem"
-        )
-        public_pem_path: Path = self.jwks_config.PUBLIC_PEM_DIRECTORY.joinpath(
-            self.pem_filename_template.format(key_id=key_id) + ".pem"
-        )
-
-        self._insure_path_deletion(private_pem_path)
-        self._insure_path_deletion(public_pem_path)
-        await asyncio.gather(
-            asyncio.to_thread(
-                private_pem_path.write_bytes,
-                private_buffer,
-            ),
-            asyncio.to_thread(
-                public_pem_path.write_bytes,
-                public_buffer,
-            ),
-        )
-
-    async def initialize_active_key(
-        self,
-    ) -> None:
-        active_kid, sk, vk = self.generate_ecdsa_pair()
-
-        if not await asyncio.to_thread(self.jwks_config.PRIVATE_PEM_DIRECTORY.exists):
-            self._insure_path_deletion(self.jwks_config.PRIVATE_PEM_DIRECTORY)
-            await asyncio.to_thread(
-                self.jwks_config.PRIVATE_PEM_DIRECTORY.mkdir, parents=True
-            )
-        if not await asyncio.to_thread(self.jwks_config.PUBLIC_PEM_DIRECTORY.exists):
-            self._insure_path_deletion(self.jwks_config.PUBLIC_PEM_DIRECTORY)
-            await asyncio.to_thread(
-                self.jwks_config.PUBLIC_PEM_DIRECTORY.mkdir, parents=True
-            )
-
-        # Persist to PEM, and DB (JWKS done at end)
-        await self.write_ecdsa_pair(
-            private_key=sk,
-            public_key=vk,
-            key_id=int(active_kid),
-        )
 
     async def get_jwks(self) -> list[dict[str, str]]:
         async with aiofiles.open(self.jwks_config.JWKS_FILEPATH, "rb") as jwks_file:
@@ -544,8 +432,8 @@ class KeyLifecycleManager(AntiSingletonMixin):
             lock_duration=LockTIme.MEDIUM,
             operational_cooldown_duration=cooldown_duration,
         ):
-            kid, signing_key, verification_key = (
-                self.filesystem_key_manager.generate_ecdsa_pair()
+            kid, signing_key, verification_key = generate_ecdsa_pair(
+                self.filesystem_key_manager.keys_config
             )
             generation_epoch: Final[datetime] = datetime.now(UTC)
             private_pem: Final[bytes] = signing_key.private_bytes(
@@ -610,21 +498,6 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     verification_key,
                     kid,
                 )
-                await self.filesystem_key_manager.write_ecdsa_pair(
-                    private_key=signing_key,
-                    public_key=verification_key,
-                    key_id=kid,
-                )
-
-                # Remove previous key's private PEM file
-                await self.filesystem_key_manager.delete_key_files(
-                    (previous_key.kid,), delete_private=True, delete_public=False
-                )
-                if target_id is not None:
-                    await self.filesystem_key_manager.delete_key_files(
-                        (target_id,), delete_private=True
-                    )
-
                 # Update token manager's mapping to use this newly created ECDSA pair
                 # TODO: Update TokenManager to accept DTO over this dataclass
                 self.token_manager.update_keydata(kid, new_key)
