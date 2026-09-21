@@ -3,7 +3,7 @@
 from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, ClassVar, Literal, overload
+from typing import Any, ClassVar, Final, Literal, overload
 
 from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
@@ -499,7 +499,7 @@ class KeydataRepository(AbstractWorkRepository):
                 return KeyPublicDataResult.construct_from_orm(active_key)
             return KeyPrivateDataResult.construct_from_orm(active_key)
 
-    # TODO: Make curve column an enum
+    @overload
     async def rotate_key(
         self,
         previous_key_id: str,
@@ -508,11 +508,43 @@ class KeydataRepository(AbstractWorkRepository):
         new_key_private_pem: bytes | bytearray,
         *,
         alg: str = "ES256",
-        curve: str = ec.SECP256K1.name,
+        curve: type[ec.EllipticCurve] = ec.SECP256K1,
         rotation_author: int | None = None,
         epoch: datetime | None = None,
         previous_key_rotation_time: datetime | None = None,
-    ) -> None:
+        returning: Literal[False] = False,
+    ) -> None: ...
+
+    @overload
+    async def rotate_key(
+        self,
+        previous_key_id: str,
+        new_key_id: str,
+        new_key_public_pem: bytes | bytearray,
+        new_key_private_pem: bytes | bytearray,
+        *,
+        alg: str = "ES256",
+        curve: type[ec.EllipticCurve] = ec.SECP256K1,
+        rotation_author: int | None = None,
+        epoch: datetime | None = None,
+        previous_key_rotation_time: datetime | None = None,
+        returning: Literal[True],
+    ) -> KeyPublicDataResult: ...
+
+    async def rotate_key(
+        self,
+        previous_key_id: str,
+        new_key_id: str,
+        new_key_public_pem: bytes | bytearray,
+        new_key_private_pem: bytes | bytearray,
+        *,
+        alg: str = "ES256",
+        curve: type[ec.EllipticCurve] = ec.SECP256K1,
+        rotation_author: int | None = None,
+        epoch: datetime | None = None,
+        previous_key_rotation_time: datetime | None = None,
+        returning: bool = False,
+    ) -> KeyPublicDataResult | None:
         epoch = epoch or datetime.now(UTC)
         previous_key_rotation_time = previous_key_rotation_time or epoch
 
@@ -528,12 +560,19 @@ class KeydataRepository(AbstractWorkRepository):
             )
 
             # Add new key
-            await session.execute(
-                insert(KeyData).values(
-                    kid=new_key_id,
-                    curve=curve,
-                    private_pem=new_key_private_pem,
-                    public_pem=new_key_public_pem,
-                    alg=alg,
+            new_key: Final[KeyPublicDataResult] = (
+                await session.execute(
+                    insert(KeyData)
+                    .values(
+                        kid=new_key_id,
+                        curve=curve,
+                        private_pem=new_key_private_pem,
+                        public_pem=new_key_public_pem,
+                        alg=alg,
+                    )
+                    .returning(KeyPublicDataResult)
                 )
-            )
+            ).scalar_one()
+
+            if returning:
+                return new_key
