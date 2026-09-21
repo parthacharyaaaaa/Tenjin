@@ -67,6 +67,8 @@ class TokenManagerConfigModel(BaseModel):
 
     MAX_TOKENS_PER_FAMILY: Annotated[int, Field(ge=1)]
 
+    POLL_INTERVAL: Annotated[int, Field(ge=0)]
+
     @model_validator(mode="after")
     def verify_time_values(self) -> Self:
         if self.ACCESS_LIFETIME > self.REFRESH_LIFETIME:
@@ -111,20 +113,7 @@ class JWKSConfigModel(BaseModel):
         BeforeValidator(_parse_jwks_path),
         Field(default="jwks.json", alias="JWKS_FILENAME"),
     ]
-
-    PUBLIC_PEM_DIRECTORY: Annotated[
-        Path,
-        BeforeValidator(lambda d: Path(d)),
-        Field(alias="PUBLIC_PEM_BASE_DIRECTORY"),
-    ]
-    PRIVATE_PEM_DIRECTORY: Annotated[
-        Path,
-        BeforeValidator(lambda d: Path(d)),
-        Field(alias="PRIVATE_PEM_BASE_DIRECTORY"),
-    ]
-
     JWKS_CAP: Annotated[int, Field(ge=1)]
-
     TOKEN_MANAGER: Annotated[TokenManagerConfigModel, Field(alias="token_manager")]
 
     def _resolve_path_attr(
@@ -143,36 +132,34 @@ class JWKSConfigModel(BaseModel):
 
         setattr(self, attr_name, path)
 
-    def resolve_public_pem_directory(self, rootpath: Path) -> None:
-        self._resolve_path_attr("PUBLIC_PEM_DIRECTORY", rootpath)
-
-    def resolve_private_pem_directory(self, rootpath: Path) -> None:
-        self._resolve_path_attr("PRIVATE_PEM_DIRECTORY", rootpath)
-
     def resolve_jwks_filepath(self, rootpath: Path) -> None:
         self._resolve_path_attr("JWKS_FILEPATH", rootpath, "file")
 
 
 class KeyConfigModel(BaseModel):
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
     MAX_VALID_KEYS: Annotated[int, Field(ge=1)]
     KEY_ROTATION_COOLDOWN: Annotated[int, Field(ge=0)]
+    KEY_IDENTIFIER_LENGTH: Annotated[int, Field(ge=1)]
+    SIGNATURE_HASHFUNC: Annotated[HashAlgorithm, Field(default_factory=hashes.SHA256)]
+    SIGNATURE_ALGORITHM: Annotated[type[ec.ECDSA], Field(default=ec.ECDSA)]
+    EC_TYPE: Annotated[ec.EllipticCurve, Field(default_factory=ec.SECP256K1)]
+
+    @computed_field
+    @cached_property
+    def PREHASHED_SIGNATURE_ALGORITHM(self) -> ec.ECDSA:  # noqa: N802
+        return self.SIGNATURE_ALGORITHM(self.SIGNATURE_HASHFUNC)
 
 
 class AdminConfigModel(BaseModel):
-    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(frozen=True)
 
     SUSPICIOUS_LOOKBACK_TIME: Annotated[int, Field(ge=1)]
     MAX_ACTIVITY_LIMIT: Annotated[int, Field(ge=0)]
     MAX_SESSION_ITERATIONS: Annotated[int, Field(ge=1)]
     ADMIN_SESSION_DURATION: Annotated[int, Field(ge=0)]
-    SESSION_HASHFUNC: Annotated[HashAlgorithm, Field(default_factory=hashes.SHA256)]
-    SESSION_SIGNATURE_ALGORITHM: Annotated[type[ec.ECDSA], Field(default=ec.ECDSA)]
     REVIVAL_DIGEST_LENGTH: Annotated[int, Field(ge=1)]
-
-    @computed_field
-    @cached_property
-    def PREHASHED_SESSION_SIGNATURE_ALGORITHM(self) -> ec.ECDSA:  # noqa: N802
-        return self.SESSION_SIGNATURE_ALGORITHM(self.SESSION_HASHFUNC)
 
 
 class SAConfigModel(BasicSQLAlchemyConfigMixin, BaseModel): ...

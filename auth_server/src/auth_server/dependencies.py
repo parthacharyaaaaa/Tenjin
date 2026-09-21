@@ -16,6 +16,11 @@ from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.keydata import KeydataRepository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.security.admin_sessions import AdminSessionManager
+from auth_server.security.key_manager import (
+    FileSystemKeyManager,
+    KeyLifecycleManager,
+    SyncedStoreKeyStateManager,
+)
 from auth_server.security.token_manager import TokenManager
 
 
@@ -96,7 +101,26 @@ def get_admin_session_manager() -> AdminSessionManager:
 @lru_cache(maxsize=1)
 def get_token_manager() -> TokenManager:
     return TokenManager(
-        interface=get_token_store_client(),
-        synced_store=get_synced_store_client(),
-        keydata_repository=get_keydata_repository(),
+        get_token_store_client(),
+        get_synced_store_client(),
+        get_keydata_repository(),
+    )
+
+
+def get_filesystem_key_manager() -> FileSystemKeyManager:
+    config: AppConfig = get_app_config()
+    return FileSystemKeyManager(config.JWKS, config.KEYS)
+
+
+def get_synced_store_key_state_manager() -> SyncedStoreKeyStateManager:
+    return SyncedStoreKeyStateManager(get_synced_store_client())
+
+
+def get_key_lifecycle_manager() -> KeyLifecycleManager:
+    return KeyLifecycleManager(
+        get_synced_store_client(),
+        get_keydata_repository(),
+        get_token_manager(),
+        get_filesystem_key_manager(),
+        get_synced_store_key_state_manager(),
     )
