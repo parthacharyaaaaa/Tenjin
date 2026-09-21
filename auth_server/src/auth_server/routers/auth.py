@@ -64,8 +64,8 @@ async def login(
             "message": response_contents.pop("message", "Login complete."),
             "username": sub,
             "time_of_issuance": epoch,
-            "access_exp": epoch + token_manager.access_lifetime,
-            "leeway": token_manager.leeway,
+            "access_exp": epoch + token_manager.token_manager_config.ACCESS_LIFETIME,
+            "leeway": token_manager.token_manager_config.LEEWAY,
             "issuer": "tenjin-auth-service",
             "_additional": {**response_contents},
         }
@@ -75,8 +75,10 @@ async def login(
         response,
         access_token,
         refresh_token,
-        token_manager.access_lifetime + token_manager.leeway,
-        token_manager.refresh_lifetime + token_manager.leeway,
+        token_manager.token_manager_config.ACCESS_LIFETIME
+        + token_manager.token_manager_config.LEEWAY,
+        token_manager.token_manager_config.REFRESH_LIFETIME
+        + token_manager.token_manager_config.LEEWAY,
         paths=[request.url_for("reissue"), request.url_for("purge_family")],
     )
     return response, 201
@@ -117,8 +119,8 @@ async def register(
             "username": sub,
             "email": response_contents.pop("email", None),
             "time_of_issuance": epoch,
-            "access_exp": epoch + token_manager.access_lifetime,
-            "leeway": token_manager.leeway,
+            "access_exp": epoch + token_manager.token_manager_config.ACCESS_LIFETIME,
+            "leeway": token_manager.token_manager_config.LEEWAY,
             "issuer": "tenjin-AUTH-service",
             "_additional": {**response_contents},
         },
@@ -129,8 +131,10 @@ async def register(
         response,
         access_token,
         refresh_token,
-        token_manager.access_lifetime + token_manager.leeway,
-        token_manager.refresh_lifetime + token_manager.leeway,
+        token_manager.token_manager_config.ACCESS_LIFETIME
+        + token_manager.token_manager_config.LEEWAY,
+        token_manager.token_manager_config.REFRESH_LIFETIME
+        + token_manager.token_manager_config.LEEWAY,
         paths=[request.url_for("reissue"), request.url_for("purge_family")],
     )
     return response, 201
@@ -159,8 +163,8 @@ async def reissue(
         {
             "message": "Reissuance successful",
             "time_of_issuance": epoch,
-            "access_exp": epoch + token_manager.access_lifetime,
-            "leeway": token_manager.leeway,
+            "access_exp": epoch + token_manager.token_manager_config.ACCESS_LIFETIME,
+            "leeway": token_manager.token_manager_config.LEEWAY,
             "issuer": "babel-AUTH-service",
         }
     )
@@ -169,8 +173,10 @@ async def reissue(
         response,
         new_access_token,
         new_refresh_token,
-        token_manager.access_lifetime + token_manager.leeway,
-        token_manager.refresh_lifetime + token_manager.leeway,
+        token_manager.token_manager_config.ACCESS_LIFETIME
+        + token_manager.token_manager_config.LEEWAY,
+        token_manager.token_manager_config.REFRESH_LIFETIME
+        + token_manager.token_manager_config.LEEWAY,
         paths=[request.url_for("reissue"), request.url_for("purge_family")],
     )
     return response, 201

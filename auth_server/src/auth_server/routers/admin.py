@@ -228,8 +228,8 @@ async def admin_refresh(
             "Invalid session revival digest",
             suspicious_activity_repository,
             admin_repository,
-            admin_session_manager,
             repository_coordinator,
+            admin_session_manager,
         )
         raise HTTPException(403, "Invalid revival digest provided")
 
