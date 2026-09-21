@@ -67,6 +67,8 @@ class TokenManagerConfigModel(BaseModel):
 
     MAX_TOKENS_PER_FAMILY: Annotated[int, Field(ge=1)]
 
+    POLL_INTERVAL: Annotated[int, Field(ge=0)]
+
     @model_validator(mode="after")
     def verify_time_values(self) -> Self:
         if self.ACCESS_LIFETIME > self.REFRESH_LIFETIME:
