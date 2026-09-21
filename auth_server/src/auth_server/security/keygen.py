@@ -17,7 +17,10 @@ from cryptography.hazmat.primitives.serialization import (
 )
 
 from auth_server.models.database import KeyData
-from auth_server.repositories.keydata import KeydataRepository
+from auth_server.repositories.keydata import (
+    KeydataRepository,
+    KeyPrivateDataResult,
+)
 
 
 def generate_ecdsa_pair() -> tuple[
@@ -145,7 +148,7 @@ async def initialize_active_key(
     private_directory: Path,
     public_directory: Path,
     keydata_repository: KeydataRepository,
-) -> KeyData:
+) -> KeyPrivateDataResult:
     active_kid, sk, vk = generate_ecdsa_pair()
 
     if not await asyncio.to_thread(private_directory.exists):
@@ -162,7 +165,6 @@ async def initialize_active_key(
         key_id=int(active_kid),
     )
 
-    active_key: KeyData = await keydata_repository.insert_keydata(
+    return await keydata_repository.insert_keydata(
         active_kid, sk, vk, "ES256", ec.SECP256K1(), returning=True
     )
-    return active_key

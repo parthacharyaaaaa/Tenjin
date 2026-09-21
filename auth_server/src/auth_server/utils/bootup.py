@@ -2,30 +2,30 @@ import asyncio
 import os
 import traceback
 from contextlib import asynccontextmanager
-from datetime import datetime
 from pathlib import Path
 from typing import AsyncGenerator, Final, Mapping, Sequence
 
 from auxillary.utils import generic_error_handler
 from fastapi import APIRouter, FastAPI
 from redis.asyncio import Redis
-from sqlalchemy.sql import select
 
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import (
     get_app_config,
     get_database_session_maker,
+    get_filesystem_key_manager,
     get_synced_store_client,
     get_token_manager,
 )
-from auth_server.models.database import KeyData
-from auth_server.repositories.keydata import KeydataRepository
+from auth_server.repositories.keydata import (
+    KeydataRepository,
+    KeyPrivateDataResult,
+    KeyPublicDataResult,
+)
 from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
-from auth_server.security.key_container import KeyMetadata
+from auth_server.security.key_manager import FileSystemKeyManager
 from auth_server.security.keygen import (
     initialize_active_key,
-    initialize_jwks,
-    write_ecdsa_pair,
 )
 from auth_server.security.token_manager import TokenManager
 from auth_server.strings import SyncedStoreStrings
@@ -66,16 +66,13 @@ async def _purge_expired_keys(
         )
 
 
-def _sync_file_system_key_state(
-    active_key: KeyData,
-    rotated_keys: Sequence[KeyData],
-    public_pem_directory: Path,
-    private_pem_directory: Path,
+async def _sync_file_system_key_state(
+    active_key: KeyPrivateDataResult,
+    rotated_keys: Sequence[KeyPublicDataResult],
+    filesystem_key_manager: FileSystemKeyManager,
 ):
     # Sync file state for active key
-    write_ecdsa_pair(
-        private_pem_directory,
-        public_pem_directory,
+    await filesystem_key_manager.write_ecdsa_pair(
         active_key.private_pem,
         active_key.public_pem,
         active_key.kid,
@@ -83,62 +80,47 @@ def _sync_file_system_key_state(
 
     for keydata in rotated_keys:
         private_pem_path: Path = (
-            private_pem_directory / f"private_{keydata.kid}_key.pem"
+            filesystem_key_manager.jwks_config.PRIVATE_PEM_DIRECTORY
+            / f"private_{keydata.kid}_key.pem"
         )
-        public_pem_path: Path = public_pem_directory / f"public_{keydata.kid}_key.pem"
+        public_pem_path: Path = (
+            filesystem_key_manager.jwks_config.PUBLIC_PEM_DIRECTORY
+            / f"public_{keydata.kid}_key.pem"
+        )
 
         # Ensure that only public pem file exists for verification keys
-        public_pem_path.write_bytes(keydata.public_pem)
-        private_pem_path.unlink(missing_ok=True)
+        await asyncio.to_thread(public_pem_path.write_bytes, keydata.public_pem)
+        await asyncio.to_thread(private_pem_path.unlink, missing_ok=True)
 
 
 async def master_bootup(
     config: AppConfig,
     synced_store_client: Redis,
     keydata_repository: KeydataRepository,
+    filesystem_key_manager: FileSystemKeyManager,
+    token_manager: TokenManager,
     process_id: int,
 ) -> None:
     print(f"[AUTH {process_id}] Serving as master")
 
-    active_kid: str | None = None
-    active_keydata: KeyMetadata | None = None
-    rotated_verifying_keys: dict[str, KeyMetadata] | None = None
+    active_keydata: KeyPrivateDataResult | None = None
+    rotated_verifying_keys: dict[str, KeyPublicDataResult] | None = None
 
     try:
-        async with keydata_repository.session_maker() as session:
-            keydata: list[KeyData] = list(
-                (
-                    await session.execute(
-                        select(KeyData)
-                        .where(KeyData.expired_at.is_(None))
-                        .order_by(KeyData.epoch.desc())
-                    )
-                )
-                .scalars()
-                .all()
-            )
-
+        keydata: list[
+            KeyPrivateDataResult
+        ] = await keydata_repository.get_relevant_keydata(public_data_only=False)
         if not keydata:
             # No valid keys in DB, master must create new pair
             print(f"[AUTH {process_id}] Creating new key pair")
-            active_key: KeyData = await initialize_active_key(
+            active_keydata = await initialize_active_key(
                 config.JWKS.PRIVATE_PEM_DIRECTORY,
                 config.JWKS.PUBLIC_PEM_DIRECTORY,
                 keydata_repository,
             )
-
-            active_keydata = KeyMetadata(
-                PUBLIC_PEM=active_key.public_pem,
-                PRIVATE_PEM=active_key.private_pem,
-                ALGORITHM="ES256",
-                EPOCH=datetime.timestamp(active_key.epoch),
-            )
-            active_kid = active_key.kid
-
-            keydata.append(active_key)
-
+            keydata.append(active_keydata)
         else:
-            verification_only_keys: list[KeyData] = list(
+            verification_only_keys: list[KeyPrivateDataResult] = list(
                 filter(lambda x: x.rotated_out_at is not None, keydata)
             )
             missing_active: bool = len(keydata) == len(verification_only_keys)
@@ -151,48 +133,20 @@ async def master_bootup(
                 keydata = keydata[: config.JWKS.JWKS_CAP]
 
             if missing_active:
-                active_key: KeyData = await initialize_active_key(
+                active_keydata = await initialize_active_key(
                     config.JWKS.PRIVATE_PEM_DIRECTORY,
                     config.JWKS.PUBLIC_PEM_DIRECTORY,
                     keydata_repository,
                 )
-                active_kid = active_key.kid
-                active_keydata = KeyMetadata(
-                    PUBLIC_PEM=active_key.public_pem,
-                    PRIVATE_PEM=active_key.private_pem,
-                    ALGORITHM="ES256",
-                    EPOCH=datetime.timestamp(active_key.epoch),
-                )
-                keydata.insert(0, active_key)
-
-            # AND condition is unnecessary here, but helps the type checker
-            # confirm that active_keydata != None
-            # when calling TokenManager.set_key_state
-            if not (active_kid and active_keydata):
-                active_kid = keydata[0].kid
-                active_keydata = KeyMetadata(
-                    PUBLIC_PEM=keydata[0].public_pem,
-                    PRIVATE_PEM=keydata[0].private_pem,
-                    ALGORITHM="ES256",
-                    EPOCH=datetime.timestamp(keydata[0].epoch),
-                )
+                keydata.insert(0, active_keydata)
+            else:
+                active_keydata = keydata[0]
 
             if len(keydata) > 1:
-                rotated_verifying_keys = {
-                    k.kid: KeyMetadata(
-                        PUBLIC_PEM=k.public_pem,
-                        PRIVATE_PEM=k.private_pem,
-                        ALGORITHM="ES256",
-                        EPOCH=datetime.timestamp(k.epoch),
-                    )
-                    for k in keydata[1:]
-                }
+                rotated_verifying_keys = {k.kid: k for k in keydata[1:]}
 
-        _sync_file_system_key_state(
-            keydata[0],
-            keydata[1:],
-            config.JWKS.PUBLIC_PEM_DIRECTORY,
-            config.JWKS.PRIVATE_PEM_DIRECTORY,
+        await _sync_file_system_key_state(
+            keydata[0], keydata[1:], filesystem_key_manager
         )
 
         # Lastly, purge any PEM files for expired keys that are somehow still in file system
@@ -202,26 +156,29 @@ async def master_bootup(
             keydata_repository=keydata_repository,
         )
 
-        initialize_jwks(config.JWKS.JWKS_FILEPATH, keydata)
+        await filesystem_key_manager.initialize_jwks(keydata)
 
         # Initialize token manager
         async with synced_store_client.pipeline() as pipe:
             pipe.delete(SyncedStoreStrings.VALID_KEYS)
             valid_keys: list[str] = (
                 list(rotated_verifying_keys.keys()) if rotated_verifying_keys else []
-            ) + [active_kid]
+            ) + [active_keydata.kid]
             pipe.lpush(SyncedStoreStrings.VALID_KEYS, *valid_keys)
             await pipe.execute()
 
-        token_manager: Final[TokenManager] = get_token_manager()
-        token_manager.set_key_state(active_kid, active_keydata, rotated_verifying_keys)
+        token_manager.set_key_state(active_keydata, rotated_verifying_keys)
         print(f"[AUTH {process_id}] Master process bootup complete!")
     except Exception as e:
         print(
             f"[AUTH {process_id}] Master worker has encountered an irrecoverable error, details: "
         )
         print(traceback.format_exc())
-        await synced_store_client.set(SyncedStoreStrings.ABORT, 1, ex=120)
+        await synced_store_client.set(
+            SyncedStoreStrings.ABORT,
+            1,
+            ex=token_manager.token_manager_config.ANNOUNCEMENT_DURATION,
+        )
         raise RuntimeError("Master bootup failed") from e
     finally:
         await synced_store_client.delete(SyncedStoreStrings.AUTH_BOOTUP_MASTER)
@@ -231,6 +188,7 @@ async def slave_bootup(
     config: AppConfig,
     synced_store_client: Redis,
     keydata_repository: KeydataRepository,
+    token_manager: TokenManager,
     process_id: int,
     master_wait_interval: float = 1.0,
 ) -> None:
@@ -246,35 +204,24 @@ async def slave_bootup(
 
     # Once lock is released, slave worker only needs to consult database and write to its own memory
 
-    keys: list[KeyData] = await keydata_repository.get_relevant_keydata(
-        limit=config.JWKS.JWKS_CAP, raise_on_empty=True
+    keys: list[KeyPrivateDataResult] = await keydata_repository.get_relevant_keydata(
+        limit=config.JWKS.JWKS_CAP, raise_on_empty=True, public_data_only=False
     )
 
-    active_keydata: KeyMetadata | None = None
-    active_kid: str | None = None
-    rotated_active_keys_mapping: dict[str, KeyMetadata] = {}
+    active_keydata: KeyPrivateDataResult | None = None
+    rotated_active_keys_mapping: dict[str, KeyPublicDataResult] = {}
 
     for key in keys:
         if key.rotated_out_at:
             # Verification Key
-            rotated_active_keys_mapping[key.kid] = KeyMetadata(
-                key.public_pem,
-                key.private_pem,
-                key.alg,
-                key.epoch.timestamp(),
-                key.rotated_out_at.timestamp(),
-            )
+            rotated_active_keys_mapping[key.kid] = key.create_public_copy()
         else:
-            active_kid = key.kid
-            active_keydata = KeyMetadata(
-                key.public_pem, key.private_pem, key.alg, key.epoch.timestamp()
-            )
+            active_keydata = key
 
-    if not (active_kid and active_keydata):
+    if not active_keydata:
         raise RuntimeError("No active key found")
 
-    token_manager: Final[TokenManager] = get_token_manager()
-    token_manager.set_key_state(active_kid, active_keydata, rotated_active_keys_mapping)
+    token_manager.set_key_state(active_keydata, rotated_active_keys_mapping)
 
 
 @asynccontextmanager
@@ -295,6 +242,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     keydata_repository: Final[KeydataRepository] = KeydataRepository(
         get_database_session_maker()
     )
+    token_manager: Final[TokenManager] = get_token_manager()
+    filesystem_key_manager: Final[FileSystemKeyManager] = get_filesystem_key_manager()
 
     is_master: bool = bool(
         await synced_store_client.set(
@@ -303,9 +252,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
 
     if is_master:
-        await master_bootup(config, synced_store_client, keydata_repository, pid)
+        await master_bootup(
+            config,
+            synced_store_client,
+            keydata_repository,
+            filesystem_key_manager,
+            token_manager,
+            pid,
+        )
     else:
-        await slave_bootup(config, synced_store_client, keydata_repository, pid)
+        await slave_bootup(
+            config, synced_store_client, keydata_repository, token_manager, pid
+        )
 
     register_routers(app, ROUTER_URL_MAPPING, config.CORE.APPLICATION_ROOT)
 

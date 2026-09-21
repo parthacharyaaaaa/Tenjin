@@ -123,7 +123,7 @@ class FileSystemKeyManager(AntiSingletonMixin):
         key_id: Final[str] = secrets.token_hex(self.keys_config.KEY_IDENTIFIER_LENGTH)
         return key_id, private_key, public_key
 
-    async def initialize_jwks(self, keys: Sequence[KeyPrivateDataResult]) -> None:
+    async def initialize_jwks(self, keys: Sequence[KeyPublicDataResult]) -> None:
         jwks_contents: list[dict[str, str | int]] = []
         for key in keys:
             verification_key: PublicKeyTypes = load_pem_public_key(key.public_pem)
