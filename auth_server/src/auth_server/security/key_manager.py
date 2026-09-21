@@ -3,6 +3,7 @@ import secrets
 from collections.abc import AsyncGenerator, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import IntEnum, IntFlag
 from pathlib import Path
 from typing import Final, Protocol
@@ -28,6 +29,7 @@ from auth_server.repositories.keydata import (
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
+from auth_server.security.key_container import KeyMetadata
 from auth_server.security.token_manager import TokenManager
 from auth_server.strings import (
     GENERIC_SEPARATOR,
@@ -206,15 +208,23 @@ class FileSystemKeyManager(AntiSingletonMixin):
             await jwks_file.write(orjson.dumps(jwks_data))
 
     async def delete_key_files(
-        self, key_ids: Sequence[str], *, delete_private: bool = False
+        self,
+        key_ids: Sequence[str],
+        *,
+        delete_private: bool = False,
+        delete_public: bool = True,
     ):
+        if not (delete_public or delete_private):
+            raise ValueError("Atleast 1 deletion flag must be true")
+
         deletion_paths: list[Path] = []
         for key_id in key_ids:
-            public_path: Path = self.jwks_config.PUBLIC_PEM_DIRECTORY.joinpath(
-                self.pem_filename_template.format(key_id)
-            )
-            deletion_paths.append(public_path)
-            self._insure_file_rewrite(public_path)
+            if delete_public:
+                public_path: Path = self.jwks_config.PUBLIC_PEM_DIRECTORY.joinpath(
+                    self.pem_filename_template.format(key_id)
+                )
+                deletion_paths.append(public_path)
+                self._insure_file_rewrite(public_path)
             if delete_private:
                 private_path: Path = self.jwks_config.PRIVATE_PEM_DIRECTORY.joinpath(
                     self.pem_filename_template.format(key_id)
@@ -343,6 +353,9 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
         return await self.synced_store_client.lrange(  # pyrefly: ignore[not-async]
             SyncedStoreStrings.VALID_KEYS, 0, -1
         )
+
+    async def get_active_key_id(self) -> str:
+        return (await self.get_valid_keys_ids())[0]
 
     async def overwrite_valid_keys(self, keys: Sequence[str]) -> None:
         async with self.synced_store_client.pipeline(transaction=True) as pipeline:
@@ -520,3 +533,126 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     self.token_manager.invalidate_key(key.kid)
 
         return active_key.kid, tuple(i.kid for i in valid_inactive_keys)
+
+    async def rotate_key(
+        self,
+        cooldown_duration: int | None = None,
+        *,
+        rotation_author: int | None = None,
+    ) -> KeyPublicDataResult:
+        async with self._transactional_block(
+            operation=SyncedStoreStrings.INVALIDATE_KEY,
+            lock_duration=LockTIme.MEDIUM,
+            operational_cooldown_duration=cooldown_duration,
+        ):
+            kid, signing_key, verification_key = (
+                self.filesystem_key_manager.generate_ecdsa_pair()
+            )
+            generation_epoch: Final[datetime] = datetime.now(UTC)
+            private_pem: Final[bytes] = signing_key.private_bytes(
+                encoding=Encoding.PEM,
+                format=PrivateFormat.PKCS8,
+                encryption_algorithm=NoEncryption(),
+            )
+            public_pem: Final[bytes] = verification_key.public_bytes(
+                encoding=Encoding.PEM,
+                format=PublicFormat.SubjectPublicKeyInfo,
+            )
+
+            target_id: str | None = None
+            async with self.keydata_repository.unit_of_work():
+                # Update currently active key
+                previous_key: (
+                    KeyPublicDataResult | None
+                ) = await self.keydata_repository.get_active_key(
+                    lock_args=(SelectionLockOption.READ, SelectionLockOption.KEY_SHARE)
+                )
+                if not previous_key:
+                    raise Exception("Invalid key state!")
+
+                # Reflect rotation in DB
+                new_key: Final[
+                    KeyPublicDataResult
+                ] = await self.keydata_repository.rotate_key(
+                    previous_key.kid,
+                    kid,
+                    public_pem,
+                    private_pem,
+                    rotation_author=rotation_author,
+                    epoch=generation_epoch,
+                    returning=True,
+                )
+
+                # Check whether max capacity has been reached. If so, purge oldest key
+                valid_inactive_key_data: list[tuple[str, datetime]] = [
+                    (i.kid, i.rotated_out_at)
+                    for i in (
+                        await self.keydata_repository.get_valid_inactive_keys(
+                            lock_args=(
+                                SelectionLockOption.READ,
+                                SelectionLockOption.KEY_SHARE,
+                            )
+                        )
+                    )
+                ]
+
+                if (
+                    len(valid_inactive_key_data)
+                    > self.filesystem_key_manager.keys_config.MAX_VALID_KEYS
+                ):
+                    target_id = sorted(valid_inactive_key_data, key=lambda x: x[1])[0][
+                        0
+                    ]
+                    await self.keydata_repository.expire_keydata(target_id)
+
+                # Update files
+                await self.filesystem_key_manager.update_jwks(
+                    verification_key,
+                    kid,
+                )
+                await self.filesystem_key_manager.write_ecdsa_pair(
+                    private_key=signing_key,
+                    public_key=verification_key,
+                    key_id=kid,
+                )
+
+                # Remove previous key's private PEM file
+                await self.filesystem_key_manager.delete_key_files(
+                    (previous_key.kid,), delete_private=True, delete_public=False
+                )
+                if target_id is not None:
+                    await self.filesystem_key_manager.delete_key_files(
+                        (target_id,), delete_private=True
+                    )
+
+                # Update token manager's mapping to use this newly created ECDSA pair
+                # TODO: Update TokenManager to accept DTO over this dataclass
+                new_keydata: KeyMetadata = KeyMetadata(
+                    PUBLIC_PEM=public_pem,
+                    PRIVATE_PEM=private_pem,
+                    ALGORITHM="ES256",
+                )
+                self.token_manager.update_keydata(kid, new_keydata)
+
+                # Update distributed state
+                valid_keys: list[
+                    str
+                ] = await self.synced_store_key_manager.get_valid_keys_ids()
+
+                # Should never happen, but in case it does we fall back and regenerate the entire list
+                if not valid_keys or kid not in valid_keys:
+                    valid_keys: list[str] = [
+                        k.kid
+                        for k in await self.keydata_repository.get_relevant_keydata(
+                            None
+                        )
+                    ]
+                elif target_id in valid_keys:
+                    # Remove invalidated key ID
+                    # in this branch, target_id will always be str since valid_keys is always Sequence[str]
+                    valid_keys.remove(target_id)  # pyrefly: ignore[bad-argument-type]
+
+                # At this state, valid_keys is a consistent list of key IDs
+                # Set global cooldown for key rotation, update global state, and release rotation lock
+                await self.synced_store_key_manager.overwrite_valid_keys(valid_keys)
+        return new_key
