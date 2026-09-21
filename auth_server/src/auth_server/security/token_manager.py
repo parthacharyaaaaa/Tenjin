@@ -16,8 +16,6 @@ from auth_server.repositories.keydata import (
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
-
-# from auth_server.security.key_container import KeyMetadata
 from auth_server.security.tokens import (
     StandardAccessTokenClaims,
     StandardRefreshTokenClaims,
