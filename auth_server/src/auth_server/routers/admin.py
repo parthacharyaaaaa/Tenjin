@@ -13,7 +13,6 @@ from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse
-from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -24,7 +23,6 @@ from auth_server.dependencies import (
     get_app_config,
     get_repository_work_coordinator,
     get_suspicious_activity_repository,
-    get_synced_store_client,
 )
 from auth_server.models.cmd_requests import (
     AdminAuthenticationModel,
@@ -39,7 +37,6 @@ from auth_server.repositories.admin import (
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.security.admin_roles import AdminRole
 from auth_server.security.admin_sessions import AdminSessionManager
-from auth_server.security.keygen import generate_ecdsa_pair
 from auth_server.security.permissions import Permission
 from auth_server.utils.auth_auxillary import (
     report_suspicious_activity,
@@ -53,7 +50,6 @@ ADMIN: Final[APIRouter] = APIRouter()
 async def admin_login(
     auth_model: AdminAuthenticationModel,
     config: Annotated[AppConfig, Depends(get_app_config)],
-    synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
     suspicious_activity_repository: Annotated[
         SuspiciousActivityRepository, Depends(get_suspicious_activity_repository)
@@ -192,7 +188,6 @@ async def admin_refresh(
     refresh_model: AdminRefreshModel,
     admin_session: Annotated[AdminSession, Depends(get_admin_session)],
     config: Annotated[AppConfig, Depends(get_app_config)],
-    synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
     suspicious_activity_repository: Annotated[
         SuspiciousActivityRepository, Depends(get_suspicious_activity_repository)
@@ -259,7 +254,6 @@ async def admin_lock(
     admin_session: Annotated[AdminSession, Depends(get_admin_session)],
     identification_model: AdminIdentificationModel,
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
-    synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
     admin_session_manager: Annotated[
         AdminSessionManager, Depends(get_admin_session_manager)
     ],
@@ -314,7 +308,6 @@ async def admin_unlock(
     request: Request,
     identification_model: AdminIdentificationModel,
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
-    synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
 ) -> JSONResponse:
     """Unlock a staff admin's account"""
     try:
@@ -360,7 +353,6 @@ async def create_admin(
         AdminSession, Depends(require_permissions(Permission.CREATE_ADMIN))
     ],
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
-    config: Annotated[AppConfig, Depends(get_app_config)],
 ) -> JSONResponse:
     try:
         existing_admin: (
@@ -374,7 +366,6 @@ async def create_admin(
         )
 
     pw_hash: Final[bytes] = bcrypt_hash_password(admin_model.password)
-    _, signing_key, verification_key = generate_ecdsa_pair(config.KEYS)
     try:
         admin: AdminPublicResult = await admin_repository.create_admin(
             username=admin_model.identity,
