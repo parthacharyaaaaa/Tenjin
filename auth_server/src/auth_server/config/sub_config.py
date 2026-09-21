@@ -113,20 +113,7 @@ class JWKSConfigModel(BaseModel):
         BeforeValidator(_parse_jwks_path),
         Field(default="jwks.json", alias="JWKS_FILENAME"),
     ]
-
-    PUBLIC_PEM_DIRECTORY: Annotated[
-        Path,
-        BeforeValidator(lambda d: Path(d)),
-        Field(alias="PUBLIC_PEM_BASE_DIRECTORY"),
-    ]
-    PRIVATE_PEM_DIRECTORY: Annotated[
-        Path,
-        BeforeValidator(lambda d: Path(d)),
-        Field(alias="PRIVATE_PEM_BASE_DIRECTORY"),
-    ]
-
     JWKS_CAP: Annotated[int, Field(ge=1)]
-
     TOKEN_MANAGER: Annotated[TokenManagerConfigModel, Field(alias="token_manager")]
 
     def _resolve_path_attr(
@@ -144,12 +131,6 @@ class JWKSConfigModel(BaseModel):
             path.touch(exist_ok=True)
 
         setattr(self, attr_name, path)
-
-    def resolve_public_pem_directory(self, rootpath: Path) -> None:
-        self._resolve_path_attr("PUBLIC_PEM_DIRECTORY", rootpath)
-
-    def resolve_private_pem_directory(self, rootpath: Path) -> None:
-        self._resolve_path_attr("PRIVATE_PEM_DIRECTORY", rootpath)
 
     def resolve_jwks_filepath(self, rootpath: Path) -> None:
         self._resolve_path_attr("JWKS_FILEPATH", rootpath, "file")

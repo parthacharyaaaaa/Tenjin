@@ -4,8 +4,6 @@ PORT=8080
 
 [jwks]
 JWKS_FILENAME="jwks.json"
-PUBLIC_PEM_BASE_DIRECTORY="public_keys"
-PRIVATE_PEM_BASE_DIRECTORY="private_keys"
 JWKS_CAP=3
 
 [jwks.token_manager]
