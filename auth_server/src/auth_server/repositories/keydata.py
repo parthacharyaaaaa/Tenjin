@@ -517,6 +517,7 @@ class KeydataRepository(AbstractWorkRepository):
         epoch: datetime | None = None,
         previous_key_rotation_time: datetime | None = None,
         returning: Literal[False] = False,
+        public_only: bool = True,
     ) -> None: ...
 
     @overload
@@ -533,7 +534,25 @@ class KeydataRepository(AbstractWorkRepository):
         epoch: datetime | None = None,
         previous_key_rotation_time: datetime | None = None,
         returning: Literal[True],
+        public_only: Literal[True] = True,
     ) -> KeyPublicDataResult: ...
+
+    @overload
+    async def rotate_key(
+        self,
+        previous_key_id: str,
+        new_key_id: str,
+        new_key_public_pem: bytes | bytearray,
+        new_key_private_pem: bytes | bytearray,
+        *,
+        alg: str = "ES256",
+        curve: type[ec.EllipticCurve] = ec.SECP256K1,
+        rotation_author: int | None = None,
+        epoch: datetime | None = None,
+        previous_key_rotation_time: datetime | None = None,
+        returning: Literal[True],
+        public_only: Literal[False],
+    ) -> KeyPrivateDataResult: ...
 
     async def rotate_key(
         self,
@@ -548,7 +567,8 @@ class KeydataRepository(AbstractWorkRepository):
         epoch: datetime | None = None,
         previous_key_rotation_time: datetime | None = None,
         returning: bool = False,
-    ) -> KeyPublicDataResult | None:
+        public_only: bool = True,
+    ) -> KeyPublicDataResult | KeyPrivateDataResult | None:
         epoch = epoch or datetime.now(UTC)
         previous_key_rotation_time = previous_key_rotation_time or epoch
 
@@ -564,7 +584,7 @@ class KeydataRepository(AbstractWorkRepository):
             )
 
             # Add new key
-            new_key: Final[KeyPublicDataResult] = (
+            new_key: Final[KeyData] = (
                 await session.execute(
                     insert(KeyData)
                     .values(
@@ -574,9 +594,11 @@ class KeydataRepository(AbstractWorkRepository):
                         public_pem=new_key_public_pem,
                         alg=alg,
                     )
-                    .returning(KeyPublicDataResult)
+                    .returning(KeyData)
                 )
             ).scalar_one()
 
             if returning:
-                return new_key
+                if public_only:
+                    return KeyPublicDataResult.construct_from_orm(new_key)
+                return KeyPrivateDataResult.construct_from_orm(new_key)
