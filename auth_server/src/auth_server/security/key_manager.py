@@ -1,7 +1,7 @@
 import asyncio
 import secrets
 from collections.abc import AsyncGenerator, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag
 from pathlib import Path
@@ -24,13 +24,22 @@ from redis.asyncio.client import Redis
 
 from auth_server.config.sub_config import JWKSConfigModel, KeyConfigModel
 from auth_server.repositories.keydata import KeyPrivateDataResult
-from auth_server.strings import SyncedStoreStrings
+from auth_server.security.token_manager import TokenManager
+from auth_server.strings import GENERIC_SEPARATOR, SyncedStoreStrings
 
 
 class KeyOperationLocks(IntFlag):
     JWKS_WRITE = 0b0001
     INVALIDATION_UPDATE = 0b0010
     KEYSTORE_CLEAN = 0b0100
+
+
+class LockTIme(IntEnum):
+    LOW = 10
+    LMEDIUM = 25
+    MEDIUM = 50
+    HMEDIUM = 75
+    HIGH = 100
 
 
 class SupportsTransactionalBlocks(Protocol):
@@ -241,42 +250,11 @@ class FileSystemKeyManager(AntiSingletonMixin):
         )
 
 
-class LockTIme(IntEnum):
-    LOW = 10
-    LMEDIUM = 25
-    MEDIUM = 50
-    HMEDIUM = 75
-    HIGH = 100
-
-
 @dataclass(slots=True)
 class SyncedStoreKeyStateManager(AntiSingletonMixin):
     synced_store_client: Redis
 
     _valid_keys_view: list[str] = field(default_factory=list, init=False)
-    _operational_lock: str | None = field(default=None, init=False)
-    _operational_lock_duration: LockTIme = field(default=LockTIme.LOW, init=False)
-    _operational_cooldown_duration: int = field(default=0, init=False)
-    _in_transaction: bool = field(default=False, init=False)
-
-    _lock_value: str = field(default="LOCK", kw_only=True)
-
-    def define_transactional_lock(
-        self,
-        lock: SyncedStoreStrings,
-        *,
-        duration: LockTIme = LockTIme.LOW,
-        override: bool = True,
-    ) -> None:
-        if self._in_transaction:
-            raise ValueError("Cannot set lock inside an ongoing transaction")
-        if self._operational_lock and not override:
-            raise ValueError(f"Lock already exists: {self._operational_lock}")
-        self._operational_lock = lock
-        self._operational_lock_duration = duration
-
-    def define_cooldown_period(self, cooldown_period: int) -> None:
-        self._operational_cooldown_duration = cooldown_period
 
     @asynccontextmanager
     async def transactional_block(
@@ -285,38 +263,16 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
         self._valid_keys_view = await self.synced_store_client.lrange(  # pyrefly: ignore[not-async]
             SyncedStoreStrings.VALID_KEYS, 0, -1
         )
-        self._in_transaction = True
         try:
-            if self._operational_lock:
-                await self.synced_store_client.set(
-                    self._operational_lock,
-                    self._lock_value,
-                    nx=True,
-                    ex=self._operational_lock_duration,
-                )
             yield
         except Exception:
             async with self.synced_store_client.pipeline(transaction=True) as pipeline:
                 pipeline.delete(SyncedStoreStrings.VALID_KEYS)
                 pipeline.lpush(SyncedStoreStrings.VALID_KEYS, *self._valid_keys_view)
                 await pipeline.execute()
-        else:
-            if self._operational_cooldown_duration:
-                await self.synced_store_client.set(
-                    SyncedStoreStrings.KEY_ROTATION_COOLDOWN,
-                    1,
-                    ex=self._operational_lock_duration,
-                )
+            raise
         finally:
-            self._operational_cooldown_duration = 0
-            self._in_transaction = False
-            self._operational_lock_duration = LockTIme.LOW
             self._valid_keys_view.clear()
-            if self._operational_lock:
-                try:
-                    await self.synced_store_client.delete(self._operational_lock)
-                finally:
-                    self._operational_lock = None
 
     async def get_key_operational_cooldown(self) -> bool:
         return bool(
@@ -327,3 +283,69 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
         return await self.synced_store_client.lrange(  # pyrefly: ignore[not-async]
             SyncedStoreStrings.VALID_KEYS, 0, -1
         )
+
+
+@dataclass(slots=True, frozen=True)
+class KeyLifecycleManager(AntiSingletonMixin):
+    synced_store_client: Redis
+    synced_store_key_manager: SyncedStoreKeyStateManager
+    filesystem_key_manager: FileSystemKeyManager
+    token_manager: TokenManager
+
+    _lock_value: str = field(default="LOCK", kw_only=True)
+    _lock_prefix: str = field(default="LOCK", kw_only=True)
+    _string_separator: str = field(default=GENERIC_SEPARATOR, kw_only=True)
+
+    def generate_distributed_lock_name(self, operation: str) -> str:
+        return self._string_separator.join((self._lock_prefix, operation))
+
+    _transactional_stack_order: tuple[SupportsTransactionalBlocks] = field(
+        init=False, default_factory=tuple
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "_transactional_stack_order",
+            (
+                self.filesystem_key_manager,
+                self.synced_store_key_manager,
+            ),
+        )
+
+    @asynccontextmanager
+    async def _transactional_block(
+        self,
+        *,
+        operation: SyncedStoreStrings | None = None,
+        lock_duration: LockTIme = LockTIme.LOW,
+        operational_cooldown_duration: int | None = None,
+    ) -> AsyncGenerator[None]:
+        lock: Final[str | None] = (
+            self.generate_distributed_lock_name(operation) if operation else None
+        )
+        if lock:
+            _lock_acquired: bool = bool(
+                await self.synced_store_client.set(
+                    lock, self._lock_value, ex=lock_duration, nx=True
+                )
+            )
+            if not _lock_acquired:
+                raise Exception(f"Failed to acquire operational lock for {operation}")
+        try:
+            async with AsyncExitStack() as stack:
+                for transactional_worker in self._transactional_stack_order:
+                    await stack.enter_async_context(
+                        transactional_worker.transactional_block()
+                    )
+                yield
+
+                if operational_cooldown_duration is not None:
+                    await self.synced_store_client.set(
+                        SyncedStoreStrings.KEY_ROTATION_COOLDOWN,
+                        1,
+                        ex=operational_cooldown_duration,
+                    )
+        finally:
+            if lock is not None:
+                await self.synced_store_client.delete(lock)
