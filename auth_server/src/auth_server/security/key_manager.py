@@ -1,6 +1,6 @@
 import asyncio
 import secrets
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from enum import IntEnum, IntFlag
@@ -23,9 +23,13 @@ from cryptography.hazmat.primitives.serialization import (
 from redis.asyncio.client import Redis
 
 from auth_server.config.sub_config import JWKSConfigModel, KeyConfigModel
-from auth_server.repositories.keydata import KeyPrivateDataResult
+from auth_server.repositories.keydata import KeydataRepository, KeyPrivateDataResult
 from auth_server.security.token_manager import TokenManager
-from auth_server.strings import GENERIC_SEPARATOR, SyncedStoreStrings
+from auth_server.strings import (
+    GENERIC_SEPARATOR,
+    SelectionLockOption,
+    SyncedStoreStrings,
+)
 
 
 class KeyOperationLocks(IntFlag):
@@ -111,8 +115,8 @@ class FileSystemKeyManager(AntiSingletonMixin):
             self.keys_config.EC_TYPE
         )
         public_key: Final[ec.EllipticCurvePublicKey] = private_key.public_key()
-        kid: Final[str] = secrets.token_hex(self.keys_config.KEY_IDENTIFIER_LENGTH)
-        return kid, private_key, public_key
+        key_id: Final[str] = secrets.token_hex(self.keys_config.KEY_IDENTIFIER_LENGTH)
+        return key_id, private_key, public_key
 
     async def initialize_jwks(self, keys: Sequence[KeyPrivateDataResult]) -> None:
         jwks_contents: list[dict[str, str | int]] = []
@@ -129,7 +133,7 @@ class FileSystemKeyManager(AntiSingletonMixin):
                     "alg": key.alg,
                     "crv": key.curve,
                     "use": "sig",
-                    "kid": key.kid,
+                    "key_id": key.kid,
                     "x": to_base64url(public_numbers.x),
                     "y": to_base64url(public_numbers.y),
                 }
@@ -144,7 +148,7 @@ class FileSystemKeyManager(AntiSingletonMixin):
     async def update_jwks(
         self,
         vk: ec.EllipticCurvePublicKey,
-        kid: str,
+        key_id: str,
         enforce_capacity: bool = True,
     ) -> None:
         """Updates the JWKS JSON file to include the given public key as the latest key"""
@@ -153,35 +157,83 @@ class FileSystemKeyManager(AntiSingletonMixin):
             to_base64url(public_numbers.x),
             to_base64url(public_numbers.y),
         )
-        key_mapping: dict[str, str | int] = {
+        key_mapping: dict[str, str] = {
             "kty": "EC",
             "alg": "ECDSA",
             "crv": ec.SECP256K1.name,
             "use": "sig",
-            "kid": kid,
+            "kid": key_id,
             "x": encoded_x,
             "y": encoded_y,
         }
 
+        self._insure_file_rewrite(self.jwks_config.JWKS_FILEPATH)
         async with aiofiles.open(
             self.jwks_config.JWKS_FILEPATH, "r+"
         ) as jwks_json_file:
-            jwks_contents: list[dict[str, str | int]] = orjson.loads(
+            jwks_contents: list[dict[str, str]] = orjson.loads(
                 await jwks_json_file.read()
             )["keys"]
             jwks_contents.append(key_mapping)
             length: int = len(jwks_contents)
 
             if enforce_capacity and length > self.keys_config.MAX_VALID_KEYS:
-                jwks_contents: list[dict[str, str | int]] = jwks_contents[
+                truncated_keys: list[dict[str, str]] = jwks_contents[
+                    : self.keys_config.MAX_VALID_KEYS
+                ]
+                jwks_contents: list[dict[str, str]] = jwks_contents[
                     -self.keys_config.MAX_VALID_KEYS :
                 ]
+
+                await self.delete_key_files(tuple(key["kid"] for key in truncated_keys))
 
             await jwks_json_file.truncate(0)
             await jwks_json_file.seek(0)
             await jwks_json_file.write(
                 orjson.dumps({"keys": jwks_contents}).decode("utf-8")
             )
+
+    async def overwrite_jwks(
+        self,
+        jwks_data: list[dict[str, str]],  # TODO: Make this a pydantic model
+    ) -> None:
+        self._insure_file_rewrite(self.jwks_config.JWKS_FILEPATH)
+        async with aiofiles.open(self.jwks_config.JWKS_FILEPATH, "wb") as jwks_file:
+            await jwks_file.write(orjson.dumps(jwks_data))
+
+    async def delete_key_files(
+        self, key_ids: Sequence[str], *, delete_private: bool = False
+    ):
+        deletion_paths: list[Path] = []
+        for key_id in key_ids:
+            public_path: Path = self.jwks_config.PUBLIC_PEM_DIRECTORY.joinpath(
+                self.pem_filename_template.format(key_id)
+            )
+            deletion_paths.append(public_path)
+            self._insure_file_rewrite(public_path)
+            if delete_private:
+                private_path: Path = self.jwks_config.PRIVATE_PEM_DIRECTORY.joinpath(
+                    self.pem_filename_template.format(key_id)
+                )
+                deletion_paths.append(private_path)
+                self._insure_file_rewrite(private_path)
+
+        await asyncio.gather(
+            *(
+                asyncio.to_thread(path.unlink, missing_ok=True)
+                for path in deletion_paths
+            )
+        )
+
+    async def invalidate_keys(self, keys: Sequence[str]) -> None:
+        async with aiofiles.open(self.jwks_config.JWKS_FILEPATH, "rb") as jwks_file:
+            jwks_data: list[dict[str, str]] = orjson.loads(await jwks_file.read())
+        for i, key_data in enumerate(jwks_data.copy()):
+            if key_data["kid"] in keys:
+                jwks_data.pop(i)
+
+        await self.overwrite_jwks(jwks_data)
+        await self.delete_key_files(keys)
 
     async def write_ecdsa_pair(
         self,
@@ -284,13 +336,20 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
             SyncedStoreStrings.VALID_KEYS, 0, -1
         )
 
+    async def overwrite_valid_keys(self, keys: Sequence[str]) -> None:
+        async with self.synced_store_client.pipeline(transaction=True) as pipeline:
+            pipeline.delete(SyncedStoreStrings.VALID_KEYS)
+            pipeline.lpush(*keys)
+            await pipeline.execute()
+
 
 @dataclass(slots=True, frozen=True)
 class KeyLifecycleManager(AntiSingletonMixin):
     synced_store_client: Redis
-    synced_store_key_manager: SyncedStoreKeyStateManager
-    filesystem_key_manager: FileSystemKeyManager
+    keydata_repository: KeydataRepository
     token_manager: TokenManager
+    filesystem_key_manager: FileSystemKeyManager
+    synced_store_key_manager: SyncedStoreKeyStateManager
 
     _lock_value: str = field(default="LOCK", kw_only=True)
     _lock_prefix: str = field(default="LOCK", kw_only=True)
@@ -349,3 +408,61 @@ class KeyLifecycleManager(AntiSingletonMixin):
         finally:
             if lock is not None:
                 await self.synced_store_client.delete(lock)
+
+    async def invalidate_key(
+        self,
+        key_id: str,
+        *,
+        intermediate_message_mapping: MutableMapping[str, str] | None = None,
+        cooldown_duration: int | None = None,
+    ) -> None:
+        async with self._transactional_block(
+            operation=SyncedStoreStrings.INVALIDATE_KEY,
+            lock_duration=LockTIme.MEDIUM,
+            operational_cooldown_duration=cooldown_duration,
+        ):
+            target_key: KeyPrivateDataResult | None = None
+            async with self.keydata_repository.unit_of_work():
+                # Select and lock key if exists
+                # Weaker, shared FOR KEY SHARE lock acquired since contention is
+                # handled above DB, and we only need to prevent DELETE and key-UPDATEs
+                target_key = await self.keydata_repository.get_keydata(
+                    key_id,
+                    public_only=False,
+                    lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ),
+                )
+                if not target_key:
+                    raise ValueError(f"No key with ID {key_id} found")
+                if not target_key.rotated_out_at:
+                    raise Exception(f"Cannot invalidate active key {key_id}")
+                if target_key.expired_at is not None:
+                    raise Exception(f"Key {key_id} has already been expired")
+                await self.keydata_repository.expire_keydata(key_id)
+
+                # Before committing to DB, delete public PEM file, and update JWKS
+                await self.filesystem_key_manager.invalidate_keys((target_key.kid,))
+
+                # Key invalidation successful, update local token manager
+                self.token_manager.invalidate_key(key_id)  # TODO: Add rollback control
+
+                # Update distributed state
+                valid_keys: list[
+                    str
+                ] = await self.synced_store_key_manager.get_valid_keys_ids()
+
+                # Should never happen, but in case it does we fall back and regenerate the entire list
+                if not valid_keys or key_id not in valid_keys:
+                    if intermediate_message_mapping:
+                        intermediate_message_mapping["keylist_integrity_warning"] = (
+                            "Synced keylist state was inconsistent and hence regenerated through database"
+                        )
+                    valid_keys: list[str] = [
+                        k.kid
+                        for k in await self.keydata_repository.get_relevant_keydata(
+                            None
+                        )
+                    ]
+                else:
+                    valid_keys.remove(key_id)
+
+                await self.synced_store_key_manager.overwrite_valid_keys(valid_keys)
