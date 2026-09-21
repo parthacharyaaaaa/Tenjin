@@ -33,7 +33,6 @@ class TokenManager:
         refresh_lifetime: int = 60 * 60 * 3,
         access_lifetime: int = 60 * 30,
         alg: str = "ES256",
-        typ: str = "JWT",
         universal_claims: dict | None = None,
         universal_headers: dict | None = None,
         leeway: int = 180,
@@ -57,7 +56,7 @@ class TokenManager:
         self.keydata_repository = keydata_repository
 
         # Initialize universal headers, common to all tokens issued in any context
-        universal_headers = {"typ": typ, "alg": alg}
+        universal_headers = {"typ": "JWT", "alg": alg}
         if universal_headers:
             universal_headers.update(universal_headers)
         self.universal_headers = universal_headers
@@ -169,15 +168,15 @@ class TokenManager:
     ) -> str:
         if family_id:
             # Check for replay attack
-            key: bytes | None = await self._token_store_client.lindex(
+            key: str | None = await self._token_store_client.lindex(  # pyrefly: ignore[not-async]
                 f"FID:{family_id}", 0
-            )  # type: ignore[reportAssignmentType]
+            )
             if not key:
                 await self.invalidate_family(family_id)
                 raise ValueError(f"Token family {family_id} is invalid or empty")
 
-            key_metadata = key.split(b":")
-            if str(key_metadata[0]) != jti or float(key_metadata[1]) != exp:
+            key_metadata = key.split(":")
+            if key_metadata[0] != jti or float(key_metadata[1]) != exp:
                 await self.invalidate_family(family_id)
                 raise ValueError(
                     f"Replay attack detected or token metadata mismatch for family {family_id}"
@@ -244,9 +243,9 @@ class TokenManager:
                 return
 
             if llen >= self.max_llen:
-                await self._token_store_client.rpop(
+                await self._token_store_client.rpop(  # pyrefly: ignore[not-async]
                     f"FID:{family_id}", max(1, llen - self.max_llen)
-                )  # type: ignore[reportGeneralTypeIssues]
+                )
         except Exception as e:
             raise RuntimeError("Failed to perform operation on token store") from e
 
@@ -277,9 +276,9 @@ class TokenManager:
         Returns:
             Fetched key casted to KeyMetadata, None if not found"""
         # Check synced store for an invalid key announcement for this key
-        invalid_key: bytes | None = await self.synced_store_client.get(
+        invalid_key: str | None = await self.synced_store_client.get(
             f"invalid_key:{kid}"
-        )  # type: ignore[reportAssignmentType]
+        )
         if invalid_key:
             return None
 
@@ -310,15 +309,15 @@ class TokenManager:
         """Check synced store to keep local keys updated with global keys. Intended to be run as a non-blocking, background task upon instantiation"""
         while True:
             try:
-                valid_keys: list[bytes] | None = await self.synced_store_client.lrange(
+                valid_keys: list[str] | None = await self.synced_store_client.lrange(  # pyrefly: ignore[not-async]
                     SyncedStoreStrings.VALID_KEYS, 0, -1
-                )  # type: ignore[reportAssignmentType]
+                )
 
                 if not valid_keys:
                     raise RuntimeError("Valid keys list empty or not found")
 
                 global_valid_keyset: frozenset[str] = frozenset(
-                    key.decode() for key in valid_keys
+                    key for key in valid_keys
                 )
                 local_valid_keyset: frozenset[str] = frozenset(self.key_mapping.keys())
 
