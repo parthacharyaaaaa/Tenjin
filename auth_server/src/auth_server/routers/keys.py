@@ -29,10 +29,12 @@ from auth_server.dependencies import (
     get_admin_repository,
     get_admin_session_manager,
     get_app_config,
+    get_key_lifecycle_manager,
     get_keydata_repository,
     get_repository_work_coordinator,
     get_suspicious_activity_repository,
     get_synced_store_client,
+    get_synced_store_key_state_manager,
     get_token_manager,
 )
 from auth_server.models.session import AdminSession
@@ -46,6 +48,10 @@ from auth_server.repositories.suspicious_activity import SuspiciousActivityRepos
 from auth_server.security.admin_roles import AdminRole
 from auth_server.security.admin_sessions import AdminSessionManager
 from auth_server.security.key_container import KeyMetadata
+from auth_server.security.key_manager import (
+    KeyLifecycleManager,
+    SyncedStoreKeyStateManager,
+)
 from auth_server.security.keygen import (
     generate_ecdsa_pair,
     update_jwks,
@@ -88,145 +94,25 @@ async def invalidate_key(
     admin_session: Annotated[
         AdminSession, Depends(require_permissions(Permission.INVALIDATE_KEY))
     ],
-    config: Annotated[AppConfig, Depends(get_app_config)],
-    token_manager: Annotated[TokenManager, Depends(get_token_manager)],
-    keydata_repository: Annotated[KeydataRepository, Depends(get_keydata_repository)],
-    admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
-    suspicious_activity_repository: Annotated[
-        SuspiciousActivityRepository, Depends(get_suspicious_activity_repository)
+    key_lifecycle_manager: Annotated[
+        KeyLifecycleManager, Depends(get_key_lifecycle_manager)
     ],
-    synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
-    repository_coordinator: Annotated[
-        MultiRepositoryWorkCoordinator, Depends(get_repository_work_coordinator)
-    ],
-    admin_session_manager: Annotated[
-        AdminSessionManager, Depends(get_admin_session_manager)
+    synced_keystate_manager: Annotated[
+        SyncedStoreKeyStateManager, Depends(get_synced_store_key_state_manager)
     ],
 ) -> JSONResponse:
-    """Invalidate a given key"""
-    key_lock: Final[str] = f"INVALIDATE_KEY:{kid}"
-    if not synced_store_client.set(key_lock, admin_session.admin_id, ex=300, nx=True):
-        # Another worker is performing clean operation, reject this request
-        admin_id: bytes = await synced_store_client.get(key_lock)  # type: ignore[reportAssignmentType]
-        return JSONResponse(
-            {
-                "message": "There is an active keystore clean being performed, your request has been rejected",
-                "admin_id": admin_id.decode(),
-            },
-            status_code=409,
-        )
-
-    public_pem_fpath: Path = config.JWKS.PUBLIC_PEM_DIRECTORY / f"public_{kid}_key.pem"
     additional_kw: dict[str, str] = {}
-    original_jwks: list[dict[str, Any]] = []
+    await key_lifecycle_manager.invalidate_key(
+        kid, intermediate_message_mapping=additional_kw
+    )
 
-    async with aiofiles.open(config.JWKS.JWKS_FILEPATH, "r") as jwks_file:
-        original_jwks = orjson.loads(await jwks_file.read())["keys"]
-
-    if any(mapping["kid"] == kid for mapping in original_jwks):
-        additional_kw["jwks_integrity_warning"] = "This key ID was not found in JWKS"
-
-    target_key: KeyPrivateDataResult | None = None
-    try:
-        async with keydata_repository.unit_of_work():
-            # Select and lock key if exists
-            # Weaker, shared FOR KEY SHARE lock acquired since contention is
-            # handled above DB, and we only need to prevent DELETE and key-UPDATEs
-            target_key = await keydata_repository.get_keydata(
-                kid,
-                public_only=False,
-                lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ),
-            )
-
-            # Key exists
-            if not target_key:
-                raise HTTPException(404, f"No key with ID {kid} found")
-
-            # Key is inactive
-            if not target_key.rotated_out_at:
-                # Key is active, cannot expire directly
-                await report_suspicious_activity(
-                    config,
-                    admin_session.admin_id,
-                    f"Invaldiation attempt on active key {kid}",
-                    suspicious_activity_repository,
-                    admin_repository,
-                    repository_coordinator,
-                    admin_session_manager,
-                )
-                raise HTTPException(
-                    409,
-                    f"Active key {kid} must be rotated out before being invalidated",
-                )
-
-            # Key is still valid for verification
-            if target_key.expired_at:
-                raise HTTPException(409, f"Key {kid} has already been expired")
-
-            await keydata_repository.expire_keydata(kid)
-
-            # Before persisting to DB, delete public PEM file, and update JWKS
-            updated_jwks = [
-                mapping for mapping in original_jwks if mapping["kid"] != kid
-            ]
-            async with aiofiles.open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
-                await jwks_file.write(
-                    orjson.dumps({"keys": updated_jwks}, option=orjson.OPT_INDENT_2)
-                )
-            # Delete public PEM file
-            await asyncio.to_thread(public_pem_fpath.unlink, missing_ok=True)
-    except (SQLAlchemyError, OSError) as exc:
-        # Revert JWKS state
-        async with aiofiles.open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
-            await jwks_file.write(
-                orjson.dumps({"keys": original_jwks}, option=orjson.OPT_INDENT_2)
-            )
-
-        # Regenerate PEM file
-        if target_key and not await asyncio.to_thread(public_pem_fpath.exists):
-            await asyncio.to_thread(public_pem_fpath.write_bytes, target_key.public_pem)
-
-        # State reverted, crash and burn
-        error: HTTPException = HTTPException(500, f"Failed to invalidate key {kid}")
-        setattr(error, "additional_kwargs", additional_kw)
-        raise error from exc
-
-    # Key invalidation successful, update local token manager
-    token_manager.invalidate_key(kid)
-
-    # Update global
-    raw_valid_keys: list[bytes] = await synced_store_client.lrange(
-        SyncedStoreStrings.VALID_KEYS, 0, -1
-    )  # type: ignore[reportAssignmentType]
-    if not raw_valid_keys or kid.encode("utf-8") not in raw_valid_keys:
-        # Should never happen, but in case it does we fall back and regenerate the entire list
-        additional_kw["keylist_integrity_warning"] = (
-            "Synced keylist state was inconsistent and hence regenerated through database"
-        )
-        valid_keys: list[str] = [
-            k.kid for k in await keydata_repository.get_relevant_keydata(None)
-        ]
-    else:
-        valid_keys: list[str] = [key.decode() for key in raw_valid_keys]
-        valid_keys.remove(kid)
-
-    # By this stage, valid_keys will maintain a consistent sequence of
-    # valid key IDs (including that of the active key),
-    # either from a simple list removal
-    # or by consulting the database in case of any inconsistency
-
-    async with synced_store_client.pipeline() as pipe:
-        pipe.delete(SyncedStoreStrings.VALID_KEYS)
-        pipe.lpush(SyncedStoreStrings.VALID_KEYS, *valid_keys)
-        pipe.delete(key_lock)
-        await pipe.execute()
-
+    valid_keys: list[str] = await synced_keystate_manager.get_valid_keys_ids()
     return JSONResponse(
         {
             "message": "Key invalidated successfully",
             "purged_kid": kid,
             "valid_keys": valid_keys,
-            **additional_kw,
+            "additional_info": additional_kw,
         }
     )
 
