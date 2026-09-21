@@ -1,23 +1,15 @@
-import asyncio
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Annotated, Any, Final
+from typing import Annotated, Final
 
-import aiofiles
-import orjson
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auxillary.utils import (
     json_repr,
-    to_base64url,
 )
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
 from cryptography.hazmat.primitives.serialization import (
     Encoding,
     NoEncryption,
     PrivateFormat,
     PublicFormat,
-    load_pem_public_key,
 )
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -120,130 +112,18 @@ async def invalidate_key(
 @KEY.delete("/keys/clean")
 async def clean_keystore(
     admin_session: Annotated[
-        AdminSession, Depends(require_permissions(Permission.CLEAN_KEYSTORE))
+        AdminSession, Depends(require_permissions(Permission.INVALIDATE_KEY))
     ],
-    config: Annotated[AppConfig, Depends(get_app_config)],
-    keydata_repository: Annotated[KeydataRepository, Depends(get_keydata_repository)],
-    synced_store_client: Annotated[Redis, Depends(get_synced_store_client)],
+    key_lifecycle_manager: Annotated[
+        KeyLifecycleManager, Depends(get_key_lifecycle_manager)
+    ],
 ) -> JSONResponse:
-    """Invalidate all keys except for the currently active key"""
-    # Check whether another worker is performing this action
-    if not await synced_store_client.set(
-        "CLEAN_KEYSTORE_LOCK", admin_session.admin_id, ex=300, nx=True
-    ):
-        # Another worker is performing clean operation, reject this request
-        admin_id: bytes = await synced_store_client.get("CLEAN_KEYSTORE_LOCK")  # type: ignore[reportAssignmentType]
-        return JSONResponse(
-            {
-                "message": "There is an active keystore clean being performed, your request has been rejected",
-                "admin_id": admin_id.decode(),
-            },
-            status_code=409,
-        )
-
-    # Before cleaning keystore, store all old data for rollbacks
-    old_jwks: list[dict[str, Any]] = []
-    async with aiofiles.open(config.JWKS.JWKS_FILEPATH) as jwks_file:
-        old_jwks = orjson.loads(await jwks_file.read())["keys"]
-
-    if len(old_jwks) == 1:
-        raise HTTPException(409, "No inactive keys present to invalidate")
-
-    pem_mappings: dict[str, bytes] = {}
-    for keydata in old_jwks:
-        pem_mappings[keydata["kid"]] = config.JWKS.PUBLIC_PEM_DIRECTORY.joinpath(
-            f"public_{keydata['kid']}_key.pem"
-        ).read_bytes()
-
-    # At this stage, we have all the old data saved for a rollback.
-    # JWKS can be restored, and any PEM files deleted in an erroneous transaction
-    # can be regenerated safely
-    async with keydata_repository.unit_of_work():
-        try:
-            # Fetch and lock all keys that have been rotated out, but not expired
-            valid_inactive_keys: list[
-                KeyPublicDataResult
-            ] = await keydata_repository.get_valid_inactive_keys(
-                lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ)
-            )
-
-            # Update and set as invalid, hence these keys can no longer be used for verification either
-            await keydata_repository.batch_expire_keydata(
-                tuple(k.kid for k in valid_inactive_keys)
-            )
-
-            # Fetch latest KID to prune JWKS and PEM files accordingly
-            active_key: (
-                KeyPublicDataResult | None
-            ) = await keydata_repository.get_active_key()
-            if not active_key:  # Violates business invariant, should never happen
-                raise HTTPException(500, "Invalid keystore state!")
-
-            verification_key: PublicKeyTypes = load_pem_public_key(
-                active_key.public_pem
-            )
-
-            # Should never happen
-            if not isinstance(verification_key, ec.EllipticCurvePublicKey):
-                raise HTTPException(500, "Invalid active key")
-            public_numbers: ec.EllipticCurvePublicNumbers = (
-                verification_key.public_numbers()
-            )
-            active_key_mapping: dict[str, Any] = {
-                "kty": "EC",
-                "alg": "ECDSA",
-                "crv": ec.SECP256K1.name,
-                "use": "sig",
-                "kid": active_key.kid,
-                "x": to_base64url(public_numbers.x),
-                "y": to_base64url(public_numbers.y),
-            }
-
-            async with aiofiles.open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
-                await jwks_file.write(
-                    orjson.dumps(
-                        {"keys": [active_key_mapping]}, option=orjson.OPT_INDENT_2
-                    )
-                )
-
-            # Purge all public PEM files for invalid keys
-            for key_id in valid_inactive_keys:
-                (
-                    config.JWKS.PUBLIC_PEM_DIRECTORY.joinpath(
-                        f"public_{key_id}_key.pem"
-                    ).unlink(missing_ok=True)
-                )
-        except Exception as exc:
-            # JWKS
-            async with aiofiles.open(config.JWKS.JWKS_FILEPATH, "wb") as jwks_file:
-                await jwks_file.write(
-                    orjson.dumps({"keys": old_jwks}, option=orjson.OPT_INDENT_2)
-                )
-
-            # PEM files
-            for kid, public_pem in pem_mappings.items():
-                fpath: Path = config.JWKS.PUBLIC_PEM_DIRECTORY / f"public_{kid}_key.pem"
-                # Regenerate public PEM file in case of deletion
-                if not await asyncio.to_thread(fpath.exists):
-                    await asyncio.to_thread(fpath.write_bytes, public_pem)
-
-            # All rollbacks performed, crash and burn
-            raise HTTPException(500, "Failed to perform clean operation") from exc
-        finally:
-            synced_store_client.delete("CLEAN_KEYSTORE_LOCK")
-
-    # Update global state, no need to fetch current list of keys
-    # anyways since as of this operation only a single active key would be valid throughout
-    async with synced_store_client.pipeline() as pipe:
-        pipe.delete(SyncedStoreStrings.VALID_KEYS)
-        pipe.lpush(SyncedStoreStrings.VALID_KEYS, active_key.kid)
-        await pipe.execute()
-
+    active_key_id, invalidated_key_ids = await key_lifecycle_manager.clean_keystore()
     return JSONResponse(
         {
             "message": "All inactive keys have been invalidated",
-            "invalidated keys": valid_inactive_keys,
-            "active_key": active_key.kid,
+            "invalidated keys": invalidated_key_ids,
+            "active_key": active_key_id,
         }
     )
 

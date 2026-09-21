@@ -23,7 +23,11 @@ from cryptography.hazmat.primitives.serialization import (
 from redis.asyncio.client import Redis
 
 from auth_server.config.sub_config import JWKSConfigModel, KeyConfigModel
-from auth_server.repositories.keydata import KeydataRepository, KeyPrivateDataResult
+from auth_server.repositories.keydata import (
+    KeydataRepository,
+    KeyPrivateDataResult,
+    KeyPublicDataResult,
+)
 from auth_server.security.token_manager import TokenManager
 from auth_server.strings import (
     GENERIC_SEPARATOR,
@@ -301,6 +305,10 @@ class FileSystemKeyManager(AntiSingletonMixin):
             key_id=int(active_kid),
         )
 
+    async def get_jwks(self) -> list[dict[str, str]]:
+        async with aiofiles.open(self.jwks_config.JWKS_FILEPATH, "rb") as jwks_file:
+            return orjson.loads(await jwks_file.read())
+
 
 @dataclass(slots=True)
 class SyncedStoreKeyStateManager(AntiSingletonMixin):
@@ -466,3 +474,49 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     valid_keys.remove(key_id)
 
                 await self.synced_store_key_manager.overwrite_valid_keys(valid_keys)
+
+    async def clean_keystore(
+        self, cooldown_duration: int | None = None
+    ) -> tuple[str, tuple[str, ...]]:
+        """Invalidate all keys except for the currently active key"""
+        jwks_data = await self.filesystem_key_manager.get_jwks()
+        if len(jwks_data) == 1:
+            raise Exception("No active keys present to invalidate")
+        async with self._transactional_block(
+            operation=SyncedStoreStrings.INVALIDATE_KEY,
+            lock_duration=LockTIme.MEDIUM,
+            operational_cooldown_duration=cooldown_duration,
+        ):
+            async with self.keydata_repository.unit_of_work():
+                valid_inactive_keys: list[
+                    KeyPublicDataResult
+                ] = await self.keydata_repository.get_valid_inactive_keys(
+                    lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ)
+                )
+                await self.keydata_repository.batch_expire_keydata(
+                    tuple(k.kid for k in valid_inactive_keys)
+                )
+
+                # Fetch latest KID to prune JWKS and PEM files accordingly
+                active_key: (
+                    KeyPublicDataResult | None
+                ) = await self.keydata_repository.get_active_key()
+                if not active_key:  # Violates business invariant, should never happen
+                    raise Exception("Invalid keystore state!")
+
+                await self.filesystem_key_manager.invalidate_keys(
+                    tuple(
+                        kid
+                        for key_data in jwks_data
+                        if (kid := key_data["kid"]) != active_key.kid
+                    )
+                )
+
+                await self.synced_store_key_manager.overwrite_valid_keys(
+                    (active_key.kid,)
+                )
+
+                for key in valid_inactive_keys:
+                    self.token_manager.invalidate_key(key.kid)
+
+        return active_key.kid, tuple(i.kid for i in valid_inactive_keys)
