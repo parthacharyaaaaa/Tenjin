@@ -101,9 +101,9 @@ def get_admin_session_manager() -> AdminSessionManager:
 @lru_cache(maxsize=1)
 def get_token_manager() -> TokenManager:
     return TokenManager(
-        interface=get_token_store_client(),
-        synced_store=get_synced_store_client(),
-        keydata_repository=get_keydata_repository(),
+        get_token_store_client(),
+        get_synced_store_client(),
+        get_keydata_repository(),
     )
 
 
