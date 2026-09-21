@@ -61,7 +61,6 @@ class SupportsTransactionalBlocks(Protocol):
 class FileSystemKeyManager(AntiSingletonMixin):
     jwks_config: JWKSConfigModel
     keys_config: KeyConfigModel
-    pem_filename_template: str = field(default="{key_id}_key", kw_only=True)
     _rewrite_buffer: dict[Path, bytes | bytearray | str] = field(default_factory=dict)
     _deletion_buffer: list[Path] = field(default_factory=list)
 
@@ -347,7 +346,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     raise Exception(f"Key {key_id} has already been expired")
                 await self.keydata_repository.expire_keydata(key_id)
 
-                # Before committing to DB, delete public PEM file, and update JWKS
+                # Before committing to DB, and update JWKS
                 await self.filesystem_key_manager.invalidate_keys((target_key.kid,))
 
                 # Key invalidation successful, update local token manager
@@ -397,7 +396,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     tuple(k.kid for k in valid_inactive_keys)
                 )
 
-                # Fetch latest KID to prune JWKS and PEM files accordingly
+                # Fetch latest KID to prune JWKS accordingly
                 active_key: (
                     KeyPublicDataResult | None
                 ) = await self.keydata_repository.get_active_key()
