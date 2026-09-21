@@ -29,7 +29,6 @@ from auth_server.repositories.keydata import (
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
-from auth_server.security.key_container import KeyMetadata
 from auth_server.security.token_manager import TokenManager
 from auth_server.strings import (
     GENERIC_SEPARATOR,
@@ -572,7 +571,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
 
                 # Reflect rotation in DB
                 new_key: Final[
-                    KeyPublicDataResult
+                    KeyPrivateDataResult
                 ] = await self.keydata_repository.rotate_key(
                     previous_key.kid,
                     kid,
@@ -581,6 +580,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     rotation_author=rotation_author,
                     epoch=generation_epoch,
                     returning=True,
+                    public_only=False,
                 )
 
                 # Check whether max capacity has been reached. If so, purge oldest key
@@ -627,12 +627,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
 
                 # Update token manager's mapping to use this newly created ECDSA pair
                 # TODO: Update TokenManager to accept DTO over this dataclass
-                new_keydata: KeyMetadata = KeyMetadata(
-                    PUBLIC_PEM=public_pem,
-                    PRIVATE_PEM=private_pem,
-                    ALGORITHM="ES256",
-                )
-                self.token_manager.update_keydata(kid, new_keydata)
+                self.token_manager.update_keydata(kid, new_key)
 
                 # Update distributed state
                 valid_keys: list[
@@ -655,4 +650,4 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 # At this state, valid_keys is a consistent list of key IDs
                 # Set global cooldown for key rotation, update global state, and release rotation lock
                 await self.synced_store_key_manager.overwrite_valid_keys(valid_keys)
-        return new_key
+        return new_key.create_public_copy()

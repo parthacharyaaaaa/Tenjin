@@ -11,9 +11,13 @@ from redis.asyncio import Redis
 
 from auth_server.config.sub_config import KeyConfigModel, TokenManagerConfigModel
 from auth_server.dependencies import get_app_config, get_keydata_repository
-from auth_server.models.database import KeyData
-from auth_server.repositories.keydata import KeydataRepository
-from auth_server.security.key_container import KeyMetadata
+from auth_server.repositories.keydata import (
+    KeydataRepository,
+    KeyPrivateDataResult,
+    KeyPublicDataResult,
+)
+
+# from auth_server.security.key_container import KeyMetadata
 from auth_server.security.tokens import (
     StandardAccessTokenClaims,
     StandardRefreshTokenClaims,
@@ -39,8 +43,11 @@ class TokenManager:
     universal_claims: dict[str, Any] = field(default_factory=dict)
     universal_headers: dict[str, Any] = field(default_factory=dict)
     _polling_task: asyncio.Task[None] = field(init=False)
-    _key_mapping: dict[str, KeyMetadata] = field(default_factory=dict, init=False)
+    _key_mapping: dict[str, KeyPublicDataResult] = field(
+        default_factory=dict, init=False
+    )
     _active_key: str = field(init=False, default="__UNINITIALIZED__")
+    _active_key_private_pem: bytes = field(init=False, default=b"__UNINITIALIZED__")
 
     def __post_init__(self):
         # Initialize universal headers, common to all tokens issued in any context
@@ -55,16 +62,16 @@ class TokenManager:
 
     def set_key_state(
         self,
-        active_kid: str,
-        active_key_metadata: KeyMetadata,
-        verification_keys_mapping: dict[str, KeyMetadata] | None = None,
+        active_key_data: KeyPrivateDataResult,
+        verification_keys_mapping: dict[str, KeyPublicDataResult] | None = None,
     ) -> None:
-        if not verification_keys_mapping:
-            verification_keys_mapping = {}
-        self._key_mapping: dict[str, KeyMetadata] = verification_keys_mapping | {
-            active_kid: active_key_metadata
-        }
-        self._active_key = active_kid
+        verification_keys_mapping = verification_keys_mapping or {}
+        self._key_mapping: dict[str, KeyPublicDataResult] = (
+            verification_keys_mapping
+            | {active_key_data.kid: active_key_data.create_public_copy()}
+        )
+        self._active_key = active_key_data.kid
+        self._active_key_private_pem = active_key_data.private_pem
 
     @overload
     async def decode_token(
@@ -88,8 +95,8 @@ class TokenManager:
 
             decoded_token: dict[str, Any] = jwt.decode(
                 jwt=token,
-                key=self._key_mapping[kid].PUBLIC_PEM,
-                algorithms=[self._key_mapping[kid].ALGORITHM],
+                key=self._key_mapping[kid].public_pem,
+                algorithms=[self._key_mapping[kid].alg],
                 leeway=self.token_manager_config.LEEWAY,
                 options=kwargs.get("options"),
             )
@@ -187,8 +194,8 @@ class TokenManager:
 
         return jwt.encode(
             payload=payload,
-            key=self._key_mapping[self._active_key].PRIVATE_PEM,
-            algorithm=self._key_mapping[self._active_key].ALGORITHM,
+            key=self._active_key_private_pem,
+            algorithm=self._key_mapping[self._active_key].alg,
             headers=self.universal_headers | {"kid": self._active_key},
         )
 
@@ -209,8 +216,8 @@ class TokenManager:
 
         return jwt.encode(
             payload=payload,
-            key=self._key_mapping[self._active_key].PRIVATE_PEM,
-            algorithm=self._key_mapping[self._active_key].ALGORITHM,
+            key=self._active_key_private_pem,
+            algorithm=self._key_mapping[self._active_key].alg,
             headers=self.universal_headers | {"kid": self._active_key},
         )
 
@@ -241,43 +248,31 @@ class TokenManager:
             raise RuntimeError("Failed to perform operation on token store") from e
 
     def update_keydata(
-        self, kid: str, new_keydata: KeyMetadata, active: bool = True
+        self, kid: str, new_keydata: KeyPrivateDataResult, active: bool = True
     ) -> None:
         """Update key mapping on key rotation"""
         if active:
             self._active_key = kid
+            self._active_key_private_pem = new_keydata.private_pem
 
-        self._key_mapping[kid] = new_keydata
+        self._key_mapping[kid] = new_keydata.create_public_copy()
 
-    async def fetch_unexpired_key(self, kid: str) -> KeyMetadata | None:
-        """Fetch a non-expired key from the database
-        Args:
-            kid: Key ID to query the database for
-
-        Returns:
-            Fetched key casted to KeyMetadata, None if not found"""
-        # Check synced store for an invalid key announcement for this key
-        invalid_key: str | None = await self._synced_store_client.get(
-            f"invalid_key:{kid}"
-        )
+    async def fetch_unexpired_key(self, kid: str) -> KeyPrivateDataResult | None:
+        key_label: str = f"invalid_key:{kid}"
+        # Pre-emptive negative check
+        invalid_key: str | None = await self._synced_store_client.get(key_label)
         if invalid_key:
             return None
 
-        # Try to fetch a valid key with this KID
-        key: KeyData | None = await self._keydata_repository.get_keydata(kid)
+        key: KeyPrivateDataResult | None = await self._keydata_repository.get_keydata(
+            kid, public_only=False
+        )
         if not key:
-            # Announce non existence to other workers in case they also receive this invalid key
             self._synced_store_client.set(
-                f"invalid_key:{kid}", 1, self.token_manager_config.ANNOUNCEMENT_DURATION
+                key_label, 1, self.token_manager_config.ANNOUNCEMENT_DURATION
             )
             return None
-        return KeyMetadata(
-            key.public_pem,
-            key.private_pem,
-            key.alg,
-            key.epoch.timestamp(),
-            key.rotated_out_at.timestamp(),
-        )
+        return key
 
     def invalidate_key(self, kid: str) -> None:
         """Invalidate a verification key"""
@@ -287,7 +282,10 @@ class TokenManager:
         self._key_mapping.pop(kid, None)
 
     async def poll_store(self, interval: int) -> None:
-        """Check synced store to keep local keys updated with global keys. Intended to be run as a non-blocking, background task upon instantiation"""
+        """
+        Check synced store to keep local keys updated with global keys.
+        Intended to be run as a non-blocking, background task upon instantiation
+        """
         while True:
             try:
                 valid_keys: list[str] | None = await self._synced_store_client.lrange(  # pyrefly: ignore[not-async]
@@ -309,10 +307,12 @@ class TokenManager:
                     print(
                         f"[BACKGROUND POLLER]: Adding verification new key {new_key}..."
                     )
-                    result: KeyMetadata | None = await self.fetch_unexpired_key(new_key)
+                    result: (
+                        KeyPrivateDataResult | None
+                    ) = await self.fetch_unexpired_key(new_key)
                     if result:
                         self.update_keydata(
-                            new_key, result, active=not bool(result.ROTATED_AT)
+                            new_key, result, active=not bool(result.rotated_out_at)
                         )  # If rotated out, them update key mapping with a verification key, else with an active key
                         print(
                             f"[BACKGROUND POLLER]: Added verification new key {new_key} to local token manager"
