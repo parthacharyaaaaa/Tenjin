@@ -2,14 +2,14 @@ import asyncio
 import os
 import traceback
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import AsyncGenerator, Final, Mapping, Sequence
+from typing import AsyncGenerator, Final, Mapping
 
 from auxillary.utils import generic_error_handler
 from fastapi import APIRouter, FastAPI
 from redis.asyncio import Redis
 
 from auth_server.config.app_config import AppConfig
+from auth_server.config.sub_config import KeyConfigModel
 from auth_server.dependencies import (
     get_app_config,
     get_database_session_maker,
@@ -24,9 +24,7 @@ from auth_server.repositories.keydata import (
 )
 from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
 from auth_server.security.key_manager import FileSystemKeyManager
-from auth_server.security.keygen import (
-    initialize_active_key,
-)
+from auth_server.security.keygen import generate_ecdsa_pair
 from auth_server.security.token_manager import TokenManager
 from auth_server.strings import SyncedStoreStrings
 
@@ -44,53 +42,13 @@ def register_routers(
         )
 
 
-async def _purge_expired_keys(
-    public_pem_directory: Path,
-    private_pem_directory: Path,
-    keydata_repository: KeydataRepository,
-) -> None:
-    expired_keys: list[str] = [
-        k.kid for k in await keydata_repository.get_expired_keys()
-    ]
-    for expired_key in expired_keys:
-        (
-            public_pem_directory.joinpath(f"public_{expired_key}_key.pem").unlink(
-                missing_ok=True
-            )
-        )
-
-        (
-            private_pem_directory.joinpath(f"private_{expired_key}_key.pem").unlink(
-                missing_ok=True
-            )
-        )
-
-
-async def _sync_file_system_key_state(
-    active_key: KeyPrivateDataResult,
-    rotated_keys: Sequence[KeyPublicDataResult],
-    filesystem_key_manager: FileSystemKeyManager,
-):
-    # Sync file state for active key
-    await filesystem_key_manager.write_ecdsa_pair(
-        active_key.private_pem,
-        active_key.public_pem,
-        active_key.kid,
+async def _initialize_active_key(
+    key_config: KeyConfigModel, keydata_repository: KeydataRepository
+) -> KeyPrivateDataResult:
+    key_id, private_key, public_key = generate_ecdsa_pair(key_config)
+    return await keydata_repository.insert_keydata(
+        key_id, private_key, public_key, "ES256", key_config.EC_TYPE, returning=True
     )
-
-    for keydata in rotated_keys:
-        private_pem_path: Path = (
-            filesystem_key_manager.jwks_config.PRIVATE_PEM_DIRECTORY
-            / f"private_{keydata.kid}_key.pem"
-        )
-        public_pem_path: Path = (
-            filesystem_key_manager.jwks_config.PUBLIC_PEM_DIRECTORY
-            / f"public_{keydata.kid}_key.pem"
-        )
-
-        # Ensure that only public pem file exists for verification keys
-        await asyncio.to_thread(public_pem_path.write_bytes, keydata.public_pem)
-        await asyncio.to_thread(private_pem_path.unlink, missing_ok=True)
 
 
 async def master_bootup(
@@ -113,10 +71,8 @@ async def master_bootup(
         if not keydata:
             # No valid keys in DB, master must create new pair
             print(f"[AUTH {process_id}] Creating new key pair")
-            active_keydata = await initialize_active_key(
-                config.JWKS.PRIVATE_PEM_DIRECTORY,
-                config.JWKS.PUBLIC_PEM_DIRECTORY,
-                keydata_repository,
+            active_keydata = await _initialize_active_key(
+                config.KEYS, keydata_repository
             )
             keydata.append(active_keydata)
         else:
@@ -133,10 +89,8 @@ async def master_bootup(
                 keydata = keydata[: config.JWKS.JWKS_CAP]
 
             if missing_active:
-                active_keydata = await initialize_active_key(
-                    config.JWKS.PRIVATE_PEM_DIRECTORY,
-                    config.JWKS.PUBLIC_PEM_DIRECTORY,
-                    keydata_repository,
+                active_keydata = await _initialize_active_key(
+                    config.KEYS, keydata_repository
                 )
                 keydata.insert(0, active_keydata)
             else:
@@ -144,17 +98,6 @@ async def master_bootup(
 
             if len(keydata) > 1:
                 rotated_verifying_keys = {k.kid: k for k in keydata[1:]}
-
-        await _sync_file_system_key_state(
-            keydata[0], keydata[1:], filesystem_key_manager
-        )
-
-        # Lastly, purge any PEM files for expired keys that are somehow still in file system
-        await _purge_expired_keys(
-            public_pem_directory=config.JWKS.PUBLIC_PEM_DIRECTORY,
-            private_pem_directory=config.JWKS.PRIVATE_PEM_DIRECTORY,
-            keydata_repository=keydata_repository,
-        )
 
         await filesystem_key_manager.initialize_jwks(keydata)
 
@@ -233,8 +176,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     # Additional filepaths depending on instance/static directories
     config.JWKS.resolve_jwks_filepath(config.CORE.instance_path)
-    config.JWKS.resolve_public_pem_directory(config.CORE.static_path)
-    config.JWKS.resolve_private_pem_directory(config.CORE.instance_path)
 
     # Error handler
     app.add_exception_handler(Exception, generic_error_handler)
