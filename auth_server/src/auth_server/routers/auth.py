@@ -4,7 +4,8 @@ from typing import Annotated, Final
 
 import aiofiles
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from auxillary.data_structures.exceptions import EnrichedHTTPException
+from fastapi import APIRouter, Depends
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response
 
@@ -193,7 +194,9 @@ async def purge_family(
         "Refresh", request.cookies.get("refresh")
     )
     if not encoded_refresh_token:
-        raise HTTPException(400, "Logout requires a refresh token to be provided")
+        raise EnrichedHTTPException(
+            400, "Logout requires a refresh token to be provided"
+        )
 
     try:
         refresh_token: StandardRefreshTokenClaims = await token_manager.decode_token(
@@ -203,6 +206,6 @@ async def purge_family(
         )
         await token_manager.invalidate_family(refresh_token["fid"])
     except Exception as e:
-        raise HTTPException(401, "Failed to validate this refresh token") from e
+        raise EnrichedHTTPException(401, "Failed to validate this refresh token") from e
 
     return JSONResponse({"message": "Token Revoked"})

@@ -1,9 +1,8 @@
 from typing import Annotated, Final
 
-from auxillary.utils import (
-    json_repr,
-)
-from fastapi import APIRouter, Depends, HTTPException
+from auxillary.data_structures.exceptions import EnrichedHTTPException
+from auxillary.utils import json_repr
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -43,7 +42,7 @@ async def get_key(
         ) = await keydata_repository.get_keydata(kid, public_only=public)
 
         if not key:
-            raise HTTPException(404, "No key with this ID found")
+            raise EnrichedHTTPException(404, "No key with this ID found")
     except SQLAlchemyError:
         raise Exception("Failed to fetch key")
 

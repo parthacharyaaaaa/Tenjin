@@ -1,11 +1,12 @@
 from typing import Annotated, Final
 
-from fastapi import Depends, HTTPException, Request
+from auxillary.data_structures.exceptions import EnrichedHTTPException
+from fastapi import Depends, Request
 
 from auth_server.admin.permissions import Permission
 from auth_server.admin.roles import ROLE_PERMISSIONS
 from auth_server.admin.session_manager import AdminSessionManager
-from auth_server.dependencies.injections import get_admin_session_manager
+from auth_server.dependencies.local import get_admin_session_manager
 from auth_server.models.session import AdminSession
 from auth_server.strings import AdminStrings
 
@@ -20,7 +21,7 @@ async def get_admin_session(
         AdminStrings.SESSION_TOKEN_HEADER
     )
     if session_id is None:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             401, f"Missing session token: {AdminStrings.SESSION_TOKEN_HEADER}"
         )
 
@@ -29,13 +30,15 @@ async def get_admin_session(
             AdminSession | None
         ) = await admin_session_manager.get_admin_session(session_id)
     except ValueError as e:
-        raise HTTPException(401, e.args[0] if e.args else "Invalid session") from e
+        raise EnrichedHTTPException(
+            401, e.args[0] if e.args else "Invalid session"
+        ) from e
     except Exception as e:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             500, f"Failed to fetch session information for session with ID {session_id}"
         ) from e
     if not admin_session:
-        raise HTTPException(401, f"No session with ID {session_id} found")
+        raise EnrichedHTTPException(401, f"No session with ID {session_id} found")
 
     return admin_session
 
@@ -48,7 +51,7 @@ def require_permissions(*required_permissions: Permission):
             ROLE_PERMISSIONS[admin_session.role]
         )
         if missing:
-            raise HTTPException(
+            raise EnrichedHTTPException(
                 403, f"Missing permissions for: {', '.join(m.value for m in missing)}"
             )
         return admin_session

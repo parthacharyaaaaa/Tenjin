@@ -2,11 +2,11 @@ import hmac
 from datetime import UTC, datetime
 from typing import Annotated, Final
 
+from auxillary.data_structures.exceptions import EnrichedHTTPException
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auxillary.security.hashing import bcrypt_check_password, bcrypt_hash_password
 from auxillary.utils import generic_database_fetch_exception, json_repr
 from fastapi import APIRouter, Depends
-from fastapi.exceptions import HTTPException
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse
 from redis.exceptions import RedisError
@@ -63,12 +63,12 @@ async def admin_login(
         )
 
         if not admin:
-            raise HTTPException(
+            raise EnrichedHTTPException(
                 404, f"No admin with identity {auth_model.identity} found"
             )
 
         if admin.time_deleted is not None:
-            raise HTTPException(410, f"Admin {admin.username} has been deleted")
+            raise EnrichedHTTPException(410, f"Admin {admin.username} has been deleted")
 
         if admin.locked:
             await report_suspicious_activity(
@@ -81,12 +81,12 @@ async def admin_login(
                 admin_session_manager,
                 force_logout=False,
             )
-            raise HTTPException(
+            raise EnrichedHTTPException(
                 403,
                 "This account is currently locked on grounds of suspicious activities",
             )
     except SQLAlchemyError:
-        raise HTTPException(500, "Failed to fetch admin information")
+        raise EnrichedHTTPException(500, "Failed to fetch admin information")
 
     if not bcrypt_check_password(auth_model.password, admin.password_hash):
         await report_suspicious_activity(
@@ -99,12 +99,12 @@ async def admin_login(
             admin_session_manager,
             force_logout=False,
         )
-        raise HTTPException(401, "Incorrect passwword")
+        raise EnrichedHTTPException(401, "Incorrect passwword")
 
     try:
         await admin_repository.update_last_login(admin.id_)
     except SQLAlchemyError as e:
-        raise HTTPException(500, "An error occured when logging you in") from e
+        raise EnrichedHTTPException(500, "An error occured when logging you in") from e
 
     # Exists in DB, check synced_store_client to see if session is already active
     try:
@@ -133,7 +133,7 @@ async def admin_login(
                 revival_digest,
             ) = await admin_session_manager.initialize_session(admin.id_, admin.role)
     except RedisError as e:
-        raise HTTPException(500, "Failed to perform login") from e
+        raise EnrichedHTTPException(500, "Failed to perform login") from e
 
     return JSONResponse(
         {"session_token": session_token, "revival_digest": revival_digest}
@@ -155,9 +155,9 @@ async def admin_delete(
     except SQLAlchemyError:
         generic_database_fetch_exception()
     if not admin:
-        raise HTTPException(404, f"No admin with ID {deletion_model.id_} found")
+        raise EnrichedHTTPException(404, f"No admin with ID {deletion_model.id_} found")
     if admin.time_deleted:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             410, f"Admin {admin.username} (ID: {admin.id_}) already deleted"
         )
 
@@ -165,7 +165,7 @@ async def admin_delete(
     try:
         await admin_repository.delete_admin(deletion_model.id_, deletion_time)
     except Exception as e:
-        raise HTTPException(500, "Failed to delete admin account") from e
+        raise EnrichedHTTPException(500, "Failed to delete admin account") from e
 
     return JSONResponse(
         {
@@ -198,7 +198,7 @@ async def admin_refresh(
     a session can be refreshed before requiring reauthentication
     """
     if admin_session.iteration >= config.ADMIN.MAX_SESSION_ITERATIONS:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             409,
             " ".join(
                 (
@@ -220,7 +220,7 @@ async def admin_refresh(
             repository_coordinator,
             admin_session_manager,
         )
-        raise HTTPException(403, "Invalid revival digest provided")
+        raise EnrichedHTTPException(403, "Invalid revival digest provided")
 
     session_token, revival_digest = await admin_session_manager.refresh_session(
         admin_session
@@ -261,11 +261,13 @@ async def admin_lock(
         generic_database_fetch_exception()
 
     if not admin:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             404, f"No admin with id {identification_model.id_} could be found"
         )
     if admin.locked:
-        conflict: HTTPException = HTTPException(409, "Admin account is already locked")
+        conflict: EnrichedHTTPException = EnrichedHTTPException(
+            409, "Admin account is already locked"
+        )
         setattr(
             conflict,
             "kwargs",
@@ -280,7 +282,7 @@ async def admin_lock(
     try:
         await admin_repository.set_admin_locked(admin.id_, True)
     except SQLAlchemyError:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             500, f"Failed to lock admin {admin.username} (ID: {admin.id_})"
         )
 
@@ -291,7 +293,7 @@ async def admin_lock(
         ):
             await admin_session_manager.terminate_session_via_object(existing_session)
     except RedisError:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             500, f"Failed to delete active session for locked admin: {admin.username}"
         )
     return JSONResponse({"message": "Admin locked succesfully"})
@@ -312,11 +314,11 @@ async def admin_unlock(
         generic_database_fetch_exception()
 
     if not admin:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             404, f"No admin with id {identification_model.id_} could be found"
         )
     if not admin.locked:
-        conflict: HTTPException = HTTPException(
+        conflict: EnrichedHTTPException = EnrichedHTTPException(
             409, "Admin account is already unlocked"
         )
         setattr(
@@ -333,7 +335,7 @@ async def admin_unlock(
     try:
         await admin_repository.set_admin_locked(admin.id_, False)
     except SQLAlchemyError:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             500, f"Failed to unlock admin {admin.username} (ID: {admin.id_})"
         )
 
@@ -355,7 +357,7 @@ async def create_admin(
     except SQLAlchemyError:
         generic_database_fetch_exception()
     if existing_admin:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             409, f"Admin with username {admin_model.identity} already exists"
         )
 
@@ -369,6 +371,6 @@ async def create_admin(
             returning=True,
         )
     except SQLAlchemyError as e:
-        raise HTTPException(500, "Failed to create a new admin") from e
+        raise EnrichedHTTPException(500, "Failed to create a new admin") from e
 
     return JSONResponse({"message": "Admin created", "admin": json_repr(admin)}, 202)
