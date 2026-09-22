@@ -2,12 +2,8 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Final
 
-from auxillary.utils import (
-    bcrypt_check_password,
-    bcrypt_hash_password,
-    json_repr,
-    to_base64url,
-)
+from auxillary.security.hashing import bcrypt_check_password, bcrypt_hash_password
+from auxillary.utils import json_repr, to_base64url
 from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (

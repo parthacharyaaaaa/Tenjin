@@ -3,12 +3,8 @@ from datetime import UTC, datetime
 from typing import Annotated, Final
 
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
-from auxillary.utils import (
-    bcrypt_check_password,
-    bcrypt_hash_password,
-    generic_database_fetch_exception,
-    json_repr,
-)
+from auxillary.security.hashing import bcrypt_check_password, bcrypt_hash_password
+from auxillary.utils import generic_database_fetch_exception, json_repr
 from fastapi import APIRouter, Depends
 from fastapi.exceptions import HTTPException
 from fastapi.requests import Request

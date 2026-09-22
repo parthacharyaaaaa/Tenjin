@@ -19,7 +19,7 @@ from traceback import format_exc
 from typing import Final, Generator, Optional
 
 import httpx
-from auxillary.utils import bcrypt_hash_password
+from auxillary.security.hashing import bcrypt_hash_password
 from dotenv import load_dotenv
 from psycopg import Connection, connect
 from psycopg import errors as pg_errors

@@ -2,9 +2,8 @@
 
 import base64
 import traceback
-from typing import Any, Final, Literal
+from typing import Any, Final
 
-import bcrypt
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from redis.typing import EncodableT, FieldT
@@ -41,25 +40,6 @@ def from_base64url(b64url: str) -> int:
     padded_b64url = b64url + padding
     byte_data = base64.urlsafe_b64decode(padded_b64url)
     return int.from_bytes(byte_data, byteorder="big")
-
-
-def bcrypt_hash_password(
-    password: str,
-    *,
-    salt: bytes | None = None,
-    salt_generation_rounds: int = 12,
-    salt_prefix: Literal[b"2", b"2a", b"2x", b"2y", b"2b"] = b"2b",
-    password_codec: str = "utf-8",
-) -> bytes:
-    if not salt:
-        salt = bcrypt.gensalt(salt_generation_rounds, salt_prefix)
-    return bcrypt.hashpw(password.encode(password_codec), salt)
-
-
-def bcrypt_check_password(
-    password: str, password_hash: bytes, *, password_codec: str = "utf-8"
-) -> bool:
-    return bcrypt.checkpw(password.encode(password_codec), password_hash)
 
 
 def generic_database_fetch_exception():
