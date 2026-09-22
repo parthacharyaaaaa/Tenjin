@@ -1,12 +1,8 @@
 """Helper functions"""
 
 import base64
-import datetime
-import hashlib
-import os
 import traceback
-from types import NoneType
-from typing import Any, Callable, Final, Literal, Mapping
+from typing import Any, Final, Literal
 
 import bcrypt
 from fastapi import HTTPException, Request, Response
@@ -47,17 +43,6 @@ def from_base64url(b64url: str) -> int:
     return int.from_bytes(byte_data, byteorder="big")
 
 
-def hash_password(password: str, salt: bytes | None = None) -> tuple[bytes, bytes]:
-    """
-    Produce a password salt and hash from a given string
-
-    returns: tuple[password-hash, salt]"""
-    if salt is None:
-        salt = os.urandom(16)
-    password_hash = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000)
-    return password_hash, salt
-
-
 def bcrypt_hash_password(
     password: str,
     *,
@@ -75,53 +60,6 @@ def bcrypt_check_password(
     password: str, password_hash: bytes, *, password_codec: str = "utf-8"
 ) -> bool:
     return bcrypt.checkpw(password.encode(password_codec), password_hash)
-
-
-def verify_password(password: str, password_hash: bytes, salt: bytes) -> bool:
-    """
-    Match a given password and salt with a hashed password
-    """
-    return (
-        hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000) == password_hash
-    )
-
-
-def rediserialize(
-    mapping: dict,
-    type_mapping: Mapping[type, Callable] = {
-        NoneType: lambda _: "",
-        bool: lambda b: int(b),
-        datetime.datetime: lambda dt: dt.isoformat(),
-        list: lambda l: ":".join(l),
-    },
-) -> dict:
-    """Serialize a Python dictionary to a Redis hashmap"""
-    return {k: type_mapping.get(type(v), lambda x: x)(v) for k, v in mapping.items()}
-
-
-def pyserialize(
-    mapping: dict[str, str],
-    deserialize_mapping: dict[str, type[Any]],
-    strict: bool = False,
-) -> dict[str, Any]:
-    """Deserialize a Redis hashmap back to its original Python model's __json_like__() dictionary
-    Args:
-        mapping: Redis hashmap to deserialize
-        deserialize_mapping: Mapping of key values and their intended types. These types can also be lambda functions to allow for casts more complex than constructor calls
-        strict: If True, mapping and deserialize mapping must have the same keys
-
-    Raises:
-        ValueError: If strict is True and mappings don't match
-        ValueError: Intended function cannot cast the string to the intended Python type
-    Returns:
-        Deserialized Python dictionary
-    """
-    if strict and set(mapping.keys()) != set(deserialize_mapping.keys()):
-        raise ValueError("Mappings do not match")
-    return {
-        key: deserialize_mapping[key](value) if key in deserialize_mapping else value
-        for key, value in mapping.items()
-    }
 
 
 def generic_database_fetch_exception():
