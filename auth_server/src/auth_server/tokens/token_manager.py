@@ -10,7 +10,6 @@ import jwt.exceptions as jwt_exceptions
 from redis.asyncio import Redis
 
 from auth_server.config.sub_config import KeyConfigModel, TokenManagerConfigModel
-from auth_server.dependencies import get_app_config, get_keydata_repository
 from auth_server.repositories.keydata import (
     KeydataRepository,
     KeyPrivateDataResult,
@@ -31,13 +30,9 @@ type TokenPair = tuple[str, str]
 class TokenManager:
     _token_store_client: Redis
     _synced_store_client: Redis
-    _keydata_repository: KeydataRepository = field(
-        default_factory=get_keydata_repository
-    )
-    key_config: KeyConfigModel = field(default_factory=lambda: get_app_config().KEYS)
-    token_manager_config: TokenManagerConfigModel = field(
-        default_factory=lambda: get_app_config().JWKS.TOKEN_MANAGER
-    )
+    _keydata_repository: KeydataRepository
+    key_config: KeyConfigModel
+    token_manager_config: TokenManagerConfigModel
     universal_claims: dict[str, Any] = field(default_factory=dict)
     universal_headers: dict[str, Any] = field(default_factory=dict)
     _polling_task: asyncio.Task[None] = field(init=False)

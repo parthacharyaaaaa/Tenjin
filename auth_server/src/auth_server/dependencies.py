@@ -100,10 +100,13 @@ def get_admin_session_manager() -> AdminSessionManager:
 
 @lru_cache(maxsize=1)
 def get_token_manager() -> TokenManager:
+    app_config: Final[AppConfig] = get_app_config()
     return TokenManager(
         get_token_store_client(),
         get_synced_store_client(),
         get_keydata_repository(),
+        app_config.KEYS,
+        app_config.JWKS.TOKEN_MANAGER,
     )
 
 
