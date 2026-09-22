@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import StrEnum
 from types import MappingProxyType
 from typing import Final, TypedDict
 
@@ -10,7 +10,7 @@ __all__ = (
 )
 
 
-class TokenType(str, Enum):
+class TokenType(StrEnum):
     StandardAccess = "StandardAccess"
     StandardRefresh = "StandardRefresh"
 
