@@ -1,30 +1,28 @@
 import datetime
-from typing import Any
 
 from sqlalchemy import BOOLEAN, INTEGER, TIMESTAMP, VARCHAR, ForeignKey, text
-from sqlalchemy.dialects.postgresql import BYTEA, ENUM
+from sqlalchemy.dialects.postgresql import BYTEA
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.schema import CheckConstraint
+from sqlalchemy.sql.functions import func
 
-from auth_server.admin.permissions import Permission
 from auth_server.admin.roles import AdminRole
+from auth_server.config.constants import MAX_IDENTITY_LENGTH, MIN_IDENTITY_LENGTH
+from auth_server.models.database_enums import ADMIN_ROLES
 
 
 class Base(DeclarativeBase):
     pass
 
 
-ADMIN_ROLES = ENUM(*[i.value for i in AdminRole], name="admin_roles", create_type=True)
-ADMIN_PERMISSIONS = ENUM(
-    *[i.value for i in Permission], name="admin_permissions", create_type=True
-)
-
-
 class Admin(Base):
     __tablename__ = "admins"
 
     id_: Mapped[int] = mapped_column(INTEGER, primary_key=True, autoincrement=True)
-    username: Mapped[str] = mapped_column(VARCHAR(64), nullable=False, unique=True)
-    role: Mapped[str] = mapped_column(ADMIN_ROLES, nullable=False)
+    username: Mapped[str] = mapped_column(
+        VARCHAR(MAX_IDENTITY_LENGTH), nullable=False, unique=True
+    )
+    role: Mapped[AdminRole] = mapped_column(ADMIN_ROLES, nullable=False)
 
     password_hash: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
 
@@ -38,6 +36,12 @@ class Admin(Base):
         BOOLEAN, nullable=False, server_default=text("false")
     )
     created_by: Mapped[int] = mapped_column(INTEGER, ForeignKey("admins.id_"))
+
+    __table_args__ = (
+        CheckConstraint(
+            func.length(username) >= MIN_IDENTITY_LENGTH, "ck_username_min_length"
+        ),
+    )
 
 
 class SuspiciousActivity(Base):
@@ -80,19 +84,3 @@ class KeyData(Base):
     rotated_by: Mapped[int] = mapped_column(
         INTEGER, ForeignKey("admins.id_"), index=True, nullable=True
     )
-
-    def __json_like__(self) -> dict[str, Any]:
-        """Return JSON serializable dictionary, excluding private PEM"""
-        return {
-            "kid": self.kid,
-            "alg": self.alg,
-            "curve": self.curve,
-            "epoch": self.epoch.isoformat(),
-            "rotated_out_at": (
-                None if not self.rotated_out_at else self.rotated_out_at.isoformat()
-            ),
-            "expired_at": None if not self.expired_at else self.expired_at.isoformat(),
-            "public_pem": self.public_pem.decode(),
-            "manual_rotation": self.manual_rotation,
-            "rotated_by": self.rotated_by,
-        }

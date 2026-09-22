@@ -25,7 +25,7 @@ class AdminPublicResult(AbstractResult):
 
     id_: int
     username: str
-    role: str  # TODO: Add roles enum
+    role: AdminRole
 
     password_hash: bytes
 

@@ -135,9 +135,7 @@ async def admin_login(
             (
                 session_token,
                 revival_digest,
-            ) = await admin_session_manager.initialize_session(
-                admin.id_, AdminRole(admin.role)
-            )
+            ) = await admin_session_manager.initialize_session(admin.id_, admin.role)
     except RedisError as e:
         raise HTTPException(500, "Failed to perform login") from e
 
