@@ -13,15 +13,15 @@ from auth_server.dependencies import (
     get_keydata_repository,
     get_synced_store_key_state_manager,
 )
+from auth_server.keys.key_manager import (
+    KeyLifecycleManager,
+    SyncedStoreKeyStateManager,
+)
 from auth_server.models.session import AdminSession
 from auth_server.repositories.keydata import (
     KeydataRepository,
     KeyPrivateDataResult,
     KeyPublicDataResult,
-)
-from auth_server.security.key_manager import (
-    KeyLifecycleManager,
-    SyncedStoreKeyStateManager,
 )
 from auth_server.utils.dependencies import require_permissions
 

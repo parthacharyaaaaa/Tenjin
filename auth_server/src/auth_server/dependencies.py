@@ -13,14 +13,14 @@ from sqlalchemy.ext.asyncio import (
 
 from auth_server.admin.session_manager import AdminSessionManager
 from auth_server.config import AppConfig
-from auth_server.repositories.admin import AdminRepository
-from auth_server.repositories.keydata import KeydataRepository
-from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
-from auth_server.security.key_manager import (
+from auth_server.keys.key_manager import (
     FileSystemKeyManager,
     KeyLifecycleManager,
     SyncedStoreKeyStateManager,
 )
+from auth_server.repositories.admin import AdminRepository
+from auth_server.repositories.keydata import KeydataRepository
+from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.security.token_manager import TokenManager
 
 

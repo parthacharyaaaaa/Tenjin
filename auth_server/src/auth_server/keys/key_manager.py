@@ -23,12 +23,12 @@ from cryptography.hazmat.primitives.serialization import (
 from redis.asyncio.client import Redis
 
 from auth_server.config.sub_config import JWKSConfigModel, KeyConfigModel
+from auth_server.keys.keygen import generate_ecdsa_pair
 from auth_server.repositories.keydata import (
     KeydataRepository,
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
-from auth_server.security.keygen import generate_ecdsa_pair
 from auth_server.security.token_manager import TokenManager
 from auth_server.strings import (
     GENERIC_SEPARATOR,

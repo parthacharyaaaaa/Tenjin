@@ -17,14 +17,14 @@ from auth_server.dependencies import (
     get_synced_store_client,
     get_token_manager,
 )
+from auth_server.keys.key_manager import FileSystemKeyManager
+from auth_server.keys.keygen import generate_ecdsa_pair
 from auth_server.repositories.keydata import (
     KeydataRepository,
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
 from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
-from auth_server.security.key_manager import FileSystemKeyManager
-from auth_server.security.keygen import generate_ecdsa_pair
 from auth_server.security.token_manager import TokenManager
 from auth_server.strings import SyncedStoreStrings
 
