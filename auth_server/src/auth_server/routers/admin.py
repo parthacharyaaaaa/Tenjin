@@ -16,13 +16,14 @@ from auth_server.admin.permissions import Permission
 from auth_server.admin.roles import AdminRole
 from auth_server.admin.session_manager import AdminSessionManager
 from auth_server.config.app_config import AppConfig
-from auth_server.dependencies import (
+from auth_server.dependencies.local import (
     get_admin_repository,
     get_admin_session_manager,
     get_app_config,
     get_repository_work_coordinator,
     get_suspicious_activity_repository,
 )
+from auth_server.dependencies.requests import get_admin_session, require_permissions
 from auth_server.models.cmd_requests import (
     AdminAuthenticationModel,
     AdminIdentificationModel,
@@ -37,7 +38,6 @@ from auth_server.repositories.suspicious_activity import SuspiciousActivityRepos
 from auth_server.utils.auth_auxillary import (
     report_suspicious_activity,
 )
-from auth_server.utils.dependencies import get_admin_session, require_permissions
 
 ADMIN: Final[APIRouter] = APIRouter()
 

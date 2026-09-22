@@ -14,7 +14,7 @@ from redis.asyncio import Redis
 
 from auth_server.config.app_config import AppConfig
 from auth_server.config.sub_config import KeyConfigModel
-from auth_server.dependencies import (
+from auth_server.dependencies.local import (
     get_app_config,
     get_database_session_maker,
     get_filesystem_key_manager,

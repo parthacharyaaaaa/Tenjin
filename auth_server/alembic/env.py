@@ -4,7 +4,7 @@ from pathlib import Path
 
 from alembic import context
 from auth_server.config.app_config import AppConfig
-from auth_server.dependencies import get_app_config
+from auth_server.dependencies.local import get_app_config
 from auth_server.models.database import Base
 from dotenv import load_dotenv
 from sqlalchemy import MetaData, engine_from_config, pool

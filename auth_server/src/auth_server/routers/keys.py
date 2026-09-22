@@ -8,11 +8,12 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from auth_server.admin.permissions import Permission
-from auth_server.dependencies import (
+from auth_server.dependencies.local import (
     get_key_lifecycle_manager,
     get_keydata_repository,
     get_synced_store_key_state_manager,
 )
+from auth_server.dependencies.requests import require_permissions
 from auth_server.keys.key_manager import (
     KeyLifecycleManager,
     SyncedStoreKeyStateManager,
@@ -23,7 +24,6 @@ from auth_server.repositories.keydata import (
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
-from auth_server.utils.dependencies import require_permissions
 
 KEY: Final[APIRouter] = APIRouter()
 

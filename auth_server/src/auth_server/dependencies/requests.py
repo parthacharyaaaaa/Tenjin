@@ -5,7 +5,7 @@ from fastapi import Depends, HTTPException, Request
 from auth_server.admin.permissions import Permission
 from auth_server.admin.roles import ROLE_PERMISSIONS
 from auth_server.admin.session_manager import AdminSessionManager
-from auth_server.dependencies import get_admin_session_manager
+from auth_server.dependencies.injections import get_admin_session_manager
 from auth_server.models.session import AdminSession
 from auth_server.strings import AdminStrings
 
