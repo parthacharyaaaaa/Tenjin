@@ -124,6 +124,7 @@ version = "0.1.0"
 source = { editable = "auxillary" }
 dependencies = [
     { name = "bcrypt" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "pydantic" },
     { name = "redis" },
@@ -133,6 +134,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "bcrypt", specifier = ">=5.0.0" },
+    { name = "cryptography", specifier = ">=50.0.0,<51" },
     { name = "fastapi", specifier = ">=0.136.3" },
     { name = "pydantic", specifier = ">=2.13.4,<3" },
     { name = "redis", specifier = ">=7.0.0,<8" },

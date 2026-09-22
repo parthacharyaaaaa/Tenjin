@@ -4,6 +4,10 @@ import traceback
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Final, Mapping
 
+from auxillary.security.serialization import (
+    pem_serialize_private_key,
+    pem_serialize_public_key,
+)
 from auxillary.utils import generic_error_handler
 from fastapi import APIRouter, FastAPI
 from redis.asyncio import Redis
@@ -47,7 +51,12 @@ async def _initialize_active_key(
 ) -> KeyPrivateDataResult:
     key_id, private_key, public_key = generate_ecdsa_pair(key_config)
     return await keydata_repository.insert_keydata(
-        key_id, private_key, public_key, "ES256", key_config.EC_TYPE, returning=True
+        key_id,
+        pem_serialize_private_key(private_key, key_config.PRIVATE_PEM_FORMAT),
+        pem_serialize_public_key(public_key, key_config.PUBLIC_PEM_FORMAT),
+        "ES256",
+        key_config.EC_TYPE,
+        returning=True,
     )
 
 

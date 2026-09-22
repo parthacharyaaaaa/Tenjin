@@ -9,12 +9,6 @@ from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
 from auxillary.utils import cache_repr
 from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.serialization import (
-    Encoding,
-    NoEncryption,
-    PrivateFormat,
-    PublicFormat,
-)
 from redis.typing import EncodableT, FieldT
 from sqlalchemy import insert, select, update
 
@@ -165,8 +159,8 @@ class KeydataRepository(AbstractWorkRepository):
     async def insert_keydata(
         self,
         key_id: str,
-        private_key: ec.EllipticCurvePrivateKey,
-        public_key: ec.EllipticCurvePublicKey,
+        private_key_bytes: bytes,
+        public_key_bytes: bytes,
         alg: str,
         curve: ec.EllipticCurve,
         epoch: datetime | None = None,
@@ -178,8 +172,8 @@ class KeydataRepository(AbstractWorkRepository):
     async def insert_keydata(
         self,
         key_id: str,
-        private_key: ec.EllipticCurvePrivateKey,
-        public_key: ec.EllipticCurvePublicKey,
+        private_key_bytes: bytes,
+        public_key_bytes: bytes,
         alg: str,
         curve: ec.EllipticCurve,
         epoch: datetime | None = None,
@@ -187,12 +181,11 @@ class KeydataRepository(AbstractWorkRepository):
         returning: Literal[True],
     ) -> KeyPrivateDataResult: ...
 
-    # TODO: Decouple key serialization logic from repository
     async def insert_keydata(
         self,
         key_id: str,
-        private_key: ec.EllipticCurvePrivateKey,
-        public_key: ec.EllipticCurvePublicKey,
+        private_key_bytes: bytes,
+        public_key_bytes: bytes,
         alg: str,
         curve: ec.EllipticCurve,
         epoch: datetime | None = None,
@@ -208,15 +201,8 @@ class KeydataRepository(AbstractWorkRepository):
                         alg=alg,
                         curve=curve.name,
                         epoch=epoch or datetime.now(UTC),
-                        private_pem=private_key.private_bytes(
-                            encoding=Encoding.PEM,
-                            format=PrivateFormat.PKCS8,
-                            encryption_algorithm=NoEncryption(),
-                        ),
-                        public_pem=public_key.public_bytes(
-                            encoding=Encoding.PEM,
-                            format=PublicFormat.SubjectPublicKeyInfo,
-                        ),
+                        private_pem=private_key_bytes,
+                        public_pem=public_key_bytes,
                     )
                     .returning(KeyData)
                 )

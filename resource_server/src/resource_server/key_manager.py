@@ -4,10 +4,10 @@ from traceback import format_exc
 from typing import Final
 
 import httpx
+from auxillary.security.serialization import pem_serialize_public_key
 from auxillary.singleton import SingletonMetaclass
 from auxillary.utils import from_base64url
 from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from redis.asyncio import Redis
 from redis.asyncio.client import PubSub
 
@@ -160,9 +160,8 @@ class KeyManager(metaclass=SingletonMetaclass):
                     verification_key = public_numbers.public_key()
 
                     self.current_mapping[key_metadata["kid"]] = (
-                        verification_key.public_bytes(
-                            encoding=Encoding.PEM,
-                            format=PublicFormat.SubjectPublicKeyInfo,
+                        pem_serialize_public_key(
+                            verification_key, self.app_config.JWKS.LOCAL_PUBKEY_ENCODING
                         )
                     )
 

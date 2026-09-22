@@ -11,6 +11,10 @@ from auxillary.mixins.redis_config import BasicRedisConfigMixin
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.hashes import HashAlgorithm
+from cryptography.hazmat.primitives.serialization import (
+    PrivateFormat,
+    PublicFormat,
+)
 from pydantic import (
     BaseModel,
     BeforeValidator,
@@ -145,6 +149,10 @@ class KeyConfigModel(BaseModel):
     SIGNATURE_HASHFUNC: Annotated[HashAlgorithm, Field(default_factory=hashes.SHA256)]
     SIGNATURE_ALGORITHM: Annotated[type[ec.ECDSA], Field(default=ec.ECDSA)]
     EC_TYPE: Annotated[ec.EllipticCurve, Field(default_factory=ec.SECP256K1)]
+    PRIVATE_PEM_FORMAT: Annotated[PrivateFormat, Field(default=PrivateFormat.PKCS8)]
+    PUBLIC_PEM_FORMAT: Annotated[
+        PublicFormat, Field(default=PublicFormat.SubjectPublicKeyInfo)
+    ]
 
     @computed_field
     @cached_property

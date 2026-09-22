@@ -9,6 +9,9 @@ from auxillary.mixins.db_config import (
     BasicSQLAlchemyConfigMixin,
 )
 from auxillary.mixins.redis_config import BasicRedisConfigMixin
+from cryptography.hazmat.primitives.serialization import (
+    PublicFormat,
+)
 from pydantic import (
     AfterValidator,
     BaseModel,
@@ -17,6 +20,7 @@ from pydantic import (
     IPvAnyAddress,
     model_validator,
 )
+from pydantic.config import ConfigDict
 
 from resource_server.config.constants import DOMAIN_REGEX
 
@@ -122,6 +126,7 @@ class BusinessConfig(BaseModel):
 
 
 class JWKSConfig(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     JWKS_ENDPOINT: str
     JWKS_REQUEST_TIMEOUT: Annotated[int, Field(ge=1)]
     JWKS_POLL_INTERVAL: Annotated[int, Field(ge=1)]
@@ -138,6 +143,10 @@ class JWKSConfig(BaseModel):
     ]
 
     KEY_ANNOUNCEMENT_AUTH_CHANNEL: str
+
+    LOCAL_PUBKEY_ENCODING: Annotated[
+        PublicFormat, Field(default=PublicFormat.SubjectPublicKeyInfo)
+    ]
 
     # TODO: Add validation for time values
     @model_validator(mode="after")

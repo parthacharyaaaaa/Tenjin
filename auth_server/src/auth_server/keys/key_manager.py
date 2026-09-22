@@ -10,14 +10,14 @@ from typing import Final, Protocol
 import aiofiles
 import orjson
 from auxillary.mixins.metaclass import AntiSingletonMixin
+from auxillary.security.serialization import (
+    pem_serialize_private_key,
+    pem_serialize_public_key,
+)
 from auxillary.utils import to_base64url
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
 from cryptography.hazmat.primitives.serialization import (
-    Encoding,
-    NoEncryption,
-    PrivateFormat,
-    PublicFormat,
     load_pem_public_key,
 )
 from redis.asyncio.client import Redis
@@ -435,14 +435,12 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 self.filesystem_key_manager.keys_config
             )
             generation_epoch: Final[datetime] = datetime.now(UTC)
-            private_pem: Final[bytes] = signing_key.private_bytes(
-                encoding=Encoding.PEM,
-                format=PrivateFormat.PKCS8,
-                encryption_algorithm=NoEncryption(),
+            private_pem: Final[bytes] = pem_serialize_private_key(
+                signing_key, self.filesystem_key_manager.keys_config.PRIVATE_PEM_FORMAT
             )
-            public_pem: Final[bytes] = verification_key.public_bytes(
-                encoding=Encoding.PEM,
-                format=PublicFormat.SubjectPublicKeyInfo,
+            public_pem: Final[bytes] = pem_serialize_public_key(
+                verification_key,
+                self.filesystem_key_manager.keys_config.PUBLIC_PEM_FORMAT,
             )
 
             target_id: str | None = None
