@@ -21,7 +21,7 @@ from auth_server.keys.key_manager import (
 from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.keydata import KeydataRepository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
-from auth_server.security.token_manager import TokenManager
+from auth_server.tokens.token_manager import TokenManager
 
 
 @lru_cache(maxsize=1)

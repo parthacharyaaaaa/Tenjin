@@ -11,8 +11,8 @@ from fastapi.responses import JSONResponse, Response
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies import get_app_config, get_token_manager
 from auth_server.models.auth_requests import AuthenticationModel, RegistrationModel
-from auth_server.security.token_manager import TokenManager
-from auth_server.security.tokens import StandardRefreshTokenClaims, TokenType
+from auth_server.tokens.token_manager import TokenManager
+from auth_server.tokens.typing import StandardRefreshTokenClaims, TokenType
 from auth_server.utils.auth_auxillary import attach_tokens
 
 AUTH: Final[APIRouter] = APIRouter()

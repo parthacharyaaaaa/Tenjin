@@ -25,8 +25,8 @@ from auth_server.repositories.keydata import (
     KeyPublicDataResult,
 )
 from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
-from auth_server.security.token_manager import TokenManager
 from auth_server.strings import SyncedStoreStrings
+from auth_server.tokens.token_manager import TokenManager
 
 # TODO: Remove magic numbers in lifespan and master_bootup (lock and flag TTLs)
 

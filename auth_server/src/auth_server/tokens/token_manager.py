@@ -16,12 +16,12 @@ from auth_server.repositories.keydata import (
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
-from auth_server.security.tokens import (
+from auth_server.strings import SyncedStoreStrings
+from auth_server.tokens.typing import (
     StandardAccessTokenClaims,
     StandardRefreshTokenClaims,
     TokenType,
 )
-from auth_server.strings import SyncedStoreStrings
 
 # Type aliases
 type TokenPair = tuple[str, str]

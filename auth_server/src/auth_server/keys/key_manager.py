@@ -29,12 +29,12 @@ from auth_server.repositories.keydata import (
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
-from auth_server.security.token_manager import TokenManager
 from auth_server.strings import (
     GENERIC_SEPARATOR,
     SelectionLockOption,
     SyncedStoreStrings,
 )
+from auth_server.tokens.token_manager import TokenManager
 
 
 class KeyOperationLocks(IntFlag):
