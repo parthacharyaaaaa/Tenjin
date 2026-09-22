@@ -4,8 +4,9 @@ from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
 
+from auxillary.data_structures.exceptions import EnrichedHTTPException
 from auxillary.utils import cache_repr, json_repr, to_base64url
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (
     Action,
@@ -79,7 +80,7 @@ async def get_forum(
     )
 
     if not forum:
-        raise HTTPException(404, f"No forum with id {forum_id} found")
+        raise EnrichedHTTPException(404, f"No forum with id {forum_id} found")
 
     return JSONResponse({"forum": json_repr(forum)})
 
@@ -104,7 +105,7 @@ async def get_forum_posts(
     )
 
     if not forum:
-        raise HTTPException(404, f"No forum with {forum_id} found")
+        raise EnrichedHTTPException(404, f"No forum with {forum_id} found")
 
     posts, next_cursor = await cache_manager.distributed_pagination_get_or_load(
         await cache_manager.derive_pagination_key(
@@ -149,7 +150,7 @@ async def create_forum(
     )
 
     if not anime:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             404, f"No anime with ID {forum_model.parent_anime_id} found"
         )
 
@@ -157,7 +158,7 @@ async def create_forum(
         forum_model.title
     )
     if existing_forum:
-        conflict: HTTPException = HTTPException(
+        conflict: EnrichedHTTPException = EnrichedHTTPException(
             409,
             f"A forum with this name, for anime with ID {forum_model.parent_anime_id} already exists",
         )
@@ -200,13 +201,13 @@ async def delete_forum(
     )
 
     if not forum:
-        raise HTTPException(404, f"No forum with id {forum_id} found")
+        raise EnrichedHTTPException(404, f"No forum with id {forum_id} found")
 
     forum_owner = await forum_repo.get_forum_owner(forum_id)
 
     # Validating request
     if forum_owner.id_ != access_token["sid"]:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             403, "You do not have the necessary permissions to delete this forum"
         )
 
@@ -251,7 +252,7 @@ async def add_admin(
         ForumResult,
     )
     if not forum:
-        raise HTTPException(404, f"No forum with id {forum_id} found")
+        raise EnrichedHTTPException(404, f"No forum with id {forum_id} found")
 
     forum_admin: ForumAdminResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(
@@ -262,7 +263,9 @@ async def add_admin(
         ForumAdminResult,
     )
     if not forum_admin:
-        raise HTTPException(403, f"You are not an admin for forum: {forum.name_}")
+        raise EnrichedHTTPException(
+            403, f"You are not an admin for forum: {forum.name_}"
+        )
 
     match admin_model.role:
         case AdminRoles.ADMIN:
@@ -271,7 +274,7 @@ async def add_admin(
             permission = AdminPermissions.ADD_SUPER
 
     if not check_permission(forum_admin.role, permission):
-        raise HTTPException(
+        raise EnrichedHTTPException(
             403, f"Insufficient permissions to add an admin of role {admin_model.role}"
         )
 
@@ -286,7 +289,7 @@ async def add_admin(
         ForumAdminResult,
     )
     if existing_admin:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             409, f"User is already an admin (role: {existing_admin.role.value})"
         )
 
@@ -297,7 +300,9 @@ async def add_admin(
             UserResult,
         )
         if not user:
-            raise HTTPException(404, f"No user with id {admin_model.user_id} found")
+            raise EnrichedHTTPException(
+                404, f"No user with id {admin_model.user_id} found"
+            )
 
     await forum_repo.add_forum_admin(forum_id, admin_model.user_id, admin_model.role)
     return JSONResponse(
@@ -324,7 +329,7 @@ async def remove_admin(
         ForumResult,
     )
     if not forum:
-        raise HTTPException(404, f"No forum with id {forum_id} found")
+        raise EnrichedHTTPException(404, f"No forum with id {forum_id} found")
 
     forum_admin: ForumAdminResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(
@@ -335,7 +340,9 @@ async def remove_admin(
         ForumAdminResult,
     )
     if not forum_admin:
-        raise HTTPException(403, f"You are not an admin for forum: {forum.name_}")
+        raise EnrichedHTTPException(
+            403, f"You are not an admin for forum: {forum.name_}"
+        )
 
     existing_admin: (
         ForumAdminResult | None
@@ -348,10 +355,10 @@ async def remove_admin(
         ForumAdminResult,
     )
     if not existing_admin:
-        raise HTTPException(404, "Admin does not exist")
+        raise EnrichedHTTPException(404, "Admin does not exist")
 
     if existing_admin.role == AdminRoles.OWNER:
-        raise HTTPException(403, "Cannot change forum ownership")
+        raise EnrichedHTTPException(403, "Cannot change forum ownership")
 
     if existing_admin.role == AdminRoles.ADMIN:
         permission = AdminPermissions.REMOVE_ADMIN
@@ -359,7 +366,7 @@ async def remove_admin(
         permission = AdminPermissions.REMOVE_SUPER
 
     if not check_permission(forum_admin.role, permission):
-        raise HTTPException(
+        raise EnrichedHTTPException(
             403,
             f"Insufficient permissions to remove an admin with role {existing_admin.role}",
         )
@@ -388,7 +395,7 @@ async def edit_admin_permissions(
         ForumResult,
     )
     if not forum:
-        raise HTTPException(404, f"No forum with id {forum_id} found")
+        raise EnrichedHTTPException(404, f"No forum with id {forum_id} found")
 
     forum_admin: ForumAdminResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(
@@ -399,7 +406,9 @@ async def edit_admin_permissions(
         ForumAdminResult,
     )
     if not forum_admin:
-        raise HTTPException(403, f"You are not an admin for forum: {forum.name_}")
+        raise EnrichedHTTPException(
+            403, f"You are not an admin for forum: {forum.name_}"
+        )
 
     existing_admin: (
         ForumAdminResult | None
@@ -412,14 +421,14 @@ async def edit_admin_permissions(
         ForumAdminResult,
     )
     if not existing_admin:
-        raise HTTPException(404, "Admin does not exist")
+        raise EnrichedHTTPException(404, "Admin does not exist")
     if existing_admin.role == AdminRoles.OWNER:
-        raise HTTPException(403, "Owner permissions cannot be changed")
+        raise EnrichedHTTPException(403, "Owner permissions cannot be changed")
 
     if admin_model.role == existing_admin.role:
-        raise HTTPException(409, "Previous and new roles identical")
+        raise EnrichedHTTPException(409, "Previous and new roles identical")
     if existing_admin.role == forum_admin.role:
-        raise HTTPException(403, "Cannot change roles of peer admins")
+        raise EnrichedHTTPException(403, "Cannot change roles of peer admins")
 
     # Very brittle logic, but I can't see adding more admin roles anytime soon
     if admin_model.role == AdminRoles.ADMIN:
@@ -428,7 +437,7 @@ async def edit_admin_permissions(
         permission = AdminPermissions.PROMOTE_TO_SUPER
 
     if not check_permission(forum_admin.role, permission):
-        raise HTTPException(
+        raise EnrichedHTTPException(
             403, "Insufficient permissions to change role in this manner"
         )
 
@@ -486,7 +495,7 @@ async def subscribe_forum(
     )
 
     if not forum:
-        raise HTTPException(404, f"No forum with ID {forum_id} exists")
+        raise EnrichedHTTPException(404, f"No forum with ID {forum_id} exists")
 
     conflict_message: str = f"Already subscribed to forum: {forum.name_}"
     async with cache_manager.guard_action(
@@ -511,7 +520,7 @@ async def subscribe_forum(
                     Action.SUB,
                     IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
                 )
-                raise HTTPException(409, conflict_message)
+                raise EnrichedHTTPException(409, conflict_message)
 
         forum_owner: UserResult | None = await cache_manager.distributed_get_or_load(
             derive_cache_key(
@@ -523,7 +532,7 @@ async def subscribe_forum(
 
         # NOTE: This should never happen
         if not forum_owner:
-            raise HTTPException(500, "Failed to perform subscription")
+            raise EnrichedHTTPException(500, "Failed to perform subscription")
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -587,7 +596,7 @@ async def unsubscribe_forum(
     )
 
     if not forum:
-        raise HTTPException(404, f"No forum with ID {forum_id} exists")
+        raise EnrichedHTTPException(404, f"No forum with ID {forum_id} exists")
 
     conflicting_message: str = f"Not subscribed to forum: {forum.name_}"
     async with cache_manager.guard_action(
@@ -613,7 +622,7 @@ async def unsubscribe_forum(
                     Action.UNSUB,
                     IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
                 )
-                raise HTTPException(409, conflicting_message)
+                raise EnrichedHTTPException(409, conflicting_message)
 
         forum_owner: UserResult | None = await cache_manager.distributed_get_or_load(
             derive_cache_key(
@@ -625,7 +634,7 @@ async def unsubscribe_forum(
 
         # NOTE: This should never happen
         if not forum_owner:
-            raise HTTPException(500, "Failed to perform unsubscription")
+            raise EnrichedHTTPException(500, "Failed to perform unsubscription")
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -688,7 +697,7 @@ async def edit_forum(
     )
 
     if not forum:
-        raise HTTPException(404, f"No forum with ID {forum_id} exists")
+        raise EnrichedHTTPException(404, f"No forum with ID {forum_id} exists")
 
     admin_role: ForumAdminResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(
@@ -700,9 +709,11 @@ async def edit_forum(
     )
 
     if not admin_role:
-        raise HTTPException(403, "You are not an admin for this forum")
+        raise EnrichedHTTPException(403, "You are not an admin for this forum")
     if admin_role.role == "staff":  # TODO: Replace with StrEnum
-        raise HTTPException(403, "You do not have access rights to edit this forum")
+        raise EnrichedHTTPException(
+            403, "You do not have access rights to edit this forum"
+        )
 
     updated_forum: ForumResult = await forum_repo.update_forum(
         forum_id, forum_model.title, forum_model.description, return_forum=True

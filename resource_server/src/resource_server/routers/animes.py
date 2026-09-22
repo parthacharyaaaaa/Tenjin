@@ -3,11 +3,12 @@ from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
 
+from auxillary.data_structures.exceptions import EnrichedHTTPException
 from auxillary.utils import (
     json_repr,
     to_base64url,
 )
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (
     create_intent_flag,
@@ -68,7 +69,7 @@ async def get_anime(
     )
 
     if not anime:
-        raise HTTPException(404, f"No anime with id {anime_id} could be found")
+        raise EnrichedHTTPException(404, f"No anime with id {anime_id} could be found")
 
     return JSONResponse(anime)
 
@@ -90,7 +91,7 @@ async def sub_anime(
     )
 
     if not anime:
-        raise HTTPException(404, f"No anime with id {anime_id} could be found")
+        raise EnrichedHTTPException(404, f"No anime with id {anime_id} could be found")
 
     conflict_message: str = f"Already subscribed to anime {anime.title}"
     async with cache_manager.guard_action(
@@ -115,7 +116,7 @@ async def sub_anime(
                     Action.SUB,
                     IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
                 )
-                raise HTTPException(409, conflict_message)
+                raise EnrichedHTTPException(409, conflict_message)
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -176,7 +177,7 @@ async def unsub_anime(
     )
 
     if not anime:
-        raise HTTPException(404, f"No anime with id {anime_id} could be found")
+        raise EnrichedHTTPException(404, f"No anime with id {anime_id} could be found")
 
     conflict_message: str = f"Not subscribed to anime {anime.title}"
     async with cache_manager.guard_action(
@@ -199,7 +200,7 @@ async def unsub_anime(
                 Action.UNSUB,
                 IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
             )
-            raise HTTPException(409, conflict_message)
+            raise EnrichedHTTPException(409, conflict_message)
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -289,7 +290,7 @@ async def get_anime_links(
     )
 
     if not anime:
-        raise HTTPException(404, f"No anime with id {anime_id} could be found")
+        raise EnrichedHTTPException(404, f"No anime with id {anime_id} could be found")
 
     return JSONResponse({"stream_links": anime.stream_links})
 
@@ -312,7 +313,7 @@ async def get_anime_forums(
     )
 
     if not anime:
-        raise HTTPException(404, f"No anime with id {anime_id} could be found")
+        raise EnrichedHTTPException(404, f"No anime with id {anime_id} could be found")
 
     pagination_cache_key: str = await cache_manager.derive_pagination_key(
         Forum.__tablename__, cursor, search_param or ""

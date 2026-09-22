@@ -2,9 +2,10 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Final
 
+from auxillary.data_structures.exceptions import EnrichedHTTPException
 from auxillary.security.hashing import bcrypt_check_password, bcrypt_hash_password
 from auxillary.utils import json_repr, to_base64url
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, Path
 from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (
     derive_cache_key,
@@ -68,13 +69,15 @@ async def register(
 
     if existing_users:
         if len(existing_users) == 2:
-            raise HTTPException(
+            raise EnrichedHTTPException(
                 409,
                 f"Username {user_model.username} and email {user_model.email} already taken",
             )
         if existing_users[0].username == user_model.username:
-            raise HTTPException(409, f"Username {user_model.username} already taken")
-        raise HTTPException(409, f"Email {user_model.email} already taken")
+            raise EnrichedHTTPException(
+                409, f"Username {user_model.username} already taken"
+            )
+        raise EnrichedHTTPException(409, f"Email {user_model.email} already taken")
 
     # All checks passed, user creation good to go
     pw_hash = bcrypt_hash_password(user_model.password)
@@ -105,12 +108,12 @@ async def delete_user(
         user_cache_key, partial(user_repo.get_user_by_username, username), UserResult
     )
     if not user:
-        raise HTTPException(404, f"User {username} not found")
+        raise EnrichedHTTPException(404, f"User {username} not found")
 
     password_hash: bytes = await user_repo.get_user_password(user.id_)
 
     if not bcrypt_check_password(deletion_model.password, password_hash):
-        raise HTTPException(403, "Incorrect password")
+        raise EnrichedHTTPException(403, "Incorrect password")
 
     # User deleting self, so both user and resource identifier are identical
     lock, latest_intent = await cache_manager.fetch_indicators(
@@ -118,9 +121,9 @@ async def delete_user(
     )
 
     if lock:
-        raise HTTPException(409, "Identical operation underway")
+        raise EnrichedHTTPException(409, "Identical operation underway")
     if latest_intent == IntentFlag.RESOURCE_DELETION_PENDING_FLAG:
-        raise HTTPException(409, "Account already queued for deletion")
+        raise EnrichedHTTPException(409, "Account already queued for deletion")
 
     await cache_manager.set_negative_mapping(user_cache_key)
     deletion_time: datetime = datetime.now(UTC)
@@ -162,7 +165,7 @@ async def recover_password(
     )
     user: UserResult | None = await fetch_method(user_model.identity)
     if not user:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             404,
             f"No user with {'email' if email_identity else 'username'} {user_model.identity} found",
         )
@@ -195,13 +198,13 @@ async def update_password(
 ) -> JSONResponse:
     user, (url, expiry) = await user_repo.get_user_password_recovery_token(user_id)
     if not user:
-        raise HTTPException(404, "User not found")
+        raise EnrichedHTTPException(404, "User not found")
     if not url:
-        raise HTTPException(404, "No password recovery token found")
+        raise EnrichedHTTPException(404, "No password recovery token found")
     if url != temp_url:
-        raise HTTPException(403, "Invalid url")
+        raise EnrichedHTTPException(403, "Invalid url")
     if expiry > datetime.now(UTC):  # type: ignore[reportOptionalOperand]
-        raise HTTPException(403, "Token expired")
+        raise EnrichedHTTPException(403, "Token expired")
 
     pw_hash: Final[bytes] = bcrypt_hash_password(password_model.password)
     await user_repo.update_password(user_id, pw_hash)
@@ -226,7 +229,7 @@ async def get_user(
         user_cache_key, partial(user_repo.get_user_by_username, username), UserResult
     )
     if not user:
-        raise HTTPException(404, f"User {username} not found")
+        raise EnrichedHTTPException(404, f"User {username} not found")
     return JSONResponse({"user": json_repr(user)})
 
 
@@ -246,7 +249,7 @@ async def get_user_posts(
         UserResult,
     )
     if not user:
-        raise HTTPException(404, f"User {username} not found")
+        raise EnrichedHTTPException(404, f"User {username} not found")
 
     pagination_cache_key: Final[str] = await cache_manager.derive_pagination_key(
         PostResult.resource_name, cursor, sort_option.value
@@ -290,7 +293,7 @@ async def get_user_forums(
         UserResult,
     )
     if not user:
-        raise HTTPException(404, f"User {username} not found")
+        raise EnrichedHTTPException(404, f"User {username} not found")
 
     pagination_cache_key: Final[str] = await cache_manager.derive_pagination_key(
         ForumResult.resource_name, cursor, sort_option.value
@@ -334,7 +337,7 @@ async def get_user_animes(
         UserResult,
     )
     if not user:
-        raise HTTPException(404, f"User {username} not found")
+        raise EnrichedHTTPException(404, f"User {username} not found")
 
     pagination_cache_key: Final[str] = await cache_manager.derive_pagination_key(
         AnimeResult.resource_name, cursor, sort_option.value
@@ -383,12 +386,12 @@ async def login(
         user = await user_repo.get_user_by_email(user_model.identity)
 
     if not user:
-        raise HTTPException(404, f"User {user_model.identity} not found")
+        raise EnrichedHTTPException(404, f"User {user_model.identity} not found")
 
     password_hash: bytes = await user_repo.get_user_password(user.id_)
 
     if not bcrypt_check_password(user_model.password, password_hash):
-        raise HTTPException(403, "Incorrect password")
+        raise EnrichedHTTPException(403, "Incorrect password")
 
     login_time = datetime.now(UTC)
     # TODO: Add event to update user login time

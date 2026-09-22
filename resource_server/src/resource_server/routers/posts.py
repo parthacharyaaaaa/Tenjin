@@ -3,8 +3,9 @@ from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
 
+from auxillary.data_structures.exceptions import EnrichedHTTPException
 from auxillary.utils import cache_repr, json_repr, to_base64url
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (
     NAME_SEPERATOR,
@@ -79,7 +80,7 @@ async def create_post(
         forum_cache_key, partial(forum_repo.get_forum, post_model.forum_id), ForumResult
     )
     if not forum:
-        raise HTTPException(404, "Forum not found")
+        raise EnrichedHTTPException(404, "Forum not found")
 
     intent_id: Final[str] = post_model.client_tag or uuid4().hex
     async with cache_manager.guard_action(
@@ -138,7 +139,7 @@ async def get_post(
     )
 
     if not post:
-        raise HTTPException(404, f"No post with id {post_id} found")
+        raise EnrichedHTTPException(404, f"No post with id {post_id} found")
 
     return JSONResponse(json_repr(post))
 
@@ -158,13 +159,15 @@ async def edit_post(
     )
 
     if not post:
-        raise HTTPException(404, f"No post with id {post_id} found")
+        raise EnrichedHTTPException(404, f"No post with id {post_id} found")
 
     if post.author_id != access_token["sid"]:
-        raise HTTPException(403, "Only owner can edit post details")
+        raise EnrichedHTTPException(403, "Only owner can edit post details")
 
     if error_dict := validate_duplicate_amendment_contents(post_model, post):
-        e: HTTPException = HTTPException(409, "Invalid amendment data provided")
+        e: EnrichedHTTPException = EnrichedHTTPException(
+            409, "Invalid amendment data provided"
+        )
         setattr(e, "kwargs", error_dict)
         raise e
 
@@ -200,7 +203,7 @@ async def delete_post(
     )
 
     if not post:
-        raise HTTPException(404, f"No post with id {post_id} found")
+        raise EnrichedHTTPException(404, f"No post with id {post_id} found")
 
     conflicting_message: str = "Post already deleted"
     async with cache_manager.guard_action(
@@ -224,9 +227,13 @@ async def delete_post(
                 ForumAdminResult,
             )
             if not forum_admin:
-                raise HTTPException(403, "Only author and admins can delete post")
+                raise EnrichedHTTPException(
+                    403, "Only author and admins can delete post"
+                )
             if not check_permission(forum_admin.role, AdminPermissions.DELETE_POST):
-                raise HTTPException(403, "Insufficient permissions to delete post")
+                raise EnrichedHTTPException(
+                    403, "Insufficient permissions to delete post"
+                )
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -282,7 +289,7 @@ async def vote_post(
         post_cache_key, partial(post_repo.get_post, post_id), PostResult
     )
     if not post:
-        raise HTTPException(404, f"No post with id {post_id} found")
+        raise EnrichedHTTPException(404, f"No post with id {post_id} found")
 
     conflicting_message: str = (
         f"Post already {'upvoted' if vote_model.vote == 1 else 'downvoted'}"
@@ -311,7 +318,7 @@ async def vote_post(
                     Action.VOTE,
                     intent,
                 )
-                raise HTTPException(409, "Same vote already casted")
+                raise EnrichedHTTPException(409, "Same vote already casted")
             if existing_vote:
                 # Transitioning from upvote to downvote, or vice-versa
                 delta *= 2
@@ -375,7 +382,7 @@ async def unvote_post(
         post_cache_key, partial(post_repo.get_post, post_id), PostResult
     )
     if not post:
-        raise HTTPException(404, f"No post with id {post_id} found")
+        raise EnrichedHTTPException(404, f"No post with id {post_id} found")
 
     conflicting_message: str = "No vote casted on post"
     async with cache_manager.guard_action(
@@ -404,7 +411,7 @@ async def unvote_post(
                     Action.VOTE,
                     IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
                 )
-                raise HTTPException(409, conflicting_message)
+                raise EnrichedHTTPException(409, conflicting_message)
             if existing_vote is False:  # downvote
                 delta = -1
 
@@ -466,7 +473,7 @@ async def save_post(
         post_cache_key, partial(post_repo.get_post, post_id), PostResult
     )
     if not post:
-        raise HTTPException(404, f"No post with id {post_id} found")
+        raise EnrichedHTTPException(404, f"No post with id {post_id} found")
 
     conflicting_message: str = "Post already saved"
     async with cache_manager.guard_action(
@@ -489,7 +496,7 @@ async def save_post(
                 Action.SAVE,
                 IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
             )
-            raise HTTPException(409, conflicting_message)
+            raise EnrichedHTTPException(409, conflicting_message)
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -548,7 +555,7 @@ async def unsave_post(
         post_cache_key, partial(post_repo.get_post, post_id), PostResult
     )
     if not post:
-        raise HTTPException(404, f"No post with id {post_id} found")
+        raise EnrichedHTTPException(404, f"No post with id {post_id} found")
 
     conflicting_message: str = "Post not saved"
     async with cache_manager.guard_action(
@@ -571,7 +578,7 @@ async def unsave_post(
                 Action.SAVE,
                 IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
             )
-            raise HTTPException(409, "Post not saved")
+            raise EnrichedHTTPException(409, "Post not saved")
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -631,7 +638,7 @@ async def report_post(
         post_cache_key, partial(post_repo.get_post, post_id), PostResult
     )
     if not post:
-        raise HTTPException(404, f"No post with id {post_id} found")
+        raise EnrichedHTTPException(404, f"No post with id {post_id} found")
 
     resource_name: str = NAME_SEPERATOR.join(
         (PostResult.resource_name, report_model.tag)
@@ -641,12 +648,12 @@ async def report_post(
     )
 
     if lock:
-        raise HTTPException(409, "An identical request is being processed")
+        raise EnrichedHTTPException(409, "An identical request is being processed")
 
     intent_id: Final[str] = uuid4().hex
 
     if latest_intent:
-        raise HTTPException(409, "Post already reported")
+        raise EnrichedHTTPException(409, "Post already reported")
     if await post_repo.check_reported(post_id, access_token["sid"], report_model.tag):
         await cache_manager.set_intent(
             intent_id,
@@ -656,7 +663,7 @@ async def report_post(
             Action.REPORT,
             IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
         )
-        raise HTTPException(
+        raise EnrichedHTTPException(
             409, f"Post already reported for reason: {report_model.tag}"
         )
 
@@ -715,7 +722,7 @@ async def get_post_comments(
         post_cache_key, partial(post_repo.get_post, post_id), PostResult
     )
     if not post:
-        raise HTTPException(404, f"No post with id {post_id} found")
+        raise EnrichedHTTPException(404, f"No post with id {post_id} found")
 
     pagination_cache_key: str = await cache_manager.derive_pagination_key(
         CommentResult.resource_name,

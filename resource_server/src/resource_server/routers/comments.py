@@ -3,7 +3,8 @@ from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from auxillary.data_structures.exceptions import EnrichedHTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (
     create_intent_flag,
@@ -69,9 +70,9 @@ async def comment_on_post(
         post_cache_key, partial(post_repo.get_post, post_id), PostResult
     )
     if not post:
-        raise HTTPException(404, f"No post with id {post_id} found")
+        raise EnrichedHTTPException(404, f"No post with id {post_id} found")
     if post.closed:
-        raise HTTPException(409, "Post closed")
+        raise EnrichedHTTPException(409, "Post closed")
 
     intent_id: Final[str] = comment_model.client_tag or uuid4().hex
 
@@ -83,7 +84,7 @@ async def comment_on_post(
     )
 
     if lock or latest_intent:
-        raise HTTPException(409, "Identical request being processed")
+        raise EnrichedHTTPException(409, "Identical request being processed")
 
     counter_updates: tuple[CounterUpdate, ...] = (
         CounterUpdate(
@@ -142,7 +143,7 @@ async def delete_comment(
     )
 
     if not comment:
-        raise HTTPException(404, "Comment not found")
+        raise EnrichedHTTPException(404, "Comment not found")
     if comment.author_id != access_token["sid"]:
         # Check for forum admin
         forum_admin: (
@@ -162,9 +163,13 @@ async def delete_comment(
             ForumAdminResult,
         )
         if not forum_admin:
-            raise HTTPException(403, "Only author and admins can delete comments")
+            raise EnrichedHTTPException(
+                403, "Only author and admins can delete comments"
+            )
         if not check_permission(forum_admin.role, AdminPermissions.DELETE_COMMENT):
-            raise HTTPException(403, "Insufficient permissions to delete comment")
+            raise EnrichedHTTPException(
+                403, "Insufficient permissions to delete comment"
+            )
 
     intent_id: Final[str] = uuid4().hex
     conflict_message: str = "Already deleted comment"
@@ -241,7 +246,7 @@ async def vote_comment(
     )
 
     if not comment:
-        raise HTTPException(404, "Comment not found")
+        raise EnrichedHTTPException(404, "Comment not found")
     intent: Final[IntentFlag] = (
         IntentFlag.RESOURCE_CREATION_PENDING_FLAG
         if vote_model.vote == 1
@@ -276,7 +281,7 @@ async def vote_comment(
                     Action.VOTE,
                     intent,
                 )
-                raise HTTPException(409, conflict_message)
+                raise EnrichedHTTPException(409, conflict_message)
             if existing_vote:
                 # Transitioning from upvote to downvote, or vice-versa
                 delta *= 2
@@ -343,7 +348,7 @@ async def unvote_comment(
         comment_cache_key, partial(comment_repo.get_comment, comment_id), CommentResult
     )
     if not comment:
-        raise HTTPException(404, "Comment not found")
+        raise EnrichedHTTPException(404, "Comment not found")
 
     conflict_message: str = "No vote casted on this comment"
     async with cache_manager.guard_action(
@@ -370,7 +375,7 @@ async def unvote_comment(
                     Action.VOTE,
                     IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
                 )
-                raise HTTPException(409, conflict_message)
+                raise EnrichedHTTPException(409, conflict_message)
             if existing_vote is False:  # downvote
                 delta = -1
 
@@ -436,7 +441,7 @@ async def report_comment(
         comment_cache_key, partial(comment_repo.get_comment, comment_id), CommentResult
     )
     if not comment:
-        raise HTTPException(404, "Comment not found")
+        raise EnrichedHTTPException(404, "Comment not found")
 
     resource_name: str = NAME_SEPERATOR.join(
         (CommentResult.resource_name, report_model.tag)
@@ -463,7 +468,7 @@ async def report_comment(
                 Action.REPORT,
                 IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
             )
-            raise HTTPException(409, conflict_message)
+            raise EnrichedHTTPException(409, conflict_message)
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
