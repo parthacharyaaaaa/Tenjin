@@ -11,11 +11,11 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from auth_server.admin.session_manager import AdminSessionManager
 from auth_server.config import AppConfig
 from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.keydata import KeydataRepository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
-from auth_server.security.admin_sessions import AdminSessionManager
 from auth_server.security.key_manager import (
     FileSystemKeyManager,
     KeyLifecycleManager,

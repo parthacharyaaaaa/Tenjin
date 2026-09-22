@@ -4,7 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from redis.typing import DecodedT, KeyT
 from sqlalchemy.util.typing import TypeGuard
 
-from auth_server.security.admin_roles import AdminRole
+from auth_server.admin.roles import AdminRole
 
 
 class AdminSession(BaseModel):

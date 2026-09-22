@@ -2,7 +2,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Final
 
-from auth_server.security.permissions import Permission
+from auth_server.admin.permissions import Permission
 
 
 class AdminRole(StrEnum):

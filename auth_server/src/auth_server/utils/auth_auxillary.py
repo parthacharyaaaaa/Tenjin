@@ -5,13 +5,13 @@ from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from fastapi import Response
 from fastapi.datastructures import URL
 
+from auth_server.admin.session_manager import AdminSessionManager
 from auth_server.config.app_config import AppConfig
 from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.suspicious_activity import (
     SuspiciousActivityRepository,
     SuspiciousActivityResult,
 )
-from auth_server.security.admin_sessions import AdminSessionManager
 
 
 def attach_tokens(

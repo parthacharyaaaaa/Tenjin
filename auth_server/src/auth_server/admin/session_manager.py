@@ -9,9 +9,9 @@ from auxillary.singleton import SingletonMetaclass
 from redis.asyncio.client import Redis
 from sqlalchemy.util.typing import Final
 
+from auth_server.admin.roles import AdminRole
 from auth_server.config import AdminConfigModel
 from auth_server.models.session import AdminSession
-from auth_server.security.admin_roles import AdminRole
 from auth_server.strings import GENERIC_SESSION_SEPARATOR
 
 

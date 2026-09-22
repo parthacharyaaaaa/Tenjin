@@ -2,11 +2,11 @@ from typing import Annotated, Final
 
 from fastapi import Depends, HTTPException, Request
 
+from auth_server.admin.permissions import Permission
+from auth_server.admin.roles import ROLE_PERMISSIONS
+from auth_server.admin.session_manager import AdminSessionManager
 from auth_server.dependencies import get_admin_session_manager
 from auth_server.models.session import AdminSession
-from auth_server.security.admin_roles import ROLE_PERMISSIONS
-from auth_server.security.admin_sessions import AdminSessionManager
-from auth_server.security.permissions import Permission
 from auth_server.strings import AdminStrings
 
 

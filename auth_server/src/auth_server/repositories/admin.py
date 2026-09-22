@@ -10,8 +10,8 @@ from auxillary.data_structures.repository import AbstractWorkRepository
 from redis.typing import EncodableT, FieldT
 from sqlalchemy import insert, select, update
 
+from auth_server.admin.roles import AdminRole
 from auth_server.models.database import Admin
-from auth_server.security.admin_roles import AdminRole
 from auth_server.strings import SelectionLockOption
 
 

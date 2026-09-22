@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
+from auth_server.admin.permissions import Permission
 from auth_server.dependencies import (
     get_key_lifecycle_manager,
     get_keydata_repository,
@@ -22,7 +23,6 @@ from auth_server.security.key_manager import (
     KeyLifecycleManager,
     SyncedStoreKeyStateManager,
 )
-from auth_server.security.permissions import Permission
 from auth_server.utils.dependencies import require_permissions
 
 KEY: Final[APIRouter] = APIRouter()

@@ -5,8 +5,8 @@ from sqlalchemy import BOOLEAN, INTEGER, TIMESTAMP, VARCHAR, ForeignKey, text
 from sqlalchemy.dialects.postgresql import BYTEA, ENUM
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-from auth_server.security.admin_roles import AdminRole
-from auth_server.security.permissions import Permission
+from auth_server.admin.permissions import Permission
+from auth_server.admin.roles import AdminRole
 
 
 class Base(DeclarativeBase):
