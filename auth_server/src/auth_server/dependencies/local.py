@@ -2,7 +2,9 @@ import os
 from functools import lru_cache
 from typing import AsyncGenerator, Final
 
+from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
+from fastapi import Request
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -22,6 +24,10 @@ from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.keydata import KeydataRepository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.tokens.token_manager import TokenManager
+
+
+def get_hypermedia_link_builder(request: Request) -> HypermediaLinkBuilder:
+    return HypermediaLinkBuilder(request)
 
 
 @lru_cache(maxsize=1)

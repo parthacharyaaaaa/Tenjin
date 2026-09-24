@@ -5,16 +5,23 @@ from typing import Annotated, Final
 import aiofiles
 import httpx
 from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
+from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from fastapi import APIRouter, Depends
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response
 
 from auth_server.config.app_config import AppConfig
-from auth_server.dependencies.local import get_app_config, get_token_manager
+from auth_server.dependencies.local import (
+    get_app_config,
+    get_hypermedia_link_builder,
+    get_token_manager,
+)
 from auth_server.models.auth_requests import AuthenticationModel, RegistrationModel
 from auth_server.tokens.token_manager import TokenManager
 from auth_server.tokens.typing import StandardRefreshTokenClaims, TokenType
 from auth_server.utils.auth_auxillary import attach_tokens
+from auth_server.utils.hypermedia import token_hypermedia
 
 AUTH: Final[APIRouter] = APIRouter()
 
@@ -34,6 +41,9 @@ async def login(
     request: Request,
     auth_model: AuthenticationModel,
     token_manager: Annotated[TokenManager, Depends(get_token_manager)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ):
     # TODO: Add proper handling of 'request_for' field
 
@@ -60,7 +70,7 @@ async def login(
     )
 
     epoch: float = time.time()
-    response: JSONResponse = JSONResponse(
+    response: JSONResponse = EnrichedJSONResponse(
         {
             "message": response_contents.pop("message", "Login complete."),
             "username": sub,
@@ -69,7 +79,9 @@ async def login(
             "leeway": token_manager.token_manager_config.LEEWAY,
             "issuer": "tenjin-auth-service",
             "_additional": {**response_contents},
-        }
+        },
+        status_code=201,
+        hypermedia_data=token_hypermedia(link_builder),
     )
 
     attach_tokens(
@@ -82,7 +94,7 @@ async def login(
         + token_manager.token_manager_config.LEEWAY,
         paths=[request.url_for("reissue"), request.url_for("purge_family")],
     )
-    return response, 201
+    return response
 
 
 @AUTH.post("/register")
@@ -90,6 +102,9 @@ async def register(
     request: Request,
     registration_model: RegistrationModel,
     token_manager: Annotated[TokenManager, Depends(get_token_manager)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ):
     async with httpx.AsyncClient() as http_client:
         resource_response = await http_client.post(
@@ -114,7 +129,7 @@ async def register(
         sub, sid, family_id=family_id
     )
     epoch: float = time.time()
-    response: JSONResponse = JSONResponse(
+    response: JSONResponse = EnrichedJSONResponse(
         {
             "message": response_contents.pop("message", "Registration complete."),
             "username": sub,
@@ -126,6 +141,7 @@ async def register(
             "_additional": {**response_contents},
         },
         status_code=201,
+        hypermedia_data=token_hypermedia(link_builder),
     )
 
     attach_tokens(
@@ -138,12 +154,16 @@ async def register(
         + token_manager.token_manager_config.LEEWAY,
         paths=[request.url_for("reissue"), request.url_for("purge_family")],
     )
-    return response, 201
+    return response
 
 
 @AUTH.get("/reissue")
 async def reissue(
-    request: Request, token_manager: Annotated[TokenManager, Depends(get_token_manager)]
+    request: Request,
+    token_manager: Annotated[TokenManager, Depends(get_token_manager)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ):
     refresh_token: str | None = request.cookies.get(
         "refresh", request.cookies.get("Refresh")
@@ -160,14 +180,16 @@ async def reissue(
         refresh_token
     )
     epoch: float = time.time()
-    response: Response = JSONResponse(
+    response: Response = EnrichedJSONResponse(
         {
             "message": "Reissuance successful",
             "time_of_issuance": epoch,
             "access_exp": epoch + token_manager.token_manager_config.ACCESS_LIFETIME,
             "leeway": token_manager.token_manager_config.LEEWAY,
             "issuer": "babel-AUTH-service",
-        }
+        },
+        status_code=201,
+        hypermedia_data=token_hypermedia(link_builder),
     )
 
     attach_tokens(
@@ -180,7 +202,7 @@ async def reissue(
         + token_manager.token_manager_config.LEEWAY,
         paths=[request.url_for("reissue"), request.url_for("purge_family")],
     )
-    return response, 201
+    return response
 
 
 @AUTH.delete("/tokens")

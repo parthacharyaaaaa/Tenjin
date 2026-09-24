@@ -1,6 +1,8 @@
 from typing import Annotated, Final
 
 from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
+from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.utils import json_repr
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -8,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from auth_server.admin.permissions import Permission
 from auth_server.dependencies.local import (
+    get_hypermedia_link_builder,
     get_key_lifecycle_manager,
     get_keydata_repository,
     get_synced_store_key_state_manager,
@@ -23,6 +26,7 @@ from auth_server.repositories.keydata import (
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
+from auth_server.utils.hypermedia import key_hypermedia, key_rotation_hypermedia
 
 KEY: Final[APIRouter] = APIRouter()
 
@@ -34,6 +38,9 @@ async def get_key(
         AdminSession, Depends(require_permissions(Permission.READ_KEY))
     ],
     keydata_repository: Annotated[KeydataRepository, Depends(get_keydata_repository)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
     public: bool = True,
 ) -> JSONResponse:
     try:
@@ -46,7 +53,10 @@ async def get_key(
     except SQLAlchemyError:
         raise Exception("Failed to fetch key")
 
-    return JSONResponse(json_repr(key))
+    return EnrichedJSONResponse(
+        json_repr(key),
+        hypermedia_data=key_hypermedia(link_builder, kid, public=public),
+    )
 
 
 @KEY.delete("/keys/{kid}")
@@ -108,6 +118,9 @@ async def rotate_keys(
     synced_key_state_manager: Annotated[
         SyncedStoreKeyStateManager, Depends(get_synced_store_key_state_manager)
     ],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     previous_active_key_id: Final[
         str
@@ -115,11 +128,14 @@ async def rotate_keys(
     active_key: Final[KeyPublicDataResult] = await key_lifecycle_manager.rotate_key(
         rotation_author=admin_session.admin_id
     )
-    return JSONResponse(
+    return EnrichedJSONResponse(
         {
             "message": "Key rotation successful",
             "active_key_data": json_repr(active_key),
             "previous_kid": previous_active_key_id,
         },
         status_code=201,
+        hypermedia_data=key_rotation_hypermedia(
+            link_builder, active_key.kid, previous_active_key_id
+        ),
     )
