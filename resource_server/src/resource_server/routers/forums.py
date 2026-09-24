@@ -710,7 +710,7 @@ async def edit_forum(
 
     if not admin_role:
         raise EnrichedHTTPException(403, "You are not an admin for this forum")
-    if admin_role.role == "staff":  # TODO: Replace with StrEnum
+    if admin_role.role == AdminRoles.ADMIN:
         raise EnrichedHTTPException(
             403, "You do not have access rights to edit this forum"
         )
