@@ -1,6 +1,6 @@
 from typing import Annotated, Final
 
-from auxillary.data_structures.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.utils import json_repr
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse

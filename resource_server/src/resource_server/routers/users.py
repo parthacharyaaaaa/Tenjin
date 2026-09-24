@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from functools import partial
 from typing import Annotated, Final
 
-from auxillary.data_structures.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.security.hashing import bcrypt_check_password, bcrypt_hash_password
 from auxillary.utils import json_repr, to_base64url
 from fastapi import APIRouter, Depends, Path
@@ -133,8 +133,8 @@ async def delete_user(
 
     deletion_event: Event = Event(
         name=EventName.USER_CLEANUP,
-        payload=payload,  # type: ignore
-        side_effects=EventSideEffects(),  # type: ignore[reportCallIssue]
+        payload=payload,
+        side_effects=EventSideEffects(),
     )
 
     await event_streamer.emit_user_event(StreamName.USERS, deletion_event)

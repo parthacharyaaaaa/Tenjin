@@ -2,7 +2,7 @@ import hmac
 from datetime import UTC, datetime
 from typing import Annotated, Final
 
-from auxillary.data_structures.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auxillary.security.hashing import bcrypt_check_password, bcrypt_hash_password
 from auxillary.utils import generic_database_fetch_exception, json_repr

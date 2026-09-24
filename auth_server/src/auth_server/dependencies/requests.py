@@ -1,6 +1,6 @@
 from typing import Annotated, Final
 
-from auxillary.data_structures.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from fastapi import Depends, Request
 
 from auth_server.admin.permissions import Permission

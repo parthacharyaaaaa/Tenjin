@@ -1,24 +1,14 @@
 from collections.abc import Mapping
-from http import HTTPMethod
 from typing import Annotated, Any, ClassVar
 
 import orjson
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from pydantic.functional_validators import BeforeValidator
 from starlette.background import BackgroundTask
 
+from auxillary.data_structures.enriched.hypermedia import HypermediaResponseSequence
+
 _whitespace_stripped_string = Annotated[str, BeforeValidator(lambda x: x.strip())]
-
-
-class HypermediaResponse(BaseModel):
-    href: _whitespace_stripped_string
-    rel: _whitespace_stripped_string
-    type: HTTPMethod
-
-
-class HypermediaResponseSequence(BaseModel):
-    links: list[HypermediaResponse]
 
 
 class EnrichedJSONResponse(JSONResponse):

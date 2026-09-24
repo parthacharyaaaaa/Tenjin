@@ -3,7 +3,7 @@ from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
 
-from auxillary.data_structures.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (
@@ -115,10 +115,8 @@ async def comment_on_post(
 
     deletion_event: Event = Event(
         name=EventName.COMMENT_CREATE,
-        payload=comment_payload,  # type: ignore
-        side_effects=EventSideEffects(
-            counter_updates=counter_updates  # type: ignore[reportCallIssue]
-        ),
+        payload=comment_payload,
+        side_effects=EventSideEffects(counter_updates=counter_updates),
     )
 
     await event_streamer.emit_user_event(StreamName.COMMENTS, deletion_event)
@@ -217,10 +215,10 @@ async def delete_comment(
         payload: CommentDeletion = CommentDeletion(comment_id=comment_id)
         deletion_event: Event = Event(
             name=EventName.COMMENT_DELETE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates,
-                intent_updates=intent_updates,  # type: ignore[reportCallIssue]
+                intent_updates=intent_updates,
             ),
         )
 
@@ -320,10 +318,10 @@ async def vote_comment(
 
         vote_event: Event = Event(
             name=EventName.COMMENT_VOTE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.COMMENTS, vote_event)
@@ -414,10 +412,10 @@ async def unvote_comment(
 
         vote_event: Event = Event(
             name=EventName.COMMENT_UNVOTE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.COMMENTS, vote_event)
@@ -503,10 +501,10 @@ async def report_comment(
 
         report_event: Event = Event(
             name=EventName.POST_UNSAVE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.COMMENTS, report_event)

@@ -8,7 +8,7 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from redis.typing import EncodableT, FieldT
 
-from auxillary.data_structures.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.typing_utils import SupportsCache, SupportsJSON
 
 

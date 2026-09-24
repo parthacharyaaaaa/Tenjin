@@ -4,7 +4,7 @@ from typing import Annotated, Final
 
 import aiofiles
 import httpx
-from auxillary.data_structures.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from fastapi import APIRouter, Depends
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response

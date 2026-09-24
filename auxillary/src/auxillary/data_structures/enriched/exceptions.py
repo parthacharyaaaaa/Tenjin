@@ -3,7 +3,7 @@ from typing import Any
 
 from fastapi.exceptions import StarletteHTTPException
 
-from auxillary.data_structures.response import HypermediaResponseSequence
+from auxillary.data_structures.enriched.hypermedia import HypermediaResponseSequence
 
 
 class EnrichedHTTPException(StarletteHTTPException):

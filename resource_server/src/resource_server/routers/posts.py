@@ -3,7 +3,7 @@ from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
 
-from auxillary.data_structures.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.utils import cache_repr, json_repr, to_base64url
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -120,7 +120,7 @@ async def create_post(
         post_event: Event = Event(
             name=EventName.POST_CREATE,
             payload=event_paylaod,
-            side_effects=EventSideEffects(counter_updates=counter_updates),  # type: ignore[reportCallIssue]
+            side_effects=EventSideEffects(counter_updates=counter_updates),
         )
         await event_streamer.emit_user_event(StreamName.POSTS, post_event)
     return JSONResponse({"message": "post created"}, 202)
@@ -258,10 +258,10 @@ async def delete_post(
         payload: PostDeletion = PostDeletion(post_id=post_id)
         subscription_event: Event = Event(
             name=EventName.POST_DELETE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.POSTS, subscription_event)
@@ -358,10 +358,10 @@ async def vote_post(
 
         vote_event: Event = Event(
             name=EventName.POST_VOTE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.POSTS, vote_event)
@@ -449,10 +449,10 @@ async def unvote_post(
         )
         unvote_event: Event = Event(
             name=EventName.POST_UNVOTE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.POSTS, unvote_event)
@@ -531,10 +531,10 @@ async def save_post(
 
         save_event: Event = Event(
             name=EventName.POST_SAVE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.POSTS, save_event)
@@ -613,10 +613,10 @@ async def unsave_post(
 
         unsave_event: Event = Event(
             name=EventName.POST_UNSAVE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.POSTS, unsave_event)
@@ -698,10 +698,10 @@ async def report_post(
 
     report_event: Event = Event(
         name=EventName.POST_UNSAVE,
-        payload=payload,  # type: ignore
+        payload=payload,
         side_effects=EventSideEffects(
             counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
+        ),
     )
 
     await event_streamer.emit_user_event(StreamName.POSTS, report_event)

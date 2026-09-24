@@ -3,7 +3,7 @@ from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
 
-from auxillary.data_structures.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.utils import (
     json_repr,
     to_base64url,
@@ -149,10 +149,10 @@ async def sub_anime(
 
         subscription_event: Event = Event(
             name=EventName.ANIME_SUB,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.ANIMES, subscription_event)
@@ -233,10 +233,10 @@ async def unsub_anime(
 
         subscription_event: Event = Event(
             name=EventName.ANIME_UNSUB,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.ANIMES, subscription_event)

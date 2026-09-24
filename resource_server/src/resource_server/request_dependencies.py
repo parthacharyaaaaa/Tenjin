@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Final
 
 import jwt
-from auxillary.data_structures.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.utils import from_base64url
 from fastapi import Depends, Query, Request
 from jwt.exceptions import ExpiredSignatureError, PyJWTError

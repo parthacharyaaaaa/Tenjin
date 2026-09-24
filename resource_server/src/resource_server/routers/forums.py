@@ -4,7 +4,7 @@ from functools import partial
 from typing import Annotated, Final
 from uuid import uuid4
 
-from auxillary.data_structures.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.utils import cache_repr, json_repr, to_base64url
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -571,10 +571,10 @@ async def subscribe_forum(
 
         subscription_event: Event = Event(
             name=EventName.FORUM_SUB,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
         await event_streamer.emit_user_event(StreamName.FORUMS, subscription_event)
     return JSONResponse({"message": "Forum subscribed!"}, 202)
@@ -672,10 +672,10 @@ async def unsubscribe_forum(
         )
         unsubscription_event: Event = Event(
             name=EventName.FORUM_UNSUB,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.FORUMS, unsubscription_event)
