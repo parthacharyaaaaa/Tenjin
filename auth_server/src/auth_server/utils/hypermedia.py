@@ -4,6 +4,22 @@ from auxillary.data_structures.enriched.hypermedia import HypermediaResponseSequ
 from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
 
 
+def login_hypermedia(
+    builder: HypermediaLinkBuilder,
+    *,
+    admin: bool = False,
+) -> HypermediaResponseSequence:
+    return HypermediaResponseSequence(
+        links=[
+            builder.link(
+                "admin_login" if admin else "login",
+                "login",
+                HTTPMethod.POST,
+            )
+        ]
+    )
+
+
 def token_hypermedia(
     builder: HypermediaLinkBuilder,
 ) -> HypermediaResponseSequence:
@@ -40,6 +56,12 @@ def admin_lock_hypermedia(
             )
         ]
     )
+
+
+def jwks_hypermedia(
+    builder: HypermediaLinkBuilder,
+) -> HypermediaResponseSequence:
+    return HypermediaResponseSequence(links=[builder.link("jwks", "jwks")])
 
 
 def key_hypermedia(

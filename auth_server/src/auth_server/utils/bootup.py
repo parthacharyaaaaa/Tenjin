@@ -4,6 +4,7 @@ import traceback
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Final, Mapping
 
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.security.serialization import (
     pem_serialize_private_key,
     pem_serialize_public_key,
@@ -184,6 +185,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     config.JWKS.resolve_jwks_filepath(config.CORE.instance_path)
 
     # Error handler
+    app.add_exception_handler(EnrichedHTTPException, generic_error_handler)
     app.add_exception_handler(Exception, generic_error_handler)
 
     keydata_repository: Final[KeydataRepository] = KeydataRepository(

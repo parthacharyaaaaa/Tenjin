@@ -21,7 +21,7 @@ from auth_server.models.auth_requests import AuthenticationModel, RegistrationMo
 from auth_server.tokens.token_manager import TokenManager
 from auth_server.tokens.typing import StandardRefreshTokenClaims, TokenType
 from auth_server.utils.auth_auxillary import attach_tokens
-from auth_server.utils.hypermedia import token_hypermedia
+from auth_server.utils.hypermedia import login_hypermedia, token_hypermedia
 
 AUTH: Final[APIRouter] = APIRouter()
 
@@ -207,7 +207,11 @@ async def reissue(
 
 @AUTH.delete("/tokens")
 async def purge_family(
-    request: Request, token_manager: Annotated[TokenManager, Depends(get_token_manager)]
+    request: Request,
+    token_manager: Annotated[TokenManager, Depends(get_token_manager)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ):
     """
     Purges an entire token family in case of a reuse attack or a normal client logout
@@ -217,7 +221,9 @@ async def purge_family(
     )
     if not encoded_refresh_token:
         raise EnrichedHTTPException(
-            400, "Logout requires a refresh token to be provided"
+            400,
+            "Logout requires a refresh token to be provided",
+            hypermedia=login_hypermedia(link_builder),
         )
 
     try:
@@ -228,6 +234,10 @@ async def purge_family(
         )
         await token_manager.invalidate_family(refresh_token["fid"])
     except Exception as e:
-        raise EnrichedHTTPException(401, "Failed to validate this refresh token") from e
+        raise EnrichedHTTPException(
+            401,
+            "Failed to validate this refresh token",
+            hypermedia=login_hypermedia(link_builder),
+        ) from e
 
     return JSONResponse({"message": "Token Revoked"})

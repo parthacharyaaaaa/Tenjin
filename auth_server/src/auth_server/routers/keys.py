@@ -26,7 +26,11 @@ from auth_server.repositories.keydata import (
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
-from auth_server.utils.hypermedia import key_hypermedia, key_rotation_hypermedia
+from auth_server.utils.hypermedia import (
+    jwks_hypermedia,
+    key_hypermedia,
+    key_rotation_hypermedia,
+)
 
 KEY: Final[APIRouter] = APIRouter()
 
@@ -49,7 +53,11 @@ async def get_key(
         ) = await keydata_repository.get_keydata(kid, public_only=public)
 
         if not key:
-            raise EnrichedHTTPException(404, "No key with this ID found")
+            raise EnrichedHTTPException(
+                404,
+                "No key with this ID found",
+                hypermedia=jwks_hypermedia(link_builder),
+            )
     except SQLAlchemyError:
         raise Exception("Failed to fetch key")
 
