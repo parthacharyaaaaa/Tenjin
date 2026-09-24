@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Final
 
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.utils import generic_error_handler
 from fastapi import FastAPI
 
@@ -23,6 +24,7 @@ def register_routers(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    app.add_exception_handler(EnrichedHTTPException, generic_error_handler)
     app.add_exception_handler(Exception, generic_error_handler)
 
     app_config: Final[AppConfig] = get_app_config()

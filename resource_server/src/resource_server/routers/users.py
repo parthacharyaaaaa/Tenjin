@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from functools import partial
+from http import HTTPMethod
 from typing import Annotated, Final
 
 from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
@@ -7,7 +8,7 @@ from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilde
 from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.security.hashing import bcrypt_check_password, bcrypt_hash_password
 from auxillary.utils import json_repr, to_base64url
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, HTTPException, Path
 from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (
     derive_cache_key,
@@ -54,6 +55,7 @@ from resource_server.request_dependencies import (
 from resource_server.utils.helpers import generate_url_token
 from resource_server.utils.hypermedia import (
     paginated_collection_hypermedia,
+    single_link_hypermedia,
     user_hypermedia,
 )
 
@@ -82,12 +84,25 @@ async def register(
             raise EnrichedHTTPException(
                 409,
                 f"Username {user_model.username} and email {user_model.email} already taken",
+                hypermedia=single_link_hypermedia(
+                    link_builder, "login", "login", HTTPMethod.POST
+                ),
             )
         if existing_users[0].username == user_model.username:
             raise EnrichedHTTPException(
-                409, f"Username {user_model.username} already taken"
+                409,
+                f"Username {user_model.username} already taken",
+                hypermedia=single_link_hypermedia(
+                    link_builder, "login", "login", HTTPMethod.POST
+                ),
             )
-        raise EnrichedHTTPException(409, f"Email {user_model.email} already taken")
+        raise EnrichedHTTPException(
+            409,
+            f"Email {user_model.email} already taken",
+            hypermedia=single_link_hypermedia(
+                link_builder, "login", "login", HTTPMethod.POST
+            ),
+        )
 
     # All checks passed, user creation good to go
     pw_hash = bcrypt_hash_password(user_model.password)
@@ -117,18 +132,30 @@ async def delete_user(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     user_repo: Annotated[UserRepository, Depends(get_user_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     user_cache_key: Final[str] = derive_cache_key(UserResult.resource_name, username)
     user: UserResult | None = await cache_manager.distributed_get_or_load(
         user_cache_key, partial(user_repo.get_user_by_username, username), UserResult
     )
     if not user:
-        raise EnrichedHTTPException(404, f"User {username} not found")
+        raise HTTPException(404, f"User {username} not found")
 
     password_hash: bytes = await user_repo.get_user_password(user.id_)
 
     if not bcrypt_check_password(deletion_model.password, password_hash):
-        raise EnrichedHTTPException(403, "Incorrect password")
+        raise EnrichedHTTPException(
+            403,
+            "Incorrect password",
+            hypermedia=single_link_hypermedia(
+                link_builder,
+                "recover_password",
+                "recover-password",
+                HTTPMethod.POST,
+            ),
+        )
 
     # User deleting self, so both user and resource identifier are identical
     lock, latest_intent = await cache_manager.fetch_indicators(
@@ -136,9 +163,9 @@ async def delete_user(
     )
 
     if lock:
-        raise EnrichedHTTPException(409, "Identical operation underway")
+        raise HTTPException(409, "Identical operation underway")
     if latest_intent == IntentFlag.RESOURCE_DELETION_PENDING_FLAG:
-        raise EnrichedHTTPException(409, "Account already queued for deletion")
+        raise HTTPException(409, "Account already queued for deletion")
 
     await cache_manager.set_negative_mapping(user_cache_key)
     deletion_time: datetime = datetime.now(UTC)
@@ -171,6 +198,9 @@ async def recover_password(
     app_config: Annotated[AppConfig, Depends(get_app_config)],
     user_repo: Annotated[UserRepository, Depends(get_user_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     email_identity: bool = "@" in user_model.identity
     fetch_method = (
@@ -183,6 +213,9 @@ async def recover_password(
         raise EnrichedHTTPException(
             404,
             f"No user with {'email' if email_identity else 'username'} {user_model.identity} found",
+            hypermedia=single_link_hypermedia(
+                link_builder, "register", "register", HTTPMethod.POST
+            ),
         )
 
     url_token: Final[str] = generate_url_token()
@@ -210,16 +243,55 @@ async def update_password(
     app_config: Annotated[AppConfig, Depends(get_app_config)],
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     user_repo: Annotated[UserRepository, Depends(get_user_repository)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     user, (url, expiry) = await user_repo.get_user_password_recovery_token(user_id)
     if not user:
-        raise EnrichedHTTPException(404, "User not found")
+        raise EnrichedHTTPException(
+            404,
+            "User not found",
+            hypermedia=single_link_hypermedia(
+                link_builder,
+                "recover_password",
+                "recover-password",
+                HTTPMethod.POST,
+            ),
+        )
     if not url:
-        raise EnrichedHTTPException(404, "No password recovery token found")
+        raise EnrichedHTTPException(
+            404,
+            "No password recovery token found",
+            hypermedia=single_link_hypermedia(
+                link_builder,
+                "recover_password",
+                "recover-password",
+                HTTPMethod.POST,
+            ),
+        )
     if url != temp_url:
-        raise EnrichedHTTPException(403, "Invalid url")
+        raise EnrichedHTTPException(
+            403,
+            "Invalid url",
+            hypermedia=single_link_hypermedia(
+                link_builder,
+                "recover_password",
+                "recover-password",
+                HTTPMethod.POST,
+            ),
+        )
     if expiry > datetime.now(UTC):  # type: ignore[reportOptionalOperand]
-        raise EnrichedHTTPException(403, "Token expired")
+        raise EnrichedHTTPException(
+            403,
+            "Token expired",
+            hypermedia=single_link_hypermedia(
+                link_builder,
+                "recover_password",
+                "recover-password",
+                HTTPMethod.POST,
+            ),
+        )
 
     pw_hash: Final[bytes] = bcrypt_hash_password(password_model.password)
     await user_repo.update_password(user_id, pw_hash)
@@ -247,7 +319,7 @@ async def get_user(
         user_cache_key, partial(user_repo.get_user_by_username, username), UserResult
     )
     if not user:
-        raise EnrichedHTTPException(404, f"User {username} not found")
+        raise HTTPException(404, f"User {username} not found")
     return EnrichedJSONResponse(
         {"user": json_repr(user)},
         hypermedia_data=user_hypermedia(link_builder, user),
@@ -274,7 +346,7 @@ async def get_user_posts(
         UserResult,
     )
     if not user:
-        raise EnrichedHTTPException(404, f"User {username} not found")
+        raise HTTPException(404, f"User {username} not found")
 
     pagination_cache_key: Final[str] = await cache_manager.derive_pagination_key(
         PostResult.resource_name, cursor, sort_option.value
@@ -330,7 +402,7 @@ async def get_user_forums(
         UserResult,
     )
     if not user:
-        raise EnrichedHTTPException(404, f"User {username} not found")
+        raise HTTPException(404, f"User {username} not found")
 
     pagination_cache_key: Final[str] = await cache_manager.derive_pagination_key(
         ForumResult.resource_name, cursor, sort_option.value
@@ -386,7 +458,7 @@ async def get_user_animes(
         UserResult,
     )
     if not user:
-        raise EnrichedHTTPException(404, f"User {username} not found")
+        raise HTTPException(404, f"User {username} not found")
 
     pagination_cache_key: Final[str] = await cache_manager.derive_pagination_key(
         AnimeResult.resource_name, cursor, sort_option.value
@@ -447,12 +519,27 @@ async def login(
         user = await user_repo.get_user_by_email(user_model.identity)
 
     if not user:
-        raise EnrichedHTTPException(404, f"User {user_model.identity} not found")
+        raise EnrichedHTTPException(
+            404,
+            f"User {user_model.identity} not found",
+            hypermedia=single_link_hypermedia(
+                link_builder, "register", "register", HTTPMethod.POST
+            ),
+        )
 
     password_hash: bytes = await user_repo.get_user_password(user.id_)
 
     if not bcrypt_check_password(user_model.password, password_hash):
-        raise EnrichedHTTPException(403, "Incorrect password")
+        raise EnrichedHTTPException(
+            403,
+            "Incorrect password",
+            hypermedia=single_link_hypermedia(
+                link_builder,
+                "recover_password",
+                "recover-password",
+                HTTPMethod.POST,
+            ),
+        )
 
     login_time = datetime.now(UTC)
     # TODO: Add event to update user login time

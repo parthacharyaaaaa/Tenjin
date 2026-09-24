@@ -1,10 +1,12 @@
 from datetime import UTC, datetime
 from functools import partial
+from http import HTTPMethod
 from typing import Annotated, Final
 from uuid import uuid4
 
 from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
-from fastapi import APIRouter, Depends
+from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (
     create_intent_flag,
@@ -39,6 +41,7 @@ from resource_server.dependencies import (
     get_comment_repository,
     get_event_streamer,
     get_forum_repository,
+    get_hypermedia_link_builder,
     get_post_repository,
 )
 from resource_server.event_streamer import EventStreamer
@@ -50,6 +53,7 @@ from resource_server.repositories.forum import ForumAdminResult, ForumRepository
 from resource_server.repositories.posts import PostRepository, PostResult
 from resource_server.repositories.user import UserResult
 from resource_server.request_dependencies import validate_access_token
+from resource_server.utils.hypermedia import single_link_hypermedia
 from resource_server.utils.typing import StandardAccessTokenClaims
 
 COMMENTS: Final[APIRouter] = APIRouter()
@@ -70,9 +74,9 @@ async def comment_on_post(
         post_cache_key, partial(post_repo.get_post, post_id), PostResult
     )
     if not post:
-        raise EnrichedHTTPException(404, f"No post with id {post_id} found")
+        raise HTTPException(404, f"No post with id {post_id} found")
     if post.closed:
-        raise EnrichedHTTPException(409, "Post closed")
+        raise HTTPException(409, "Post closed")
 
     intent_id: Final[str] = comment_model.client_tag or uuid4().hex
 
@@ -84,7 +88,7 @@ async def comment_on_post(
     )
 
     if lock or latest_intent:
-        raise EnrichedHTTPException(409, "Identical request being processed")
+        raise HTTPException(409, "Identical request being processed")
 
     counter_updates: tuple[CounterUpdate, ...] = (
         CounterUpdate(
@@ -132,6 +136,9 @@ async def delete_comment(
     comment_repo: Annotated[CommentRepository, Depends(get_comment_repository)],
     forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     comment_cache_key: Final[str] = derive_cache_key(
         CommentResult.resource_name, comment_id
@@ -141,7 +148,17 @@ async def delete_comment(
     )
 
     if not comment:
-        raise EnrichedHTTPException(404, "Comment not found")
+        raise EnrichedHTTPException(
+            404,
+            "Comment not found",
+            hypermedia=single_link_hypermedia(
+                link_builder,
+                "get_post_comments",
+                "collection",
+                HTTPMethod.GET,
+                post_id=post_id,
+            ),
+        )
     if comment.author_id != access_token["sid"]:
         # Check for forum admin
         forum_admin: (
@@ -161,13 +178,9 @@ async def delete_comment(
             ForumAdminResult,
         )
         if not forum_admin:
-            raise EnrichedHTTPException(
-                403, "Only author and admins can delete comments"
-            )
+            raise HTTPException(403, "Only author and admins can delete comments")
         if not check_permission(forum_admin.role, AdminPermissions.DELETE_COMMENT):
-            raise EnrichedHTTPException(
-                403, "Insufficient permissions to delete comment"
-            )
+            raise HTTPException(403, "Insufficient permissions to delete comment")
 
     intent_id: Final[str] = uuid4().hex
     conflict_message: str = "Already deleted comment"
@@ -235,6 +248,9 @@ async def vote_comment(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     comment_repo: Annotated[CommentRepository, Depends(get_comment_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     comment_cache_key: Final[str] = derive_cache_key(
         CommentResult.resource_name, comment_id
@@ -244,7 +260,17 @@ async def vote_comment(
     )
 
     if not comment:
-        raise EnrichedHTTPException(404, "Comment not found")
+        raise EnrichedHTTPException(
+            404,
+            "Comment not found",
+            hypermedia=single_link_hypermedia(
+                link_builder,
+                "get_post_comments",
+                "collection",
+                HTTPMethod.GET,
+                post_id=post_id,
+            ),
+        )
     intent: Final[IntentFlag] = (
         IntentFlag.RESOURCE_CREATION_PENDING_FLAG
         if vote_model.vote == 1
@@ -279,7 +305,18 @@ async def vote_comment(
                     Action.VOTE,
                     intent,
                 )
-                raise EnrichedHTTPException(409, conflict_message)
+                raise EnrichedHTTPException(
+                    409,
+                    conflict_message,
+                    hypermedia=single_link_hypermedia(
+                        link_builder,
+                        "unvote_comment",
+                        "remove-vote",
+                        HTTPMethod.DELETE,
+                        query={"post_id": post_id},
+                        comment_id=comment_id,
+                    ),
+                )
             if existing_vote:
                 # Transitioning from upvote to downvote, or vice-versa
                 delta *= 2
@@ -336,6 +373,9 @@ async def unvote_comment(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     comment_repo: Annotated[CommentRepository, Depends(get_comment_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     comment_cache_key: Final[str] = derive_cache_key(
         CommentResult.resource_name, comment_id
@@ -346,7 +386,17 @@ async def unvote_comment(
         comment_cache_key, partial(comment_repo.get_comment, comment_id), CommentResult
     )
     if not comment:
-        raise EnrichedHTTPException(404, "Comment not found")
+        raise EnrichedHTTPException(
+            404,
+            "Comment not found",
+            hypermedia=single_link_hypermedia(
+                link_builder,
+                "get_post_comments",
+                "collection",
+                HTTPMethod.GET,
+                post_id=post_id,
+            ),
+        )
 
     conflict_message: str = "No vote casted on this comment"
     async with cache_manager.guard_action(
@@ -373,7 +423,18 @@ async def unvote_comment(
                     Action.VOTE,
                     IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
                 )
-                raise EnrichedHTTPException(409, conflict_message)
+                raise EnrichedHTTPException(
+                    409,
+                    conflict_message,
+                    hypermedia=single_link_hypermedia(
+                        link_builder,
+                        "vote_comment",
+                        "vote",
+                        HTTPMethod.POST,
+                        query={"post_id": post_id},
+                        comment_id=comment_id,
+                    ),
+                )
             if existing_vote is False:  # downvote
                 delta = -1
 
@@ -431,6 +492,9 @@ async def report_comment(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     comment_repo: Annotated[CommentRepository, Depends(get_comment_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     comment_cache_key: Final[str] = derive_cache_key(
         CommentResult.resource_name, comment_id
@@ -439,7 +503,17 @@ async def report_comment(
         comment_cache_key, partial(comment_repo.get_comment, comment_id), CommentResult
     )
     if not comment:
-        raise EnrichedHTTPException(404, "Comment not found")
+        raise EnrichedHTTPException(
+            404,
+            "Comment not found",
+            hypermedia=single_link_hypermedia(
+                link_builder,
+                "get_post_comments",
+                "collection",
+                HTTPMethod.GET,
+                post_id=post_id,
+            ),
+        )
 
     resource_name: str = NAME_SEPERATOR.join(
         (CommentResult.resource_name, report_model.tag)
@@ -466,7 +540,7 @@ async def report_comment(
                 Action.REPORT,
                 IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
             )
-            raise EnrichedHTTPException(409, conflict_message)
+            raise HTTPException(409, conflict_message)
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(

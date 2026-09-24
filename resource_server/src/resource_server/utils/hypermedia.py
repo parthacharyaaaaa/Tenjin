@@ -14,6 +14,7 @@ __all__ = (
     "forum_hypermedia",
     "paginated_collection_hypermedia",
     "post_hypermedia",
+    "single_link_hypermedia",
     "user_hypermedia",
 )
 
@@ -49,6 +50,20 @@ def _response_sequence(
     links: Sequence[HypermediaResponse],
 ) -> HypermediaResponseSequence:
     return HypermediaResponseSequence(links=list(links))
+
+
+def single_link_hypermedia(
+    builder: HypermediaLinkBuilder,
+    route_name: str,
+    rel: str,
+    method: HTTPMethod = HTTPMethod.GET,
+    *,
+    query: dict[str, Any] | None = None,
+    **path_parameters: Any,
+) -> HypermediaResponseSequence:
+    return _response_sequence(
+        [builder.link(route_name, rel, method, query=query, **path_parameters)]
+    )
 
 
 def paginated_collection_hypermedia(
