@@ -2,9 +2,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Final
 
 import jwt
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.utils import from_base64url
 from fastapi import Depends, Query, Request
-from fastapi.exceptions import HTTPException
 from jwt.exceptions import ExpiredSignatureError, PyJWTError
 
 from resource_server.config.app_config import AppConfig
@@ -28,7 +28,7 @@ async def validate_access_token(
     Protect an endpoint by validating an access token through cookies
     """
     if "Authorization" not in request.headers:
-        raise HTTPException(401, "Authentication details missing")
+        raise EnrichedHTTPException(401, "Authentication details missing")
 
     encoded_access_token: Final[str] = request.headers["Authorization"].split()[1]
 
@@ -37,9 +37,9 @@ async def validate_access_token(
 
     # Early exit on visibly invaalid tokens
     if not key_id:
-        raise HTTPException(401, "Invalid token, key ID missing")
+        raise EnrichedHTTPException(401, "Invalid token, key ID missing")
     if alg not in app_config.JWKS.ALLOWED_ALGORITHMS:
-        raise HTTPException(401, "Invalid token, unsupported algorithm claim")
+        raise EnrichedHTTPException(401, "Invalid token, unsupported algorithm claim")
 
     try:
         decoded_token: dict[str, str | int] | None = None
@@ -63,14 +63,14 @@ async def validate_access_token(
 
             return StandardAccessTokenClaims(**decoded_token)  # type: ignore[reportArgumentType]
 
-        raise HTTPException(
+        raise EnrichedHTTPException(
             401, "Invalid Key ID, no such key was found. Please login again"
         )
 
     except ExpiredSignatureError:
-        raise HTTPException(401, "JWT token expired, begin refresh issuance")
+        raise EnrichedHTTPException(401, "JWT token expired, begin refresh issuance")
     except PyJWTError:
-        raise HTTPException(401, "JWT token invalid")
+        raise EnrichedHTTPException(401, "JWT token invalid")
 
 
 def cursor_preprocessor(

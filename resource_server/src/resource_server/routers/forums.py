@@ -1,9 +1,13 @@
 import time
 from datetime import UTC, datetime
 from functools import partial
+from http import HTTPMethod
 from typing import Annotated, Final
 from uuid import uuid4
 
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
+from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.utils import cache_repr, json_repr, to_base64url
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -34,6 +38,7 @@ from resource_server.dependencies import (
     get_cache_manager,
     get_event_streamer,
     get_forum_repository,
+    get_hypermedia_link_builder,
     get_post_repository,
     get_user_repository,
 )
@@ -61,6 +66,11 @@ from resource_server.request_dependencies import (
     preprocess_timeframe,
     validate_access_token,
 )
+from resource_server.utils.hypermedia import (
+    forum_hypermedia,
+    paginated_collection_hypermedia,
+    single_link_hypermedia,
+)
 from resource_server.utils.typing import StandardAccessTokenClaims
 
 FORUMS: Final[APIRouter] = APIRouter()
@@ -71,7 +81,10 @@ async def get_forum(
     forum_id: int,
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     forum: ForumResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(Forum.__tablename__, forum_id),
         partial(forum_repo.get_forum, forum_id),
@@ -81,7 +94,10 @@ async def get_forum(
     if not forum:
         raise HTTPException(404, f"No forum with id {forum_id} found")
 
-    return JSONResponse({"forum": json_repr(forum)})
+    return EnrichedJSONResponse(
+        {"forum": json_repr(forum)},
+        hypermedia_data=forum_hypermedia(link_builder, forum),
+    )
 
 
 @FORUMS.get("/{forum_id}/posts")
@@ -96,7 +112,10 @@ async def get_forum_posts(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     forum: ForumResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(Forum.__tablename__, forum_id),
         partial(forum_repo.get_forum, forum_id),
@@ -131,7 +150,20 @@ async def get_forum_posts(
             posts[-1].id_, app_config.BUSINESS.PAGINATION_CURSOR_LENGTH
         )
 
-    return JSONResponse({"posts": [json_repr(p) for p in posts], "cursor": next_cursor})
+    return EnrichedJSONResponse(
+        {"posts": [json_repr(p) for p in posts], "cursor": next_cursor},
+        hypermedia_data=paginated_collection_hypermedia(
+            link_builder,
+            "get_forum_posts",
+            path_parameters={"forum_id": forum_id},
+            query={
+                "sort": sort_option.value,
+                "timeframe": timeframe_tuple[0].value,
+            },
+            next_cursor=next_cursor,
+            related_links=(link_builder.link("get_forum", "forum", forum_id=forum_id),),
+        ),
+    )
 
 
 @FORUMS.post("/")
@@ -141,7 +173,10 @@ async def create_forum(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     anime_repo: Annotated[AnimeRepository, Depends(get_anime_repository)],
     forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     anime: AnimeResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(Anime.__tablename__, forum_model.parent_anime_id),
         partial(anime_repo.get_anime, forum_model.parent_anime_id),
@@ -149,20 +184,29 @@ async def create_forum(
     )
 
     if not anime:
-        raise HTTPException(
-            404, f"No anime with ID {forum_model.parent_anime_id} found"
+        raise EnrichedHTTPException(
+            404,
+            f"No anime with ID {forum_model.parent_anime_id} found",
+            hypermedia=single_link_hypermedia(
+                link_builder, "get_animes", "collection", HTTPMethod.GET
+            ),
         )
 
     existing_forum: ForumResult | None = await forum_repo.get_forum_by_name(
         forum_model.title
     )
     if existing_forum:
-        conflict: HTTPException = HTTPException(
+        raise EnrichedHTTPException(
             409,
             f"A forum with this name, for anime with ID {forum_model.parent_anime_id} already exists",
+            hypermedia=single_link_hypermedia(
+                link_builder,
+                "get_forum",
+                "existing",
+                HTTPMethod.GET,
+                forum_id=existing_forum.id_,
+            ),
         )
-        setattr(conflict, "kwargs", {"forum": json_repr(existing_forum)})
-        raise conflict
 
     created_forum: ForumResult = await forum_repo.create_forum(
         forum_model.title,
@@ -179,8 +223,10 @@ async def create_forum(
         cache_manager.cache_config.TTL_STRONG,
     )
 
-    return JSONResponse(
-        {"message": "Forum created", "forum": json_repr(created_forum)}, 201
+    return EnrichedJSONResponse(
+        {"message": "Forum created", "forum": json_repr(created_forum)},
+        201,
+        hypermedia_data=forum_hypermedia(link_builder, created_forum),
     )
 
 
@@ -448,7 +494,10 @@ async def get_forum_admins(
     app_config: Annotated[AppConfig, Depends(get_app_config)],
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     pagination_cache_key: str = await cache_manager.derive_pagination_key(
         NAME_SEPERATOR.join((ForumAdmin.__tablename__, str(forum_id)))
     )
@@ -465,8 +514,15 @@ async def get_forum_admins(
             admin_users[-1].user_id, app_config.BUSINESS.PAGINATION_CURSOR_LENGTH
         )
 
-    return JSONResponse(
-        {"admins": [json_repr(i) for i in admin_users], "cursor": next_cursor}
+    return EnrichedJSONResponse(
+        {"admins": [json_repr(i) for i in admin_users], "cursor": next_cursor},
+        hypermedia_data=paginated_collection_hypermedia(
+            link_builder,
+            "get_forum_admins",
+            path_parameters={"forum_id": forum_id},
+            include_first=False,
+            related_links=(link_builder.link("get_forum", "up", forum_id=forum_id),),
+        ),
     )
 
 
@@ -477,6 +533,9 @@ async def subscribe_forum(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     cache_key: Final[str] = derive_cache_key(Forum.__tablename__, forum_id)
     forum: ForumResult | None = await cache_manager.distributed_get_or_load(
@@ -511,7 +570,17 @@ async def subscribe_forum(
                     Action.SUB,
                     IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
                 )
-                raise HTTPException(409, conflict_message)
+                raise EnrichedHTTPException(
+                    409,
+                    conflict_message,
+                    hypermedia=single_link_hypermedia(
+                        link_builder,
+                        "unsubscribe_forum",
+                        "unsubscribe",
+                        HTTPMethod.DELETE,
+                        forum_id=forum_id,
+                    ),
+                )
 
         forum_owner: UserResult | None = await cache_manager.distributed_get_or_load(
             derive_cache_key(
@@ -562,10 +631,10 @@ async def subscribe_forum(
 
         subscription_event: Event = Event(
             name=EventName.FORUM_SUB,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
         await event_streamer.emit_user_event(StreamName.FORUMS, subscription_event)
     return JSONResponse({"message": "Forum subscribed!"}, 202)
@@ -578,6 +647,9 @@ async def unsubscribe_forum(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     cache_key: Final[str] = derive_cache_key(ForumResult.resource_name, forum_id)
     forum: ForumResult | None = await cache_manager.distributed_get_or_load(
@@ -613,7 +685,17 @@ async def unsubscribe_forum(
                     Action.UNSUB,
                     IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
                 )
-                raise HTTPException(409, conflicting_message)
+                raise EnrichedHTTPException(
+                    409,
+                    conflicting_message,
+                    hypermedia=single_link_hypermedia(
+                        link_builder,
+                        "subscribe_forum",
+                        "subscribe",
+                        HTTPMethod.POST,
+                        forum_id=forum_id,
+                    ),
+                )
 
         forum_owner: UserResult | None = await cache_manager.distributed_get_or_load(
             derive_cache_key(
@@ -663,10 +745,10 @@ async def unsubscribe_forum(
         )
         unsubscription_event: Event = Event(
             name=EventName.FORUM_UNSUB,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.FORUMS, unsubscription_event)
@@ -680,7 +762,10 @@ async def edit_forum(
     forum_model: ForumUpdationModel,
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     forum: ForumResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(Forum.__tablename__, forum_id),
         partial(forum_repo.get_forum, forum_id),
@@ -701,13 +786,14 @@ async def edit_forum(
 
     if not admin_role:
         raise HTTPException(403, "You are not an admin for this forum")
-    if admin_role.role == "staff":  # TODO: Replace with StrEnum
+    if admin_role.role == AdminRoles.ADMIN:
         raise HTTPException(403, "You do not have access rights to edit this forum")
 
     updated_forum: ForumResult = await forum_repo.update_forum(
         forum_id, forum_model.title, forum_model.description, return_forum=True
     )
 
-    return JSONResponse(
-        {"message": "Forum edited succesfully", "forum": json_repr(updated_forum)}
+    return EnrichedJSONResponse(
+        {"message": "Forum edited succesfully", "forum": json_repr(updated_forum)},
+        hypermedia_data=forum_hypermedia(link_builder, updated_forum),
     )

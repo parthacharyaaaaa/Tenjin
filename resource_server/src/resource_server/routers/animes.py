@@ -1,8 +1,12 @@
 from datetime import UTC, datetime
 from functools import partial
+from http import HTTPMethod
 from typing import Annotated, Final
 from uuid import uuid4
 
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
+from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.utils import (
     json_repr,
     to_base64url,
@@ -33,6 +37,7 @@ from resource_server.dependencies import (
     get_cache_manager,
     get_event_streamer,
     get_forum_repository,
+    get_hypermedia_link_builder,
 )
 from resource_server.event_streamer import EventStreamer
 from resource_server.models.database import (
@@ -49,6 +54,11 @@ from resource_server.request_dependencies import (
     search_param_preprocessor,
     validate_access_token,
 )
+from resource_server.utils.hypermedia import (
+    anime_hypermedia,
+    paginated_collection_hypermedia,
+    single_link_hypermedia,
+)
 from resource_server.utils.typing import StandardAccessTokenClaims
 
 ANIMES: Final[APIRouter] = APIRouter()
@@ -59,6 +69,7 @@ async def get_anime(
     anime_id: int,
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     anime_repo: Annotated[AnimeRepository, Depends(get_anime_repository)],
+    builder: Annotated[HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)],
 ) -> JSONResponse:
     anime: AnimeResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(Anime.__tablename__, anime_id),
@@ -68,9 +79,17 @@ async def get_anime(
     )
 
     if not anime:
-        raise HTTPException(404, f"No anime with id {anime_id} could be found")
+        raise EnrichedHTTPException(
+            404,
+            f"No anime with id {anime_id} could be found",
+            hypermedia=single_link_hypermedia(
+                builder, "get_animes", "collection", HTTPMethod.GET
+            ),
+        )
 
-    return JSONResponse(anime)
+    return EnrichedJSONResponse(
+        json_repr(anime), hypermedia_data=anime_hypermedia(builder, anime)
+    )
 
 
 @ANIMES.post("/{anime_id}/subscriptions")
@@ -80,6 +99,7 @@ async def sub_anime(
     anime_repo: Annotated[AnimeRepository, Depends(get_anime_repository)],
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    builder: Annotated[HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)],
 ) -> JSONResponse:
     cache_key: Final[str] = derive_cache_key(AnimeResult.resource_name, anime_id)
     anime: AnimeResult | None = await cache_manager.distributed_get_or_load(
@@ -90,7 +110,13 @@ async def sub_anime(
     )
 
     if not anime:
-        raise HTTPException(404, f"No anime with id {anime_id} could be found")
+        raise EnrichedHTTPException(
+            404,
+            f"No anime with id {anime_id} could be found",
+            hypermedia=single_link_hypermedia(
+                builder, "get_animes", "collection", HTTPMethod.GET
+            ),
+        )
 
     conflict_message: str = f"Already subscribed to anime {anime.title}"
     async with cache_manager.guard_action(
@@ -115,7 +141,17 @@ async def sub_anime(
                     Action.SUB,
                     IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
                 )
-                raise HTTPException(409, conflict_message)
+                raise EnrichedHTTPException(
+                    409,
+                    conflict_message,
+                    hypermedia=single_link_hypermedia(
+                        builder,
+                        "unsub_anime",
+                        "unsubscribe",
+                        HTTPMethod.DELETE,
+                        anime_id=anime_id,
+                    ),
+                )
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -148,10 +184,10 @@ async def sub_anime(
 
         subscription_event: Event = Event(
             name=EventName.ANIME_SUB,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.ANIMES, subscription_event)
@@ -166,6 +202,7 @@ async def unsub_anime(
     anime_repo: Annotated[AnimeRepository, Depends(get_anime_repository)],
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    builder: Annotated[HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)],
 ) -> JSONResponse:
     cache_key: Final[str] = derive_cache_key(Anime.__tablename__, anime_id)
     anime: AnimeResult | None = await cache_manager.distributed_get_or_load(
@@ -176,7 +213,13 @@ async def unsub_anime(
     )
 
     if not anime:
-        raise HTTPException(404, f"No anime with id {anime_id} could be found")
+        raise EnrichedHTTPException(
+            404,
+            f"No anime with id {anime_id} could be found",
+            hypermedia=single_link_hypermedia(
+                builder, "get_animes", "collection", HTTPMethod.GET
+            ),
+        )
 
     conflict_message: str = f"Not subscribed to anime {anime.title}"
     async with cache_manager.guard_action(
@@ -232,10 +275,10 @@ async def unsub_anime(
 
         subscription_event: Event = Event(
             name=EventName.ANIME_UNSUB,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.ANIMES, subscription_event)
@@ -250,6 +293,7 @@ async def get_animes(
     app_config: Annotated[AppConfig, Depends(get_app_config)],
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     anime_repo: Annotated[AnimeRepository, Depends(get_anime_repository)],
+    builder: Annotated[HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)],
 ) -> JSONResponse:
     pagination_cache_key: str = await cache_manager.derive_pagination_key(
         Anime.__tablename__,
@@ -270,8 +314,17 @@ async def get_animes(
             animes[-1].id_, app_config.BUSINESS.PAGINATION_CURSOR_LENGTH
         )
 
-    return JSONResponse(
-        {"animes": [json_repr(i) for i in animes], "cursor": next_cursor}
+    return EnrichedJSONResponse(
+        {"animes": [json_repr(i) for i in animes], "cursor": next_cursor},
+        hypermedia_data=paginated_collection_hypermedia(
+            builder,
+            "get_animes",
+            query={
+                "search": search_param,
+                "genre": [genre.name_ for genre in genres],
+            },
+            next_cursor=next_cursor,
+        ),
     )
 
 
@@ -280,6 +333,7 @@ async def get_anime_links(
     anime_id: int,
     cache_manager: Annotated[CacheManager, get_cache_manager],
     anime_repo: Annotated[AnimeRepository, get_anime_repository],
+    builder: Annotated[HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)],
 ) -> JSONResponse:
     anime: AnimeResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(Anime.__tablename__, anime_id),
@@ -289,7 +343,13 @@ async def get_anime_links(
     )
 
     if not anime:
-        raise HTTPException(404, f"No anime with id {anime_id} could be found")
+        raise EnrichedHTTPException(
+            404,
+            f"No anime with id {anime_id} could be found",
+            hypermedia=single_link_hypermedia(
+                builder, "get_animes", "collection", HTTPMethod.GET
+            ),
+        )
 
     return JSONResponse({"stream_links": anime.stream_links})
 
@@ -303,6 +363,7 @@ async def get_anime_forums(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     anime_repo: Annotated[AnimeRepository, Depends(get_anime_repository)],
     forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
+    builder: Annotated[HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)],
 ) -> JSONResponse:
     anime: AnimeResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(Anime.__tablename__, anime_id),
@@ -312,7 +373,13 @@ async def get_anime_forums(
     )
 
     if not anime:
-        raise HTTPException(404, f"No anime with id {anime_id} could be found")
+        raise EnrichedHTTPException(
+            404,
+            f"No anime with id {anime_id} could be found",
+            hypermedia=single_link_hypermedia(
+                builder, "get_animes", "collection", HTTPMethod.GET
+            ),
+        )
 
     pagination_cache_key: str = await cache_manager.derive_pagination_key(
         Forum.__tablename__, cursor, search_param or ""
@@ -329,6 +396,14 @@ async def get_anime_forums(
             forums[-1].id_, app_config.BUSINESS.PAGINATION_CURSOR_LENGTH
         )
 
-    return JSONResponse(
-        {"forums": [json_repr(f) for f in forums], "cursor": next_cursor}
+    return EnrichedJSONResponse(
+        {"forums": [json_repr(f) for f in forums], "cursor": next_cursor},
+        hypermedia_data=paginated_collection_hypermedia(
+            builder,
+            "get_anime_forums",
+            path_parameters={"anime_id": anime_id},
+            query={"search": search_param},
+            next_cursor=next_cursor,
+            related_links=(builder.link("get_anime", "anime", anime_id=anime_id),),
+        ),
     )

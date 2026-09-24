@@ -1,8 +1,12 @@
 from datetime import UTC, datetime
 from functools import partial
+from http import HTTPMethod
 from typing import Annotated, Final
 from uuid import uuid4
 
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
+from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.utils import cache_repr, json_repr, to_base64url
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -35,6 +39,7 @@ from resource_server.dependencies import (
     get_comment_repository,
     get_event_streamer,
     get_forum_repository,
+    get_hypermedia_link_builder,
     get_post_repository,
 )
 from resource_server.event_streamer import EventStreamer
@@ -57,6 +62,11 @@ from resource_server.repositories.user import UserResult
 from resource_server.request_dependencies import (
     cursor_preprocessor,
     validate_access_token,
+)
+from resource_server.utils.hypermedia import (
+    paginated_collection_hypermedia,
+    post_hypermedia,
+    single_link_hypermedia,
 )
 from resource_server.utils.typing import StandardAccessTokenClaims
 from resource_server.utils.validation import validate_duplicate_amendment_contents
@@ -119,7 +129,7 @@ async def create_post(
         post_event: Event = Event(
             name=EventName.POST_CREATE,
             payload=event_paylaod,
-            side_effects=EventSideEffects(counter_updates=counter_updates),  # type: ignore[reportCallIssue]
+            side_effects=EventSideEffects(counter_updates=counter_updates),
         )
         await event_streamer.emit_user_event(StreamName.POSTS, post_event)
     return JSONResponse({"message": "post created"}, 202)
@@ -130,7 +140,10 @@ async def get_post(
     post_id: int,
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     post: PostResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(PostResult.resource_name, post_id),
         partial(post_repo.get_post, post_id),
@@ -140,7 +153,9 @@ async def get_post(
     if not post:
         raise HTTPException(404, f"No post with id {post_id} found")
 
-    return JSONResponse(json_repr(post))
+    return EnrichedJSONResponse(
+        json_repr(post), hypermedia_data=post_hypermedia(link_builder, post)
+    )
 
 
 @POSTS.patch("/{post_id}")
@@ -151,7 +166,10 @@ async def edit_post(
     app_config: Annotated[AppConfig, Depends(get_app_config)],
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     cache_key: Final[str] = derive_cache_key(PostResult.resource_name, post_id)
     post: PostResult | None = await cache_manager.distributed_get_or_load(
         cache_key, partial(post_repo.get_post, post_id), PostResult
@@ -164,7 +182,17 @@ async def edit_post(
         raise HTTPException(403, "Only owner can edit post details")
 
     if error_dict := validate_duplicate_amendment_contents(post_model, post):
-        e: HTTPException = HTTPException(409, "Invalid amendment data provided")
+        e: EnrichedHTTPException = EnrichedHTTPException(
+            409,
+            "Invalid amendment data provided",
+            hypermedia=single_link_hypermedia(
+                link_builder,
+                "get_post",
+                "current",
+                HTTPMethod.GET,
+                post_id=post_id,
+            ),
+        )
         setattr(e, "kwargs", error_dict)
         raise e
 
@@ -181,7 +209,10 @@ async def edit_post(
         cache_key, cache_repr(post), app_config.CACHE.TTL_STRONG
     )
 
-    return JSONResponse({"message": "Post edited.", "post": json_repr(post)})
+    return EnrichedJSONResponse(
+        {"message": "Post edited.", "post": json_repr(post)},
+        hypermedia_data=post_hypermedia(link_builder, post),
+    )
 
 
 @POSTS.delete("/{post_id}")
@@ -251,10 +282,10 @@ async def delete_post(
         payload: PostDeletion = PostDeletion(post_id=post_id)
         subscription_event: Event = Event(
             name=EventName.POST_DELETE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.POSTS, subscription_event)
@@ -269,6 +300,9 @@ async def vote_post(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     post_cache_key: Final[str] = derive_cache_key(PostResult.resource_name, post_id)
     intent: Final[IntentFlag] = (
@@ -311,7 +345,17 @@ async def vote_post(
                     Action.VOTE,
                     intent,
                 )
-                raise HTTPException(409, "Same vote already casted")
+                raise EnrichedHTTPException(
+                    409,
+                    "Same vote already casted",
+                    hypermedia=single_link_hypermedia(
+                        link_builder,
+                        "unvote_post",
+                        "remove-vote",
+                        HTTPMethod.DELETE,
+                        post_id=post_id,
+                    ),
+                )
             if existing_vote:
                 # Transitioning from upvote to downvote, or vice-versa
                 delta *= 2
@@ -351,10 +395,10 @@ async def vote_post(
 
         vote_event: Event = Event(
             name=EventName.POST_VOTE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.POSTS, vote_event)
@@ -368,6 +412,9 @@ async def unvote_post(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     post_cache_key: Final[str] = derive_cache_key(PostResult.resource_name, post_id)
 
@@ -404,7 +451,17 @@ async def unvote_post(
                     Action.VOTE,
                     IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
                 )
-                raise HTTPException(409, conflicting_message)
+                raise EnrichedHTTPException(
+                    409,
+                    conflicting_message,
+                    hypermedia=single_link_hypermedia(
+                        link_builder,
+                        "vote_post",
+                        "vote",
+                        HTTPMethod.POST,
+                        post_id=post_id,
+                    ),
+                )
             if existing_vote is False:  # downvote
                 delta = -1
 
@@ -442,10 +499,10 @@ async def unvote_post(
         )
         unvote_event: Event = Event(
             name=EventName.POST_UNVOTE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.POSTS, unvote_event)
@@ -459,6 +516,9 @@ async def save_post(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     post_cache_key: Final[str] = derive_cache_key(PostResult.resource_name, post_id)
 
@@ -489,7 +549,17 @@ async def save_post(
                 Action.SAVE,
                 IntentFlag.RESOURCE_CREATION_PENDING_FLAG,
             )
-            raise HTTPException(409, conflicting_message)
+            raise EnrichedHTTPException(
+                409,
+                conflicting_message,
+                hypermedia=single_link_hypermedia(
+                    link_builder,
+                    "unsave_post",
+                    "unsave",
+                    HTTPMethod.DELETE,
+                    post_id=post_id,
+                ),
+            )
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -524,10 +594,10 @@ async def save_post(
 
         save_event: Event = Event(
             name=EventName.POST_SAVE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.POSTS, save_event)
@@ -541,6 +611,9 @@ async def unsave_post(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     post_cache_key: Final[str] = derive_cache_key(PostResult.resource_name, post_id)
 
@@ -571,7 +644,17 @@ async def unsave_post(
                 Action.SAVE,
                 IntentFlag.RESOURCE_DELETION_PENDING_FLAG,
             )
-            raise HTTPException(409, "Post not saved")
+            raise EnrichedHTTPException(
+                409,
+                "Post not saved",
+                hypermedia=single_link_hypermedia(
+                    link_builder,
+                    "save_post",
+                    "save",
+                    HTTPMethod.POST,
+                    post_id=post_id,
+                ),
+            )
 
         counter_updates: tuple[CounterUpdate, ...] = (
             CounterUpdate(
@@ -606,10 +689,10 @@ async def unsave_post(
 
         unsave_event: Event = Event(
             name=EventName.POST_UNSAVE,
-            payload=payload,  # type: ignore
+            payload=payload,
             side_effects=EventSideEffects(
                 counter_updates=counter_updates, intent_updates=intent_updates
-            ),  # type: ignore[reportCallIssue]
+            ),
         )
 
         await event_streamer.emit_user_event(StreamName.POSTS, unsave_event)
@@ -691,10 +774,10 @@ async def report_post(
 
     report_event: Event = Event(
         name=EventName.POST_UNSAVE,
-        payload=payload,  # type: ignore
+        payload=payload,
         side_effects=EventSideEffects(
             counter_updates=counter_updates, intent_updates=intent_updates
-        ),  # type: ignore[reportCallIssue]
+        ),
     )
 
     await event_streamer.emit_user_event(StreamName.POSTS, report_event)
@@ -709,7 +792,10 @@ async def get_post_comments(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
     comment_repo: Annotated[CommentRepository, Depends(get_comment_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     post_cache_key: Final[str] = derive_cache_key(PostResult.resource_name, post_id)
     post: PostResult | None = await cache_manager.distributed_get_or_load(
         post_cache_key, partial(post_repo.get_post, post_id), PostResult
@@ -738,6 +824,13 @@ async def get_post_comments(
             comments[-1].id_, app_config.BUSINESS.PAGINATION_CURSOR_LENGTH
         )
 
-    return JSONResponse(
-        {"comments": [json_repr(i) for i in comments], "cursor": next_cursor}
+    return EnrichedJSONResponse(
+        {"comments": [json_repr(i) for i in comments], "cursor": next_cursor},
+        hypermedia_data=paginated_collection_hypermedia(
+            link_builder,
+            "get_post_comments",
+            path_parameters={"post_id": post_id},
+            next_cursor=next_cursor,
+            related_links=(link_builder.link("get_post", "post", post_id=post_id),),
+        ),
     )

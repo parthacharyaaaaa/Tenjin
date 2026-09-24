@@ -4,6 +4,7 @@ import traceback
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Final, Mapping
 
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.security.serialization import (
     pem_serialize_private_key,
     pem_serialize_public_key,
@@ -31,8 +32,6 @@ from auth_server.repositories.keydata import (
 from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
 from auth_server.strings import SyncedStoreStrings
 from auth_server.tokens.token_manager import TokenManager
-
-# TODO: Remove magic numbers in lifespan and master_bootup (lock and flag TTLs)
 
 
 def register_routers(
@@ -142,11 +141,10 @@ async def slave_bootup(
     keydata_repository: KeydataRepository,
     token_manager: TokenManager,
     process_id: int,
-    master_wait_interval: float = 1.0,
 ) -> None:
     # Wait for master worker to finish managing key synchronization and file I/O, and then proceed on the assumption that the JWKS file has been written into/validated.
     while await synced_store_client.get(SyncedStoreStrings.AUTH_BOOTUP_MASTER):  # noqa
-        await asyncio.sleep(master_wait_interval)  # noqa
+        await asyncio.sleep(config.BOOTUP.SLAVE_SLEEP_POLLING_INTERVAL)  # noqa
 
     if await synced_store_client.get(SyncedStoreStrings.ABORT):
         print(
@@ -187,6 +185,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     config.JWKS.resolve_jwks_filepath(config.CORE.instance_path)
 
     # Error handler
+    app.add_exception_handler(EnrichedHTTPException, generic_error_handler)
     app.add_exception_handler(Exception, generic_error_handler)
 
     keydata_repository: Final[KeydataRepository] = KeydataRepository(
@@ -197,7 +196,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     is_master: bool = bool(
         await synced_store_client.set(
-            SyncedStoreStrings.AUTH_BOOTUP_MASTER, pid, nx=True, ex=300
+            SyncedStoreStrings.AUTH_BOOTUP_MASTER,
+            pid,
+            nx=True,
+            ex=config.BOOTUP.MASTER_BOOTUP_LOCK_LIFESPAN,
         )
     )
 

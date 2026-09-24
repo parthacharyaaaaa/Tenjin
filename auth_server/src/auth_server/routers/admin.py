@@ -2,12 +2,13 @@ import hmac
 from datetime import UTC, datetime
 from typing import Annotated, Final
 
+from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
+from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auxillary.security.hashing import bcrypt_check_password, bcrypt_hash_password
 from auxillary.utils import generic_database_fetch_exception, json_repr
-from fastapi import APIRouter, Depends
-from fastapi.exceptions import HTTPException
-from fastapi.requests import Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from redis.exceptions import RedisError
 from sqlalchemy.exc import SQLAlchemyError
@@ -20,6 +21,7 @@ from auth_server.dependencies.local import (
     get_admin_repository,
     get_admin_session_manager,
     get_app_config,
+    get_hypermedia_link_builder,
     get_repository_work_coordinator,
     get_suspicious_activity_repository,
 )
@@ -38,6 +40,11 @@ from auth_server.repositories.suspicious_activity import SuspiciousActivityRepos
 from auth_server.utils.auth_auxillary import (
     report_suspicious_activity,
 )
+from auth_server.utils.hypermedia import (
+    admin_lock_hypermedia,
+    admin_session_hypermedia,
+    login_hypermedia,
+)
 
 ADMIN: Final[APIRouter] = APIRouter()
 
@@ -55,6 +62,9 @@ async def admin_login(
     ],
     admin_session_manager: Annotated[
         AdminSessionManager, Depends(get_admin_session_manager)
+    ],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
     ],
 ) -> JSONResponse:
     try:
@@ -135,8 +145,9 @@ async def admin_login(
     except RedisError as e:
         raise HTTPException(500, "Failed to perform login") from e
 
-    return JSONResponse(
-        {"session_token": session_token, "revival_digest": revival_digest}
+    return EnrichedJSONResponse(
+        {"session_token": session_token, "revival_digest": revival_digest},
+        hypermedia_data=admin_session_hypermedia(link_builder),
     )
 
 
@@ -192,13 +203,16 @@ async def admin_refresh(
     admin_session_manager: Annotated[
         AdminSessionManager, Depends(get_admin_session_manager)
     ],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     """
     Refresh an admin's session and enforce a maximum number of times
     a session can be refreshed before requiring reauthentication
     """
     if admin_session.iteration >= config.ADMIN.MAX_SESSION_ITERATIONS:
-        raise HTTPException(
+        raise EnrichedHTTPException(
             409,
             " ".join(
                 (
@@ -207,6 +221,7 @@ async def admin_refresh(
                     "assigned a fresh session",
                 )
             ),
+            hypermedia=login_hypermedia(link_builder, admin=True),
         )
     if not hmac.compare_digest(
         admin_session.revival_digest, refresh_model.refresh_digest
@@ -220,14 +235,19 @@ async def admin_refresh(
             repository_coordinator,
             admin_session_manager,
         )
-        raise HTTPException(403, "Invalid revival digest provided")
+        raise EnrichedHTTPException(
+            403,
+            "Invalid revival digest provided",
+            hypermedia=login_hypermedia(link_builder, admin=True),
+        )
 
     session_token, revival_digest = await admin_session_manager.refresh_session(
         admin_session
     )
 
-    return JSONResponse(
-        {"session_token": session_token, "revival_digest": revival_digest}
+    return EnrichedJSONResponse(
+        {"session_token": session_token, "revival_digest": revival_digest},
+        hypermedia_data=admin_session_hypermedia(link_builder),
     )
 
 
@@ -244,12 +264,14 @@ async def admin_logout(
 
 @ADMIN.post("/admins/locks")
 async def admin_lock(
-    request: Request,
     admin_session: Annotated[AdminSession, Depends(get_admin_session)],
     identification_model: AdminIdentificationModel,
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
     admin_session_manager: Annotated[
         AdminSessionManager, Depends(get_admin_session_manager)
+    ],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
     ],
 ) -> JSONResponse:
     """Lock a staff admin's account"""
@@ -265,17 +287,11 @@ async def admin_lock(
             404, f"No admin with id {identification_model.id_} could be found"
         )
     if admin.locked:
-        conflict: HTTPException = HTTPException(409, "Admin account is already locked")
-        setattr(
-            conflict,
-            "kwargs",
-            {
-                "links": {
-                    "unlock admin account": {"_href": request.url_for("admin_unlock")}
-                }
-            },
+        raise EnrichedHTTPException(
+            409,
+            "Admin account is already locked",
+            hypermedia=admin_lock_hypermedia(link_builder, locked=True),
         )
-        raise conflict
 
     try:
         await admin_repository.set_admin_locked(admin.id_, True)
@@ -299,9 +315,11 @@ async def admin_lock(
 
 @ADMIN.delete("/admins/locks")
 async def admin_unlock(
-    request: Request,
     identification_model: AdminIdentificationModel,
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
 ) -> JSONResponse:
     """Unlock a staff admin's account"""
     try:
@@ -316,19 +334,11 @@ async def admin_unlock(
             404, f"No admin with id {identification_model.id_} could be found"
         )
     if not admin.locked:
-        conflict: HTTPException = HTTPException(
-            409, "Admin account is already unlocked"
+        raise EnrichedHTTPException(
+            409,
+            "Admin account is already unlocked",
+            hypermedia=admin_lock_hypermedia(link_builder, locked=False),
         )
-        setattr(
-            conflict,
-            "kwargs",
-            {
-                "links": {
-                    "unlock admin account": {"_href": request.url_for("admin_unlock")}
-                }
-            },
-        )
-        raise conflict
 
     try:
         await admin_repository.set_admin_locked(admin.id_, False)
