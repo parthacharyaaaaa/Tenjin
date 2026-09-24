@@ -2,6 +2,9 @@ import hashlib
 from datetime import UTC, datetime
 from typing import Annotated, Final
 
+from auxillary.data_structures.enriched.hypermedia import HypermediaResponseSequence
+from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
+from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
@@ -15,6 +18,7 @@ from resource_server.dependencies import (
     get_cache_manager,
     get_event_streamer,
     get_genres,
+    get_hypermedia_link_builder,
 )
 from resource_server.event_streamer import EventStreamer
 from resource_server.models.database import Genre
@@ -24,10 +28,23 @@ MISC: Final[APIRouter] = APIRouter()
 
 
 @MISC.get("/genres")
-async def get_anime_genres() -> JSONResponse:
+async def get_anime_genres(
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     genres: list[Genre] = await get_genres()
 
-    return JSONResponse({g.name_: g.id_ for g in genres})
+    return EnrichedJSONResponse(
+        {g.name_: g.id_ for g in genres},
+        hypermedia_data=HypermediaResponseSequence(
+            links=[
+                link_builder.link_self(),
+                link_builder.link("get_animes", "animes"),
+            ]
+        ),
+        hypermedia_links_key="_links",
+    )
 
 
 @MISC.post("/tickets")

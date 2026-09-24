@@ -3,6 +3,8 @@ from functools import partial
 from typing import Annotated, Final
 
 from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
+from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.security.hashing import bcrypt_check_password, bcrypt_hash_password
 from auxillary.utils import json_repr, to_base64url
 from fastapi import APIRouter, Depends, Path
@@ -27,6 +29,7 @@ from resource_server.dependencies import (
     get_cache_manager,
     get_event_streamer,
     get_forum_repository,
+    get_hypermedia_link_builder,
     get_post_repository,
     get_user_repository,
 )
@@ -49,6 +52,10 @@ from resource_server.request_dependencies import (
     preprocess_sort_option,
 )
 from resource_server.utils.helpers import generate_url_token
+from resource_server.utils.hypermedia import (
+    paginated_collection_hypermedia,
+    user_hypermedia,
+)
 
 USERS: Final[APIRouter] = APIRouter()
 
@@ -60,7 +67,10 @@ async def register(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     user_repo: Annotated[UserRepository, Depends(get_user_repository)],
     event_streamer: Annotated[EventStreamer, Depends(get_event_streamer)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     # TODO: Add bloom filter
 
     existing_users: list[UserResult] = await user_repo.get_user_by_identity(
@@ -92,7 +102,12 @@ async def register(
 
     # TODO: Dispatch email event
 
-    return JSONResponse({"message": "account created", "user": json_repr(user)}, 201)
+    return EnrichedJSONResponse(
+        {"message": "account created", "user": json_repr(user)},
+        201,
+        hypermedia_data=user_hypermedia(link_builder, user),
+        hypermedia_links_key="_links",
+    )
 
 
 @USERS.delete("/{username}")
@@ -223,14 +238,21 @@ async def get_user(
     username: str,
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     user_repo: Annotated[UserRepository, Depends(get_user_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     user_cache_key: Final[str] = derive_cache_key(UserResult.resource_name, username)
     user: UserResult | None = await cache_manager.distributed_get_or_load(
         user_cache_key, partial(user_repo.get_user_by_username, username), UserResult
     )
     if not user:
         raise EnrichedHTTPException(404, f"User {username} not found")
-    return JSONResponse({"user": json_repr(user)})
+    return EnrichedJSONResponse(
+        {"user": json_repr(user)},
+        hypermedia_data=user_hypermedia(link_builder, user),
+        hypermedia_links_key="_links",
+    )
 
 
 @USERS.get("/{username}/posts")
@@ -242,7 +264,10 @@ async def get_user_posts(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     user_repo: Annotated[UserRepository, Depends(get_user_repository)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     user: UserResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(UserResult.resource_name, username),
         partial(user_repo.get_user_by_username, username),
@@ -272,8 +297,17 @@ async def get_user_posts(
             posts[-1].id_, app_config.BUSINESS.PAGINATION_CURSOR_LENGTH
         )
 
-    return JSONResponse(
-        {"posts": [json_repr(post) for post in posts], "cursor": next_cursor}
+    return EnrichedJSONResponse(
+        {"posts": [json_repr(post) for post in posts], "cursor": next_cursor},
+        hypermedia_data=paginated_collection_hypermedia(
+            link_builder,
+            "get_user_posts",
+            path_parameters={"username": username},
+            query={"sort": sort_option.value},
+            next_cursor=next_cursor,
+            related_links=(link_builder.link("get_user", "user", username=username),),
+        ),
+        hypermedia_links_key="_links",
     )
 
 
@@ -286,7 +320,10 @@ async def get_user_forums(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     user_repo: Annotated[UserRepository, Depends(get_user_repository)],
     forum_repo: Annotated[ForumRepository, Depends(get_forum_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     user: UserResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(UserResult.resource_name, username),
         partial(user_repo.get_user_by_username, username),
@@ -316,8 +353,17 @@ async def get_user_forums(
             forums[-1].id_, app_config.BUSINESS.PAGINATION_CURSOR_LENGTH
         )
 
-    return JSONResponse(
-        {"forums": [json_repr(forum) for forum in forums], "cursor": next_cursor}
+    return EnrichedJSONResponse(
+        {"forums": [json_repr(forum) for forum in forums], "cursor": next_cursor},
+        hypermedia_data=paginated_collection_hypermedia(
+            link_builder,
+            "get_user_forums",
+            path_parameters={"username": username},
+            query={"sort": sort_option.value},
+            next_cursor=next_cursor,
+            related_links=(link_builder.link("get_user", "user", username=username),),
+        ),
+        hypermedia_links_key="_links",
     )
 
 
@@ -330,7 +376,10 @@ async def get_user_animes(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     user_repo: Annotated[UserRepository, Depends(get_user_repository)],
     anime_repo: Annotated[AnimeRepository, Depends(get_anime_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     user: UserResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(UserResult.resource_name, username),
         partial(user_repo.get_user_by_username, username),
@@ -360,8 +409,17 @@ async def get_user_animes(
             animes[-1].id_, app_config.BUSINESS.PAGINATION_CURSOR_LENGTH
         )
 
-    return JSONResponse(
-        {"animes": [json_repr(anime) for anime in animes], "cursor": next_cursor}
+    return EnrichedJSONResponse(
+        {"animes": [json_repr(anime) for anime in animes], "cursor": next_cursor},
+        hypermedia_data=paginated_collection_hypermedia(
+            link_builder,
+            "get_user_animes",
+            path_parameters={"username": username},
+            query={"sort": sort_option.value},
+            next_cursor=next_cursor,
+            related_links=(link_builder.link("get_user", "user", username=username),),
+        ),
+        hypermedia_links_key="_links",
     )
 
 
@@ -370,7 +428,10 @@ async def login(
     user_model: UserLoginModel,
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     user_repo: Annotated[UserRepository, Depends(get_user_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     email_identity: bool = "@" in user_model.identity
 
     # Early check in case username is available
@@ -395,11 +456,13 @@ async def login(
 
     login_time = datetime.now(UTC)
     # TODO: Add event to update user login time
-    return JSONResponse(
+    return EnrichedJSONResponse(
         {
             "message": "authentication successful",
             "username": user.username,
             "id": user.id_,
             "login_time": login_time.isoformat(),
-        }
+        },
+        hypermedia_data=user_hypermedia(link_builder, user),
+        hypermedia_links_key="_links",
     )

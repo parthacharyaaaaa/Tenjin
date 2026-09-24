@@ -2,6 +2,8 @@ import os
 from functools import lru_cache
 from typing import AsyncGenerator, Final
 
+from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
+from fastapi import Request
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import (
@@ -21,6 +23,10 @@ from resource_server.repositories.comment import CommentRepository
 from resource_server.repositories.forum import ForumRepository
 from resource_server.repositories.posts import PostRepository
 from resource_server.repositories.user import UserRepository
+
+
+def get_hypermedia_link_builder(request: Request) -> HypermediaLinkBuilder:
+    return HypermediaLinkBuilder(request)
 
 
 @lru_cache(maxsize=1)

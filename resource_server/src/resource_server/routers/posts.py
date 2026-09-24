@@ -4,6 +4,8 @@ from typing import Annotated, Final
 from uuid import uuid4
 
 from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
+from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.utils import cache_repr, json_repr, to_base64url
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
@@ -36,6 +38,7 @@ from resource_server.dependencies import (
     get_comment_repository,
     get_event_streamer,
     get_forum_repository,
+    get_hypermedia_link_builder,
     get_post_repository,
 )
 from resource_server.event_streamer import EventStreamer
@@ -58,6 +61,10 @@ from resource_server.repositories.user import UserResult
 from resource_server.request_dependencies import (
     cursor_preprocessor,
     validate_access_token,
+)
+from resource_server.utils.hypermedia import (
+    paginated_collection_hypermedia,
+    post_hypermedia,
 )
 from resource_server.utils.typing import StandardAccessTokenClaims
 from resource_server.utils.validation import validate_duplicate_amendment_contents
@@ -131,7 +138,10 @@ async def get_post(
     post_id: int,
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     post: PostResult | None = await cache_manager.distributed_get_or_load(
         derive_cache_key(PostResult.resource_name, post_id),
         partial(post_repo.get_post, post_id),
@@ -141,7 +151,9 @@ async def get_post(
     if not post:
         raise EnrichedHTTPException(404, f"No post with id {post_id} found")
 
-    return JSONResponse(json_repr(post))
+    return EnrichedJSONResponse(
+        json_repr(post), hypermedia_data=post_hypermedia(link_builder, post)
+    )
 
 
 @POSTS.patch("/{post_id}")
@@ -152,7 +164,10 @@ async def edit_post(
     app_config: Annotated[AppConfig, Depends(get_app_config)],
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     cache_key: Final[str] = derive_cache_key(PostResult.resource_name, post_id)
     post: PostResult | None = await cache_manager.distributed_get_or_load(
         cache_key, partial(post_repo.get_post, post_id), PostResult
@@ -184,7 +199,10 @@ async def edit_post(
         cache_key, cache_repr(post), app_config.CACHE.TTL_STRONG
     )
 
-    return JSONResponse({"message": "Post edited.", "post": json_repr(post)})
+    return EnrichedJSONResponse(
+        {"message": "Post edited.", "post": json_repr(post)},
+        hypermedia_data=post_hypermedia(link_builder, post),
+    )
 
 
 @POSTS.delete("/{post_id}")
@@ -716,7 +734,10 @@ async def get_post_comments(
     cache_manager: Annotated[CacheManager, Depends(get_cache_manager)],
     post_repo: Annotated[PostRepository, Depends(get_post_repository)],
     comment_repo: Annotated[CommentRepository, Depends(get_comment_repository)],
-) -> JSONResponse:
+    link_builder: Annotated[
+        HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
+    ],
+) -> EnrichedJSONResponse:
     post_cache_key: Final[str] = derive_cache_key(PostResult.resource_name, post_id)
     post: PostResult | None = await cache_manager.distributed_get_or_load(
         post_cache_key, partial(post_repo.get_post, post_id), PostResult
@@ -745,6 +766,13 @@ async def get_post_comments(
             comments[-1].id_, app_config.BUSINESS.PAGINATION_CURSOR_LENGTH
         )
 
-    return JSONResponse(
-        {"comments": [json_repr(i) for i in comments], "cursor": next_cursor}
+    return EnrichedJSONResponse(
+        {"comments": [json_repr(i) for i in comments], "cursor": next_cursor},
+        hypermedia_data=paginated_collection_hypermedia(
+            link_builder,
+            "get_post_comments",
+            path_parameters={"post_id": post_id},
+            next_cursor=next_cursor,
+            related_links=(link_builder.link("get_post", "post", post_id=post_id),),
+        ),
     )
