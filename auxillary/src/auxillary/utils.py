@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from redis.typing import EncodableT, FieldT
 
 from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
+from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.typing_utils import SupportsCache, SupportsJSON
 
 
@@ -25,9 +26,10 @@ def generic_error_handler(
             else "an error occured"
         )
 
-    response: Final[JSONResponse] = JSONResponse(
+    response: Final[JSONResponse] = EnrichedJSONResponse(
         status_code=e.status_code,
         content={"message": e.detail, **(e.additional_fields or {})},
+        hypermedia_data=e.hypermedia,
     )
     if e.headers:
         response.headers.update(e.headers)

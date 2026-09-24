@@ -37,10 +37,8 @@ class EnrichedJSONResponse(JSONResponse):
         if not isinstance(content, dict):
             content = {self.array_key or self.default_response_key: content}
         if self.hypermedia_data:
-            content[self.hypermedia_links_key or self.default_hypermedia_links_key] = {
-                self.hypermedia_links_key: [
-                    i.model_dump() for i in self.hypermedia_data.links
-                ]
-            }
+            content[self.hypermedia_links_key or self.default_hypermedia_links_key] = [
+                link.model_dump() for link in self.hypermedia_data.links
+            ]
 
         return orjson.dumps(content)

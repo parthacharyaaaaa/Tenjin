@@ -1,9 +1,11 @@
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from http import HTTPMethod
 from typing import Any
 
 from fastapi.datastructures import URL
 from fastapi.requests import Request
+from starlette.datastructures import QueryParams
 
 from auxillary.data_structures.enriched.hypermedia import HypermediaResponse
 
@@ -45,13 +47,17 @@ class HypermediaLinkBuilder:
         )
 
         if query:
-            url: URL = url.include_query_params(
-                **{
-                    name: str(value)
-                    for name, value in query.items()
-                    if value is not None
-                }
-            )
+            query_items: list[tuple[str, str]] = []
+            for name, value in query.items():
+                if value is None:
+                    continue
+                if isinstance(value, Sequence) and not isinstance(
+                    value, (str, bytes, bytearray)
+                ):
+                    query_items.extend((name, str(item)) for item in value)
+                    continue
+                query_items.append((name, str(value)))
+            url = url.replace(query=str(QueryParams(query_items)))
 
         if self.absolute:
             href = str(url)
