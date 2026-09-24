@@ -183,3 +183,8 @@ class RedisStoreModel(BasicRedisConfigMixin, BaseModel): ...
 class RedisConfigModel(BaseModel):
     SYNCED_STORE: Annotated[RedisStoreModel, Field(alias="synced_store")]
     TOKEN_STORE: Annotated[RedisStoreModel, Field(alias="token_store")]
+
+
+class BootupConfigModel(BaseModel):
+    SLAVE_SLEEP_POLLING_INTERVAL: Annotated[int, Field(ge=0)]
+    MASTER_BOOTUP_LOCK_LIFESPAN: Annotated[int, Field(ge=0)]

@@ -24,6 +24,7 @@ class AppConfig(BaseSettings):
     DATABASE: Annotated[sub_config.DatabaseConfigModel, Field(alias="database")]
     KEYS: Annotated[sub_config.KeyConfigModel, Field(alias="keys")]
     ADMIN: Annotated[sub_config.AdminConfigModel, Field(alias="admin")]
+    BOOTUP: Annotated[sub_config.BootupConfigModel, Field(alias="bootup")]
 
     @classmethod
     def settings_customise_sources(
