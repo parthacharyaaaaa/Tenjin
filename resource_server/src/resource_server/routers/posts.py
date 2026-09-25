@@ -12,7 +12,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (
     NAME_SEPERATOR,
-    Action,
     create_intent_flag,
     derive_cache_key,
     derive_hashmap_name,
@@ -29,7 +28,7 @@ from resource_auxillary.events import (
     EventSideEffects,
     IntentUpdate,
 )
-from resource_auxillary.strings import EventName, IntentFlag, StreamName
+from resource_auxillary.strings import Action, EventName, IntentFlag, StreamName
 
 from resource_server.cache_manager import CacheManager
 from resource_server.config.app_config import AppConfig
