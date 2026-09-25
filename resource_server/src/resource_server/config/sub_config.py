@@ -1,9 +1,8 @@
-from datetime import timedelta
 from ipaddress import ip_address
 from typing import Annotated, Self
 
 import jwt
-from auxillary.mixins.annotations import timedelta_ms
+from auxillary.mixins.annotations import timedelta_days, timedelta_ms, timedelta_s
 from auxillary.mixins.cache_config import BasicCacheTTLConfig, BasicNegativeCacheConfig
 from auxillary.mixins.db_config import (
     BasicPostgresDatabaseConfigMixin,
@@ -109,18 +108,11 @@ class CacheConfig(BasicCacheTTLConfig, BasicNegativeCacheConfig, BaseModel):
 
 
 class BusinessConfig(BaseModel):
-    ACCOUNT_RECOVERY_PERIOD: Annotated[
-        timedelta, BeforeValidator(lambda x: timedelta(days=x))
-    ]
-    PASSWORD_TOKEN_MAX_AGE: Annotated[
-        timedelta, BeforeValidator(lambda x: timedelta(minutes=x))
-    ]
-    ACCOUNT_AUDIT_THRESHOLD: Annotated[
-        timedelta, BeforeValidator(lambda x: timedelta(days=x))
-    ]
+    ACCOUNT_RECOVERY_PERIOD: timedelta_days
+    PASSWORD_TOKEN_MAX_AGE: timedelta_s
+    ACCOUNT_AUDIT_THRESHOLD: timedelta_days
 
     PAGINATION_SIZE: Annotated[int, Field(ge=1)]
-
     PAGINATION_CURSOR_LENGTH: Annotated[
         int, Field(ge=4), AfterValidator(_verify_b64_compatible)
     ]

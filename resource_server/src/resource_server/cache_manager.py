@@ -324,7 +324,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                                     self.cache_config.FETCH_WAITING_JITTER.total_seconds()
                                 ),
                             )  # nosec
-                            ** self.cache_config.FETCH_WAITING_EXPONENT.total_seconds()
+                            ** self.cache_config.FETCH_WAITING_EXPONENT
                         )
                         continue
 
@@ -521,7 +521,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                                     self.cache_config.FETCH_WAITING_JITTER.total_seconds()
                                 ),
                             )  # nosec
-                            ** self.cache_config.FETCH_WAITING_EXPONENT.total_seconds()
+                            ** self.cache_config.FETCH_WAITING_EXPONENT
                         )
                         continue
 
