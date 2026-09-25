@@ -42,7 +42,7 @@ def get_synced_store_client() -> Redis:
     return Redis(
         # username=os.environ["AUTH_WORKER_REDIS_USERNAME"],
         # password=os.environ["AUTH_WORKER_REDIS_PASSWORD"],
-        **config.REDIS.SYNCED_STORE.to_constructor_kwargs(),
+        **config.REDIS.SYNCED_STORE.model_dump(),
     )
 
 
@@ -53,7 +53,7 @@ def get_token_store_client() -> Redis:
     return Redis(
         # username=os.environ["AUTH_WORKER_REDIS_USERNAME"],
         # password=os.environ["AUTH_WORKER_REDIS_PASSWORD"],
-        **config.REDIS.TOKEN_STORE.to_constructor_kwargs(),
+        **config.REDIS.TOKEN_STORE.model_dump(),
     )
 
 
