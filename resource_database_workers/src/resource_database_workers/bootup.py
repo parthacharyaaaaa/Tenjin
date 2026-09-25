@@ -1,5 +1,6 @@
 import asyncio
 import traceback
+from datetime import timedelta
 from typing import Any, Callable, Coroutine, Final, Mapping
 
 from resource_auxillary.datastructures.status_indicator import (
@@ -50,7 +51,7 @@ from resource_database_workers.utils.strings import (
 
 async def tasks_wrapper(
     worker_callables: Mapping[str, Callable[[], Coroutine[None, None, None]]],
-    graceful_shutdown_timeout: float,
+    graceful_shutdown_timeout: timedelta,
     status_controller: StatusController,
 ) -> None:
     tasks: tuple[asyncio.Task[None], ...] = tuple(
@@ -60,7 +61,9 @@ async def tasks_wrapper(
     failed, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
 
     status_controller.status_ok = False
-    _done, pending = await asyncio.wait(pending, timeout=graceful_shutdown_timeout)
+    _done, pending = await asyncio.wait(
+        pending, timeout=graceful_shutdown_timeout.total_seconds()
+    )
 
     for task in pending:
         task.cancel()

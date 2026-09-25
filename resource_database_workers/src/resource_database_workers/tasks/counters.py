@@ -50,11 +50,13 @@ async def batch_update_retry_counters(
     status_proxy: STATUS_PROXY,
 ) -> None:
     while status_proxy.status_ok:
-        batch_name: str = await worker_redis.blpop(
-            config.WORKER.COUNTER_RETRY_REGISTRY_NAME
-        )  # type: ignore
+        batch_name: str = (
+            await worker_redis.blpop(  # pyrefly: ignore[not-async]
+                config.WORKER.COUNTER_RETRY_REGISTRY_NAME
+            )
+        )[0]
         if not batch_name:
-            await asyncio.sleep(config.WORKER.COUNTER_FLUSH_INTERVAL)
+            await asyncio.sleep(config.WORKER.COUNTER_FLUSH_INTERVAL.total_seconds())
             continue
         counter_data: dict[str, int] | None = await batch_update_counter_group(
             config,
@@ -93,7 +95,7 @@ async def batch_update_counters(
         # in the extremely rare case of a schema change
         if (
             int(time.monotonic()) - refresh_time
-            >= config.WORKER.COUNTER_REGISTRY_REFRESH_INTERVAL
+            >= config.WORKER.COUNTER_REGISTRY_REFRESH_INTERVAL.total_seconds()
         ):
             counter_groups = list(
                 await retrieve_counter_group_names(
