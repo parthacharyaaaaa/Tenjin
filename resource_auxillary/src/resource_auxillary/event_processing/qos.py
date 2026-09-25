@@ -1,9 +1,7 @@
 """Quality-of-Service utility functions"""
 
-from contextlib import asynccontextmanager
 from typing import Any, Callable, Coroutine, Sequence, TypeVar
 
-from redis.asyncio import Redis
 from redis.exceptions import ExceptionType, RedisError
 
 from resource_auxillary.coordination import exponential_jittered_backoff
@@ -63,11 +61,3 @@ async def dlq_aware_process_events(
         )
         # Fail hard on this retried attempt
         await execute_with_redis_retries(retry_policy, coro, dlq_attempts)
-
-
-@asynccontextmanager
-async def locked_operation(redis: Redis, lock_name: str):
-    try:
-        yield
-    finally:
-        await redis.delete(lock_name)

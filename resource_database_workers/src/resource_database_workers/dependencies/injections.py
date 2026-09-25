@@ -1,6 +1,7 @@
 import os
 from functools import lru_cache
 
+from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
 from resource_auxillary.event_processing.event_stream_manager import (
@@ -70,3 +71,8 @@ def get_stream_manager() -> EventStreamManager:
     """Current Implementation: Redis Streams"""
     redis_client: Redis = get_internal_redis()
     return RedisStreamManager(redis_client)
+
+
+@lru_cache(maxsize=1)
+def get_distributed_lock_factory() -> RedisInstanceLockFactory:
+    return RedisInstanceLockFactory(get_internal_redis())

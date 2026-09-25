@@ -1,6 +1,7 @@
 import asyncio
 from typing import Annotated, Final, LiteralString
 
+from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from psycopg_pool.pool_async import AsyncConnectionPool
 from redis.asyncio.client import Redis
 from resource_auxillary.datastructures.database import StrongEntity
@@ -21,6 +22,7 @@ from resource_database_workers.dependencies.injections import (
     get_connection_pool,
     get_consumer_id,
     get_dead_letter_queue_name,
+    get_distributed_lock_factory,
     get_internal_redis,
     get_queue_registry,
     get_stream_manager,
@@ -55,6 +57,9 @@ DEAD_LETTER_STREAM_NAME = Annotated[StreamName, Inject(get_dead_letter_queue_nam
 BATCHED_EVENT_QUEUE = Annotated[asyncio.Queue[tuple[StreamedEvent, ...]], None]
 ISOLATED_EVENT_QUEUE = Annotated[asyncio.Queue[StreamedEvent], None]
 EVENT_STREAM_MANAGER = Annotated[EventStreamManager, Inject(get_stream_manager)]
+DISTRIBUTED_LOCK_FACTORY = Annotated[
+    RedisInstanceLockFactory, Inject(get_distributed_lock_factory)
+]
 
 ## Insertion-specific
 ACTION_LITERAL = Annotated[t_action_literal | None, None]

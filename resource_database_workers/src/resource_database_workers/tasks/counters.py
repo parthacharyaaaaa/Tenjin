@@ -1,11 +1,14 @@
 import asyncio
 import time
-from typing import Literal, MutableMapping
+from typing import Final, MutableMapping
 
+from auxillary.data_structures.locks.typing import (
+    SupportsBasicLockContext,
+    SupportsDistributedLocking,
+)
 from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
 from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
-from resource_auxillary.event_processing.qos import locked_operation
 from resource_auxillary.strings import NAME_SEPERATOR, StreamName
 
 from resource_database_workers.config.config import AppConfig
@@ -17,6 +20,7 @@ from resource_database_workers.dependencies.annotations import (
     APP_REDIS,
     CONNECTION_POOL,
     DEAD_LETTER_STREAM_NAME,
+    DISTRIBUTED_LOCK_FACTORY,
     EVENT_STREAM_MANAGER,
     INTERNAL_REDIS,
     STATUS_PROXY,
@@ -48,6 +52,7 @@ async def batch_update_retry_counters(
     worker_redis: INTERNAL_REDIS,
     server_redis: APP_REDIS,
     status_proxy: STATUS_PROXY,
+    distributed_lock_factory: DISTRIBUTED_LOCK_FACTORY,
 ) -> None:
     while status_proxy.status_ok:
         batch_name: str = (
@@ -65,6 +70,7 @@ async def batch_update_retry_counters(
             batch_name,
             dlq_stream_name,
             worker_redis,
+            distributed_lock_factory,
         )
         if not counter_data:
             continue
@@ -82,6 +88,7 @@ async def batch_update_counters(
     worker_redis: INTERNAL_REDIS,
     server_redis: APP_REDIS,
     status_proxy: STATUS_PROXY,
+    distributed_lock_factory: DISTRIBUTED_LOCK_FACTORY,
 ) -> None:
     counter_groups: list[str] = list(
         await retrieve_counter_group_names(
@@ -111,6 +118,7 @@ async def batch_update_counters(
             counter_groups[counter_group_iterator_index],
             dlq_stream_name,
             worker_redis,
+            distributed_lock_factory,
         )
 
         if not counter_data:
@@ -146,16 +154,17 @@ async def batch_update_counter_group(
     batch_name: str,
     dlq_stream_name: StreamName,
     worker_redis: Redis,
+    lock_factory: SupportsDistributedLocking,
 ) -> dict[str, int] | None:
     # Acquire lock for processing this counter group
     lock_name: str = derive_lock_key(batch_name)
-    lock_set: None | Literal[True] = await worker_redis.set(
-        lock_name, 1, ex=config.WORKER.COUNTER_FLUSH_LOCK_TTL, nx=True
+    lock_context: Final[SupportsBasicLockContext] = await lock_factory.lock(
+        lock_name, "__lock__", int(config.WORKER.COUNTER_FLUSH_LOCK_TTL.total_seconds())
     )
-    if not lock_set:
+    if not lock_context.valid:
         return None
 
-    async with locked_operation(worker_redis, lock_name):
+    async with lock_context:
         async with worker_redis.pipeline(transaction=True) as pipeline:
             pipeline.hgetall(batch_name)
             pipeline.delete(batch_name)
