@@ -121,16 +121,16 @@ class BusinessConfig(BaseModel):
 class JWKSConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     JWKS_ENDPOINT: str
-    JWKS_REQUEST_TIMEOUT: Annotated[int, Field(ge=1)]
-    JWKS_POLL_INTERVAL: Annotated[int, Field(ge=1)]
-    UPDATION_LOCK_LIFESPAN: Annotated[int, Field(ge=1)]
+    JWKS_REQUEST_TIMEOUT: timedelta_s
+    JWKS_POLL_INTERVAL: timedelta_s
+    UPDATION_LOCK_LIFESPAN: timedelta_s
 
-    KEY_ANNOUNCEMENT_DURATION: Annotated[int, Field(ge=0)]
+    KEY_ANNOUNCEMENT_DURATION: timedelta_s
     MAX_GLOBAL_MAPPING_POLLS: Annotated[int, Field(ge=1)]
     GLOBAL_MAPPING_POLL_INTERVAL: Annotated[int, Field(ge=0)]
-    SLAVE_WAIT_INTERVAL: Annotated[int, Field(ge=0)]
+    SLAVE_WAIT_INTERVAL: timedelta_s
 
-    KEY_LEEWAY: Annotated[int, Field(ge=0)]
+    KEY_LEEWAY: timedelta_s
     ALLOWED_ALGORITHMS: Annotated[
         frozenset[str], BeforeValidator(lambda x: frozenset(i.upper() for i in x))
     ]

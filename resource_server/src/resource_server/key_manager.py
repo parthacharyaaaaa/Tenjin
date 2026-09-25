@@ -98,7 +98,7 @@ class KeyManager(metaclass=SingletonMetaclass):
         async with httpx.AsyncClient() as client:
             response: httpx.Response = await client.get(
                 self.jwks_endpoint,
-                timeout=self.app_config.JWKS.JWKS_REQUEST_TIMEOUT,
+                timeout=self.app_config.JWKS.JWKS_REQUEST_TIMEOUT.total_seconds(),
             )
             if response.status_code != 200:
                 return None
