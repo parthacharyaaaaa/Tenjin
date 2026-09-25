@@ -86,7 +86,9 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
         return await self.get_admin_session(session_id, missing_ok=missing_ok)
 
     def derive_session_expiry(self, session_epoch: int) -> int:
-        return session_epoch + self.admin_config.ADMIN_SESSION_DURATION
+        return session_epoch + int(
+            self.admin_config.ADMIN_SESSION_DURATION.total_seconds()
+        )
 
     def generate_session_revival_digest(self) -> str:
         return secrets.token_hex(self.admin_config.REVIVAL_DIGEST_LENGTH)

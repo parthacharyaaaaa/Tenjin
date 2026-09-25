@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Sequence
 
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
@@ -62,8 +62,7 @@ async def report_suspicious_activity(
             (len(activities) > config.ADMIN.MAX_ACTIVITY_LIMIT)
             or (
                 activities[-1].time_logged
-                > current_time
-                - timedelta(seconds=config.ADMIN.SUSPICIOUS_LOOKBACK_TIME)
+                > current_time - config.ADMIN.SUSPICIOUS_LOOKBACK_TIME
             )
         ):
             await admin_repository.set_admin_locked(admin_id, locked=True)

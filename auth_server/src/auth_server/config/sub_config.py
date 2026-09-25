@@ -140,7 +140,7 @@ class KeyConfigModel(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
     MAX_VALID_KEYS: Annotated[int, Field(ge=1)]
-    KEY_ROTATION_COOLDOWN: Annotated[int, Field(ge=0)]
+    KEY_ROTATION_COOLDOWN: timedelta_s
     KEY_IDENTIFIER_LENGTH: Annotated[int, Field(ge=1)]
     SIGNATURE_HASHFUNC: Annotated[HashAlgorithm, Field(default_factory=hashes.SHA256)]
     SIGNATURE_ALGORITHM: Annotated[type[ec.ECDSA], Field(default=ec.ECDSA)]
@@ -159,10 +159,10 @@ class KeyConfigModel(BaseModel):
 class AdminConfigModel(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    SUSPICIOUS_LOOKBACK_TIME: Annotated[int, Field(ge=1)]
+    SUSPICIOUS_LOOKBACK_TIME: timedelta_s
     MAX_ACTIVITY_LIMIT: Annotated[int, Field(ge=0)]
     MAX_SESSION_ITERATIONS: Annotated[int, Field(ge=1)]
-    ADMIN_SESSION_DURATION: Annotated[int, Field(ge=0)]
+    ADMIN_SESSION_DURATION: timedelta_s
     REVIVAL_DIGEST_LENGTH: Annotated[int, Field(ge=1)]
 
 
