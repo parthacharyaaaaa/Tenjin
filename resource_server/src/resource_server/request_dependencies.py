@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Annotated, Final
 
 import jwt
@@ -47,7 +47,7 @@ async def validate_access_token(
             decoded_token = jwt.decode(
                 jwt=encoded_access_token,
                 key=key,
-                leeway=timedelta(minutes=app_config.JWKS.KEY_LEEWAY),
+                leeway=app_config.JWKS.KEY_LEEWAY,
             )
 
             return StandardAccessTokenClaims(**decoded_token)  # type: ignore[reportArgumentType]
@@ -58,7 +58,7 @@ async def validate_access_token(
             decoded_token = jwt.decode(
                 jwt=encoded_access_token,
                 key=key,
-                leeway=timedelta(minutes=app_config.JWKS.KEY_LEEWAY),
+                leeway=app_config.JWKS.KEY_LEEWAY,
             )
 
             return StandardAccessTokenClaims(**decoded_token)  # type: ignore[reportArgumentType]

@@ -1,19 +1,22 @@
-from typing import Annotated, Self
+from datetime import timedelta
+from typing import Self
 
-from pydantic import Field, model_validator
+from pydantic import model_validator
+
+from auxillary.mixins.annotations import timedelta_s
 
 
 class BasicCacheTTLConfig:
-    TTL_CAP: Annotated[int, Field(ge=0)]
-    TTL_PROMOTION: Annotated[int, Field(ge=0)]
-    TTL_STRONGEST: Annotated[int, Field(ge=0)]
-    TTL_STRONG: Annotated[int, Field(ge=0)]
-    TTL_WEAK: Annotated[int, Field(ge=0)]
-    TTL_EPHEMERAL: Annotated[int, Field(ge=0)]
+    TTL_CAP: timedelta_s
+    TTL_PROMOTION: timedelta_s
+    TTL_STRONGEST: timedelta_s
+    TTL_STRONG: timedelta_s
+    TTL_WEAK: timedelta_s
+    TTL_EPHEMERAL: timedelta_s
 
     @model_validator(mode="after")
     def validate_ttl_times(self) -> Self:
-        time_dict: dict[str, int] = {
+        time_dict: dict[str, timedelta] = {
             "maximum": self.TTL_CAP,
             "strongest": self.TTL_STRONGEST,
             "strong": self.TTL_STRONG,

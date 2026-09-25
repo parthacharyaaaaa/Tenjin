@@ -1,8 +1,8 @@
-from datetime import timedelta
 from ipaddress import ip_address
 from typing import Annotated, Self
 
 import jwt
+from auxillary.mixins.annotations import timedelta_days, timedelta_ms, timedelta_s
 from auxillary.mixins.cache_config import BasicCacheTTLConfig, BasicNegativeCacheConfig
 from auxillary.mixins.db_config import (
     BasicPostgresDatabaseConfigMixin,
@@ -17,7 +17,6 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     Field,
-    IPvAnyAddress,
     model_validator,
 )
 from pydantic.config import ConfigDict
@@ -25,9 +24,9 @@ from pydantic.config import ConfigDict
 from resource_server.config.constants import DOMAIN_REGEX
 
 
-def _verify_hostname(s: str) -> str | IPvAnyAddress:
+def _verify_hostname(s: str) -> str:
     try:
-        return ip_address(s)
+        return str(ip_address(s))
     except ValueError:
         pass
     if not DOMAIN_REGEX.match(s.strip().lower()):
@@ -64,13 +63,13 @@ class RedisConfig(BaseModel):
 
 
 class CacheConfig(BasicCacheTTLConfig, BasicNegativeCacheConfig, BaseModel):
-    TTL_OPERATIONAL_LOCK: Annotated[int, Field(ge=0)]
+    TTL_OPERATIONAL_LOCK: timedelta_ms
 
     # Fetch locks, for thundering herds
-    TTL_FETCH_LOCK: Annotated[int, Field(ge=0)]
-    FETCH_WAITING_INITIAL_INTERVAL: Annotated[int, Field(ge=1)]
-    FETCH_WAITING_JITTER: Annotated[int, Field(ge=1)]
-    FETCH_WAITING_EXPONENT: Annotated[int, Field(ge=2)]
+    TTL_FETCH_LOCK: timedelta_ms
+    FETCH_WAITING_INITIAL_INTERVAL: timedelta_ms
+    FETCH_WAITING_JITTER: timedelta_ms
+    FETCH_WAITING_EXPONENT: Annotated[int, Field(ge=1, default=2)]
     FETCH_WAITING_MAX_INTERVALS: Annotated[int, Field(ge=1)]
     FETCH_MAX_RETRIES: Annotated[int, Field(ge=0)]
 
@@ -78,8 +77,9 @@ class CacheConfig(BasicCacheTTLConfig, BasicNegativeCacheConfig, BaseModel):
     def validate_fetch_lock_times(self) -> Self:
         max_waiting_time: float = sum(
             (
-                self.FETCH_WAITING_INITIAL_INTERVAL
-                * self.FETCH_WAITING_JITTER**self.FETCH_WAITING_EXPONENT
+                self.FETCH_WAITING_INITIAL_INTERVAL.total_seconds()
+                * self.FETCH_WAITING_JITTER.total_seconds()
+                ** self.FETCH_WAITING_EXPONENT
             )
             for _ in range(self.FETCH_WAITING_MAX_INTERVALS)
         )
@@ -94,7 +94,7 @@ class CacheConfig(BasicCacheTTLConfig, BasicNegativeCacheConfig, BaseModel):
                 )
             )
 
-        if max_waiting_time > self.TTL_FETCH_LOCK:
+        if max_waiting_time > self.TTL_FETCH_LOCK.total_seconds():
             raise ValueError(
                 " ".join(
                     (
@@ -108,18 +108,11 @@ class CacheConfig(BasicCacheTTLConfig, BasicNegativeCacheConfig, BaseModel):
 
 
 class BusinessConfig(BaseModel):
-    ACCOUNT_RECOVERY_PERIOD: Annotated[
-        timedelta, BeforeValidator(lambda x: timedelta(days=x))
-    ]
-    PASSWORD_TOKEN_MAX_AGE: Annotated[
-        timedelta, BeforeValidator(lambda x: timedelta(minutes=x))
-    ]
-    ACCOUNT_AUDIT_THRESHOLD: Annotated[
-        timedelta, BeforeValidator(lambda x: timedelta(days=x))
-    ]
+    ACCOUNT_RECOVERY_PERIOD: timedelta_days
+    PASSWORD_TOKEN_MAX_AGE: timedelta_s
+    ACCOUNT_AUDIT_THRESHOLD: timedelta_days
 
     PAGINATION_SIZE: Annotated[int, Field(ge=1)]
-
     PAGINATION_CURSOR_LENGTH: Annotated[
         int, Field(ge=4), AfterValidator(_verify_b64_compatible)
     ]
@@ -128,16 +121,16 @@ class BusinessConfig(BaseModel):
 class JWKSConfig(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
     JWKS_ENDPOINT: str
-    JWKS_REQUEST_TIMEOUT: Annotated[int, Field(ge=1)]
-    JWKS_POLL_INTERVAL: Annotated[int, Field(ge=1)]
-    UPDATION_LOCK_LIFESPAN: Annotated[int, Field(ge=1)]
+    JWKS_REQUEST_TIMEOUT: timedelta_s
+    JWKS_POLL_INTERVAL: timedelta_s
+    UPDATION_LOCK_LIFESPAN: timedelta_s
 
-    KEY_ANNOUNCEMENT_DURATION: Annotated[int, Field(ge=0)]
+    KEY_ANNOUNCEMENT_DURATION: timedelta_s
     MAX_GLOBAL_MAPPING_POLLS: Annotated[int, Field(ge=1)]
     GLOBAL_MAPPING_POLL_INTERVAL: Annotated[int, Field(ge=0)]
-    SLAVE_WAIT_INTERVAL: Annotated[int, Field(ge=0)]
+    SLAVE_WAIT_INTERVAL: timedelta_s
 
-    KEY_LEEWAY: Annotated[int, Field(ge=0)]
+    KEY_LEEWAY: timedelta_s
     ALLOWED_ALGORITHMS: Annotated[
         frozenset[str], BeforeValidator(lambda x: frozenset(i.upper() for i in x))
     ]

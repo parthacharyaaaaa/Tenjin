@@ -3,6 +3,11 @@ from typing import Annotated, ClassVar, Self
 
 from pydantic import Field, model_validator
 
+# Time-related values for
+# BasicSQLAlchemyConfigMixin and BasicConnectionPoolConfigMixin
+# are not casted to timedelta instances since they are meant to be used by their
+# respective library's constructor/methods, which expect int/float instances
+
 
 class BasicSQLAlchemyConfigMixin:
     SQLALCHEMY_DATABASE_URI_TEMPLATE: ClassVar[str] = (
@@ -95,7 +100,7 @@ class BasicPostgresDatabaseConfigMixin:
         return self.construct_sqlalchemy_uri(
             username=username,
             password=password,
-            host=str(self.POSTGRES_HOST),
+            host=self.POSTGRES_HOST,
             port=self.POSTGRES_PORT,
             database=self.POSTGRES_DATABASE,
         )

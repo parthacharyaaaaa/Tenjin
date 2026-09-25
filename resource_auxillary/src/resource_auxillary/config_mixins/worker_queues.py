@@ -1,8 +1,7 @@
 from typing import Annotated
 
+from auxillary.mixins.annotations import timedelta_ms
 from pydantic import Field
-
-from resource_auxillary.config_mixins.annotations import timedelta_ms
 
 
 class WorkerInternalQueueMixin:

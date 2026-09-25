@@ -36,7 +36,7 @@ class JWKS(Protocol):
     keys: list[SupportsJWK]
 
 
-class GenericJWKMixin(BaseModel):
+class GenericJWKMixin:
     kid: Annotated[str, _string_whitespace_remover]
     use: Annotated[Literal[JWKUse.SIG], Field(init=False, frozen=True)] = JWKUse.SIG
 

@@ -2,6 +2,7 @@ import asyncio
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import timedelta
 from random import randint
 from typing import (
     Any,
@@ -88,15 +89,17 @@ class CacheManager(metaclass=SingletonMetaclass):
         return key.split(NAME_SEPERATOR)[2]
 
     async def set_negative_string(self, key: str, *, ttl: int | None = None) -> None:
-        ttl = ttl or self.cache_config.TTL_EPHEMERAL
+        ttl = ttl or int(self.cache_config.TTL_EPHEMERAL.total_seconds())
         await self.redis_client.set(key, self.cache_config.NF_SENTINEL_KEY, ex=ttl)
 
-    async def set_negative_mapping(self, key: str, *, ttl: int | None = None) -> None:
+    async def set_negative_mapping(
+        self, key: str, *, ttl: timedelta | None = None
+    ) -> None:
         ttl = ttl or self.cache_config.TTL_EPHEMERAL
         await self.hset_with_ttl(key, self.cache_config.NF_MAPPING, ttl)
 
     async def hset_with_ttl(
-        self, name: str, mapping: dict, ttl: int, transaction: bool = False
+        self, name: str, mapping: dict, ttl: timedelta, transaction: bool = False
     ):
         async with self.redis_client.pipeline(transaction) as pipe:
             pipe.hset(name=name, mapping=mapping)
@@ -107,7 +110,7 @@ class CacheManager(metaclass=SingletonMetaclass):
         self,
         names: Sequence[str],
         mappings: Sequence[dict],
-        ttl: int,
+        ttl: timedelta,
         transaction: bool = True,
     ):
         if len(names) != len(mappings):
@@ -154,7 +157,7 @@ class CacheManager(metaclass=SingletonMetaclass):
             await self.redis_client.set(
                 cache_key,
                 self.cache_config.NF_SENTINEL_KEY,
-                self.cache_config.TTL_EPHEMERAL,
+                int(self.cache_config.TTL_EPHEMERAL.total_seconds()),
             )
             return True
         return False
@@ -256,7 +259,12 @@ class CacheManager(metaclass=SingletonMetaclass):
         # Cache hit, and resource actually exists
         await self.redis_client.expire(
             cache_key,
-            min(self.cache_config.TTL_CAP, self.cache_config.TTL_PROMOTION + ttl),
+            int(
+                min(
+                    self.cache_config.TTL_CAP,
+                    self.cache_config.TTL_PROMOTION + timedelta(seconds=ttl),
+                ).total_seconds()
+            ),
         )
 
         return cache_entry
@@ -284,7 +292,10 @@ class CacheManager(metaclass=SingletonMetaclass):
             leader: bool = False
             leader = bool(
                 await self.redis_client.set(
-                    lock_name, time.time(), px=self.cache_config.TTL_FETCH_LOCK, nx=True
+                    lock_name,
+                    time.time(),
+                    px=self.cache_config.TTL_FETCH_LOCK.microseconds,
+                    nx=True,
                 )
             )
             if leader:
@@ -306,8 +317,13 @@ class CacheManager(metaclass=SingletonMetaclass):
                 for _ in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
                     if await self.redis_client.get(lock_name):
                         await asyncio.sleep(
-                            self.cache_config.FETCH_WAITING_INITIAL_INTERVAL
-                            * randint(1, self.cache_config.FETCH_WAITING_JITTER)  # nosec
+                            self.cache_config.FETCH_WAITING_INITIAL_INTERVAL.total_seconds()
+                            * randint(
+                                1,
+                                int(
+                                    self.cache_config.FETCH_WAITING_JITTER.total_seconds()
+                                ),
+                            )  # nosec
                             ** self.cache_config.FETCH_WAITING_EXPONENT
                         )
                         continue
@@ -415,7 +431,7 @@ class CacheManager(metaclass=SingletonMetaclass):
         await self.redis_client.set(
             intent,
             NAME_SEPERATOR.join((intent_flag, intent_id)),
-            ex=ttl or self.cache_config.TTL_STRONGEST,
+            ex=ttl or int(self.cache_config.TTL_STRONGEST.total_seconds()),
         )
 
     async def _fetch_paginated_resources(
@@ -477,7 +493,10 @@ class CacheManager(metaclass=SingletonMetaclass):
             leader: bool = False
             leader = bool(
                 await self.redis_client.set(
-                    lock_name, time.time(), px=self.cache_config.TTL_FETCH_LOCK, nx=True
+                    lock_name,
+                    time.time(),
+                    px=self.cache_config.TTL_FETCH_LOCK.microseconds,
+                    nx=True,
                 )
             )
             if leader:
@@ -495,8 +514,13 @@ class CacheManager(metaclass=SingletonMetaclass):
                 for _ in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
                     if await self.redis_client.get(lock_name):
                         await asyncio.sleep(
-                            self.cache_config.FETCH_WAITING_INITIAL_INTERVAL
-                            * randint(1, self.cache_config.FETCH_WAITING_JITTER)  # nosec
+                            self.cache_config.FETCH_WAITING_INITIAL_INTERVAL.total_seconds()
+                            * randint(
+                                1,
+                                int(
+                                    self.cache_config.FETCH_WAITING_JITTER.total_seconds()
+                                ),
+                            )  # nosec
                             ** self.cache_config.FETCH_WAITING_EXPONENT
                         )
                         continue
@@ -532,7 +556,7 @@ class CacheManager(metaclass=SingletonMetaclass):
                 page_key,
                 min(
                     self.cache_config.TTL_CAP,
-                    page_ttl + self.cache_config.TTL_PROMOTION,
+                    timedelta(seconds=page_ttl) + self.cache_config.TTL_PROMOTION,
                 ),
             )
 
@@ -541,7 +565,8 @@ class CacheManager(metaclass=SingletonMetaclass):
                     key,
                     min(
                         self.cache_config.TTL_CAP,
-                        member_ttls[idx] + self.cache_config.TTL_PROMOTION,
+                        timedelta(seconds=member_ttls[idx])
+                        + self.cache_config.TTL_PROMOTION,
                     ),
                 )
             await pipe.execute()

@@ -1,4 +1,3 @@
-import time
 from hashlib import sha256
 from typing import Annotated, Final
 
@@ -69,15 +68,10 @@ async def login(
         sub, sid, family_id=family_id
     )
 
-    epoch: float = time.time()
     response: JSONResponse = EnrichedJSONResponse(
         {
             "message": response_contents.pop("message", "Login complete."),
             "username": sub,
-            "time_of_issuance": epoch,
-            "access_exp": epoch + token_manager.token_manager_config.ACCESS_LIFETIME,
-            "leeway": token_manager.token_manager_config.LEEWAY,
-            "issuer": "tenjin-auth-service",
             "_additional": {**response_contents},
         },
         status_code=201,
@@ -88,10 +82,14 @@ async def login(
         response,
         access_token,
         refresh_token,
-        token_manager.token_manager_config.ACCESS_LIFETIME
-        + token_manager.token_manager_config.LEEWAY,
-        token_manager.token_manager_config.REFRESH_LIFETIME
-        + token_manager.token_manager_config.LEEWAY,
+        int(
+            token_manager.token_manager_config.ACCESS_LIFETIME.total_seconds()
+            + token_manager.token_manager_config.LEEWAY.total_seconds()
+        ),
+        int(
+            token_manager.token_manager_config.REFRESH_LIFETIME.total_seconds()
+            + token_manager.token_manager_config.LEEWAY.total_seconds()
+        ),
         paths=[request.url_for("reissue"), request.url_for("purge_family")],
     )
     return response
@@ -128,15 +126,11 @@ async def register(
     refresh_token: str = await token_manager.issue_refresh_token(
         sub, sid, family_id=family_id
     )
-    epoch: float = time.time()
     response: JSONResponse = EnrichedJSONResponse(
         {
             "message": response_contents.pop("message", "Registration complete."),
             "username": sub,
             "email": response_contents.pop("email", None),
-            "time_of_issuance": epoch,
-            "access_exp": epoch + token_manager.token_manager_config.ACCESS_LIFETIME,
-            "leeway": token_manager.token_manager_config.LEEWAY,
             "issuer": "tenjin-AUTH-service",
             "_additional": {**response_contents},
         },
@@ -148,10 +142,14 @@ async def register(
         response,
         access_token,
         refresh_token,
-        token_manager.token_manager_config.ACCESS_LIFETIME
-        + token_manager.token_manager_config.LEEWAY,
-        token_manager.token_manager_config.REFRESH_LIFETIME
-        + token_manager.token_manager_config.LEEWAY,
+        int(
+            token_manager.token_manager_config.ACCESS_LIFETIME.total_seconds()
+            + token_manager.token_manager_config.LEEWAY.total_seconds()
+        ),
+        int(
+            token_manager.token_manager_config.REFRESH_LIFETIME.total_seconds()
+            + token_manager.token_manager_config.LEEWAY.total_seconds()
+        ),
         paths=[request.url_for("reissue"), request.url_for("purge_family")],
     )
     return response
@@ -179,14 +177,9 @@ async def reissue(
     new_refresh_token, new_access_token = await token_manager.reissue_token_pair(
         refresh_token
     )
-    epoch: float = time.time()
     response: Response = EnrichedJSONResponse(
         {
             "message": "Reissuance successful",
-            "time_of_issuance": epoch,
-            "access_exp": epoch + token_manager.token_manager_config.ACCESS_LIFETIME,
-            "leeway": token_manager.token_manager_config.LEEWAY,
-            "issuer": "babel-AUTH-service",
         },
         status_code=201,
         hypermedia_data=token_hypermedia(link_builder),
@@ -196,10 +189,14 @@ async def reissue(
         response,
         new_access_token,
         new_refresh_token,
-        token_manager.token_manager_config.ACCESS_LIFETIME
-        + token_manager.token_manager_config.LEEWAY,
-        token_manager.token_manager_config.REFRESH_LIFETIME
-        + token_manager.token_manager_config.LEEWAY,
+        int(
+            token_manager.token_manager_config.ACCESS_LIFETIME.total_seconds()
+            + token_manager.token_manager_config.LEEWAY.total_seconds()
+        ),
+        int(
+            token_manager.token_manager_config.REFRESH_LIFETIME.total_seconds()
+            + token_manager.token_manager_config.LEEWAY.total_seconds()
+        ),
         paths=[request.url_for("reissue"), request.url_for("purge_family")],
     )
     return response
