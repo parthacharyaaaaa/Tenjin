@@ -23,22 +23,23 @@ SQLALCHEMY_TRACK_MODIFICATIONS=false
 HOST="resource_server_redis"
 PORT=6379
 DB=0
-
+decode_respones=true
 
 [redis.auth]
 HOST="auth_server_redis"
 PORT=6380
 DB=0
+decode_respones=true
 
 [cache]
 # All units in seconds, unless specified otherwise
-TTL_CAP=86400
-TTL_PROMOTION=15
-TTL_STRONGEST=1200
-TTL_STRONG=600
-TTL_WEAK=300
-TTL_EPHEMERAL=60
-TTL_OPERATIONAL_LOCK=5
+TTL_CAP=86400               # seconds
+TTL_PROMOTION=15            # seconds
+TTL_STRONGEST=1200          # seconds
+TTL_STRONG=600              # seconds
+TTL_WEAK=300                # seconds
+TTL_EPHEMERAL=60            # seconds
+TTL_OPERATIONAL_LOCK=5      # seconds
 
 TTL_FETCH_LOCK=1000                     # milliseconds
 FETCH_WAITING_INITIAL_INTERVAL=5        # milliseconds

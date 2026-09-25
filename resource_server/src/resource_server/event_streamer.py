@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import timedelta
 
 from auxillary.singleton import SingletonMetaclass
 from auxillary.utils import cache_repr
@@ -23,7 +24,7 @@ class EventStreamer(metaclass=SingletonMetaclass):
         pipeline.hincrby(hashmap_name, identifier, delta)
 
     def _pipeline_set_intent(
-        self, pipeline: Pipeline, name: str, intent: str, ttl: int
+        self, pipeline: Pipeline, name: str, intent: str, ttl: timedelta
     ) -> None:
         pipeline.set(name, intent, ex=ttl)
 
