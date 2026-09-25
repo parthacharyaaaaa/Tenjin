@@ -18,10 +18,12 @@ from typing import (
 )
 
 import orjson
+from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
+from auxillary.data_structures.locks.typing import SupportsBasicLockContext
 from auxillary.singleton import SingletonMetaclass
 from auxillary.typing_utils import SupportsAsyncRedis, SupportsCache
 from auxillary.utils import cache_repr
-from redis.asyncio.client import Pipeline, Redis
+from redis.asyncio.client import Pipeline
 from resource_auxillary.cache import create_intent_flag
 from resource_auxillary.strings import NAME_SEPERATOR, Action, IntentFlag
 
@@ -42,10 +44,11 @@ type pagination_database_fallback_callable = Callable[
 ]
 
 
-@dataclass(init=False, slots=True, weakref_slot=True)
+@dataclass(slots=True, weakref_slot=True, frozen=True)
 class CacheManager(metaclass=SingletonMetaclass):
     redis_client: SupportsAsyncRedis
     cache_config: CacheConfig
+    lock_factory: RedisInstanceLockFactory
 
     allowed_intents: ClassVar[frozenset[str]] = frozenset(
         [
@@ -59,10 +62,6 @@ class CacheManager(metaclass=SingletonMetaclass):
     CURSOR_UNDERIVABLE_SENTINEL: ClassVar[LiteralString] = "X"
     PAGINATION_VERSION_MAP: ClassVar[LiteralString] = "pagination_versions"
     MAX_CACHE_VERSION: ClassVar[int] = 64
-
-    def __init__(self, redis: Redis, cache_config: CacheConfig) -> None:
-        self.redis_client = redis  # type: ignore
-        self.cache_config = cache_config
 
     @staticmethod
     def derive_lock_key(*args: str) -> str:
@@ -289,17 +288,16 @@ class CacheManager(metaclass=SingletonMetaclass):
         # Upon cache miss, elect a leader to actually talk to DB
         lock_name: Final[str] = self.derive_lock_key(key)
         for _leader_attempt in range(self.cache_config.FETCH_MAX_RETRIES):
-            leader: bool = False
-            leader = bool(
-                await self.redis_client.set(
-                    lock_name,
-                    time.time(),
-                    px=self.cache_config.TTL_FETCH_LOCK.microseconds,
-                    nx=True,
-                )
+            leader_lock_context: Final[
+                SupportsBasicLockContext
+            ] = await self.lock_factory.lock(
+                lock_name,
+                str(time.time()),
+                int(self.cache_config.TTL_FETCH_LOCK.total_seconds() * 1000),
+                ttl_in_ms=True,
             )
-            if leader:
-                try:
+            if leader_lock_context.valid:
+                async with leader_lock_context:
                     result_dto: AbstractDTO | None = await fallback_coroutine()
                     if not result_dto:
                         if fetch_dtype == "mapping":
@@ -311,8 +309,6 @@ class CacheManager(metaclass=SingletonMetaclass):
                         key, cache_repr(result_dto), self.cache_config.TTL_STRONG
                     )
                     return result_dto  # type: ignore[reportReturnType]
-                finally:
-                    await self.redis_client.delete(lock_name)
             else:
                 for _ in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
                     if await self.redis_client.get(lock_name):
@@ -386,33 +382,33 @@ class CacheManager(metaclass=SingletonMetaclass):
     ):
         user_identifier = str(user_identifier)
         resource_identifier = str(resource_identifier)
-
         intent: str = create_intent_flag(
             resource_name, action, user_identifier, resource_identifier
         )
         lock_name: str = self.derive_lock_key(
             resource_name, action.value, user_identifier, resource_identifier
         )
-        try:
-            async with self.redis_client.pipeline() as pipe:
-                pipe.set(lock_name, 1, nx=True, px=self.cache_config.TTL_FETCH_LOCK)
-                pipe.get(intent)
-                lock_set, intent = await pipe.execute()
-            if not lock_set:
+        async with await self.lock_factory.lock(
+            lock_name,
+            "__lock__",
+            int(self.cache_config.TTL_FETCH_LOCK.total_seconds() * 1000),
+            ttl_in_ms=True,
+        ) as lock_context:
+            if not lock_context.valid:
                 raise DuplicateRequestError(
                     lock_conflict_message or "Detected duplicate request"
                 )
-            if not intent:
-                yield None
-            intent_value: str = intent.split(NAME_SEPERATOR)[0]
+            _intent = await self.redis_client.get(intent)
+        if not _intent:
+            yield None
+        else:
+            intent_value: str = _intent.split(NAME_SEPERATOR)[0]
 
             if conflicting_intent == intent_value:
                 raise ConflictingIntentError(
                     intent_conflict_message or "Operation already performed"
                 )
             yield intent_value
-        finally:
-            await self.redis_client.delete(lock_name)
 
     async def set_intent(
         self,
@@ -490,17 +486,16 @@ class CacheManager(metaclass=SingletonMetaclass):
         # Upon cache miss, elect a leader to actually talk to DB
         lock_name: Final[str] = self.derive_lock_key(page_key)
         for _leader_attempt in range(self.cache_config.FETCH_MAX_RETRIES):
-            leader: bool = False
-            leader = bool(
-                await self.redis_client.set(
-                    lock_name,
-                    time.time(),
-                    px=self.cache_config.TTL_FETCH_LOCK.microseconds,
-                    nx=True,
-                )
+            leader_lock_context: Final[
+                SupportsBasicLockContext
+            ] = await self.lock_factory.lock(
+                lock_name,
+                str(time.time()),
+                int(self.cache_config.TTL_FETCH_LOCK.total_seconds() * 1000),
+                ttl_in_ms=True,
             )
-            if leader:
-                try:
+            if leader_lock_context.valid:
+                async with leader_lock_context:
                     results: list[AbstractDTO] = list(await fallback_coroutine())
                     await self.cache_grouped_resource(
                         page_key,
@@ -508,8 +503,6 @@ class CacheManager(metaclass=SingletonMetaclass):
                         self.derive_cursor_from_pagination_key(page_key),
                     )
                     return results, self.CURSOR_UNDERIVABLE_SENTINEL  # type: ignore[reportReturnType]
-                finally:
-                    await self.redis_client.delete(lock_name)
             else:
                 for _ in range(1, self.cache_config.FETCH_WAITING_MAX_INTERVALS + 1):
                     if await self.redis_client.get(lock_name):

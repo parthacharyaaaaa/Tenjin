@@ -3,6 +3,7 @@ from functools import lru_cache
 from typing import AsyncGenerator, Final
 
 from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
+from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from fastapi import Request
 from redis.asyncio import Redis
 from sqlalchemy import select
@@ -61,13 +62,27 @@ def get_auth_redis_client() -> Redis:
 
 
 @lru_cache(maxsize=1)
+def get_distributed_lock_factory() -> RedisInstanceLockFactory:
+    return RedisInstanceLockFactory(get_app_redis_client())
+
+
+@lru_cache(maxsize=1)
 def get_key_manager() -> KeyManager:
-    return KeyManager(get_app_config(), get_app_redis_client(), get_auth_redis_client())
+    return KeyManager(
+        get_app_config(),
+        get_app_redis_client(),
+        get_auth_redis_client(),
+        get_distributed_lock_factory(),
+    )
 
 
 @lru_cache(maxsize=1)
 def get_cache_manager() -> CacheManager:
-    return CacheManager(get_app_redis_client(), get_app_config().CACHE)
+    return CacheManager(
+        get_app_redis_client(),  # pyrefly: ignore[bad-argument-type]
+        get_app_config().CACHE,
+        get_distributed_lock_factory(),
+    )
 
 
 @lru_cache(maxsize=1)

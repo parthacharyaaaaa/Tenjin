@@ -9,7 +9,7 @@ from redis.commands.core import AsyncScript
 from auxillary.data_structures.locks.lua_scripts import (
     CONDITIONAL_LOCK_UNSETTING_SCRIPT,
 )
-from auxillary.data_structures.locks.typing import SupportsDistributedLocking
+from auxillary.data_structures.locks.typing import SupportsDistributedRelease
 from auxillary.singleton import SingletonMetaclass
 
 
@@ -17,7 +17,7 @@ from auxillary.singleton import SingletonMetaclass
 class BasicLockContext:
     resource: str
     value: str
-    client: SupportsDistributedLocking
+    client: SupportsDistributedRelease
     valid: bool
 
     async def __aenter__(self) -> Self:
@@ -50,18 +50,22 @@ class RedisInstanceLockFactory(metaclass=SingletonMetaclass):
         return uuid4().hex
 
     async def lock(
-        self,
-        resource: str,
-        value: str,
-        ttl: int,
+        self, resource: str, value: str, ttl: int, *, ttl_in_ms: bool = False
     ) -> BasicLockContext:
         if value is None:
             value = self.generate_random_lock_token()
+        if not ttl_in_ms:
+            return BasicLockContext(
+                resource,
+                value,
+                self,
+                bool(await self.redis_client.set(resource, value, ex=ttl, nx=True)),
+            )
         return BasicLockContext(
             resource,
             value,
             self,
-            bool(await self.redis_client.set(resource, value, ex=ttl, nx=True)),
+            bool(await self.redis_client.set(resource, value, px=ttl, nx=True)),
         )
 
     async def release(self, lock_name: str, value: int) -> None:

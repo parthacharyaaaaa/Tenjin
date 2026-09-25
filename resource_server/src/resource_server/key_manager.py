@@ -4,6 +4,7 @@ from traceback import format_exc
 from typing import Final
 
 import httpx
+from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from auxillary.security.serialization import pem_serialize_public_key
 from auxillary.singleton import SingletonMetaclass
 from auxillary.utils import from_base64url
@@ -21,6 +22,7 @@ class KeyManager(metaclass=SingletonMetaclass):
     app_config: Final[AppConfig]
     app_redis_client: Final[Redis]
     auth_redis_client: Final[Redis]
+    distributed_lock_factory: Final[RedisInstanceLockFactory]
     current_mapping: dict[str, bytes] = field(default_factory=dict)
     _pubsub: PubSub | None = field(default=None)
     _monitoring_task: asyncio.Task | None = field(init=False, default=None)
@@ -111,15 +113,14 @@ class KeyManager(metaclass=SingletonMetaclass):
 
     async def update_jwks(self) -> None:
         """Fetch JWKS from auth server and load any new key mappings into current_mapping"""
-        res: int = await self.app_redis_client.set(
+        lock_context = await self.distributed_lock_factory.lock(
             RedisConstants.JWKS_POLL_LOCK,
-            1,
-            ex=self.app_config.JWKS.UPDATION_LOCK_LIFESPAN,
-            nx=True,
+            "__lock__",
+            int(self.app_config.JWKS.UPDATION_LOCK_LIFESPAN.total_seconds()),
         )
 
         # Wait for current worker and then read global key mapping
-        if not res:
+        if not lock_context:
             for _ in range(self.app_config.JWKS.MAX_GLOBAL_MAPPING_POLLS):
                 if await self.app_redis_client.get(RedisConstants.JWKS_POLL_LOCK):
                     await asyncio.sleep(
