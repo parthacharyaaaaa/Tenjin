@@ -182,5 +182,5 @@ class RedisConfigModel(BaseModel):
 
 
 class BootupConfigModel(BaseModel):
-    SLAVE_SLEEP_POLLING_INTERVAL: Annotated[int, Field(ge=0)]
-    MASTER_BOOTUP_LOCK_LIFESPAN: Annotated[int, Field(ge=0)]
+    SLAVE_SLEEP_POLLING_INTERVAL: timedelta_s
+    MASTER_BOOTUP_LOCK_LIFESPAN: timedelta_s
