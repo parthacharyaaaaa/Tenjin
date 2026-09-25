@@ -1,8 +1,9 @@
 import re
 from functools import cached_property
 from pathlib import Path
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
+from auxillary.mixins.annotations import timedelta_s
 from auxillary.mixins.db_config import (
     BasicPostgresDatabaseConfigMixin,
     BasicSQLAlchemyConfigMixin,
@@ -45,9 +46,7 @@ def _parse_jwks_path(path: str) -> Path:
 
 class CoreConfigModel(BaseModel):
     APPLICATION_ROOT: Annotated[str, Field(pattern=utils.APP_ROOT_PATTERN, frozen=True)]
-
     PORT: Annotated[int, Field(ge=1024, le=65_535, frozen=True)]
-
     WORKING_DIRECTORY: Annotated[Path, Field(default_factory=Path.cwd)]
 
     @computed_field
@@ -62,16 +61,13 @@ class CoreConfigModel(BaseModel):
 
 
 class TokenManagerConfigModel(BaseModel):
-    REFRESH_LIFETIME: Annotated[int, Field(ge=1)]
-    ACCESS_LIFETIME: Annotated[int, Field(ge=1)]
-    LEEWAY: Annotated[int, Field(ge=0)]
-    ANNOUNCEMENT_DURATION: Annotated[int, Field(ge=1)]
-
+    REFRESH_LIFETIME: timedelta_s
+    ACCESS_LIFETIME: timedelta_s
+    LEEWAY: timedelta_s
+    ANNOUNCEMENT_DURATION: timedelta_s
     ALG: Annotated[str, Field(default="ES256")]
-
     MAX_TOKENS_PER_FAMILY: Annotated[int, Field(ge=1)]
-
-    POLL_INTERVAL: Annotated[int, Field(ge=0)]
+    POLL_INTERVAL: timedelta_s
 
     @model_validator(mode="after")
     def verify_time_values(self) -> Self:
@@ -99,7 +95,7 @@ class TokenManagerConfigModel(BaseModel):
 
         return self
 
-    def to_constructor_kwargs(self) -> dict[str, int | str]:
+    def to_constructor_kwargs(self) -> dict[str, Any]:
         return {
             "refresh_lifetime": self.REFRESH_LIFETIME,
             "access_lifetime": self.ACCESS_LIFETIME,

@@ -7,26 +7,26 @@ JWKS_FILENAME="jwks.json"
 JWKS_CAP=3
 
 [jwks.token_manager]
-REFRESH_LIFETIME=10800
-ACCESS_LIFETIME=1800
-LEEWAY=180
+REFRESH_LIFETIME=10800      # seconds
+ACCESS_LIFETIME=1800        # seconds
+LEEWAY=180                  # seconds
 ALG="ES256"
 MAX_TOKENS_PER_FAMILY=3
-ANNOUNCEMENT_DURATION=10800
-POLL_INTERVAL=30
+ANNOUNCEMENT_DURATION=10800 # seconds
+POLL_INTERVAL=30            # seconds
 
 [redis]
 [redis.synced_store]
 HOST="auth_server_redis"
 PORT=6380
 DB=0
-DECODE_RESPONSES=false
+DECODE_RESPONSES=true
 
 [redis.token_store]
 HOST="auth_server_redis"
 PORT=6380
 DB=1
-DECODE_RESPONSES=false
+DECODE_RESPONSES=true
 
 [database]
 POSTGRES_HOST="auth_server_database"

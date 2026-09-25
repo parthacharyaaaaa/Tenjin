@@ -2,8 +2,9 @@ import asyncio
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import timedelta
 from traceback import format_exc
-from typing import Any, Literal, Optional, overload
+from typing import Any, Final, Literal, Optional, overload
 
 import jwt
 import jwt.exceptions as jwt_exceptions
@@ -164,12 +165,14 @@ class TokenManager:
             await self.invalidate_family(family_id)
 
         # All checks passed
+        token_epoch_reference: Final[int] = int(time.time())
         payload: dict = {
-            "iat": time.time(),
-            "exp": time.time() + self.token_manager_config.REFRESH_LIFETIME,
-            "nbf": time.time()
-            + self.token_manager_config.ACCESS_LIFETIME
-            - self.token_manager_config.LEEWAY,
+            "iat": token_epoch_reference,
+            "exp": token_epoch_reference
+            + int(self.token_manager_config.REFRESH_LIFETIME.total_seconds()),
+            "nbf": token_epoch_reference
+            + int(self.token_manager_config.ACCESS_LIFETIME.total_seconds())
+            - int(self.token_manager_config.LEEWAY.total_seconds()),
             "fid": family_id,
             "sub": sub,
             "sid": sid,
@@ -195,9 +198,11 @@ class TokenManager:
     def issue_access_token(
         self, sub: str, sid: int, family_id: str, additional_claims: dict | None = None
     ) -> str:
+        token_epoch_reference: Final[int] = int(time.time())
         payload: dict = {
-            "iat": time.time(),
-            "exp": time.time() + self.token_manager_config.ACCESS_LIFETIME,
+            "iat": token_epoch_reference,
+            "exp": token_epoch_reference
+            + int(self.token_manager_config.ACCESS_LIFETIME.total_seconds()),
             "fid": family_id,
             "sub": sub,
             "sid": sid,
@@ -274,7 +279,7 @@ class TokenManager:
 
         self._key_mapping.pop(kid, None)
 
-    async def poll_store(self, interval: int) -> None:
+    async def poll_store(self, interval: timedelta) -> None:
         """
         Check synced store to keep local keys updated with global keys.
         Intended to be run as a non-blocking, background task upon instantiation
@@ -326,7 +331,7 @@ class TokenManager:
                 print("[BACKGROUND POLLER]: Exception encountered. Traceback:")
                 print(format_exc())
             finally:
-                await asyncio.sleep(interval)
+                await asyncio.sleep(interval.total_seconds())
 
     @staticmethod
     def generate_unique_identifier():
