@@ -2,9 +2,9 @@
 
 from typing import Annotated, Self
 
+from auxillary.mixins.annotations import timedelta_ms
 from pydantic import BeforeValidator, Field, model_validator
 
-from resource_auxillary.config_mixins.annotations import timedelta_ms
 from resource_auxillary.strings import StreamName
 
 
