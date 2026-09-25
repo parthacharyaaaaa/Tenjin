@@ -2,13 +2,14 @@ import asyncio
 from collections.abc import AsyncGenerator, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import IntEnum, IntFlag
 from pathlib import Path
 from typing import Final, Protocol
 
 import aiofiles
 import orjson
+from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from auxillary.mixins.metaclass import AntiSingletonMixin
 from auxillary.security.serialization import (
     pem_serialize_private_key,
@@ -249,14 +250,21 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
             pipeline.lpush(*keys)
             await pipeline.execute()
 
+    async def set_operation_cooldown(self, cooldown: timedelta | int) -> None:
+        await self.synced_store_client.set(
+            SyncedStoreStrings.KEY_ROTATION_COOLDOWN,
+            1,
+            ex=cooldown,
+        )
+
 
 @dataclass(slots=True, frozen=True)
 class KeyLifecycleManager(AntiSingletonMixin):
-    synced_store_client: Redis
     keydata_repository: KeydataRepository
     token_manager: TokenManager
     filesystem_key_manager: FileSystemKeyManager
     synced_store_key_manager: SyncedStoreKeyStateManager
+    redis_lock_factory: RedisInstanceLockFactory
 
     _lock_value: str = field(default="LOCK", kw_only=True)
     _lock_prefix: str = field(default="LOCK", kw_only=True)
@@ -285,36 +293,30 @@ class KeyLifecycleManager(AntiSingletonMixin):
         *,
         operation: SyncedStoreStrings | None = None,
         lock_duration: LockTIme = LockTIme.LOW,
-        operational_cooldown_duration: int | None = None,
+        operational_cooldown_duration: int | timedelta | None = None,
     ) -> AsyncGenerator[None]:
-        lock: Final[str | None] = (
-            self.generate_distributed_lock_name(operation) if operation else None
-        )
-        if lock:
-            _lock_acquired: bool = bool(
-                await self.synced_store_client.set(
-                    lock, self._lock_value, ex=lock_duration, nx=True
+        async with AsyncExitStack() as stack:
+            if operation:
+                lock_name: Final[str] = self.generate_distributed_lock_name(operation)
+                lock_set = await stack.enter_async_context(
+                    await self.redis_lock_factory.lock(
+                        lock_name, self._lock_value, lock_duration
+                    )
                 )
-            )
-            if not _lock_acquired:
-                raise Exception(f"Failed to acquire operational lock for {operation}")
-        try:
-            async with AsyncExitStack() as stack:
-                for transactional_worker in self._transactional_stack_order:
-                    await stack.enter_async_context(
-                        transactional_worker.transactional_block()
+                if not lock_set.valid:
+                    raise Exception(
+                        f"Failed to acquire operational lock for {operation}"
                     )
-                yield
+            for transactional_worker in self._transactional_stack_order:
+                await stack.enter_async_context(
+                    transactional_worker.transactional_block()
+                )
+            yield
 
-                if operational_cooldown_duration is not None:
-                    await self.synced_store_client.set(
-                        SyncedStoreStrings.KEY_ROTATION_COOLDOWN,
-                        1,
-                        ex=operational_cooldown_duration,
-                    )
-        finally:
-            if lock is not None:
-                await self.synced_store_client.delete(lock)
+            if operational_cooldown_duration:
+                await self.synced_store_key_manager.set_operation_cooldown(
+                    operational_cooldown_duration
+                )
 
     async def invalidate_key(
         self,

@@ -3,6 +3,7 @@ from functools import lru_cache
 from typing import AsyncGenerator, Final
 
 from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
+from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from fastapi import Request
 from redis.asyncio import Redis
@@ -125,11 +126,16 @@ def get_synced_store_key_state_manager() -> SyncedStoreKeyStateManager:
     return SyncedStoreKeyStateManager(get_synced_store_client())
 
 
+@lru_cache(maxsize=1)
+def get_distributed_lock_factory() -> RedisInstanceLockFactory:
+    return RedisInstanceLockFactory(get_synced_store_client())
+
+
 def get_key_lifecycle_manager() -> KeyLifecycleManager:
     return KeyLifecycleManager(
-        get_synced_store_client(),
         get_keydata_repository(),
         get_token_manager(),
         get_filesystem_key_manager(),
         get_synced_store_key_state_manager(),
+        get_distributed_lock_factory(),
     )
