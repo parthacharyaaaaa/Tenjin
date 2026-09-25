@@ -5,6 +5,10 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Final, Mapping
 
 from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
+from auxillary.data_structures.locks.lock import (
+    BasicLockContext,
+    RedisInstanceLockFactory,
+)
 from auxillary.security.serialization import (
     pem_serialize_private_key,
     pem_serialize_public_key,
@@ -18,6 +22,7 @@ from auth_server.config.sub_config import KeyConfigModel
 from auth_server.dependencies.local import (
     get_app_config,
     get_database_session_maker,
+    get_distributed_lock_factory,
     get_filesystem_key_manager,
     get_synced_store_client,
     get_token_manager,
@@ -180,6 +185,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     config: Final[AppConfig] = get_app_config()
     synced_store_client: Final[Redis] = get_synced_store_client()
+    lock_factory: Final[RedisInstanceLockFactory] = get_distributed_lock_factory()
 
     # Additional filepaths depending on instance/static directories
     config.JWKS.resolve_jwks_filepath(config.CORE.instance_path)
@@ -194,16 +200,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     token_manager: Final[TokenManager] = get_token_manager()
     filesystem_key_manager: Final[FileSystemKeyManager] = get_filesystem_key_manager()
 
-    is_master: bool = bool(
-        await synced_store_client.set(
-            SyncedStoreStrings.AUTH_BOOTUP_MASTER,
-            pid,
-            nx=True,
-            ex=config.BOOTUP.MASTER_BOOTUP_LOCK_LIFESPAN,
-        )
+    master_lock_context: Final[BasicLockContext] = await lock_factory.lock(
+        SyncedStoreStrings.AUTH_BOOTUP_MASTER,
+        str(pid),
+        int(config.BOOTUP.MASTER_BOOTUP_LOCK_LIFESPAN.total_seconds()),
     )
 
-    if is_master:
+    if master_lock_context.valid:
         await master_bootup(
             config,
             synced_store_client,
