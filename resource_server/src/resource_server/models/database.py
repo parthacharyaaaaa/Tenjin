@@ -445,7 +445,9 @@ class Forum(SoftEventDeletionMixin, Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     admin_count: Mapped[int] = mapped_column(
         SMALLINT, default=1, server_default=text("1"), nullable=False
