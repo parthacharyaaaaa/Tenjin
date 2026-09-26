@@ -20,10 +20,16 @@ class ReportTags(StrEnum):
     OTHER = "OTHER"
 
 
-ADMIN_ROLES = ENUM(*(i.value for i in AdminRoles), name="ADMIN_ROLES", create_type=True)
+ADMIN_ROLES = ENUM(
+    AdminRoles,
+    values_callable=lambda x: [e.value for e in x],
+    name="ADMIN_ROLES",
+    create_type=True,
+)
 
 REPORT_TAGS = ENUM(
-    *(i.value for i in ReportTags),
+    ReportTags,
+    values_callable=lambda x: [e.value for e in x],
     name="REPORT_TAGS",
     create_type=True,
 )

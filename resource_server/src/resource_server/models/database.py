@@ -222,6 +222,7 @@ class StreamLink(Base):
         ForeignKey(f"{StrongEntity.ANIME}.{GenericLiterals.ID}", ondelete="CASCADE"),
         primary_key=True,
         name=AssociationColumnLiteral.ANIME_ID,
+        nullable=False,
     )
     url: Mapped[str] = mapped_column(
         VARCHAR(database_constants.StreamLinkConstants.URL_MAX_LENGTH),
