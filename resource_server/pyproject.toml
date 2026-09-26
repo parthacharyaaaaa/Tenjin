@@ -41,6 +41,9 @@ known_first_party=[
 python-dotenv = "dotenv"
 pyjwt = "jwt"
 
+[tool.deptry.per_rule_ignores]
+DEP002 = ["psycopg"]
+
 [tool.pyrefly]
 project-excludes=[
     "**/alembic/versions"

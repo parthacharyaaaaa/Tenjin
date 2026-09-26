@@ -6,13 +6,14 @@ from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilde
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from fastapi import Request
 from redis.asyncio import Redis
-from sqlalchemy import select
+from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import Session, sessionmaker
 
 from resource_server.cache_manager import CacheManager
 from resource_server.config.app_config import AppConfig
@@ -115,6 +116,24 @@ async def get_database_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
     finally:
         await session.close()
+
+
+@lru_cache(maxsize=1)
+def get_sync_database_session_maker() -> sessionmaker[Session]:
+    config: Final[AppConfig] = get_app_config()
+
+    uri: Final[str] = config.DATABASE.derive_sqlalchemy_uri(
+        username=os.environ["RESOURCE_SERVER_POSTGRES_USERNAME"],
+        password=os.environ["RESOURCE_SERVER_POSTGRES_PASSWORD"],
+    )
+
+    engine: Final[Engine] = create_engine(uri)
+
+    session_maker: Final[sessionmaker[Session]] = sessionmaker(
+        bind=engine, autocommit=False, autoflush=False
+    )
+
+    return session_maker
 
 
 @lru_cache(maxsize=1)
