@@ -63,8 +63,8 @@ def get_database_session_maker() -> async_sessionmaker[AsyncSession]:
     config: Final[AppConfig] = get_app_config()
 
     uri: Final[str] = config.DATABASE.derive_sqlalchemy_uri(
-        username=os.environ["AUTH_WORKER_POSTGRES_USERNAME"],
-        password=os.environ["AUTH_WORKER_POSTGRES_PASSWORD"],
+        username=os.environ["AUTH_SERVER_POSTGRES_USERNAME"],
+        password=os.environ["AUTH_SERVER_POSTGRES_PASSWORD"],
     )
 
     engine: Final[AsyncEngine] = create_async_engine(uri)
