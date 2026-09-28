@@ -9,7 +9,7 @@ from typing import Final, Optional
 import httpx
 from auxillary.security.hashing import bcrypt_hash_password
 from dotenv import load_dotenv
-from resource_server.dependencies import get_sync_database_session_maker
+from resource_server.depedencies.local import get_sync_database_session_maker
 from resource_server.models.database import (
     Anime,
     AnimeGenre,

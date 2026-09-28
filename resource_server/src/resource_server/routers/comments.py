@@ -36,7 +36,7 @@ from resource_auxillary.strings import (
 )
 
 from resource_server.cache_manager import CacheManager
-from resource_server.dependencies import (
+from resource_server.depedencies.local import (
     get_cache_manager,
     get_comment_repository,
     get_event_streamer,
@@ -44,6 +44,7 @@ from resource_server.dependencies import (
     get_hypermedia_link_builder,
     get_post_repository,
 )
+from resource_server.depedencies.request import validate_access_token
 from resource_server.event_streamer import EventStreamer
 from resource_server.models.admin_permissions import AdminPermissions, check_permission
 from resource_server.models.database import CommentVote
@@ -52,7 +53,6 @@ from resource_server.repositories.comment import CommentRepository, CommentResul
 from resource_server.repositories.forum import ForumAdminResult, ForumRepository
 from resource_server.repositories.posts import PostRepository, PostResult
 from resource_server.repositories.user import UserResult
-from resource_server.request_dependencies import validate_access_token
 from resource_server.utils.hypermedia import single_link_hypermedia
 from resource_server.utils.typing import StandardAccessTokenClaims
 

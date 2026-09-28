@@ -8,7 +8,7 @@ from psycopg import connect
 from psycopg.conninfo import make_conninfo
 from psycopg.sql import SQL, Composed, Identifier, Literal
 from resource_server.config.app_config import AppConfig
-from resource_server.dependencies import get_app_config
+from resource_server.depedencies.local import get_app_config
 from resource_server.models.database import (
     Anime,
     Comment,

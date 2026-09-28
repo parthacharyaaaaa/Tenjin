@@ -32,7 +32,7 @@ from resource_auxillary.strings import Action, EventName, IntentFlag, StreamName
 
 from resource_server.cache_manager import CacheManager
 from resource_server.config.app_config import AppConfig
-from resource_server.dependencies import (
+from resource_server.depedencies.local import (
     get_app_config,
     get_cache_manager,
     get_comment_repository,
@@ -40,6 +40,10 @@ from resource_server.dependencies import (
     get_forum_repository,
     get_hypermedia_link_builder,
     get_post_repository,
+)
+from resource_server.depedencies.request import (
+    cursor_preprocessor,
+    validate_access_token,
 )
 from resource_server.event_streamer import EventStreamer
 from resource_server.models.admin_permissions import AdminPermissions, check_permission
@@ -58,10 +62,6 @@ from resource_server.repositories.forum import (
 )
 from resource_server.repositories.posts import PostRepository, PostResult
 from resource_server.repositories.user import UserResult
-from resource_server.request_dependencies import (
-    cursor_preprocessor,
-    validate_access_token,
-)
 from resource_server.utils.hypermedia import (
     paginated_collection_hypermedia,
     post_hypermedia,

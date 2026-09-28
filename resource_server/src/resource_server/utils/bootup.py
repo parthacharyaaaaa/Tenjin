@@ -6,7 +6,7 @@ from auxillary.utils import generic_error_handler
 from fastapi import FastAPI
 
 from resource_server.config.app_config import AppConfig
-from resource_server.dependencies import get_app_config, get_key_manager
+from resource_server.depedencies.local import get_app_config, get_key_manager
 from resource_server.key_manager import KeyManager
 from resource_server.routers import ROUTER_PREFIXES, t_route_prefixes
 

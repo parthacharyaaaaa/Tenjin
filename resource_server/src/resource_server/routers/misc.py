@@ -13,7 +13,7 @@ from resource_auxillary.events import Event, EventSideEffects
 from resource_auxillary.strings import Action, EventName, StreamName
 
 from resource_server.cache_manager import CacheManager
-from resource_server.dependencies import (
+from resource_server.depedencies.local import (
     get_app_redis_client,
     get_cache_manager,
     get_event_streamer,

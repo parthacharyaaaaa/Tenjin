@@ -31,13 +31,19 @@ from resource_auxillary.strings import Action, EventName, IntentFlag, StreamName
 
 from resource_server.cache_manager import CacheManager
 from resource_server.config.app_config import AppConfig
-from resource_server.dependencies import (
+from resource_server.depedencies.local import (
     get_anime_repository,
     get_app_config,
     get_cache_manager,
     get_event_streamer,
     get_forum_repository,
     get_hypermedia_link_builder,
+)
+from resource_server.depedencies.request import (
+    anime_genres_preprocessor,
+    cursor_preprocessor,
+    search_param_preprocessor,
+    validate_access_token,
 )
 from resource_server.event_streamer import EventStreamer
 from resource_server.models.database import (
@@ -48,12 +54,6 @@ from resource_server.models.database import (
 )
 from resource_server.repositories.anime import AnimeRepository, AnimeResult
 from resource_server.repositories.forum import ForumRepository, ForumResult
-from resource_server.request_dependencies import (
-    anime_genres_preprocessor,
-    cursor_preprocessor,
-    search_param_preprocessor,
-    validate_access_token,
-)
 from resource_server.utils.hypermedia import (
     anime_hypermedia,
     paginated_collection_hypermedia,

@@ -13,7 +13,11 @@ from resource_server.datastructures.requests import (
     SortOption,
     TimeFrameOption,
 )
-from resource_server.dependencies import get_app_config, get_genres, get_key_manager
+from resource_server.depedencies.local import (
+    get_app_config,
+    get_genres,
+    get_key_manager,
+)
 from resource_server.key_manager import KeyManager
 from resource_server.models.database import Genre
 from resource_server.utils.typing import StandardAccessTokenClaims

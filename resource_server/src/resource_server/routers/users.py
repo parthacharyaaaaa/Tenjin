@@ -24,7 +24,7 @@ from resource_server.cache_manager import CacheManager
 from resource_server.config.app_config import AppConfig
 from resource_server.config.database_constants import UserConstants
 from resource_server.datastructures.requests import SortOption
-from resource_server.dependencies import (
+from resource_server.depedencies.local import (
     get_anime_repository,
     get_app_config,
     get_cache_manager,
@@ -33,6 +33,10 @@ from resource_server.dependencies import (
     get_hypermedia_link_builder,
     get_post_repository,
     get_user_repository,
+)
+from resource_server.depedencies.request import (
+    cursor_preprocessor,
+    preprocess_sort_option,
 )
 from resource_server.event_streamer import EventStreamer
 from resource_server.models.requests import (
@@ -47,10 +51,6 @@ from resource_server.repositories.posts import PostRepository, PostResult
 from resource_server.repositories.user import (
     UserRepository,
     UserResult,
-)
-from resource_server.request_dependencies import (
-    cursor_preprocessor,
-    preprocess_sort_option,
 )
 from resource_server.utils.helpers import generate_url_token
 from resource_server.utils.hypermedia import (
