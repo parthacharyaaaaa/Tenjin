@@ -265,7 +265,7 @@ class ForumAdmin(Base):
         name=AssociationColumnLiteral.USER_ID,
     )
     role: Mapped[AdminRoles] = mapped_column(
-        ADMIN_ROLES, nullable=False, server_default=text(AdminRoles.ADMIN)
+        ADMIN_ROLES, nullable=False, server_default=AdminRoles.ADMIN
     )
 
 
