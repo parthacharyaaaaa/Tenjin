@@ -40,8 +40,8 @@ def _set_sqlalchemy_uri_config() -> None:
     app_config: AppConfig = get_app_config()
 
     uri: Final[str] = app_config.DATABASE.derive_sqlalchemy_uri(
-        username=os.environ["RESOURCE_SERVER_POSTGRES_USERNAME"],
-        password=os.environ["RESOURCE_SERVER_POSTGRES_PASSWORD"],
+        username=os.environ["SUPERUSER_POSTGRES_USERNAME"],
+        password=os.environ["SUPERUSER_POSTGRES_PASSWORD"],
     )
 
     config.set_main_option("sqlalchemy.url", uri)
