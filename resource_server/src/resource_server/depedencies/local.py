@@ -15,16 +15,16 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import Session, sessionmaker
 
-from resource_server.cache_manager import CacheManager
 from resource_server.config.app_config import AppConfig
-from resource_server.event_streamer import EventStreamer
-from resource_server.key_manager import KeyManager
 from resource_server.models.database import Genre
 from resource_server.repositories.anime import AnimeRepository
 from resource_server.repositories.comment import CommentRepository
 from resource_server.repositories.forum import ForumRepository
 from resource_server.repositories.posts import PostRepository
 from resource_server.repositories.user import UserRepository
+from resource_server.subsystems.cache_manager import CacheManager
+from resource_server.subsystems.event_streamer import EventStreamer
+from resource_server.subsystems.key_manager import KeyManager
 
 
 def get_hypermedia_link_builder(request: Request) -> HypermediaLinkBuilder:

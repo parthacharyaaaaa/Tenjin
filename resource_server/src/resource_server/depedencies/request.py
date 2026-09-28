@@ -18,8 +18,8 @@ from resource_server.depedencies.local import (
     get_genres,
     get_key_manager,
 )
-from resource_server.key_manager import KeyManager
 from resource_server.models.database import Genre
+from resource_server.subsystems.key_manager import KeyManager
 from resource_server.utils.typing import StandardAccessTokenClaims
 
 

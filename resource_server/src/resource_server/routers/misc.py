@@ -12,7 +12,6 @@ from resource_auxillary.datastructures.payloads.standalone import UserTicket
 from resource_auxillary.events import Event, EventSideEffects
 from resource_auxillary.strings import Action, EventName, StreamName
 
-from resource_server.cache_manager import CacheManager
 from resource_server.depedencies.local import (
     get_app_redis_client,
     get_cache_manager,
@@ -20,9 +19,10 @@ from resource_server.depedencies.local import (
     get_genres,
     get_hypermedia_link_builder,
 )
-from resource_server.event_streamer import EventStreamer
 from resource_server.models.database import Genre
 from resource_server.models.requests import UserTicketModel
+from resource_server.subsystems.cache_manager import CacheManager
+from resource_server.subsystems.event_streamer import EventStreamer
 
 MISC: Final[APIRouter] = APIRouter()
 
