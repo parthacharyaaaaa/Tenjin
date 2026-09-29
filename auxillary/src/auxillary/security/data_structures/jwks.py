@@ -1,4 +1,4 @@
-from typing import Annotated, Any, Literal, Protocol
+from typing import Annotated, Any, Literal
 
 from cryptography.hazmat.primitives.asymmetric.ec import (
     SECP256K1,
@@ -14,26 +14,6 @@ from auxillary.utils import to_base64url
 
 # Common validators
 _string_whitespace_remover = BeforeValidator(lambda x: x.strip())
-
-
-class SupportsJWK(Protocol):
-    @property
-    def kty(self) -> JWKKty: ...
-    @property
-    def use(self) -> Literal[JWKUse.SIG]: ...
-    @property
-    def alg(self) -> str: ...
-
-    kid: str
-
-
-class SupportsEllipticCurveJWK(SupportsJWK):
-    crv: type[EllipticCurve]
-    public_memebrs: EllipticCurvePublicNumbers
-
-
-class JWKS(Protocol):
-    keys: list[SupportsJWK]
 
 
 class GenericJWKMixin:
@@ -61,3 +41,7 @@ class EllipticCurveJWK(GenericJWKMixin, BaseModel):
 
 class EllipticCurveJWKS(BaseModel):
     keys: list[EllipticCurveJWK]
+
+
+class VariableJWKS(BaseModel):
+    keys: list[EllipticCurveJWK]  # To be unionized if we add other key types

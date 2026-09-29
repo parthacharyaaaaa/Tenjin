@@ -5,12 +5,18 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum, IntFlag
 from pathlib import Path
-from typing import Final, Protocol
+from types import MappingProxyType
+from typing import Any, Final, Protocol
 
 import aiofiles
 import orjson
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from auxillary.mixins.metaclass import AntiSingletonMixin
+from auxillary.security.data_structures.jwks import EllipticCurveJWK, VariableJWKS
+from auxillary.security.data_structures.jwks_enums import JWKKty
+from auxillary.security.data_structures.jwks_typing import (
+    SupportsJWKSerialization,
+)
 from auxillary.security.serialization import (
     pem_serialize_private_key,
     pem_serialize_public_key,
@@ -64,6 +70,16 @@ class FileSystemKeyManager(AntiSingletonMixin):
     keys_config: KeyConfigModel
     _rewrite_buffer: dict[Path, bytes | bytearray | str] = field(default_factory=dict)
     _deletion_buffer: list[Path] = field(default_factory=list)
+    _supported_key_types: MappingProxyType[JWKKty, type[SupportsJWKSerialization]] = (
+        field(  # pyrefly: ignore[bad-assignment]
+            init=False,
+            default_factory=lambda: MappingProxyType(
+                {
+                    JWKKty.EC: EllipticCurveJWK,
+                }
+            ),
+        )
+    )
 
     @asynccontextmanager
     async def transactional_block(
@@ -113,6 +129,12 @@ class FileSystemKeyManager(AntiSingletonMixin):
     def _insure_path_deletion(self, path: Path) -> None:
         self._deletion_buffer.append(path)
 
+    async def load_jwks_data(self) -> VariableJWKS:
+        async with aiofiles.open(self.jwks_config.JWKS_FILEPATH, "rb") as jwks_file:
+            return self.serialize_jwks_data(
+                orjson.loads(await jwks_file.read())["keys"]
+            )
+
     async def initialize_jwks(self, keys: Sequence[KeyPublicDataResult]) -> None:
         jwks_contents: list[dict[str, str | int]] = []
         for key in keys:
@@ -134,11 +156,9 @@ class FileSystemKeyManager(AntiSingletonMixin):
                 }
             )
 
+        jwks: VariableJWKS = VariableJWKS.model_validate({"keys": jwks_contents})
         self._insure_file_rewrite(self.jwks_config.JWKS_FILEPATH)
-        await asyncio.to_thread(
-            self.jwks_config.JWKS_FILEPATH.write_bytes,
-            orjson.dumps({"keys": jwks_contents}),
-        )
+        await self.overwrite_jwks(jwks)
 
     async def update_jwks(
         self,
@@ -152,59 +172,53 @@ class FileSystemKeyManager(AntiSingletonMixin):
             to_base64url(public_numbers.x),
             to_base64url(public_numbers.y),
         )
-        key_mapping: dict[str, str] = {
-            "kty": "EC",
-            "alg": "ECDSA",
-            "crv": ec.SECP256K1.name,
-            "use": "sig",
-            "kid": key_id,
-            "x": encoded_x,
-            "y": encoded_y,
-        }
+        new_jwk: Final[EllipticCurveJWK] = EllipticCurveJWK.model_validate(
+            {
+                "kid": key_id,
+                "x": encoded_x,
+                "y": encoded_y,
+            }
+        )
 
         self._insure_file_rewrite(self.jwks_config.JWKS_FILEPATH)
         async with aiofiles.open(
             self.jwks_config.JWKS_FILEPATH, "r+"
         ) as jwks_json_file:
-            jwks_contents: list[dict[str, str]] = orjson.loads(
-                await jwks_json_file.read()
-            )["keys"]
-            jwks_contents.append(key_mapping)
-            length: int = len(jwks_contents)
+            jwks_contents: VariableJWKS = self.serialize_jwks_data(
+                orjson.loads(await jwks_json_file.read())["keys"]
+            )
+            jwks_contents.keys.append(new_jwk)
+            length: int = len(jwks_contents.keys)
 
             if enforce_capacity and length > self.keys_config.MAX_VALID_KEYS:
-                jwks_contents: list[dict[str, str]] = jwks_contents[
+                jwks_contents.keys = jwks_contents.keys[
                     -self.keys_config.MAX_VALID_KEYS :
                 ]
 
             await jwks_json_file.truncate(0)
             await jwks_json_file.seek(0)
-            await jwks_json_file.write(
-                orjson.dumps({"keys": jwks_contents}).decode("utf-8")
-            )
+            await jwks_json_file.write(jwks_contents.model_dump_json())
+
+    def serialize_jwks_data(self, jwks_data: list[dict[str, Any]]) -> VariableJWKS:
+        return VariableJWKS.model_validate(
+            self._supported_key_types[JWKKty(i["kty"])].model_validate(i)
+            for i in jwks_data
+        )
 
     async def overwrite_jwks(
         self,
-        jwks_data: list[dict[str, str]],  # TODO: Make this a pydantic model
+        jwks_data: VariableJWKS,
     ) -> None:
         self._insure_file_rewrite(self.jwks_config.JWKS_FILEPATH)
-        async with aiofiles.open(self.jwks_config.JWKS_FILEPATH, "wb") as jwks_file:
-            await jwks_file.write(orjson.dumps({"keys": jwks_data}))
+        async with aiofiles.open(self.jwks_config.JWKS_FILEPATH, "w") as jwks_file:
+            await jwks_file.write(jwks_data.model_dump_json())
 
     async def invalidate_keys(self, keys: Sequence[str]) -> None:
-        async with aiofiles.open(self.jwks_config.JWKS_FILEPATH, "rb") as jwks_file:
-            jwks_data: list[dict[str, str]] = orjson.loads(await jwks_file.read())[
-                "keys"
-            ]
-        for i, key_data in enumerate(jwks_data.copy()):
-            if key_data["kid"] in keys:
-                jwks_data.pop(i)
-
+        jwks_data = await self.load_jwks_data()
+        for i, key_data in enumerate(jwks_data.keys.copy()):
+            if key_data.kid in keys:
+                jwks_data.keys.pop(i)
         await self.overwrite_jwks(jwks_data)
-
-    async def get_jwks(self) -> list[dict[str, str]]:
-        async with aiofiles.open(self.jwks_config.JWKS_FILEPATH, "rb") as jwks_file:
-            return orjson.loads(await jwks_file.read())
 
 
 @dataclass(slots=True)
@@ -381,8 +395,10 @@ class KeyLifecycleManager(AntiSingletonMixin):
         self, cooldown_duration: int | None = None
     ) -> tuple[str, tuple[str, ...]]:
         """Invalidate all keys except for the currently active key"""
-        jwks_data = await self.filesystem_key_manager.get_jwks()
-        if len(jwks_data) == 1:
+        jwks_data: Final[
+            VariableJWKS
+        ] = await self.filesystem_key_manager.load_jwks_data()
+        if len(jwks_data.keys) == 1:
             raise Exception("No active keys present to invalidate")
         async with self._transactional_block(
             operation=SyncedStoreStrings.INVALIDATE_KEY,
@@ -409,8 +425,8 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 await self.filesystem_key_manager.invalidate_keys(
                     tuple(
                         kid
-                        for key_data in jwks_data
-                        if (kid := key_data["kid"]) != active_key.kid
+                        for key_data in jwks_data.keys
+                        if (kid := key_data.kid) != active_key.kid
                     )
                 )
 
