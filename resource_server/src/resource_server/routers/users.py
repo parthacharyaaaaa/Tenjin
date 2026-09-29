@@ -590,7 +590,7 @@ async def login(
         )
 
     login_time = datetime.now(UTC)
-    # TODO: Add event to update user login time
+    await user_repo.update_login(user.id_, login_time)
     return EnrichedJSONResponse(
         {
             "message": "authentication successful",

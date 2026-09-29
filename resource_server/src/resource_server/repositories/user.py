@@ -240,3 +240,17 @@ class UserRepository(metaclass=SingletonMetaclass):
                 .values(deleted=False, time_deleted=None)
             )
             await session.commit()
+
+    async def update_login(
+        self, user_id: int, login_time: datetime | None = None
+    ) -> None:
+        if login_time and login_time.tzinfo != UTC:
+            login_time = login_time.astimezone(tz=UTC)
+        elif not login_time:
+            login_time = datetime.now(UTC)
+
+        async with self.session_maker() as session:
+            await session.execute(
+                update(User).where(User.id_ == user_id).values(last_login=login_time)
+            )
+            await session.commit()
