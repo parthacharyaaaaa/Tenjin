@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tenjin account deletion notice</title>
+  <style>
+    body {{
+      margin: 0;
+      padding: 0;
+      background: #f4f7fb;
+      color: #172033;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    .page {{
+      width: 100%;
+      padding: 40px 16px;
+      box-sizing: border-box;
+    }}
+    .card {{
+      width: 100%;
+      max-width: 600px;
+      margin: 0 auto;
+      overflow: hidden;
+      background: #ffffff;
+      border: 1px solid #e6eaf0;
+      border-radius: 18px;
+      box-shadow: 0 14px 40px rgba(30, 41, 59, 0.10);
+    }}
+    .accent {{
+      height: 6px;
+      background: linear-gradient(90deg, #f97371, #f5a524);
+    }}
+    .content {{
+      padding: 44px 46px 38px;
+    }}
+    .brand {{
+      margin: 0 0 28px;
+      color: #6d5dfc;
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }}
+    h1 {{
+      margin: 0 0 18px;
+      color: #111827;
+      font-size: 30px;
+      line-height: 1.2;
+    }}
+    p {{
+      margin: 0 0 18px;
+      color: #526076;
+      font-size: 16px;
+      line-height: 1.7;
+    }}
+    .summary {{
+      margin: 24px 0;
+      padding: 18px 20px;
+      background: #fff5f3;
+      border: 1px solid #ffd9d4;
+      border-radius: 10px;
+    }}
+    .summary-label {{
+      display: block;
+      margin-bottom: 6px;
+      color: #9b3f38;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }}
+    .summary-value {{
+      color: #61332f;
+      font-size: 15px;
+      overflow-wrap: anywhere;
+    }}
+    .notice {{
+      padding: 16px 18px;
+      background: #f8fafc;
+      border: 1px solid #e4e9f0;
+      border-radius: 10px;
+      color: #5d687a;
+      font-size: 14px;
+      line-height: 1.6;
+    }}
+    .footer {{
+      padding: 22px 46px 28px;
+      background: #fafbfc;
+      border-top: 1px solid #edf0f4;
+      color: #8a94a6;
+      font-size: 12px;
+      line-height: 1.6;
+      text-align: center;
+    }}
+    @media (max-width: 620px) {{
+      .page {{ padding: 18px 10px; }}
+      .content {{ padding: 34px 24px 28px; }}
+      .footer {{ padding: 20px 24px 24px; }}
+      h1 {{ font-size: 26px; }}
+    }}
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="card" aria-label="Tenjin account deletion notice">
+      <div class="accent"></div>
+      <div class="content">
+        <p class="brand">Tenjin</p>
+        <h1>Account deletion requested</h1>
+        <p>Hi {username}, we received a request to delete your Tenjin account.</p>
+        <div class="summary">
+          <span class="summary-label">Request time</span>
+          <span class="summary-value">{time_of_request}</span>
+        </div>
+        <p class="notice">If you did not request this change, contact Tenjin support immediately so the request can be reviewed.</p>
+      </div>
+      <footer class="footer">This is an automated account notification from Tenjin. Please do not reply to this email.</footer>
+    </section>
+  </main>
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Welcome to Tenjin</title>
+  <style>
+    body {{
+      margin: 0;
+      padding: 0;
+      background: #f4f7fb;
+      color: #172033;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    .page {{
+      width: 100%;
+      padding: 40px 16px;
+      box-sizing: border-box;
+    }}
+    .card {{
+      width: 100%;
+      max-width: 600px;
+      margin: 0 auto;
+      overflow: hidden;
+      background: #ffffff;
+      border: 1px solid #e6eaf0;
+      border-radius: 18px;
+      box-shadow: 0 14px 40px rgba(30, 41, 59, 0.10);
+    }}
+    .accent {{
+      height: 6px;
+      background: linear-gradient(90deg, #6d5dfc, #35b9e9);
+    }}
+    .content {{
+      padding: 44px 46px 38px;
+    }}
+    .brand {{
+      margin: 0 0 28px;
+      color: #6d5dfc;
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }}
+    h1 {{
+      margin: 0 0 18px;
+      color: #111827;
+      font-size: 32px;
+      line-height: 1.2;
+    }}
+    p {{
+      margin: 0 0 18px;
+      color: #526076;
+      font-size: 16px;
+      line-height: 1.7;
+    }}
+    .button {{
+      display: inline-block;
+      margin: 12px 0 24px;
+      padding: 14px 24px;
+      color: #ffffff !important;
+      background: #6d5dfc;
+      border-radius: 10px;
+      font-size: 15px;
+      font-weight: 700;
+      text-decoration: none;
+    }}
+    .note {{
+      padding: 16px 18px;
+      background: #f5f3ff;
+      border: 1px solid #e6e0ff;
+      border-radius: 10px;
+      color: #554b75;
+      font-size: 14px;
+    }}
+    .footer {{
+      padding: 22px 46px 28px;
+      background: #fafbfc;
+      border-top: 1px solid #edf0f4;
+      color: #8a94a6;
+      font-size: 12px;
+      line-height: 1.6;
+      text-align: center;
+    }}
+    @media (max-width: 620px) {{
+      .page {{ padding: 18px 10px; }}
+      .content {{ padding: 34px 24px 28px; }}
+      .footer {{ padding: 20px 24px 24px; }}
+      h1 {{ font-size: 27px; }}
+      .button {{ display: block; text-align: center; }}
+    }}
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="card" aria-label="Tenjin registration confirmation">
+      <div class="accent"></div>
+      <div class="content">
+        <p class="brand">Tenjin</p>
+        <h1>Welcome, {username}.</h1>
+        <p>Your account is ready. You can now build your profile, join discussions, and keep up with the anime communities you care about.</p>
+        <a class="button" href="{profile_url}">View your profile</a>
+        <p class="note">This account was registered using this email address. If that was not you, please contact Tenjin support.</p>
+      </div>
+      <footer class="footer">This is an automated account notification from Tenjin. Please do not reply to this email.</footer>
+    </section>
+  </main>
+</body>
+</html>
