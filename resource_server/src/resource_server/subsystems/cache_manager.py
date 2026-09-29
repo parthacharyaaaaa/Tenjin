@@ -21,9 +21,9 @@ import orjson
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from auxillary.data_structures.locks.typing import SupportsBasicLockContext
 from auxillary.singleton import SingletonMetaclass
-from auxillary.typing_utils import SupportsAsyncRedis, SupportsCache
+from auxillary.typing_utils import SupportsCache
 from auxillary.utils import cache_repr
-from redis.asyncio.client import Pipeline
+from redis.asyncio.client import Pipeline, Redis
 from resource_auxillary.cache import create_intent_flag
 from resource_auxillary.strings import NAME_SEPERATOR, Action, IntentFlag
 
@@ -46,7 +46,7 @@ type pagination_database_fallback_callable = Callable[
 
 @dataclass(slots=True, weakref_slot=True, frozen=True)
 class CacheManager(metaclass=SingletonMetaclass):
-    redis_client: SupportsAsyncRedis
+    redis_client: Redis
     cache_config: CacheConfig
     lock_factory: RedisInstanceLockFactory
 
@@ -74,7 +74,7 @@ class CacheManager(metaclass=SingletonMetaclass):
         *args: str,
     ) -> str:
         version: str = (
-            await self.redis_client.hget(self.PAGINATION_VERSION_MAP, resource_name)
+            await self.redis_client.hget(self.PAGINATION_VERSION_MAP, resource_name)  # pyrefly: ignore[not-async]
             or "0"
         )
         return NAME_SEPERATOR.join((version, resource_name, str(cursor), *args))
@@ -200,7 +200,7 @@ class CacheManager(metaclass=SingletonMetaclass):
         *,
         dtype: Literal["mapping", "string"] = "mapping",
     ) -> tuple[int, list[str], list[tuple[dict[str, Any] | None, int]], str]:
-        keys: list[str] = await self.redis_client.lrange(page_key, 0, -1)
+        keys: list[str] = await self.redis_client.lrange(page_key, 0, -1)  # pyrefly: ignore[not-async]
         cursor: str = keys.pop(-1)
         async with self.redis_client.pipeline(transaction=False) as pipe:
             pipe.ttl(page_key)
@@ -589,7 +589,7 @@ class CacheManager(metaclass=SingletonMetaclass):
             await pipe.execute()
 
     async def update_cache_version(self, resource_name: str) -> None:
-        await self.redis_client.hincrby(self.PAGINATION_VERSION_MAP, resource_name)
+        await self.redis_client.hincrby(self.PAGINATION_VERSION_MAP, resource_name)  # pyrefly: ignore[not-async]
 
     @classmethod
     def _pipelined_update_cache_version(

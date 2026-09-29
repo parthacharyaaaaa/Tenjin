@@ -141,7 +141,6 @@ class JWKSConfig(BaseModel):
         PublicFormat, Field(default=PublicFormat.SubjectPublicKeyInfo)
     ]
 
-    # TODO: Add validation for time values
     @model_validator(mode="after")
     def validate_algorithms(self) -> Self:
         if unsupported_algs := self.ALLOWED_ALGORITHMS - set(
