@@ -284,6 +284,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
             (
                 self.filesystem_key_manager,
                 self.synced_store_key_manager,
+                self.token_manager,
             ),
         )
 
@@ -352,7 +353,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 await self.filesystem_key_manager.invalidate_keys((target_key.kid,))
 
                 # Key invalidation successful, update local token manager
-                self.token_manager.invalidate_key(key_id)  # TODO: Add rollback control
+                self.token_manager.invalidate_key(key_id)
 
                 # Update distributed state
                 valid_keys: list[
@@ -498,7 +499,6 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     kid,
                 )
                 # Update token manager's mapping to use this newly created ECDSA pair
-                # TODO: Update TokenManager to accept DTO over this dataclass
                 self.token_manager.update_keydata(kid, new_key)
 
                 # Update distributed state

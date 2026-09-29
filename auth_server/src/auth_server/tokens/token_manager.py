@@ -1,9 +1,12 @@
 import asyncio
 import time
 import uuid
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 from traceback import format_exc
+from types import MappingProxyType
 from typing import Any, Final, Literal, Optional, overload
 
 import jwt
@@ -53,6 +56,19 @@ class TokenManager:
             self.poll_store(self.token_manager_config.POLL_INTERVAL),
             name="polling_task",
         )
+
+    @asynccontextmanager
+    async def transactional_block(self) -> AsyncGenerator[None, None]:
+        keys_snapshot: Final[MappingProxyType] = MappingProxyType(self._key_mapping)
+        active_key_id_snapshot: Final[str] = self._active_key
+        active_key_pem_snapshot: Final[bytes] = self._active_key_private_pem
+        try:
+            yield
+        except Exception:
+            self._key_mapping = dict(keys_snapshot)
+            self._active_key = active_key_id_snapshot
+            self._active_key_private_pem = active_key_pem_snapshot
+            raise
 
     def set_key_state(
         self,
