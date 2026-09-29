@@ -7,16 +7,19 @@ GENERIC_SESSION_SEPARATOR: Final[LiteralString] = "."
 
 class AdminStrings(StrEnum):
     SESSION_TOKEN_HEADER = "X-SESSION-TOKEN"  # nosec
-    ADMIN_KEY_CACHE = "ADMIN_KEY_CACHE"
-    NO_REFRESH_SENTINEL = "__NONE__"
 
 
-class SyncedStoreStrings(StrEnum):
+class SyncedStoreCommandStrings(StrEnum):
     ABORT = "ABORT"
     AUTH_BOOTUP_MASTER = "AUTH_BOOTUP_MASTER"
+
+
+class SyncedStoreKeyStrings(StrEnum):
     VALID_KEYS = "VALID_KEYS"
     KEY_ROTATION_LOCK = "KEY_ROTATION_LOCK"
     KEY_ROTATION_COOLDOWN = "KEY_ROTATION_COOLDOWN"
+    INVALIDATE_KEY = "INVALIDATE_KEY"
+    KEYSTORE_CLEAN = "KEYSTORE_CLEAN"
 
 
 class SelectionLockOption(StrEnum):

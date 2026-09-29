@@ -35,7 +35,7 @@ from auth_server.repositories.keydata import (
     KeyPublicDataResult,
 )
 from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
-from auth_server.strings import SyncedStoreStrings
+from auth_server.strings import SyncedStoreCommandStrings, SyncedStoreKeyStrings
 from auth_server.tokens.token_manager import TokenManager
 
 
@@ -116,11 +116,11 @@ async def master_bootup(
 
         # Initialize token manager
         async with synced_store_client.pipeline() as pipe:
-            pipe.delete(SyncedStoreStrings.VALID_KEYS)
+            pipe.delete(SyncedStoreKeyStrings.VALID_KEYS)
             valid_keys: list[str] = (
                 list(rotated_verifying_keys.keys()) if rotated_verifying_keys else []
             ) + [active_keydata.kid]
-            pipe.lpush(SyncedStoreStrings.VALID_KEYS, *valid_keys)
+            pipe.lpush(SyncedStoreKeyStrings.VALID_KEYS, *valid_keys)
             await pipe.execute()
 
         token_manager.set_key_state(active_keydata, rotated_verifying_keys)
@@ -131,13 +131,13 @@ async def master_bootup(
         )
         print(traceback.format_exc())
         await synced_store_client.set(
-            SyncedStoreStrings.ABORT,
+            SyncedStoreCommandStrings.ABORT,
             1,
             ex=token_manager.token_manager_config.ANNOUNCEMENT_DURATION,
         )
         raise RuntimeError("Master bootup failed") from e
     finally:
-        await synced_store_client.delete(SyncedStoreStrings.AUTH_BOOTUP_MASTER)
+        await synced_store_client.delete(SyncedStoreCommandStrings.AUTH_BOOTUP_MASTER)
 
 
 async def slave_bootup(
@@ -148,10 +148,10 @@ async def slave_bootup(
     process_id: int,
 ) -> None:
     # Wait for master worker to finish managing key synchronization and file I/O, and then proceed on the assumption that the JWKS file has been written into/validated.
-    while await synced_store_client.get(SyncedStoreStrings.AUTH_BOOTUP_MASTER):  # noqa
+    while await synced_store_client.get(SyncedStoreCommandStrings.AUTH_BOOTUP_MASTER):  # noqa
         await asyncio.sleep(config.BOOTUP.SLAVE_SLEEP_POLLING_INTERVAL.total_seconds())  # noqa
 
-    if await synced_store_client.get(SyncedStoreStrings.ABORT):
+    if await synced_store_client.get(SyncedStoreCommandStrings.ABORT):
         print(
             f"[AUTH {process_id}] Master failed to setup key configuration, aborting..."
         )
@@ -201,7 +201,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     filesystem_key_manager: Final[FileSystemKeyManager] = get_filesystem_key_manager()
 
     master_lock_context: Final[BasicLockContext] = await lock_factory.lock(
-        SyncedStoreStrings.AUTH_BOOTUP_MASTER,
+        SyncedStoreCommandStrings.AUTH_BOOTUP_MASTER,
         str(pid),
         int(config.BOOTUP.MASTER_BOOTUP_LOCK_LIFESPAN.total_seconds()),
     )

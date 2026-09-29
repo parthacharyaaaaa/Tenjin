@@ -19,7 +19,7 @@ from auth_server.repositories.keydata import (
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
-from auth_server.strings import SyncedStoreStrings
+from auth_server.strings import SyncedStoreKeyStrings
 from auth_server.tokens.typing import (
     StandardAccessTokenClaims,
     StandardRefreshTokenClaims,
@@ -303,7 +303,7 @@ class TokenManager:
         while True:
             try:
                 valid_keys: list[str] | None = await self._synced_store_client.lrange(  # pyrefly: ignore[not-async]
-                    SyncedStoreStrings.VALID_KEYS, 0, -1
+                    SyncedStoreKeyStrings.VALID_KEYS, 0, -1
                 )
 
                 if not valid_keys:

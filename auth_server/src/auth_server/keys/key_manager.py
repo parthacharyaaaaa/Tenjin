@@ -39,7 +39,7 @@ from auth_server.repositories.keydata import (
 from auth_server.strings import (
     GENERIC_SEPARATOR,
     SelectionLockOption,
-    SyncedStoreStrings,
+    SyncedStoreKeyStrings,
 )
 from auth_server.tokens.token_manager import TokenManager
 
@@ -232,14 +232,14 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
         self,
     ) -> AsyncGenerator[None]:
         self._valid_keys_view = await self.synced_store_client.lrange(  # pyrefly: ignore[not-async]
-            SyncedStoreStrings.VALID_KEYS, 0, -1
+            SyncedStoreKeyStrings.VALID_KEYS, 0, -1
         )
         try:
             yield
         except Exception:
             async with self.synced_store_client.pipeline(transaction=True) as pipeline:
-                pipeline.delete(SyncedStoreStrings.VALID_KEYS)
-                pipeline.lpush(SyncedStoreStrings.VALID_KEYS, *self._valid_keys_view)
+                pipeline.delete(SyncedStoreKeyStrings.VALID_KEYS)
+                pipeline.lpush(SyncedStoreKeyStrings.VALID_KEYS, *self._valid_keys_view)
                 await pipeline.execute()
             raise
         finally:
@@ -247,12 +247,14 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
 
     async def get_key_operational_cooldown(self) -> bool:
         return bool(
-            await self.synced_store_client.get(SyncedStoreStrings.KEY_ROTATION_COOLDOWN)
+            await self.synced_store_client.get(
+                SyncedStoreKeyStrings.KEY_ROTATION_COOLDOWN
+            )
         )
 
     async def get_valid_keys_ids(self) -> list[str]:
         return await self.synced_store_client.lrange(  # pyrefly: ignore[not-async]
-            SyncedStoreStrings.VALID_KEYS, 0, -1
+            SyncedStoreKeyStrings.VALID_KEYS, 0, -1
         )
 
     async def get_active_key_id(self) -> str:
@@ -260,13 +262,13 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
 
     async def overwrite_valid_keys(self, keys: Sequence[str]) -> None:
         async with self.synced_store_client.pipeline(transaction=True) as pipeline:
-            pipeline.delete(SyncedStoreStrings.VALID_KEYS)
+            pipeline.delete(SyncedStoreKeyStrings.VALID_KEYS)
             pipeline.lpush(*keys)
             await pipeline.execute()
 
     async def set_operation_cooldown(self, cooldown: timedelta | int) -> None:
         await self.synced_store_client.set(
-            SyncedStoreStrings.KEY_ROTATION_COOLDOWN,
+            SyncedStoreKeyStrings.KEY_ROTATION_COOLDOWN,
             1,
             ex=cooldown,
         )
@@ -306,7 +308,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
     async def _transactional_block(
         self,
         *,
-        operation: SyncedStoreStrings | None = None,
+        operation: SyncedStoreKeyStrings | None = None,
         lock_duration: LockTIme = LockTIme.LOW,
         operational_cooldown_duration: int | timedelta | None = None,
     ) -> AsyncGenerator[None]:
@@ -341,7 +343,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
         cooldown_duration: int | None = None,
     ) -> None:
         async with self._transactional_block(
-            operation=SyncedStoreStrings.INVALIDATE_KEY,
+            operation=SyncedStoreKeyStrings.INVALIDATE_KEY,
             lock_duration=LockTIme.MEDIUM,
             operational_cooldown_duration=cooldown_duration,
         ):
@@ -401,7 +403,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
         if len(jwks_data.keys) == 1:
             raise Exception("No active keys present to invalidate")
         async with self._transactional_block(
-            operation=SyncedStoreStrings.INVALIDATE_KEY,
+            operation=SyncedStoreKeyStrings.INVALIDATE_KEY,
             lock_duration=LockTIme.MEDIUM,
             operational_cooldown_duration=cooldown_duration,
         ):
@@ -446,7 +448,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
         rotation_author: int | None = None,
     ) -> KeyPublicDataResult:
         async with self._transactional_block(
-            operation=SyncedStoreStrings.INVALIDATE_KEY,
+            operation=SyncedStoreKeyStrings.INVALIDATE_KEY,
             lock_duration=LockTIme.MEDIUM,
             operational_cooldown_duration=cooldown_duration,
         ):
