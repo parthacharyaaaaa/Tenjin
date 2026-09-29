@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -35,6 +36,30 @@ class EventStreamer(metaclass=SingletonMetaclass):
         event: Event,
     ) -> None:
         pipeline.xadd(stream.value, cache_repr(event), nomkstream=False)  # type: ignore
+
+    async def emit_user_events(
+        self, event_stream_mapping: Mapping[StreamName, Event]
+    ) -> None:
+        async with self.redis_client.pipeline(transaction=True) as pipeline:
+            for stream, event in event_stream_mapping.items():
+                # Perform event-side effects, apart from cache invalidation
+                for counter_update in event.side_effects.cache.counter_updates:
+                    self._pipeline_update_counter(
+                        pipeline,
+                        counter_update.counter_group,
+                        counter_update.cache_key,
+                        counter_update.delta,
+                    )
+                for intent_update in event.side_effects.cache.intent_updates:
+                    self._pipeline_set_intent(
+                        pipeline,
+                        intent_update.intent_name,
+                        intent_update.intent_value,
+                        self.cache_config.TTL_STRONGEST,
+                    )
+                self._pipeline_create_event(pipeline, stream, event)
+
+            await pipeline.execute()
 
     async def emit_user_event(self, stream: StreamName, event: Event) -> None:
         async with self.redis_client.pipeline(transaction=True) as pipeline:

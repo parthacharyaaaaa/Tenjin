@@ -14,6 +14,7 @@ from resource_server.repositories.result_protocol import AbstractDTO
 class UserResult(AbstractDTO):
     id_: int
     username: str
+    email: str
 
     aura: int
     total_posts: int

@@ -8,10 +8,16 @@ from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilde
 from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.security.hashing import bcrypt_check_password, bcrypt_hash_password
 from auxillary.utils import json_repr, to_base64url
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, HTTPException, Path, Request
 from fastapi.responses import JSONResponse
 from resource_auxillary.cache import (
     derive_cache_key,
+)
+from resource_auxillary.datastructures.payloads.emails import (
+    UserDeletionEmail,
+    UserEmailPayload,
+    UserRecoveryEmailPayload,
+    UserRegistrationEmail,
 )
 from resource_auxillary.datastructures.payloads.standalone import UserCleanup
 from resource_auxillary.events import (
@@ -72,6 +78,7 @@ async def register(
     link_builder: Annotated[
         HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
     ],
+    request: Request,
 ) -> EnrichedJSONResponse:
     # TODO: Add bloom filter
 
@@ -115,7 +122,20 @@ async def register(
         app_config.CACHE.TTL_WEAK,
     )
 
-    # TODO: Dispatch email event
+    registration_email_event: Final[Event] = Event(
+        name=EventName.USER_PASSWORD_RECOVERY_EMAIL,
+        payload=UserEmailPayload(
+            recipient=user.email,
+            sender="noreply@tenjin.org",
+            body_kwargs=UserRegistrationEmail(  # pyrefly: ignore[bad-argument-type]
+                username=user.username,
+                profile_url=str(request.url_for("get_user", username=user.username)),
+            ),
+        ),
+    )
+    await event_streamer.emit_user_event(
+        StreamName.USER_EMAILS, registration_email_event
+    )
 
     return EnrichedJSONResponse(
         {"message": "account created", "user": json_repr(user)},
@@ -167,9 +187,9 @@ async def delete_user(
     if latest_intent == IntentFlag.RESOURCE_DELETION_PENDING_FLAG:
         raise HTTPException(409, "Account already queued for deletion")
 
-    await cache_manager.set_negative_mapping(user_cache_key)
-    deletion_time: datetime = datetime.now(UTC)
+    deletion_time: Final[datetime] = datetime.now(UTC)
     await user_repo.delete_user(user.id_, deletion_time=deletion_time)
+    await cache_manager.set_negative_mapping(user_cache_key)
 
     payload: UserCleanup = UserCleanup(user_id=user.id_, time_deleted=deletion_time)
 
@@ -179,13 +199,25 @@ async def delete_user(
         side_effects=EventSideEffects(),
     )
 
-    await event_streamer.emit_user_event(StreamName.USERS, deletion_event)
-    # TODO: Add mail dispatch
+    deletion_email_event: Final[Event] = Event(
+        name=EventName.USER_PASSWORD_RECOVERY_EMAIL,
+        payload=UserEmailPayload(
+            recipient=user.email,
+            sender="noreply@tenjin.org",
+            body_kwargs=UserDeletionEmail(  # pyrefly: ignore[bad-argument-type]
+                username=user.username,
+                time_of_request=deletion_time,
+            ),
+        ),
+    )
+    await event_streamer.emit_user_events(
+        {StreamName.USERS: deletion_event, StreamName.USER_EMAILS: deletion_email_event}
+    )
     return JSONResponse(
         {
             "message": "Account marked for deletion",
             "details": {
-                "info": f"Your contributions will soon be {'deleted'}",
+                "info": "Your contributions will soon be deleted",
             },
         },
         202,
@@ -219,13 +251,29 @@ async def recover_password(
         )
 
     url_token: Final[str] = generate_url_token()
+    time_of_request: Final[datetime] = datetime.now(UTC)
     await user_repo.set_password_recovery_token(
         user.id_,
         url_token,
-        datetime.now(UTC) + app_config.BUSINESS.PASSWORD_TOKEN_MAX_AGE,
+        time_of_request + app_config.BUSINESS.PASSWORD_TOKEN_MAX_AGE,
     )
 
-    # TODO: Enqueue email
+    recovery_email: Final[Event] = Event(
+        name=EventName.USER_PASSWORD_RECOVERY_EMAIL,
+        payload=UserEmailPayload(
+            recipient=user.email,
+            sender="noreply@tenjin.org",
+            body_kwargs=UserRecoveryEmailPayload(  # pyrefly: ignore[bad-argument-type]
+                username=user.username,
+                time_of_request=time_of_request,
+                url_token=url_token,
+            ),
+        ),
+    )
+    await event_streamer.emit_user_event(
+        StreamName.USER_EMAILS,
+        recovery_email,
+    )
     return JSONResponse({"message": "An email has been sent to account"}, 202)
 
 

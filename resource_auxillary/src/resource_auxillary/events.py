@@ -1,5 +1,5 @@
-from datetime import datetime
-from functools import cached_property
+from datetime import UTC, datetime
+from functools import cached_property, partial
 from typing import Annotated, Any, Literal, Self
 
 import orjson
@@ -119,9 +119,13 @@ class Event(BaseModel):
     name: Annotated[
         EventName, Field(frozen=True), BeforeValidator(lambda x: x.strip().upper())
     ]
-    payload: dict[str, Any]
-    side_effects: Annotated[EventSideEffects, Field(frozen=True)]
-    creation_time: Annotated[datetime, Field(frozen=True, default_factory=datetime.now)]
+    payload: Annotated[dict[str, Any], Field(default_factory=dict)]
+    side_effects: Annotated[
+        EventSideEffects, Field(frozen=True, default_factory=EventSideEffects)
+    ]
+    creation_time: Annotated[
+        datetime, Field(frozen=True, default_factory=partial(datetime.now, tz=UTC))
+    ]
 
     @property
     def resource_name(self) -> str:
