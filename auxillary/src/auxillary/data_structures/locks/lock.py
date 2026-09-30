@@ -9,7 +9,7 @@ from redis.commands.core import AsyncScript
 from auxillary.data_structures.locks.lua_scripts import (
     CONDITIONAL_LOCK_UNSETTING_SCRIPT,
 )
-from auxillary.data_structures.locks.typing import SupportsDistributedRelease
+from auxillary.data_structures.locks.typing import SupportsDistributedLocking
 from auxillary.singleton import SingletonMetaclass
 
 
@@ -17,7 +17,7 @@ from auxillary.singleton import SingletonMetaclass
 class BasicLockContext:
     resource: str
     value: str
-    client: SupportsDistributedRelease
+    client: SupportsDistributedLocking
     valid: bool
 
     async def __aenter__(self) -> Self:
