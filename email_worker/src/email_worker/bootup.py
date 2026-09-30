@@ -14,7 +14,7 @@ from email_worker.datastructures.worker_inputs import (
     GeneralEmailInput,
     UpstreamDispatcherInput,
 )
-from email_worker.dependencies import get_email_config, get_queue_registry
+from email_worker.dependencies.injections import get_email_config, get_queue_registry
 from email_worker.tasks.emailing import email_dispatcher
 from email_worker.tasks.stream_reading import upstream_dispatcher
 

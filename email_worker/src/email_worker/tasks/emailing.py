@@ -20,7 +20,7 @@ from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import StreamName
 
 from email_worker.config.email_config import EmailConfig
-from email_worker.dependencies import get_fresh_smtp_client
+from email_worker.dependencies.injections import get_fresh_smtp_client
 from email_worker.outgoing import batch_send_emails
 from email_worker.utilities.qos import clean_user_email_payloads
 

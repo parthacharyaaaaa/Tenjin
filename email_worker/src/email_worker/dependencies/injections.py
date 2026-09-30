@@ -66,7 +66,7 @@ def get_connection_pool() -> AsyncConnectionPool:
 
     return AsyncConnectionPool(
         conninfo=uri,
-        **config.DATABASE.emit_connection_pool_constructor_kwargs(),  # type: ignore
+        **config.DATABASE.emit_connection_pool_constructor_kwargs(),  # noqa
     )
 
 

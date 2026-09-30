@@ -3,7 +3,7 @@ from typing import MutableSequence, Sequence
 from aiosmtplib import SMTPException
 from resource_auxillary.events import StreamedEvent
 
-from email_worker.src.email_worker.utilities.parsing import parse_user_email_payload
+from email_worker.utilities.parsing import parse_user_email_payload
 
 
 def determine_smtp_error_threshold_reached(
