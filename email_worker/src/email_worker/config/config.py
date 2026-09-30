@@ -19,7 +19,6 @@ class AppConfig(BaseSettings):
     EMAIL: Annotated[sub_config.EmailConfig, Field(alias="email")]
     REDIS: Annotated[sub_config.RedisConfig, Field(alias="redis")]
     DATABASE: Annotated[sub_config.DatabaseConfig, Field(alias="database")]
-    WORKER_COUNT: Annotated[sub_config.WorkerCountConfig, Field(alias="worker_count")]
 
     @classmethod
     def settings_customise_sources(

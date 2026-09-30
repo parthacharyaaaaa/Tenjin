@@ -5,8 +5,7 @@ from auxillary.mixins.db_config import (
     BasicConnectionPoolConfigMixin,
     BasicPostgresDatabaseConfigMixin,
 )
-from pydantic import BaseModel, Field
-from resource_auxillary.strings import EventName
+from pydantic import BaseModel, BeforeValidator, Field
 
 from resource_auxillary import config_mixins
 
@@ -28,6 +27,7 @@ class EmailWorkerConfig(
     GRACEFUL_SHUTDOWN_PERIOD: timedelta_s
     SMTP_NETWORK_ERROR_WINDOW: timedelta_s
     MAXIMUM_SMTP_REFRESHES: Annotated[int, Field(ge=0)]
+    WORKER_TASK_PREFIX: Annotated[str, BeforeValidator(lambda x: x.strip())]
 
 
 class EmailConfig(BaseModel):
@@ -42,8 +42,3 @@ class RedisConfig(BaseModel):
     PORT: Annotated[int, Field(ge=1024, le=65_535)]
     DB: Annotated[int, Field(ge=0)]
     DECODE_RESPONSES: Annotated[bool, Field(default=True)]
-
-
-class WorkerCountConfig(BaseModel):
-    READER_COUNT: Annotated[int, Field(ge=1)]
-    EVENT_WORKER_COUNT_MAPPING: dict[EventName, Annotated[int, Field(ge=1)]] = {}
