@@ -1,8 +1,7 @@
-import asyncio
-from datetime import timedelta
 from functools import partial
-from typing import Any, Callable, Coroutine, Final, Mapping, MutableMapping
+from typing import Any, Final, MutableMapping
 
+from resource_auxillary.boot_utils import t_worker_task_callable, tasks_bootup_wrapper
 from resource_auxillary.datastructures.status_indicator import (
     StatusController,
     StatusProxy,
@@ -19,51 +18,11 @@ from email_worker.dependencies.injections import get_email_config, get_queue_reg
 from email_worker.tasks.emailing import email_dispatcher
 from email_worker.tasks.stream_reading import upstream_dispatcher
 
-type _t_worker_task_callable = Callable[[], Coroutine[None, None, None]]
-
-
-async def tasks_wrapper(
-    callable_details: Mapping[str, _t_worker_task_callable],
-    graceful_shutdown_timeout: timedelta,
-    status_controller: StatusController,
-) -> None:
-    tasks: tuple[asyncio.Task[None], ...] = tuple(
-        asyncio.create_task(worker_callable(), name=name)
-        for name, worker_callable in callable_details.items()
-    )
-    failed, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
-    assert len(failed) == 1  # nosec
-
-    # Save initial exception
-    exception: Exception = next(iter(failed)).exception()  # type: ignore[reportAssignmentType]
-
-    status_controller.status_ok = False
-    done, pending = await asyncio.wait(
-        pending, timeout=graceful_shutdown_timeout.total_seconds()
-    )
-
-    for task in pending:
-        task.cancel()
-
-    forced_cancellation_results = await asyncio.gather(
-        *(pending), return_exceptions=True
-    )
-    exception.add_note(
-        "\n".join(
-            (
-                f"Forced cancelled {len(forced_cancellation_results)} tasks.",
-                "Cancellation results:",
-                ", ".join(str(i) for i in forced_cancellation_results),
-            )
-        )
-    )
-    raise exception
-
 
 def _prepare_reader_task_callables(
     worker_count_config: WorkerCountConfig,
     status_proxy: StatusProxy,
-    tasks_mapping: MutableMapping[str, _t_worker_task_callable],
+    tasks_mapping: MutableMapping[str, t_worker_task_callable],
 ) -> None:
     input_fields: Final[dict[str, Any]] = UpstreamDispatcherInput(
         status_proxy=status_proxy
@@ -77,7 +36,7 @@ def _prepare_reader_task_callables(
 def _prepare_worker_task_callables(
     worker_count_config: WorkerCountConfig,
     status_proxy: StatusProxy,
-    tasks_mapping: MutableMapping[str, _t_worker_task_callable],
+    tasks_mapping: MutableMapping[str, t_worker_task_callable],
 ) -> None:
     queue_registry: Final[QueueRegistry] = get_queue_registry()
     for event, worker_count in worker_count_config.EVENT_WORKER_COUNT_MAPPING.items():
@@ -95,12 +54,12 @@ def _prepare_worker_task_callables(
 async def spawn_tasks(worker_count_config: WorkerCountConfig) -> None:
     status_controller: Final[StatusController] = StatusController()
     status_proxy: Final[StatusProxy] = StatusProxy(status_controller)
-    callable_details: dict[str, _t_worker_task_callable] = {}
+    callable_details: dict[str, t_worker_task_callable] = {}
 
     _prepare_reader_task_callables(worker_count_config, status_proxy, callable_details)
     _prepare_worker_task_callables(worker_count_config, status_proxy, callable_details)
 
-    await tasks_wrapper(
+    await tasks_bootup_wrapper(
         callable_details,
         get_email_config().WORKER.GRACEFUL_SHUTDOWN_PERIOD,
         status_controller,
