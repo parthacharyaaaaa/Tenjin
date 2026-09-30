@@ -3,6 +3,7 @@ import traceback
 from datetime import timedelta
 from typing import Any, Callable, Coroutine, Final, Mapping
 
+from auxillary.dependencies.resolution import inject_worker_dependencies
 from resource_auxillary.datastructures.status_indicator import (
     StatusController,
     StatusProxy,
@@ -37,7 +38,6 @@ from resource_database_workers.dependencies.event_dependencies import (
 from resource_database_workers.dependencies.injections import get_queue_registry
 from resource_database_workers.dependencies.resolver import (
     inject_stream_worker_dependencies,
-    inject_worker_dependencies,
 )
 from resource_database_workers.tasks.counters import (
     batch_update_counters,
