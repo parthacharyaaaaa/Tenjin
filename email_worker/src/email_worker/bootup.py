@@ -1,4 +1,5 @@
 import asyncio
+from datetime import timedelta
 from functools import partial
 from typing import Any, Callable, Coroutine, Final, Mapping, MutableMapping
 
@@ -23,7 +24,7 @@ type _t_worker_task_callable = Callable[[], Coroutine[None, None, None]]
 
 async def tasks_wrapper(
     callable_details: Mapping[str, _t_worker_task_callable],
-    graceful_shutdown_timeout: float,
+    graceful_shutdown_timeout: timedelta,
     status_controller: StatusController,
 ) -> None:
     tasks: tuple[asyncio.Task[None], ...] = tuple(
@@ -37,7 +38,9 @@ async def tasks_wrapper(
     exception: Exception = next(iter(failed)).exception()  # type: ignore[reportAssignmentType]
 
     status_controller.status_ok = False
-    done, pending = await asyncio.wait(pending, timeout=graceful_shutdown_timeout)
+    done, pending = await asyncio.wait(
+        pending, timeout=graceful_shutdown_timeout.total_seconds()
+    )
 
     for task in pending:
         task.cancel()

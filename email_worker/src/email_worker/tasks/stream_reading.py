@@ -30,7 +30,7 @@ async def stream_reader(
         streams={stream_name.value: requested_id},
         count=config.WORKER.CONSUMER_READ_SIZE,
         noack=False,
-        block=config.WORKER.CONSUMER_BLOCK_TIME,
+        block=int(config.WORKER.CONSUMER_BLOCK_TIME.total_seconds()),
     )
 
     if len(result[0][1]) == 0:
@@ -89,4 +89,4 @@ async def upstream_dispatcher(
         for consumer_queue, events_batch in event_mapping.items():
             await consumer_queue.put(tuple(events_batch))
 
-        await asyncio.sleep(config.WORKER.CONSUMER_READ_INTERVAL)
+        await asyncio.sleep(config.WORKER.CONSUMER_READ_INTERVAL.total_seconds())

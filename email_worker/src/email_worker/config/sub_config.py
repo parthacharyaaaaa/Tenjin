@@ -1,5 +1,6 @@
 from typing import Annotated
 
+from auxillary.mixins.annotations import timedelta_s
 from auxillary.mixins.db_config import (
     BasicConnectionPoolConfigMixin,
     BasicPostgresDatabaseConfigMixin,
@@ -24,8 +25,8 @@ class EmailWorkerConfig(
     config_mixins.WorkerDLQMixin,
     BaseModel,
 ):
-    GRACEFUL_SHUTDOWN_PERIOD: Annotated[float, Field(ge=0)]
-    SMTP_NETWORK_ERROR_WINDOW: Annotated[int, Field(ge=1)]
+    GRACEFUL_SHUTDOWN_PERIOD: timedelta_s
+    SMTP_NETWORK_ERROR_WINDOW: timedelta_s
     MAXIMUM_SMTP_REFRESHES: Annotated[int, Field(ge=0)]
 
 
