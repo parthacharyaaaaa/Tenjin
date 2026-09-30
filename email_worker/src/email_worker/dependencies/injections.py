@@ -6,13 +6,17 @@ from typing import Final
 from aiosmtplib import SMTP
 from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
+from resource_auxillary.event_processing.event_stream_manager import (
+    EventStreamManager,
+    RedisStreamManager,
+)
+from resource_auxillary.strings import StreamName
 
 from email_worker.config.config import AppConfig
 from email_worker.config.sub_config import DatabaseConfig, EmailConfig, RedisConfig
 from email_worker.datastructures.queue_registry import QueueRegistry
 
 
-### Configurations ###
 @lru_cache(maxsize=1)
 def get_app_config() -> AppConfig:
     return AppConfig()  # type: ignore[reportCallIssue]
@@ -33,7 +37,6 @@ def get_database_config() -> DatabaseConfig:
     return get_app_config().DATABASE
 
 
-### Third-Party Clients ###
 @lru_cache(maxsize=1)
 def get_redis_client() -> Redis:
     redis_config: RedisConfig = get_redis_config()
@@ -59,7 +62,15 @@ async def get_fresh_smtp_client() -> SMTP:
     return smtp_client
 
 
-### Database ###
+def get_event_stream_manager() -> EventStreamManager:
+    return RedisStreamManager(get_redis_client())
+
+
+@lru_cache(maxsize=1)
+def get_consumer_id() -> str:
+    return str(os.getpid())
+
+
 @lru_cache(maxsize=1)
 def get_connection_pool() -> AsyncConnectionPool:
     db_config: DatabaseConfig = get_database_config()
@@ -74,9 +85,11 @@ def get_connection_pool() -> AsyncConnectionPool:
     )
 
 
-### Queues ###
-
-
 @lru_cache(maxsize=1)
 def get_queue_registry() -> QueueRegistry:
     return QueueRegistry()
+
+
+@lru_cache(maxsize=1)
+def get_dead_letter_queue_name() -> StreamName:
+    return StreamName.DEAD_LETTER_QUEUE
