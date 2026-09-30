@@ -1,10 +1,7 @@
 from pathlib import Path
-from typing import ClassVar
+from typing import Annotated, ClassVar
 
-from auxillary.mixins.db_config import (
-    BasicConnectionPoolConfigMixin,
-    BasicPostgresDatabaseConfigMixin,
-)
+from pydantic import Field
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -12,12 +9,17 @@ from pydantic_settings import (
     TomlConfigSettingsSource,
 )
 
+from email_worker.config import sub_config
 
-class DatabaseConfig(
-    BasicPostgresDatabaseConfigMixin, BasicConnectionPoolConfigMixin, BaseSettings
-):
-    config_filepath: ClassVar[Path] = Path(__file__).parent / "db_config.toml"
+
+class AppConfig(BaseSettings):
+    config_filepath: ClassVar[Path] = Path(__file__).parent / "config.toml"
     model_config = SettingsConfigDict(toml_file=str(config_filepath))
+
+    EMAIL: Annotated[sub_config.EmailConfig, Field(alias="email")]
+    REDIS: Annotated[sub_config.RedisConfig, Field(alias="redis")]
+    DATABASE: Annotated[sub_config.DatabaseConfig, Field(alias="database")]
+    WORKER_COUNT: Annotated[sub_config.WorkerCountConfig, Field(alias="worker_count")]
 
     @classmethod
     def settings_customise_sources(

@@ -10,11 +10,11 @@ from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 
-from email_worker.config.email_config import EmailConfig
+from email_worker.config.sub_config import EmailConfig
 from email_worker.constants import (
     UNSAFE_SMTP_NETWORK_ERRORS,
 )
-from email_worker.dependencies import get_fresh_smtp_client
+from email_worker.dependencies.injections import get_fresh_smtp_client
 from email_worker.utilities.emails import construct_email_message
 from email_worker.utilities.qos import determine_smtp_error_threshold_reached
 

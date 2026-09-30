@@ -1,3 +1,0 @@
-POSTGRES_HOST="resource_server_database"
-POSTGRES_PORT=5432
-POSTGRES_DATABASE="resource_db"

@@ -11,9 +11,9 @@ from resource_auxillary.datastructures.status_indicator import StatusProxy
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import EventName, StreamName
 
-from email_worker.config.email_config import EmailConfig
+from email_worker.config.sub_config import EmailConfig
 from email_worker.datastructures.queue_registry import QueueRegistry
-from email_worker.dependencies import (
+from email_worker.dependencies.injections import (
     get_connection_pool,
     get_email_config,
     get_queue_registry,

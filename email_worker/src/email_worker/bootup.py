@@ -7,7 +7,7 @@ from resource_auxillary.datastructures.status_indicator import (
     StatusProxy,
 )
 
-from email_worker.config.worker_config import WorkerCountConfig
+from email_worker.config.sub_config import WorkerCountConfig
 from email_worker.datastructures.queue_registry import QueueRegistry
 from email_worker.datastructures.streams import STREAM_EVENT_MAPPING
 from email_worker.datastructures.worker_inputs import (

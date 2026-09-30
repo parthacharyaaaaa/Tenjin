@@ -7,7 +7,7 @@ from resource_auxillary.datastructures.status_indicator import StatusProxy
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import EventName, StreamName
 
-from email_worker.config.email_config import EmailConfig
+from email_worker.config.sub_config import EmailConfig
 
 
 async def stream_reader(

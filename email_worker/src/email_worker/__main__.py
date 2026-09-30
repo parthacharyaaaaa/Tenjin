@@ -3,19 +3,21 @@ import sys
 from argparse import ArgumentParser, Namespace
 from typing import Sequence
 
-from email_worker.bootup import spawn_tasks
 from email_worker.cli import get_argument_parser
-from email_worker.src.email_worker.config.worker_config import WorkerCountConfig
+from email_worker.config.config import AppConfig
+from email_worker.dependencies.injections import get_app_config
 
 
 async def main(args: Sequence[str]) -> int:
     parser: ArgumentParser = get_argument_parser()
     parsed_args: Namespace = parser.parse_args(args)
 
-    worker_count_config: WorkerCountConfig = WorkerCountConfig.construct_from_toml(
-        parsed_args.config_file
-    )
-    await spawn_tasks(worker_count_config)
+    if parsed_args.config_file is not None:
+        AppConfig.model_config["toml_file"] = parsed_args.config_file
+
+    from email_worker.bootup import spawn_tasks
+
+    await spawn_tasks(get_app_config().WORKER_COUNT)
 
     return 0
 

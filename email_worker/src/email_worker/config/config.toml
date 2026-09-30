@@ -1,11 +1,22 @@
+[database]
+POSTGRES_HOST="resource_server_database"
+POSTGRES_PORT=5432
+POSTGRES_DATABASE="resource_db"
+
+[redis]
+HOSTNAME="resource_server_redis"
+PORT=6379
+DB=1
+DECODE_RESPONSES=true
+
+[email]
 hostname="email_worker"
 port=10_000
 use_tls=true
 
-[worker]
+[email.worker]
 MAX_RETRIES=2
-
-DLQ_NAME="DLQ"
+DLQ_NAME="DEAD_LETTER_QUEUE"
 
 CONSUMER_READ_INTERVAL=500                      # milliseconds
 CONSUMER_READ_SIZE=1000
@@ -13,7 +24,7 @@ CONSUMER_BLOCK_TIME=500                         # milliseconds
 CONSUMER_GROUP_NAME="email_consumers"
 
 IQ_CONSUMER_BASE_WAITING_TIME=2                     # seconds
-IQ_CONSUMER_BATCH_SIZE_QUOTA=0.1
+IQ_CONSUMER_BATCH_SIZE_QUOTA=10
 IQ_CONSUMER_GET_TIMEOUT=0.1                         # seconds
 IQ_CONSUMER_SLEEP_INTERVAL=0.01                     # seconds
 
@@ -29,3 +40,11 @@ GRACEFUL_SHUTDOWN_PERIOD=10                         # seconds
 
 SMTP_NETWORK_ERROR_WINDOW=30                        # seconds
 MAXIMUM_SMTP_REFRESHES=2
+
+[worker_count]
+READER_COUNT=1
+
+[worker_count.EVENT_WORKER_COUNT_MAPPING]
+USER_DELETION_EMAIL=1
+USER_REGISTRATION_EMAIL=1
+USER_PASSWORD_RECOVERY_EMAIL=1

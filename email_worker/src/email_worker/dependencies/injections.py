@@ -7,26 +7,30 @@ from aiosmtplib import SMTP
 from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
 
-from email_worker.config.db_config import DatabaseConfig
-from email_worker.config.email_config import EmailConfig
-from email_worker.config.redis_config import RedisConfig
+from email_worker.config.config import AppConfig
+from email_worker.config.sub_config import DatabaseConfig, EmailConfig, RedisConfig
 from email_worker.datastructures.queue_registry import QueueRegistry
 
 
 ### Configurations ###
 @lru_cache(maxsize=1)
+def get_app_config() -> AppConfig:
+    return AppConfig()  # type: ignore[reportCallIssue]
+
+
+@lru_cache(maxsize=1)
 def get_email_config() -> EmailConfig:
-    return EmailConfig()  # type: ignore[reportCallIssue]
+    return get_app_config().EMAIL
 
 
 @lru_cache(maxsize=1)
 def get_redis_config() -> RedisConfig:
-    return RedisConfig()  # type: ignore[reportCallIssue]
+    return get_app_config().REDIS
 
 
 @lru_cache(maxsize=1)
 def get_database_config() -> DatabaseConfig:
-    return DatabaseConfig()  # type: ignore[reportCallIssue]
+    return get_app_config().DATABASE
 
 
 ### Third-Party Clients ###
