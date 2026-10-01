@@ -6,6 +6,9 @@ from psycopg_pool.pool_async import AsyncConnectionPool
 from redis.asyncio.client import Redis
 from resource_auxillary.datastructures.status_indicator import StatusProxy
 from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
+from resource_auxillary.event_processing.queues.registry import (
+    TieredQueueRegistry,
+)
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import StreamName
 
@@ -17,6 +20,7 @@ from email_worker.dependencies.injections import (
     get_consumer_id,
     get_dead_letter_queue_name,
     get_event_stream_manager,
+    get_queue_registry,
     get_redis_client,
 )
 
@@ -27,7 +31,10 @@ APP_CONFIG = Annotated[AppConfig, Inject(get_app_config)]
 EMAIL_CONFIG = Annotated[EmailConfig, Inject(lambda: get_app_config().EMAIL)]
 APP_REDIS = Annotated[Redis, Inject(get_redis_client)]
 CONNECTION_POOL = Annotated[AsyncConnectionPool, Inject(get_connection_pool)]
-
+QUEUE_REGISTRY = Annotated[
+    TieredQueueRegistry[tuple[StreamedEvent, ...]],
+    Inject(lambda: get_queue_registry()),
+]
 # Worker-level dependencies
 STATUS_PROXY = Annotated[StatusProxy, None]
 GROUP_NAME = Annotated[str, None]

@@ -10,11 +10,13 @@ from resource_auxillary.event_processing.event_stream_manager import (
     EventStreamManager,
     RedisStreamManager,
 )
-from resource_auxillary.strings import StreamName
+from resource_auxillary.event_processing.queues.registry import (
+    TieredQueueRegistry,
+)
+from resource_auxillary.strings import EventName, StreamName
 
 from email_worker.config.config import AppConfig
 from email_worker.config.sub_config import DatabaseConfig, EmailConfig, RedisConfig
-from email_worker.datastructures.queue_registry import QueueRegistry
 
 
 @lru_cache(maxsize=1)
@@ -86,8 +88,11 @@ def get_connection_pool() -> AsyncConnectionPool:
 
 
 @lru_cache(maxsize=1)
-def get_queue_registry() -> QueueRegistry:
-    return QueueRegistry()
+def get_queue_registry() -> TieredQueueRegistry:
+    return TieredQueueRegistry(
+        default_event=EventName.INTERNAL_EMAIL_EVENT_SENTIENL,
+        first_class_events=frozenset((EventName.USER_PASSWORD_RECOVERY_EMAIL,)),
+    )
 
 
 @lru_cache(maxsize=1)
