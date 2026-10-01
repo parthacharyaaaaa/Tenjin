@@ -72,9 +72,9 @@ class EventName(StrEnum):
     USER_REGISTRATION_EMAIL = "USER_REGISTRATION_EMAIL"
     USER_PASSWORD_RECOVERY_EMAIL = "USER_PASSWORD_RECOVERY_EMAIL"  # nosec
 
-    DEAD_LETTER_SENTINEL = (
-        "DEAD_LETTER_SENTINEL"  # For internal queues only, must never touch Redis
-    )
+    # For internal queues only, must never touch Redis
+    DEAD_LETTER_SENTINEL = "DEAD_LETTER_SENTINEL"
+    INTERNAL_EMAIL_EVENT_SENTIENL = "INTERNAL_EMAIL_EVENT_SENTIENL"
 
 
 SECOND_CLASS_EVENTS: Final[frozenset] = frozenset(

@@ -1,7 +1,7 @@
 from types import MappingProxyType
 from typing import Callable, Final
 
-from resource_auxillary.strings import EventName, StreamName
+from resource_auxillary.strings import StreamName
 
 from resource_database_workers.tasks.stream_readers import (
     dlq_dispatcher,
@@ -17,43 +17,6 @@ STREAM_CONSUMER_MAPPING: Final[MappingProxyType[StreamName, Callable]] = (
             StreamName.COMMENTS: upstream_dispatcher,
             StreamName.USERS: upstream_dispatcher,
             StreamName.DEAD_LETTER_QUEUE: dlq_dispatcher,
-        }
-    )
-)
-
-STREAM_EVENT_MAPPING: Final[MappingProxyType[StreamName, tuple[EventName, ...]]] = (
-    MappingProxyType(
-        {
-            StreamName.POSTS: (
-                EventName.POST_CREATE,
-                EventName.POST_SAVE,
-                EventName.POST_UNSAVE,
-                EventName.POST_REPORT,
-                EventName.POST_VOTE,
-                EventName.POST_UNVOTE,
-                EventName.POST_DELETE,
-            ),
-            StreamName.COMMENTS: (
-                EventName.COMMENT_CREATE,
-                EventName.COMMENT_VOTE,
-                EventName.COMMENT_UNVOTE,
-                EventName.COMMENT_REPORT,
-                EventName.COMMENT_DELETE,
-            ),
-            StreamName.FORUMS: (
-                EventName.FORUM_SUB,
-                EventName.FORUM_UNSUB,
-                EventName.FORUM_DELETE,
-            ),
-            StreamName.ANIMES: (
-                EventName.ANIME_SUB,
-                EventName.ANIME_UNSUB,
-            ),
-            StreamName.USERS: (EventName.USER_CLEANUP, EventName.USER_TICKET),
-            StreamName.DEAD_LETTER_QUEUE: (
-                EventName.DLQ_COUNTER,
-                EventName.DLQ_SIDE_EFFECTS,
-            ),
         }
     )
 )

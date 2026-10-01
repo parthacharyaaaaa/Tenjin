@@ -1,28 +1,8 @@
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from functools import partial
 from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
-from resource_auxillary.strings import EventName
-
-from resource_database_workers.dependencies.event_dependencies import (
-    EVENT_WORKER_DATA_MAPPING,
-    t_event_worker_data,
-)
-from resource_database_workers.dependencies.indicator import Inject
-
-
-def inject_stream_worker_dependencies(
-    event_name: EventName,
-    worker_context: Mapping[Any, Any],
-    *,
-    worker_data_mapping: Mapping[
-        EventName, t_event_worker_data
-    ] = EVENT_WORKER_DATA_MAPPING,
-) -> partial[Callable[[], Any]]:
-    worker_callable, event_context = worker_data_mapping[event_name]
-    event_context |= worker_context
-
-    return inject_worker_dependencies(worker_callable, event_context)
+from auxillary.dependencies.indicator import Inject
 
 
 def inject_worker_dependencies(
@@ -43,7 +23,7 @@ def inject_worker_dependencies(
 
         _base_type, *metadata = get_args(type_hint)
         for metadata_item in metadata:
-            if isinstance(metadata_item, Inject):  # Global dependency
+            if isinstance(metadata_item, Inject):
                 partial_kwargs[param_name] = metadata_item.dependency()
                 break
 

@@ -6,30 +6,39 @@ from typing import Final
 from aiosmtplib import SMTP
 from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
+from resource_auxillary.event_processing.event_stream_manager import (
+    EventStreamManager,
+    RedisStreamManager,
+)
+from resource_auxillary.event_processing.queues.registry import (
+    TieredQueueRegistry,
+)
+from resource_auxillary.strings import EventName, StreamName
 
-from email_worker.config.db_config import DatabaseConfig
-from email_worker.config.email_config import EmailConfig
-from email_worker.config.redis_config import RedisConfig
-from email_worker.datastructures.queue_registry import QueueRegistry
+from email_worker.config.config import AppConfig
+from email_worker.config.sub_config import DatabaseConfig, EmailConfig, RedisConfig
 
 
-### Configurations ###
+@lru_cache(maxsize=1)
+def get_app_config() -> AppConfig:
+    return AppConfig()  # type: ignore[reportCallIssue]
+
+
 @lru_cache(maxsize=1)
 def get_email_config() -> EmailConfig:
-    return EmailConfig()  # type: ignore[reportCallIssue]
+    return get_app_config().EMAIL
 
 
 @lru_cache(maxsize=1)
 def get_redis_config() -> RedisConfig:
-    return RedisConfig()  # type: ignore[reportCallIssue]
+    return get_app_config().REDIS
 
 
 @lru_cache(maxsize=1)
 def get_database_config() -> DatabaseConfig:
-    return DatabaseConfig()  # type: ignore[reportCallIssue]
+    return get_app_config().DATABASE
 
 
-### Third-Party Clients ###
 @lru_cache(maxsize=1)
 def get_redis_client() -> Redis:
     redis_config: RedisConfig = get_redis_config()
@@ -55,7 +64,15 @@ async def get_fresh_smtp_client() -> SMTP:
     return smtp_client
 
 
-### Database ###
+def get_event_stream_manager() -> EventStreamManager:
+    return RedisStreamManager(get_redis_client())
+
+
+@lru_cache(maxsize=1)
+def get_consumer_id() -> str:
+    return str(os.getpid())
+
+
 @lru_cache(maxsize=1)
 def get_connection_pool() -> AsyncConnectionPool:
     db_config: DatabaseConfig = get_database_config()
@@ -66,13 +83,18 @@ def get_connection_pool() -> AsyncConnectionPool:
 
     return AsyncConnectionPool(
         conninfo=uri,
-        **config.DATABASE.emit_connection_pool_constructor_kwargs(),  # type: ignore
+        **db_config.emit_connection_pool_constructor_kwargs(),  # pyrefly: ignore[bad-argument-type]
     )
 
 
-### Queues ###
+@lru_cache(maxsize=1)
+def get_queue_registry() -> TieredQueueRegistry:
+    return TieredQueueRegistry(
+        default_event=EventName.INTERNAL_EMAIL_EVENT_SENTIENL,
+        first_class_events=frozenset((EventName.USER_PASSWORD_RECOVERY_EMAIL,)),
+    )
 
 
 @lru_cache(maxsize=1)
-def get_queue_registry() -> QueueRegistry:
-    return QueueRegistry()
+def get_dead_letter_queue_name() -> StreamName:
+    return StreamName.DEAD_LETTER_QUEUE

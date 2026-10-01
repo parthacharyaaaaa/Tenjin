@@ -1,8 +1,8 @@
 import asyncio
-import traceback
-from datetime import timedelta
-from typing import Any, Callable, Coroutine, Final, Mapping
+from typing import Any, Callable, Coroutine, Final
 
+from auxillary.dependencies.resolution import inject_worker_dependencies
+from resource_auxillary.boot_utils import tasks_bootup_wrapper
 from resource_auxillary.datastructures.status_indicator import (
     StatusController,
     StatusProxy,
@@ -35,10 +35,6 @@ from resource_database_workers.dependencies.event_dependencies import (
     EVENT_WORKER_DATA_MAPPING,
 )
 from resource_database_workers.dependencies.injections import get_queue_registry
-from resource_database_workers.dependencies.resolver import (
-    inject_stream_worker_dependencies,
-    inject_worker_dependencies,
-)
 from resource_database_workers.tasks.counters import (
     batch_update_counters,
     batch_update_retry_counters,
@@ -47,56 +43,6 @@ from resource_database_workers.tasks.stream_readers import upstream_dispatcher
 from resource_database_workers.utils.strings import (
     generate_worker_name,
 )
-
-
-async def tasks_wrapper(
-    worker_callables: Mapping[str, Callable[[], Coroutine[None, None, None]]],
-    graceful_shutdown_timeout: timedelta,
-    status_controller: StatusController,
-) -> None:
-    tasks: tuple[asyncio.Task[None], ...] = tuple(
-        asyncio.create_task(worker_callable(), name=name)
-        for name, worker_callable in worker_callables.items()
-    )
-    failed, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
-
-    status_controller.status_ok = False
-    _done, pending = await asyncio.wait(
-        pending, timeout=graceful_shutdown_timeout.total_seconds()
-    )
-
-    for task in pending:
-        task.cancel()
-
-    forced_cancellation_results = await asyncio.gather(
-        *(pending), return_exceptions=True
-    )
-
-    failed_tasks_info_string = "\n\n".join(
-        (
-            f"Task: {task.get_name()}\n"
-            f"Exception: {type(exception).__name__}: {exception}\n"
-            "Traceback:\n"
-            f"{''.join(traceback.format_exception(exception))}"
-        )
-        for task in failed
-        if not task.cancelled() and (exception := task.exception()) is not None
-    )
-    forced_cancellation_info_string = "\n\n".join(
-        (f"Task: {task.get_name()}\nResult: {type(result).__name__}: {result}")
-        for task, result in zip(pending, forced_cancellation_results)
-    )
-
-    exception = Exception("Worker tasks terminated unexpectedly")
-    exception.add_note(
-        f"Failed tasks ({len(failed)}):\n{failed_tasks_info_string or '<none>'}"
-    )
-    exception.add_note(
-        f"Forced-cancelled tasks ({len(pending)}):\n"
-        f"{forced_cancellation_info_string or '<none>'}"
-    )
-
-    raise exception
 
 
 def _counter_worker_wrapper(
@@ -176,8 +122,8 @@ def _stream_worker_wrapper(
             for i in range(1, worker_count + 1):
                 worker_mapping[
                     generate_worker_name(worker_config.STREAM_WORKER_TASK_PREFIX, i)
-                ] = inject_stream_worker_dependencies(
-                    event, worker_context | base_context
+                ] = inject_worker_dependencies(
+                    worker_callable, worker_context | base_context
                 )
 
     return worker_mapping
@@ -208,7 +154,7 @@ async def spawn_tasks(
             app_config.WORKER.CONSUMER_GROUP_NAME,
         )
 
-    await tasks_wrapper(
+    await tasks_bootup_wrapper(
         tasks_mapping,
         app_config.WORKER.GRACEFUL_SHUTDOWN_PERIOD,
         status_controller,

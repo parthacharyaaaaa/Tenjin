@@ -1,14 +1,15 @@
+from datetime import timedelta
 from typing import MutableSequence, Sequence
 
 from aiosmtplib import SMTPException
 from resource_auxillary.events import StreamedEvent
 
-from email_worker.src.email_worker.utilities.parsing import parse_user_email_payload
+from email_worker.utilities.parsing import parse_user_email_payload
 
 
 def determine_smtp_error_threshold_reached(
     smtp_error_data: Sequence[tuple[SMTPException, float]],
-    timeframe_size: float | int,
+    timeframe_size: timedelta,
     error_threshold: int,
 ) -> bool:
     if len(smtp_error_data) < error_threshold:
@@ -22,7 +23,7 @@ def determine_smtp_error_threshold_reached(
             smtp_error_data[error_entry][1],
             smtp_error_data[error_entry + error_threshold][1],
         )
-        if timeframe_end - timeframe_start <= timeframe_size:
+        if timeframe_end - timeframe_start <= timeframe_size.total_seconds():
             return True
     return False
 

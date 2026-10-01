@@ -2,6 +2,7 @@ import asyncio
 from typing import Annotated, Final, LiteralString
 
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
+from auxillary.dependencies.indicator import Inject
 from psycopg_pool.pool_async import AsyncConnectionPool
 from redis.asyncio.client import Redis
 from resource_auxillary.datastructures.database import StrongEntity
@@ -15,7 +16,6 @@ from resource_database_workers.datastructures.queues import (
     EventQueueRegistry,
     EventQueueRegistryContainer,
 )
-from resource_database_workers.dependencies.indicator import Inject
 from resource_database_workers.dependencies.injections import (
     get_app_redis,
     get_config,
