@@ -83,7 +83,7 @@ def get_connection_pool() -> AsyncConnectionPool:
 
     return AsyncConnectionPool(
         conninfo=uri,
-        **config.DATABASE.emit_connection_pool_constructor_kwargs(),  # noqa
+        **db_config.emit_connection_pool_constructor_kwargs(),  # pyrefly: ignore[bad-argument-type]
     )
 
 
