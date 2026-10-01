@@ -35,9 +35,6 @@ from resource_database_workers.dependencies.event_dependencies import (
     EVENT_WORKER_DATA_MAPPING,
 )
 from resource_database_workers.dependencies.injections import get_queue_registry
-from resource_database_workers.dependencies.resolver import (
-    inject_stream_worker_dependencies,
-)
 from resource_database_workers.tasks.counters import (
     batch_update_counters,
     batch_update_retry_counters,
@@ -125,8 +122,8 @@ def _stream_worker_wrapper(
             for i in range(1, worker_count + 1):
                 worker_mapping[
                     generate_worker_name(worker_config.STREAM_WORKER_TASK_PREFIX, i)
-                ] = inject_stream_worker_dependencies(
-                    event, worker_context | base_context
+                ] = inject_worker_dependencies(
+                    worker_callable, worker_context | base_context
                 )
 
     return worker_mapping
