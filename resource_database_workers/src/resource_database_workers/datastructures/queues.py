@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import TypeVar
 
 from auxillary.singleton import SingletonMetaclass
-from resource_auxillary.datastructures.queues import (
+from resource_auxillary.event_processing.queues.registry import (
     EventQueueRegistry,
     TieredQueueRegistry,
 )
