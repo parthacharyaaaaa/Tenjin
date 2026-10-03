@@ -15,7 +15,7 @@ class SyncedStoreCommandStrings(StrEnum):
 
 
 class SyncedStoreKeyStrings(StrEnum):
-    VALID_KEYS = "VALID_KEYS"
+    JWKS_KEY = "JWKS_KEY"
     KEY_ROTATION_LOCK = "KEY_ROTATION_LOCK"
     KEY_ROTATION_COOLDOWN = "KEY_ROTATION_COOLDOWN"
     INVALIDATE_KEY = "INVALIDATE_KEY"

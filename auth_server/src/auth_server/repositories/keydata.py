@@ -19,8 +19,9 @@ from auth_server.models.database import KeyData
 from auth_server.strings import SelectionLockOption
 
 
-@dataclass(slots=True, frozen=True)
-class EllipticCurveJWKSResult:
+@dataclass(slots=True)
+class EllipticCurveJWKResult(AbstractResult):
+    resource_name: ClassVar[str] = "EllipticCurveJWK"
     alg: ECAlg
     crv: str
     kid: str
@@ -66,14 +67,14 @@ class KeyPublicDataResult(AbstractResult):
         self.stringify_binary_fields(cache_mapping)
         return cache_mapping
 
-    def as_jwk(self) -> EllipticCurveJWKSResult:
+    def as_jwk(self) -> EllipticCurveJWKResult:
         verification_key: PublicKeyTypes = load_pem_public_key(self.public_pem)
         if not isinstance(verification_key, ec.EllipticCurvePublicKey):
             raise TypeError("Expected an elliptic-curve public key")
         public_numbers: ec.EllipticCurvePublicNumbers = (
             verification_key.public_numbers()
         )
-        return EllipticCurveJWKSResult(
+        return EllipticCurveJWKResult(
             ECAlg(self.alg),
             str(verification_key.curve),
             self.kid,
@@ -618,7 +619,7 @@ class KeydataRepository(AbstractWorkRepository):
                     return KeyPublicDataResult.construct_from_orm(new_key)
                 return KeyPrivateDataResult.construct_from_orm(new_key)
 
-    async def get_jwks(self) -> tuple[EllipticCurveJWKSResult, ...]:
+    async def get_jwks(self) -> tuple[EllipticCurveJWKResult, ...]:
         return tuple(
             i.as_jwk()
             for i in await self.get_relevant_keydata(limit=None, public_data_only=True)

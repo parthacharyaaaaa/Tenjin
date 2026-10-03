@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -14,12 +15,13 @@ import jwt.exceptions as jwt_exceptions
 from redis.asyncio import Redis
 
 from auth_server.config.sub_config import KeyConfigModel, TokenManagerConfigModel
+from auth_server.keys.key_manager import SyncedStoreKeyStateManager
 from auth_server.repositories.keydata import (
+    EllipticCurveJWKResult,
     KeydataRepository,
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
-from auth_server.strings import SyncedStoreKeyStrings
 from auth_server.tokens.typing import (
     StandardAccessTokenClaims,
     StandardRefreshTokenClaims,
@@ -35,8 +37,10 @@ class TokenManager:
     _token_store_client: Redis
     _synced_store_client: Redis
     _keydata_repository: KeydataRepository
+    _synced_state_manager: SyncedStoreKeyStateManager
     key_config: KeyConfigModel
     token_manager_config: TokenManagerConfigModel
+    logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__file__))
     universal_claims: dict[str, Any] = field(default_factory=dict)
     universal_headers: dict[str, Any] = field(default_factory=dict)
     _polling_task: asyncio.Task[None] = field(init=False)
@@ -257,7 +261,7 @@ class TokenManager:
             if await self._token_store_client.lrange(f"FID:{family_id}", 0, -1):  # type: ignore[reportGeneralTypeIssues]
                 await self._token_store_client.delete(f"FID:{family_id}")
             else:
-                print("No Family Found")
+                self.logger.info("No Family Found")
         except Exception as e:
             raise RuntimeError("Failed to perform operation on token store") from e
 
@@ -302,50 +306,40 @@ class TokenManager:
         """
         while True:
             try:
-                valid_keys: list[str] | None = await self._synced_store_client.lrange(  # pyrefly: ignore[not-async]
-                    SyncedStoreKeyStrings.VALID_KEYS, 0, -1
+                global_jwks: Final[tuple[EllipticCurveJWKResult, ...]] = tuple(
+                    await self._synced_state_manager.get_jwks()
                 )
-
-                if not valid_keys:
-                    raise RuntimeError("Valid keys list empty or not found")
+                if not global_jwks:
+                    raise RuntimeError("Global key state empty or not found")
 
                 global_valid_keyset: frozenset[str] = frozenset(
-                    key for key in valid_keys
+                    k.kid for k in global_jwks
                 )
                 local_valid_keyset: frozenset[str] = frozenset(self._key_mapping.keys())
 
-                new_valid_keys: frozenset[str] = (
-                    global_valid_keyset - local_valid_keyset
-                )
-                for new_key in new_valid_keys:
-                    print(
-                        f"[BACKGROUND POLLER]: Adding verification new key {new_key}..."
-                    )
+                for new_key in global_valid_keyset - local_valid_keyset:
+                    self.logger.info(f"Adding verification new key {new_key}...")
                     result: (
                         KeyPrivateDataResult | None
-                    ) = await self.fetch_unexpired_key(new_key)
+                    ) = await self._keydata_repository.get_keydata(
+                        new_key, public_only=False
+                    )
                     if result:
                         self.update_keydata(
-                            new_key, result, active=not bool(result.rotated_out_at)
-                        )  # If rotated out, them update key mapping with a verification key, else with an active key
-                        print(
-                            f"[BACKGROUND POLLER]: Added verification new key {new_key} to local token manager"
+                            new_key, result, active=result.rotated_out_at is None
+                        )
+                        self.logger.info(
+                            f"Added verification new key {new_key} to local token manager"
                         )
 
-                # Eliminate expired keys from memory. This is done after adding any new keys to local mapping
-                expired_local_keys: frozenset[str] = (
-                    local_valid_keyset - global_valid_keyset
-                )
-                for expired_key in expired_local_keys:
-                    print(
-                        f"[BACKGROUND POLLER]: Invalidating local key {expired_key}..."
-                    )
+                for expired_key in local_valid_keyset - global_valid_keyset:
+                    self.logger.info(f"Invalidating local key {expired_key}...")
                     self.invalidate_key(expired_key)
-                    print(f"[BACKGROUND POLLER]: Invalidated local key {expired_key}")
+                    self.logger.info(f"Invalidated local key {expired_key}")
 
             except Exception:
-                print("[BACKGROUND POLLER]: Exception encountered. Traceback:")
-                print(format_exc())
+                self.logger.error("Exception encountered. Traceback:")
+                self.logger.error(format_exc())
             finally:
                 await asyncio.sleep(interval.total_seconds())
 

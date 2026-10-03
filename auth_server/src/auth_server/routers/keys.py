@@ -85,7 +85,7 @@ async def invalidate_key(
         kid, intermediate_message_mapping=additional_kw
     )
 
-    valid_keys: list[str] = await synced_keystate_manager.get_valid_keys_ids()
+    valid_keys: list[str] = [i.kid for i in await synced_keystate_manager.get_jwks()]
     return JSONResponse(
         {
             "message": "Key invalidated successfully",
@@ -130,9 +130,9 @@ async def rotate_keys(
         HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
     ],
 ) -> JSONResponse:
-    previous_active_key_id: Final[
-        str
-    ] = await synced_key_state_manager.get_active_key_id()
+    previous_active_key_id: Final[str] = (await synced_key_state_manager.get_jwks())[
+        0
+    ].kid
     active_key: Final[KeyPublicDataResult] = await key_lifecycle_manager.rotate_key(
         rotation_author=admin_session.admin_id
     )

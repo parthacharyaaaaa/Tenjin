@@ -24,16 +24,19 @@ from auth_server.dependencies.local import (
     get_database_session_maker,
     get_distributed_lock_factory,
     get_synced_store_client,
+    get_synced_store_key_state_manager,
     get_token_manager,
 )
+from auth_server.keys.key_manager import SyncedStoreKeyStateManager
 from auth_server.keys.keygen import generate_ecdsa_pair
 from auth_server.repositories.keydata import (
+    EllipticCurveJWKResult,
     KeydataRepository,
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
 from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
-from auth_server.strings import SyncedStoreCommandStrings, SyncedStoreKeyStrings
+from auth_server.strings import SyncedStoreCommandStrings
 from auth_server.tokens.token_manager import TokenManager
 
 
@@ -65,6 +68,7 @@ async def _initialize_active_key(
 async def master_bootup(
     config: AppConfig,
     synced_store_client: Redis,
+    synced_store_manager: SyncedStoreKeyStateManager,
     keydata_repository: KeydataRepository,
     token_manager: TokenManager,
     process_id: int,
@@ -109,14 +113,10 @@ async def master_bootup(
             if len(keydata) > 1:
                 rotated_verifying_keys = {k.kid: k for k in keydata[1:]}
 
-        # Initialize token manager
-        async with synced_store_client.pipeline() as pipe:
-            pipe.delete(SyncedStoreKeyStrings.VALID_KEYS)
-            valid_keys: list[str] = (
-                list(rotated_verifying_keys.keys()) if rotated_verifying_keys else []
-            ) + [active_keydata.kid]
-            pipe.lpush(SyncedStoreKeyStrings.VALID_KEYS, *valid_keys)
-            await pipe.execute()
+        jwks: Final[tuple[EllipticCurveJWKResult, ...]] = tuple(
+            await keydata_repository.get_jwks()
+        )
+        await synced_store_manager.set_jwks(jwks)
 
         token_manager.set_key_state(active_keydata, rotated_verifying_keys)
         print(f"[AUTH {process_id}] Master process bootup complete!")
@@ -193,6 +193,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         get_database_session_maker()
     )
     token_manager: Final[TokenManager] = get_token_manager()
+    synced_state_manager: Final[SyncedStoreKeyStateManager] = (
+        get_synced_store_key_state_manager()
+    )
 
     master_lock_context: Final[BasicLockContext] = await lock_factory.lock(
         SyncedStoreCommandStrings.AUTH_BOOTUP_MASTER,
@@ -201,13 +204,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
 
     if master_lock_context.valid:
-        await master_bootup(
-            config,
-            synced_store_client,
-            keydata_repository,
-            token_manager,
-            pid,
-        )
+        async with master_lock_context:
+            await master_bootup(
+                config,
+                synced_store_client,
+                synced_state_manager,
+                keydata_repository,
+                token_manager,
+                pid,
+            )
     else:
         await slave_bootup(
             config, synced_store_client, keydata_repository, token_manager, pid
