@@ -23,11 +23,9 @@ from auth_server.dependencies.local import (
     get_app_config,
     get_database_session_maker,
     get_distributed_lock_factory,
-    get_filesystem_key_manager,
     get_synced_store_client,
     get_token_manager,
 )
-from auth_server.keys.key_manager import FileSystemKeyManager
 from auth_server.keys.keygen import generate_ecdsa_pair
 from auth_server.repositories.keydata import (
     KeydataRepository,
@@ -68,7 +66,6 @@ async def master_bootup(
     config: AppConfig,
     synced_store_client: Redis,
     keydata_repository: KeydataRepository,
-    filesystem_key_manager: FileSystemKeyManager,
     token_manager: TokenManager,
     process_id: int,
 ) -> None:
@@ -111,8 +108,6 @@ async def master_bootup(
 
             if len(keydata) > 1:
                 rotated_verifying_keys = {k.kid: k for k in keydata[1:]}
-
-        await filesystem_key_manager.initialize_jwks(keydata)
 
         # Initialize token manager
         async with synced_store_client.pipeline() as pipe:
@@ -198,7 +193,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         get_database_session_maker()
     )
     token_manager: Final[TokenManager] = get_token_manager()
-    filesystem_key_manager: Final[FileSystemKeyManager] = get_filesystem_key_manager()
 
     master_lock_context: Final[BasicLockContext] = await lock_factory.lock(
         SyncedStoreCommandStrings.AUTH_BOOTUP_MASTER,
@@ -211,7 +205,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             config,
             synced_store_client,
             keydata_repository,
-            filesystem_key_manager,
             token_manager,
             pid,
         )

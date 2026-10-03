@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import (
 from auth_server.admin.session_manager import AdminSessionManager
 from auth_server.config import AppConfig
 from auth_server.keys.key_manager import (
-    FileSystemKeyManager,
     KeyLifecycleManager,
     SyncedStoreKeyStateManager,
 )
@@ -117,11 +116,6 @@ def get_token_manager() -> TokenManager:
     )
 
 
-def get_filesystem_key_manager() -> FileSystemKeyManager:
-    config: AppConfig = get_app_config()
-    return FileSystemKeyManager(config.JWKS, config.KEYS)
-
-
 def get_synced_store_key_state_manager() -> SyncedStoreKeyStateManager:
     return SyncedStoreKeyStateManager(get_synced_store_client())
 
@@ -135,7 +129,7 @@ def get_key_lifecycle_manager() -> KeyLifecycleManager:
     return KeyLifecycleManager(
         get_keydata_repository(),
         get_token_manager(),
-        get_filesystem_key_manager(),
+        get_app_config().KEYS,
         get_synced_store_key_state_manager(),
         get_distributed_lock_factory(),
     )
