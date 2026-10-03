@@ -17,8 +17,8 @@ class SupportsJWK(Protocol):
     def use(self) -> Literal[JWKUse.SIG]: ...
     @property
     def alg(self) -> str: ...
-
-    kid: str
+    @property
+    def kid(self) -> str: ...
 
 
 class SupportsPydanticModelSerialization(Protocol):
