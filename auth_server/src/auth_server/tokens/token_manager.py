@@ -275,23 +275,6 @@ class TokenManager:
 
         self._key_mapping[kid] = new_keydata.create_public_copy()
 
-    async def fetch_unexpired_key(self, kid: str) -> KeyPrivateDataResult | None:
-        key_label: str = f"invalid_key:{kid}"
-        # Pre-emptive negative check
-        invalid_key: str | None = await self._synced_store_client.get(key_label)
-        if invalid_key:
-            return None
-
-        key: KeyPrivateDataResult | None = await self._keydata_repository.get_keydata(
-            kid, public_only=False
-        )
-        if not key:
-            self._synced_store_client.set(
-                key_label, 1, self.token_manager_config.ANNOUNCEMENT_DURATION
-            )
-            return None
-        return key
-
     def invalidate_key(self, kid: str) -> None:
         """Invalidate a verification key"""
         if self._active_key == kid:
