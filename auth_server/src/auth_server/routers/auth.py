@@ -14,11 +14,11 @@ from auth_server.config.app_config import AppConfig
 from auth_server.dependencies.local import (
     get_app_config,
     get_hypermedia_link_builder,
-    get_keydata_repository,
+    get_synced_store_key_state_manager,
     get_token_manager,
 )
+from auth_server.keys.key_manager import SyncedStoreKeyStateManager
 from auth_server.models.auth_requests import AuthenticationModel, RegistrationModel
-from auth_server.repositories.keydata import KeydataRepository
 from auth_server.tokens.token_manager import TokenManager
 from auth_server.tokens.typing import StandardRefreshTokenClaims, TokenType
 from auth_server.utils.auth_auxillary import attach_tokens
@@ -32,9 +32,11 @@ config: Final[AppConfig] = get_app_config()
 ### Endpoints ###
 @AUTH.get("/jwks")
 async def jwks(
-    keydata_repository: Annotated[KeydataRepository, Depends(get_keydata_repository)],
+    synced_keystate_manager: Annotated[
+        SyncedStoreKeyStateManager, Depends(get_synced_store_key_state_manager)
+    ],
 ) -> JSONResponse:
-    jwks_list: tuple[SupportsJWK, ...] = await keydata_repository.get_jwks()
+    jwks_list: tuple[SupportsJWK, ...] = tuple(await synced_keystate_manager.get_jwks())
     return JSONResponse({"keys": jwks_list})
 
 
