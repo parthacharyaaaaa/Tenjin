@@ -1,1 +1,0 @@
-print("Packeged resource server succesfully")

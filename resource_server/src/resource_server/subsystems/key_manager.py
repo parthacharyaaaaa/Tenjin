@@ -1,6 +1,5 @@
 import asyncio
 from dataclasses import dataclass, field
-from traceback import format_exc
 from typing import Final
 
 import httpx
@@ -172,9 +171,6 @@ class KeyManager(metaclass=SingletonMetaclass):
                 pipe.delete(RedisConstants.JWKS_MAPPING)
                 pipe.hset(RedisConstants.JWKS_MAPPING, mapping=self.current_mapping)
                 await pipe.execute()
-
-        except Exception:
-            print(format_exc())
         finally:
             async with self.app_redis_client.pipeline() as pipe:
                 pipe.delete(RedisConstants.JWKS_POLL_LOCK)
