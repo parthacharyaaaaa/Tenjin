@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import traceback
 from contextlib import asynccontextmanager
@@ -72,8 +73,11 @@ async def master_bootup(
     keydata_repository: KeydataRepository,
     token_manager: TokenManager,
     process_id: int,
+    *,
+    logger: logging.Logger | None = None,
 ) -> None:
-    print(f"[AUTH {process_id}] Serving as master")
+    logger = logger or logging.getLogger(f"{process_id}::{master_bootup.__name__}")
+    logger.info("Serving as master")
 
     active_keydata: KeyPrivateDataResult | None = None
     rotated_verifying_keys: dict[str, KeyPublicDataResult] | None = None
@@ -84,7 +88,7 @@ async def master_bootup(
         ] = await keydata_repository.get_relevant_keydata(public_data_only=False)
         if not keydata:
             # No valid keys in DB, master must create new pair
-            print(f"[AUTH {process_id}] Creating new key pair")
+            logger.info("Creating new key pair")
             active_keydata = await _initialize_active_key(
                 config.KEYS, keydata_repository
             )
@@ -119,12 +123,10 @@ async def master_bootup(
         await synced_store_manager.set_jwks(jwks)
 
         token_manager.set_key_state(active_keydata, rotated_verifying_keys)
-        print(f"[AUTH {process_id}] Master process bootup complete!")
+        logger.info("Master process bootup complete!")
     except Exception as e:
-        print(
-            f"[AUTH {process_id}] Master worker has encountered an irrecoverable error, details: "
-        )
-        print(traceback.format_exc())
+        logger.error("Master worker has encountered an irrecoverable error, details:")
+        logger.error(traceback.format_exc())
         await synced_store_client.set(
             SyncedStoreCommandStrings.ABORT,
             1,
@@ -141,18 +143,17 @@ async def slave_bootup(
     keydata_repository: KeydataRepository,
     token_manager: TokenManager,
     process_id: int,
+    *,
+    logger: logging.Logger | None = None,
 ) -> None:
+    logger = logger or logging.getLogger(f"{process_id}::{slave_bootup.__name__}")
     # Wait for master worker to finish managing key synchronization and file I/O, and then proceed on the assumption that the JWKS file has been written into/validated.
     while await synced_store_client.get(SyncedStoreCommandStrings.AUTH_BOOTUP_MASTER):  # noqa
         await asyncio.sleep(config.BOOTUP.SLAVE_SLEEP_POLLING_INTERVAL.total_seconds())  # noqa
 
     if await synced_store_client.get(SyncedStoreCommandStrings.ABORT):
-        print(
-            f"[AUTH {process_id}] Master failed to setup key configuration, aborting..."
-        )
+        logger.error("Master failed to setup key configuration, aborting...")
         raise RuntimeError("Master failed to set up key configuration")
-
-    # Once lock is released, slave worker only needs to consult database and write to its own memory
 
     keys: list[KeyPrivateDataResult] = await keydata_repository.get_relevant_keydata(
         limit=config.JWKS.JWKS_CAP, raise_on_empty=True, public_data_only=False
