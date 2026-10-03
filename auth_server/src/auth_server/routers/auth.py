@@ -1,11 +1,11 @@
 from hashlib import sha256
 from typing import Annotated, Final
 
-import aiofiles
 import httpx
 from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
 from auxillary.data_structures.enriched.response import EnrichedJSONResponse
+from auxillary.security.data_structures.jwks_typing import SupportsJWK
 from fastapi import APIRouter, Depends
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response
@@ -14,9 +14,11 @@ from auth_server.config.app_config import AppConfig
 from auth_server.dependencies.local import (
     get_app_config,
     get_hypermedia_link_builder,
+    get_keydata_repository,
     get_token_manager,
 )
 from auth_server.models.auth_requests import AuthenticationModel, RegistrationModel
+from auth_server.repositories.keydata import KeydataRepository
 from auth_server.tokens.token_manager import TokenManager
 from auth_server.tokens.typing import StandardRefreshTokenClaims, TokenType
 from auth_server.utils.auth_auxillary import attach_tokens
@@ -28,11 +30,12 @@ config: Final[AppConfig] = get_app_config()
 
 
 ### Endpoints ###
-@AUTH.get("/jwks.json")
-async def jwks() -> Response:
-    # TODO: Add Cache-Control, and using an in-memory jwks copy
-    async with aiofiles.open(config.JWKS.JWKS_FILEPATH, mode="rb") as jwks_file:
-        return Response(await jwks_file.read(), media_type="application/json")
+@AUTH.get("/jwks")
+async def jwks(
+    keydata_repository: Annotated[KeydataRepository, Depends(get_keydata_repository)],
+) -> JSONResponse:
+    jwks_list: tuple[SupportsJWK, ...] = await keydata_repository.get_jwks()
+    return JSONResponse({"keys": jwks_list})
 
 
 @AUTH.post("/login")
