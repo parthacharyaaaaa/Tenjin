@@ -23,6 +23,7 @@ from auth_server.keys.key_manager import (
 from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.keydata import KeydataRepository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
+from auth_server.subsystems.jwks_announcer import JWKSUpdateAnnouncer
 from auth_server.tokens.token_manager import TokenManager
 
 
@@ -126,6 +127,11 @@ def get_distributed_lock_factory() -> RedisInstanceLockFactory:
     return RedisInstanceLockFactory(get_synced_store_client())
 
 
+@lru_cache(maxsize=1)
+def get_jwks_update_announcer() -> JWKSUpdateAnnouncer:
+    return JWKSUpdateAnnouncer(get_synced_store_client(), get_app_config().JWKS)
+
+
 def get_key_lifecycle_manager() -> KeyLifecycleManager:
     return KeyLifecycleManager(
         get_keydata_repository(),
@@ -133,4 +139,5 @@ def get_key_lifecycle_manager() -> KeyLifecycleManager:
         get_app_config().KEYS,
         get_synced_store_key_state_manager(),
         get_distributed_lock_factory(),
+        get_jwks_update_announcer(),
     )

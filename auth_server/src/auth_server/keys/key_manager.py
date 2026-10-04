@@ -8,6 +8,7 @@ from typing import Final, Protocol
 import orjson
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from auxillary.mixins.metaclass import AntiSingletonMixin
+from auxillary.security.data_structures.jwks import VariableJWKS
 from auxillary.security.serialization import (
     pem_serialize_private_key,
     pem_serialize_public_key,
@@ -28,6 +29,7 @@ from auth_server.strings import (
     SelectionLockOption,
     SyncedStoreKeyStrings,
 )
+from auth_server.subsystems.jwks_announcer import JWKSUpdateAnnouncer
 from auth_server.tokens.token_manager import TokenManager
 
 
@@ -111,6 +113,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
     key_config: KeyConfigModel
     synced_store_key_manager: SyncedStoreKeyStateManager
     redis_lock_factory: RedisInstanceLockFactory
+    jwks_update_announcer: JWKSUpdateAnnouncer
 
     _lock_value: str = field(default="LOCK", kw_only=True)
     _lock_prefix: str = field(default="LOCK", kw_only=True)
@@ -212,6 +215,9 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     jwks = list(filter(lambda x: x.kid != key_id, jwks))
 
                 await self.synced_store_key_manager.set_jwks(jwks)
+        await self.jwks_update_announcer.stream_update(
+            VariableJWKS.model_validate({"keys": jwks})
+        )
 
     async def clean_keystore(
         self, cooldown_duration: int | None = None
@@ -237,6 +243,10 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 await self.synced_store_key_manager.set_jwks((active_key,))
                 for key in jwks_data:
                     self.token_manager.invalidate_key(key.kid)
+
+        await self.jwks_update_announcer.stream_update(
+            VariableJWKS.model_validate({"keys": jwks_data})
+        )
 
         return active_key.kid, tuple(i.kid for i in jwks_data)
 
@@ -318,4 +328,9 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     await self.keydata_repository.get_jwks()
                 )
                 await self.synced_store_key_manager.set_jwks(jwks)
+
+        await self.jwks_update_announcer.stream_update(
+            VariableJWKS.model_validate({"keys": jwks})
+        )
+
         return new_key.create_public_copy()
