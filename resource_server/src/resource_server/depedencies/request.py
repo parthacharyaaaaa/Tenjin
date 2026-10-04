@@ -57,7 +57,7 @@ async def validate_access_token(
             return StandardAccessTokenClaims(**decoded_token)  # type: ignore[reportArgumentType]
 
         # Update current mapping through global JWKS mapping
-        key_manager.current_mapping = await key_manager.get_global_key_mapping()
+        await key_manager.update_local_mapping()
         if key := key_manager.current_mapping.get(key_id):
             decoded_token = jwt.decode(
                 jwt=encoded_access_token,

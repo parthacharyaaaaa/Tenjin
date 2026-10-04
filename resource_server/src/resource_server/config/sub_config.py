@@ -125,9 +125,17 @@ class JWKSConfig(BaseModel):
     JWKS_POLL_INTERVAL: timedelta_s
     UPDATION_LOCK_LIFESPAN: timedelta_s
 
+    # Updation-related attributes
+    JWKS_UPDATE_STREAM_NAME: str
+    JWKS_UPDATE_LISTENER_GROUP_NAME: Annotated[
+        str, Field(frozen=True, default="jwks_updation")
+    ]
+    JWKS_UPDATE_LIST_NAME: str
+
     KEY_ANNOUNCEMENT_DURATION: timedelta_s
     MAX_GLOBAL_MAPPING_POLLS: Annotated[int, Field(ge=1)]
-    GLOBAL_MAPPING_POLL_INTERVAL: Annotated[int, Field(ge=0)]
+    MIN_GLOBAL_MAPPING_POLL_INTERVAL: timedelta_s
+    MAX_GLOBAL_MAPPING_POLL_INTERVAL: timedelta_s
     SLAVE_WAIT_INTERVAL: timedelta_s
 
     KEY_LEEWAY: timedelta_s
@@ -147,4 +155,15 @@ class JWKSConfig(BaseModel):
             jwt.PyJWS().get_algorithms()
         ):
             raise ValueError(f"Unsupported algorithms: {', '.join(unsupported_algs)}")
+        return self
+
+    @model_validator(mode="after")
+    def validate_global_mapping_polling_intervals(self) -> Self:
+        if (
+            self.MIN_GLOBAL_MAPPING_POLL_INTERVAL
+            > self.MAX_GLOBAL_MAPPING_POLL_INTERVAL
+        ):
+            raise ValueError(
+                "Minimum polling interval greater than maximum polling interval"
+            )
         return self
