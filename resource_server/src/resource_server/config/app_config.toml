@@ -58,6 +58,7 @@ JWKS_REQUEST_TIMEOUT=3                  # seconds
 JWKS_POLL_INTERVAL=1800                 # seconds
 UPDATION_LOCK_LIFESPAN=300              # seconds
 
+JWKS_UPDATE_STREAM_NAME="updates:jwks"
 KEY_ANNOUNCEMENT_DURATION=300           # seconds
 MAX_GLOBAL_MAPPING_POLLS=10
 MIN_GLOBAL_MAPPING_POLL_INTERVAL=5      # seconds
@@ -66,7 +67,6 @@ SLAVE_WAIT_INTERVAL=5                   # seconds
 
 KEY_LEEWAY=180                          # seconds
 ALLOWED_ALGORITHMS=["ES256"]
-KEY_ANNOUNCEMENT_AUTH_CHANNEL="updates:jwks"
 
 [business]
 ACCOUNT_RECOVERY_PERIOD=7       # days

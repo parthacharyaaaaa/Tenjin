@@ -143,8 +143,6 @@ class JWKSConfig(BaseModel):
         frozenset[str], BeforeValidator(lambda x: frozenset(i.upper() for i in x))
     ]
 
-    KEY_ANNOUNCEMENT_AUTH_CHANNEL: str
-
     LOCAL_PUBKEY_ENCODING: Annotated[
         PublicFormat, Field(default=PublicFormat.SubjectPublicKeyInfo)
     ]
