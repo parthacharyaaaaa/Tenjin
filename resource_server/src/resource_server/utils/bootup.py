@@ -34,12 +34,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     key_manager: Final[KeyManager] = get_key_manager()
-    key_manager.current_mapping = await key_manager.get_global_key_mapping()
+    await key_manager.update_local_mapping()
     if not key_manager.current_mapping:
-        await key_manager.update_jwks()
-
-    key_manager.start_jwks_monitoring()
-
+        await key_manager.hard_update_jwks()
+    key_manager.start_monitoring_tasks()
     yield
-
-    await key_manager.stop_jwks_monitoring()
+    await key_manager.stop_monitoring_tasks()

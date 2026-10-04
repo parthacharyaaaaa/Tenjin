@@ -114,6 +114,7 @@ class JWKSConfigModel(BaseModel):
         Field(default="jwks.json", alias="JWKS_FILENAME"),
     ]
     JWKS_CAP: Annotated[int, Field(ge=1)]
+    UPDATION_STREAM_NAME: str
     TOKEN_MANAGER: Annotated[TokenManagerConfigModel, Field(alias="token_manager")]
 
     def _resolve_path_attr(

@@ -1,186 +1,214 @@
 import asyncio
+import os
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from traceback import format_exc
-from typing import Final
+from types import MappingProxyType
+from uuid import uuid4
 
 import httpx
+import orjson
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
+from auxillary.security.data_structures.jwks import (
+    EllipticCurveJWK,
+    EllipticCurveJWKS,
+)
+from auxillary.security.data_structures.jwks_enums import JWKKty
 from auxillary.security.serialization import pem_serialize_public_key
 from auxillary.singleton import SingletonMetaclass
-from auxillary.utils import from_base64url
 from cryptography.hazmat.primitives.asymmetric import ec
 from redis.asyncio import Redis
-from redis.asyncio.client import PubSub
+from resource_auxillary.coordination import exponential_jittered_backoff
 
-from resource_server.config.app_config import AppConfig
 from resource_server.config.constants import RedisConstants
+from resource_server.config.sub_config import JWKSConfig
 from resource_server.utils.typing import JWKSEntry
 
 
-@dataclass(slots=True, weakref_slot=True)
+@dataclass(slots=True, weakref_slot=True, frozen=True)
 class KeyManager(metaclass=SingletonMetaclass):
-    app_config: Final[AppConfig]
-    app_redis_client: Final[Redis]
-    auth_redis_client: Final[Redis]
-    distributed_lock_factory: Final[RedisInstanceLockFactory]
-    current_mapping: dict[str, bytes] = field(default_factory=dict)
-    _pubsub: PubSub | None = field(default=None)
-    _monitoring_task: asyncio.Task | None = field(init=False, default=None)
-    _jwks_endpoint: str = ""
+    auth_server_address: str
+    jwks_config: JWKSConfig
+    app_redis_client: Redis
+    auth_redis_client: Redis
+    distributed_lock_factory: RedisInstanceLockFactory
+    _current_mapping: dict[str, bytes] = field(default_factory=dict)
+    consumer_name: str = field(
+        kw_only=True, default_factory=lambda: f"{os.getpid}:{uuid4().hex}"
+    )
 
-    def __post_init__(self) -> None:
-        self._jwks_endpoint = "http://" + "/".join(
-            (self.app_config.CORE.AUTH_SERVER_NAME, self.app_config.JWKS.JWKS_ENDPOINT)
-        )
-
-    @staticmethod
-    def parse_keyset(
-        raw_keyset: str, entry_delimitor: str, pair_delimitor: str
-    ) -> dict[str, bytes]:
-        return {
-            entry.split(pair_delimitor)[0]: entry.split(pair_delimitor)[1].encode(
-                "utf-8"
-            )
-            for entry in raw_keyset.split(entry_delimitor)
-        }
-
-    async def subscribe(self):
-        self._pubsub = self.auth_redis_client.pubsub()
-        await self._pubsub.subscribe(self.app_config.JWKS.KEY_ANNOUNCEMENT_AUTH_CHANNEL)
-
-    async def sync_jwks(self) -> None:
-        await self.subscribe()
-        if not self._pubsub:
-            raise TypeError("PubSub object not instantiated")
-
-        async for message in self._pubsub.listen():
-            keys: dict[str, bytes] = self.parse_keyset(message, ":", "=")
-            expired_keys: tuple[str, ...] = tuple(
-                k for k in keys.keys() if k not in self.current_mapping
-            )
-            for key_id in expired_keys:
-                self.current_mapping.pop(key_id)
-                keys.pop(key_id)
-
-            for key_id, key in keys.items():
-                self.current_mapping.setdefault(key_id, key)
-
-    def start_jwks_monitoring(self) -> None:
-        if not self._monitoring_task:
-            self._monitoring_task = asyncio.create_task(
-                self.sync_jwks(), name=f"{self}:{self.start_jwks_monitoring.__name__}"
-            )
-
-    async def stop_jwks_monitoring(self) -> None:
-        if not self._monitoring_task:
-            return
-
-        self._monitoring_task.cancel()
-        try:
-            await self._monitoring_task
-        except asyncio.CancelledError:
-            pass
-        self._monitoring_task = None
+    jwks_endpoint: str = field(init=False)
+    _jwks_monitoring_task: asyncio.Task = field(init=False)
+    _global_mapping_monitoring_task: asyncio.Task = field(init=False)
+    _last_update_timestamp: int = field(init=False, default=-1)
+    _casting_map: MappingProxyType[JWKKty, Callable] = field(
+        init=False, default=MappingProxyType({JWKKty.EC: EllipticCurveJWK})
+    )
 
     @property
-    def jwks_endpoint(self) -> str:
-        return self._jwks_endpoint
+    def current_mapping(self) -> dict[str, bytes]:
+        return self._current_mapping
 
-    async def get_global_key_mapping(self) -> dict[str, bytes]:
+    def update_updation_timestamp(self, timestamp: int) -> None:
+        if timestamp < self._last_update_timestamp:
+            raise ValueError("New timestamp value lower than current timestamp")
+        object.__setattr__(self, "_last_update_timestamp", timestamp)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "jwks_endpoint",
+            "http://"
+            + "/".join((self.auth_server_address, self.jwks_config.JWKS_ENDPOINT)),
+        )
+
+    def start_monitoring_tasks(self) -> None:
+        for task, coro in {
+            "_global_mapping_monitoring_task": self.global_mapping_poller,
+            "_jwks_monitoring_task": self.jwks_updation_listener,
+        }.items():
+            task_ref: asyncio.Task[None] | None = getattr(self, task, None)
+            if isinstance(task_ref, asyncio.Task):
+                continue
+            object.__setattr__(self, task, coro())
+
+    async def stop_monitoring_tasks(self) -> None:
+        for task in ("_global_mapping_monitoring_task", "_jwks_monitoring_task"):
+            task_ref: asyncio.Task[None] | None = getattr(self, task, None)
+            if not task_ref:
+                continue
+            task_ref.cancel()
+            try:
+                await task_ref
+            except asyncio.CancelledError:
+                pass
+            object.__setattr__(self, task, None)
+
+    async def fetch_global_key_mapping(self) -> dict[str, bytes]:
         """Get JWKS cache in Redis"""
-        res: dict[str, str] = await self.app_redis_client.hgetall(
+        res: dict[str, str] = await self.app_redis_client.hgetall(  # pyrefly: ignore[not-async]
             RedisConstants.JWKS_MAPPING
-        )  # pyrefly: ignore[not-async]
+        )
+        return {kid: pub_pem.encode("utf-8") for kid, pub_pem in res.items()}
 
-        # crypto APIs expect bytes
-        return {kid: pub_pem.encode() for kid, pub_pem in res.items()}
-
-    async def get_jwks(self) -> list[JWKSEntry] | None:
-        """Read and return JWKS from source"""
+    async def fetch_jwks(self) -> EllipticCurveJWKS:
+        """Read and return JWKS from issuing authority (auth server)"""
         async with httpx.AsyncClient() as client:
             response: httpx.Response = await client.get(
                 self.jwks_endpoint,
-                timeout=self.app_config.JWKS.JWKS_REQUEST_TIMEOUT.total_seconds(),
+                timeout=self.jwks_config.JWKS_REQUEST_TIMEOUT.total_seconds(),
             )
-            if response.status_code != 200:
-                return None
-
+        response.raise_for_status()
         new_mapping: list[JWKSEntry] = response.json().get("keys")
         if not new_mapping:
-            pass
+            raise ValueError("Fetched JWKS data empty")
         # TODO: Ping auth server to indicate malformatted JWKS response
-        return new_mapping
+        return EllipticCurveJWKS.construct_from_jwks_list(new_mapping)
 
-    async def update_jwks(self) -> None:
-        """Fetch JWKS from auth server and load any new key mappings into current_mapping"""
+    def _update_local_mapping_from_jwks(self, fetched_jwks: EllipticCurveJWKS) -> None:
+        local_keys: frozenset[str] = frozenset(self._current_mapping.keys())
+        global_valid_keys: frozenset[str] = frozenset(
+            jwk.kid for jwk in fetched_jwks.keys
+        )
+        for expired_key in local_keys - global_valid_keys:
+            self._current_mapping.pop(expired_key)
+        for jwk in fetched_jwks.keys:
+            if jwk.kid in local_keys:
+                continue
+            # Welcome to the club >:3
+            public_numbers = ec.EllipticCurvePublicNumbers(
+                jwk.public_members.x, jwk.public_members.y, ec.SECP256K1()
+            )
+            verification_key = public_numbers.public_key()
+            self._current_mapping[jwk.kid] = pem_serialize_public_key(
+                verification_key, self.jwks_config.LOCAL_PUBKEY_ENCODING
+            )
+
+    def _local_reflect_global_mapping(
+        self, global_mapping: Mapping[str, bytes]
+    ) -> None:
+        local_keys = self._current_mapping.keys()
+        for expired_key in local_keys - global_mapping.keys():
+            self._current_mapping.pop(expired_key)
+        for key_id, public_pem_bytes in global_mapping.items():
+            if key_id in local_keys:
+                continue
+            # Welcome to the club >:3
+            self._current_mapping[key_id] = public_pem_bytes
+
+    async def _global_reflect_local_changes(self) -> None:
+        async with self.app_redis_client.pipeline(transaction=True) as pipe:
+            pipe.delete(RedisConstants.JWKS_MAPPING)
+            pipe.hset(RedisConstants.JWKS_MAPPING, mapping=self._current_mapping)
+            await pipe.execute()
+
+    async def hard_update_jwks(self) -> None:
+        """
+        Fetch JWKS from auth server
+        and load any new key mappings into current_mapping
+        """
         lock_context = await self.distributed_lock_factory.lock(
             RedisConstants.JWKS_POLL_LOCK,
             "__lock__",
-            int(self.app_config.JWKS.UPDATION_LOCK_LIFESPAN.total_seconds()),
+            int(self.jwks_config.UPDATION_LOCK_LIFESPAN.total_seconds()),
         )
-
-        # Wait for current worker and then read global key mapping
         if not lock_context:
-            for _ in range(self.app_config.JWKS.MAX_GLOBAL_MAPPING_POLLS):
-                if await self.app_redis_client.get(RedisConstants.JWKS_POLL_LOCK):
-                    await asyncio.sleep(
-                        self.app_config.JWKS.GLOBAL_MAPPING_POLL_INTERVAL * 2
-                    )
-                break
+            # Let background polling update local key data naturally
+            return
+        async with lock_context:
+            fetched_jwks: EllipticCurveJWKS = await self.fetch_jwks()
+            self._update_local_mapping_from_jwks(fetched_jwks)
+            await self._global_reflect_local_changes()
 
-            global_mapping: dict[str, bytes] = {}
-            for _ in range(self.app_config.JWKS.MAX_GLOBAL_MAPPING_POLLS):
-                global_mapping = await self.get_global_key_mapping()
-                if global_mapping:
-                    self.current_mapping = global_mapping
-                    return
+    async def handle_invalid_updates(self, message_id: str) -> None:
+        pass
 
-            raise RuntimeError("Failed to concile JWKS")
-        try:
-            new_mapping: list[JWKSEntry] | None = await self.get_jwks()
+    async def update_local_mapping(self) -> None:
+        global_mapping: dict[str, bytes] = await self.fetch_global_key_mapping()
+        self._local_reflect_global_mapping(global_mapping)
 
-            if not new_mapping:
-                # TODO: Improved handling of JWKS failures
-                return
-
-            local_keys: frozenset[str] = frozenset(self.current_mapping.keys())
-            global_valid_keys: frozenset[str] = frozenset(
-                mapping["kid"] for mapping in new_mapping
-            )
-
-            # Purge local keys that are invalid
-            for expired_key in local_keys - global_valid_keys:
-                self.current_mapping.pop(expired_key)
-
-            for key_metadata in new_mapping:
-                # New key found, welcome to the club >:3
-                if key_metadata["kid"] not in self.current_mapping:
-                    x = from_base64url(key_metadata["x"])
-                    y = from_base64url(key_metadata["y"])
-                    public_numbers = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256K1())
-                    verification_key = public_numbers.public_key()
-
-                    self.current_mapping[key_metadata["kid"]] = (
-                        pem_serialize_public_key(
-                            verification_key, self.app_config.JWKS.LOCAL_PUBKEY_ENCODING
-                        )
-                    )
-
-            # Update global list and values in Redis to inform other workers
-            async with self.app_redis_client.pipeline() as pipe:
-                # Overwrite mapping entirely
-                pipe.delete(RedisConstants.JWKS_MAPPING)
-                pipe.hset(RedisConstants.JWKS_MAPPING, mapping=self.current_mapping)
-                await pipe.execute()
-
-        except Exception:
-            print(format_exc())
-        finally:
-            async with self.app_redis_client.pipeline() as pipe:
-                pipe.delete(RedisConstants.JWKS_POLL_LOCK)
-                pipe.set(
-                    RedisConstants.JWKS_POLL_COOLDOWN,
-                    value=1,
-                    ex=self.app_config.JWKS.JWKS_POLL_INTERVAL,
+    async def _jwks_updation_stream_iterator(self):
+        while True:
+            try:
+                update_data: list[
+                    list[list[tuple[str, dict[str, str]]]]
+                ] = await self.auth_redis_client.xreadgroup(
+                    groupname=self.jwks_config.JWKS_UPDATE_LISTENER_GROUP_NAME,
+                    consumername=self.consumer_name,
+                    streams={self.jwks_config.JWKS_UPDATE_STREAM_NAME: ">"},
+                    block=0,
+                    count=1,
                 )
-                await pipe.execute()
+                if (
+                    event_id := int(update_data[0][1][0][0])
+                ) < self._last_update_timestamp:
+                    await self.auth_redis_client.xack(
+                        self.jwks_config.JWKS_UPDATE_STREAM_NAME,
+                        self.consumer_name,
+                        event_id,
+                    )
+                    continue
+                # Thank you redis python client for the amazing typing support :D
+                yield (
+                    event_id,
+                    EllipticCurveJWKS.construct_from_jwks_list(
+                        orjson.loads(update_data[0][1][0][1]["keys"])
+                    ),
+                )
+            except Exception:  # nosec
+                continue
+
+    async def jwks_updation_listener(self) -> None:
+        async for event_id, announced_jwks in self._jwks_updation_stream_iterator():
+            # Invalidation is inherently idempotent
+            self._update_local_mapping_from_jwks(announced_jwks)
+            self.update_updation_timestamp(event_id)
+            await self._global_reflect_local_changes()
+
+    async def global_mapping_poller(self) -> None:
+        while True:
+            await self.update_local_mapping()
+            await exponential_jittered_backoff(
+                self.jwks_config.MAX_GLOBAL_MAPPING_POLL_INTERVAL,
+                self.jwks_config.MIN_GLOBAL_MAPPING_POLL_INTERVAL,
+                1,
+            )

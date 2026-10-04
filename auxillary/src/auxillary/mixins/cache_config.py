@@ -26,7 +26,6 @@ class BasicCacheTTLConfig:
         }
 
         if sorted(time_dict.values(), reverse=True) != list(time_dict.values()):
-            print(sorted(time_dict.values()), list(time_dict.values()))
             raise ValueError(
                 " ".join(
                     (

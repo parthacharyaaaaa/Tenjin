@@ -17,8 +17,8 @@ class SupportsJWK(Protocol):
     def use(self) -> Literal[JWKUse.SIG]: ...
     @property
     def alg(self) -> str: ...
-
-    kid: str
+    @property
+    def kid(self) -> str: ...
 
 
 class SupportsPydanticModelSerialization(Protocol):
@@ -68,7 +68,7 @@ class SupportsJWKSerialization(SupportsJWK, SupportsPydanticModelSerialization):
 
 class SupportsEllipticCurveJWK(SupportsJWK):
     crv: type[EllipticCurve]
-    public_memebrs: EllipticCurvePublicNumbers
+    public_members: EllipticCurvePublicNumbers
 
 
 class JWKS(Protocol):

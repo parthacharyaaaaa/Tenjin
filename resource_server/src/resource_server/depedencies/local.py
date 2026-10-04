@@ -69,8 +69,10 @@ def get_distributed_lock_factory() -> RedisInstanceLockFactory:
 
 @lru_cache(maxsize=1)
 def get_key_manager() -> KeyManager:
+    app_cnofig: Final[AppConfig] = get_app_config()
     return KeyManager(
-        get_app_config(),
+        app_cnofig.CORE.AUTH_SERVER_NAME,
+        app_cnofig.JWKS,
         get_app_redis_client(),
         get_auth_redis_client(),
         get_distributed_lock_factory(),

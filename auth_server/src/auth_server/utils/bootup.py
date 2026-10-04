@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import traceback
 from contextlib import asynccontextmanager
@@ -23,19 +24,20 @@ from auth_server.dependencies.local import (
     get_app_config,
     get_database_session_maker,
     get_distributed_lock_factory,
-    get_filesystem_key_manager,
     get_synced_store_client,
+    get_synced_store_key_state_manager,
     get_token_manager,
 )
-from auth_server.keys.key_manager import FileSystemKeyManager
+from auth_server.keys.key_manager import SyncedStoreKeyStateManager
 from auth_server.keys.keygen import generate_ecdsa_pair
 from auth_server.repositories.keydata import (
+    EllipticCurveJWKResult,
     KeydataRepository,
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
 from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
-from auth_server.strings import SyncedStoreCommandStrings, SyncedStoreKeyStrings
+from auth_server.strings import SyncedStoreCommandStrings
 from auth_server.tokens.token_manager import TokenManager
 
 
@@ -67,12 +69,15 @@ async def _initialize_active_key(
 async def master_bootup(
     config: AppConfig,
     synced_store_client: Redis,
+    synced_store_manager: SyncedStoreKeyStateManager,
     keydata_repository: KeydataRepository,
-    filesystem_key_manager: FileSystemKeyManager,
     token_manager: TokenManager,
     process_id: int,
+    *,
+    logger: logging.Logger | None = None,
 ) -> None:
-    print(f"[AUTH {process_id}] Serving as master")
+    logger = logger or logging.getLogger(f"{process_id}::{master_bootup.__name__}")
+    logger.info("Serving as master")
 
     active_keydata: KeyPrivateDataResult | None = None
     rotated_verifying_keys: dict[str, KeyPublicDataResult] | None = None
@@ -83,7 +88,7 @@ async def master_bootup(
         ] = await keydata_repository.get_relevant_keydata(public_data_only=False)
         if not keydata:
             # No valid keys in DB, master must create new pair
-            print(f"[AUTH {process_id}] Creating new key pair")
+            logger.info("Creating new key pair")
             active_keydata = await _initialize_active_key(
                 config.KEYS, keydata_repository
             )
@@ -112,24 +117,16 @@ async def master_bootup(
             if len(keydata) > 1:
                 rotated_verifying_keys = {k.kid: k for k in keydata[1:]}
 
-        await filesystem_key_manager.initialize_jwks(keydata)
-
-        # Initialize token manager
-        async with synced_store_client.pipeline() as pipe:
-            pipe.delete(SyncedStoreKeyStrings.VALID_KEYS)
-            valid_keys: list[str] = (
-                list(rotated_verifying_keys.keys()) if rotated_verifying_keys else []
-            ) + [active_keydata.kid]
-            pipe.lpush(SyncedStoreKeyStrings.VALID_KEYS, *valid_keys)
-            await pipe.execute()
+        jwks: Final[tuple[EllipticCurveJWKResult, ...]] = tuple(
+            await keydata_repository.get_jwks()
+        )
+        await synced_store_manager.set_jwks(jwks)
 
         token_manager.set_key_state(active_keydata, rotated_verifying_keys)
-        print(f"[AUTH {process_id}] Master process bootup complete!")
+        logger.info("Master process bootup complete!")
     except Exception as e:
-        print(
-            f"[AUTH {process_id}] Master worker has encountered an irrecoverable error, details: "
-        )
-        print(traceback.format_exc())
+        logger.error("Master worker has encountered an irrecoverable error, details:")
+        logger.error(traceback.format_exc())
         await synced_store_client.set(
             SyncedStoreCommandStrings.ABORT,
             1,
@@ -146,18 +143,17 @@ async def slave_bootup(
     keydata_repository: KeydataRepository,
     token_manager: TokenManager,
     process_id: int,
+    *,
+    logger: logging.Logger | None = None,
 ) -> None:
+    logger = logger or logging.getLogger(f"{process_id}::{slave_bootup.__name__}")
     # Wait for master worker to finish managing key synchronization and file I/O, and then proceed on the assumption that the JWKS file has been written into/validated.
     while await synced_store_client.get(SyncedStoreCommandStrings.AUTH_BOOTUP_MASTER):  # noqa
         await asyncio.sleep(config.BOOTUP.SLAVE_SLEEP_POLLING_INTERVAL.total_seconds())  # noqa
 
     if await synced_store_client.get(SyncedStoreCommandStrings.ABORT):
-        print(
-            f"[AUTH {process_id}] Master failed to setup key configuration, aborting..."
-        )
+        logger.error("Master failed to setup key configuration, aborting...")
         raise RuntimeError("Master failed to set up key configuration")
-
-    # Once lock is released, slave worker only needs to consult database and write to its own memory
 
     keys: list[KeyPrivateDataResult] = await keydata_repository.get_relevant_keydata(
         limit=config.JWKS.JWKS_CAP, raise_on_empty=True, public_data_only=False
@@ -198,7 +194,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         get_database_session_maker()
     )
     token_manager: Final[TokenManager] = get_token_manager()
-    filesystem_key_manager: Final[FileSystemKeyManager] = get_filesystem_key_manager()
+    synced_state_manager: Final[SyncedStoreKeyStateManager] = (
+        get_synced_store_key_state_manager()
+    )
 
     master_lock_context: Final[BasicLockContext] = await lock_factory.lock(
         SyncedStoreCommandStrings.AUTH_BOOTUP_MASTER,
@@ -207,14 +205,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
 
     if master_lock_context.valid:
-        await master_bootup(
-            config,
-            synced_store_client,
-            keydata_repository,
-            filesystem_key_manager,
-            token_manager,
-            pid,
-        )
+        async with master_lock_context:
+            await master_bootup(
+                config,
+                synced_store_client,
+                synced_state_manager,
+                keydata_repository,
+                token_manager,
+                pid,
+            )
     else:
         await slave_bootup(
             config, synced_store_client, keydata_repository, token_manager, pid

@@ -1,37 +1,25 @@
-import asyncio
 from collections.abc import AsyncGenerator, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum, IntFlag
-from pathlib import Path
-from types import MappingProxyType
-from typing import Any, Final, Protocol
+from typing import Final, Protocol
 
-import aiofiles
 import orjson
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from auxillary.mixins.metaclass import AntiSingletonMixin
-from auxillary.security.data_structures.jwks import EllipticCurveJWK, VariableJWKS
-from auxillary.security.data_structures.jwks_enums import JWKKty
-from auxillary.security.data_structures.jwks_typing import (
-    SupportsJWKSerialization,
-)
+from auxillary.security.data_structures.jwks import VariableJWKS
 from auxillary.security.serialization import (
     pem_serialize_private_key,
     pem_serialize_public_key,
 )
-from auxillary.utils import to_base64url
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
-from cryptography.hazmat.primitives.serialization import (
-    load_pem_public_key,
-)
+from auxillary.utils import json_repr
 from redis.asyncio.client import Redis
 
-from auth_server.config.sub_config import JWKSConfigModel, KeyConfigModel
+from auth_server.config.sub_config import KeyConfigModel
 from auth_server.keys.keygen import generate_ecdsa_pair
 from auth_server.repositories.keydata import (
+    EllipticCurveJWKResult,
     KeydataRepository,
     KeyPrivateDataResult,
     KeyPublicDataResult,
@@ -41,6 +29,7 @@ from auth_server.strings import (
     SelectionLockOption,
     SyncedStoreKeyStrings,
 )
+from auth_server.subsystems.jwks_announcer import JWKSUpdateAnnouncer
 from auth_server.tokens.token_manager import TokenManager
 
 
@@ -64,186 +53,24 @@ class SupportsTransactionalBlocks(Protocol):
     ) -> AbstractAsyncContextManager[None, bool | None]: ...
 
 
-@dataclass(slots=True, frozen=True)
-class FileSystemKeyManager(AntiSingletonMixin):
-    jwks_config: JWKSConfigModel
-    keys_config: KeyConfigModel
-    _rewrite_buffer: dict[Path, bytes | bytearray | str] = field(default_factory=dict)
-    _deletion_buffer: list[Path] = field(default_factory=list)
-    _supported_key_types: MappingProxyType[JWKKty, type[SupportsJWKSerialization]] = (
-        field(  # pyrefly: ignore[bad-assignment]
-            init=False,
-            default_factory=lambda: MappingProxyType(
-                {
-                    JWKKty.EC: EllipticCurveJWK,
-                }
-            ),
-        )
-    )
-
-    @asynccontextmanager
-    async def transactional_block(
-        self,
-    ) -> AsyncGenerator[None]:
-        try:
-            yield
-        except Exception:
-            await asyncio.gather(
-                *(
-                    asyncio.to_thread(
-                        path.write_text  # pyrefly: ignore[bad-argument-type]
-                        if isinstance(buffer, str)
-                        else path.write_bytes,
-                        buffer,  # pyrefly: ignore[bad-argument-type]
-                    )
-                    for path, buffer in self._rewrite_buffer.items()
-                )
-            )
-            await asyncio.gather(
-                *(
-                    asyncio.to_thread(path.unlink, missing_ok=True)
-                    for path in self._deletion_buffer
-                )
-            )
-            raise
-        finally:
-            self._deletion_buffer.clear()
-            self._rewrite_buffer.clear()
-
-    def _insure_file_rewrite(
-        self,
-        filepath: Path,
-        *,
-        decoded: bool = True,
-        string_encoding: str | None = None,
-        errors: str | None = None,
-        newline: str | None = None,
-    ) -> None:
-        if not decoded:
-            self._rewrite_buffer[filepath] = filepath.read_bytes()
-            return
-        self._rewrite_buffer[filepath] = filepath.read_text(
-            string_encoding, errors, newline
-        )
-
-    def _insure_path_deletion(self, path: Path) -> None:
-        self._deletion_buffer.append(path)
-
-    async def load_jwks_data(self) -> VariableJWKS:
-        async with aiofiles.open(self.jwks_config.JWKS_FILEPATH, "rb") as jwks_file:
-            return self.serialize_jwks_data(
-                orjson.loads(await jwks_file.read())["keys"]
-            )
-
-    async def initialize_jwks(self, keys: Sequence[KeyPublicDataResult]) -> None:
-        jwks_contents: list[dict[str, str | int]] = []
-        for key in keys:
-            verification_key: PublicKeyTypes = load_pem_public_key(key.public_pem)
-            if not isinstance(verification_key, ec.EllipticCurvePublicKey):
-                raise TypeError("Expected an elliptic-curve public key")
-            public_numbers: ec.EllipticCurvePublicNumbers = (
-                verification_key.public_numbers()
-            )
-            jwks_contents.append(
-                {
-                    "kty": "EC",
-                    "alg": key.alg,
-                    "crv": key.curve,
-                    "use": "sig",
-                    "key_id": key.kid,
-                    "x": to_base64url(public_numbers.x),
-                    "y": to_base64url(public_numbers.y),
-                }
-            )
-
-        jwks: VariableJWKS = VariableJWKS.model_validate({"keys": jwks_contents})
-        self._insure_file_rewrite(self.jwks_config.JWKS_FILEPATH)
-        await self.overwrite_jwks(jwks)
-
-    async def update_jwks(
-        self,
-        vk: ec.EllipticCurvePublicKey,
-        key_id: str,
-        enforce_capacity: bool = True,
-    ) -> None:
-        """Updates the JWKS JSON file to include the given public key as the latest key"""
-        public_numbers: ec.EllipticCurvePublicNumbers = vk.public_numbers()
-        encoded_x, encoded_y = (
-            to_base64url(public_numbers.x),
-            to_base64url(public_numbers.y),
-        )
-        new_jwk: Final[EllipticCurveJWK] = EllipticCurveJWK.model_validate(
-            {
-                "kid": key_id,
-                "x": encoded_x,
-                "y": encoded_y,
-            }
-        )
-
-        self._insure_file_rewrite(self.jwks_config.JWKS_FILEPATH)
-        async with aiofiles.open(
-            self.jwks_config.JWKS_FILEPATH, "r+"
-        ) as jwks_json_file:
-            jwks_contents: VariableJWKS = self.serialize_jwks_data(
-                orjson.loads(await jwks_json_file.read())["keys"]
-            )
-            jwks_contents.keys.append(new_jwk)
-            length: int = len(jwks_contents.keys)
-
-            if enforce_capacity and length > self.keys_config.MAX_VALID_KEYS:
-                jwks_contents.keys = jwks_contents.keys[
-                    -self.keys_config.MAX_VALID_KEYS :
-                ]
-
-            await jwks_json_file.truncate(0)
-            await jwks_json_file.seek(0)
-            await jwks_json_file.write(jwks_contents.model_dump_json())
-
-    def serialize_jwks_data(self, jwks_data: list[dict[str, Any]]) -> VariableJWKS:
-        return VariableJWKS.model_validate(
-            self._supported_key_types[JWKKty(i["kty"])].model_validate(i)
-            for i in jwks_data
-        )
-
-    async def overwrite_jwks(
-        self,
-        jwks_data: VariableJWKS,
-    ) -> None:
-        self._insure_file_rewrite(self.jwks_config.JWKS_FILEPATH)
-        async with aiofiles.open(self.jwks_config.JWKS_FILEPATH, "w") as jwks_file:
-            await jwks_file.write(jwks_data.model_dump_json())
-
-    async def invalidate_keys(self, keys: Sequence[str]) -> None:
-        jwks_data = await self.load_jwks_data()
-        for i, key_data in enumerate(jwks_data.keys.copy()):
-            if key_data.kid in keys:
-                jwks_data.keys.pop(i)
-        await self.overwrite_jwks(jwks_data)
-
-
 @dataclass(slots=True)
 class SyncedStoreKeyStateManager(AntiSingletonMixin):
     synced_store_client: Redis
 
-    _valid_keys_view: list[str] = field(default_factory=list, init=False)
-
     @asynccontextmanager
     async def transactional_block(
         self,
     ) -> AsyncGenerator[None]:
-        self._valid_keys_view = await self.synced_store_client.lrange(  # pyrefly: ignore[not-async]
-            SyncedStoreKeyStrings.VALID_KEYS, 0, -1
+        raw_jwks: Final[str] = await self.synced_store_client.get(
+            SyncedStoreKeyStrings.JWKS_KEY
         )
         try:
             yield
         except Exception:
             async with self.synced_store_client.pipeline(transaction=True) as pipeline:
-                pipeline.delete(SyncedStoreKeyStrings.VALID_KEYS)
-                pipeline.lpush(SyncedStoreKeyStrings.VALID_KEYS, *self._valid_keys_view)
+                pipeline.set(SyncedStoreKeyStrings.JWKS_KEY, raw_jwks)
                 await pipeline.execute()
             raise
-        finally:
-            self._valid_keys_view.clear()
 
     async def get_key_operational_cooldown(self) -> bool:
         return bool(
@@ -252,20 +79,6 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
             )
         )
 
-    async def get_valid_keys_ids(self) -> list[str]:
-        return await self.synced_store_client.lrange(  # pyrefly: ignore[not-async]
-            SyncedStoreKeyStrings.VALID_KEYS, 0, -1
-        )
-
-    async def get_active_key_id(self) -> str:
-        return (await self.get_valid_keys_ids())[0]
-
-    async def overwrite_valid_keys(self, keys: Sequence[str]) -> None:
-        async with self.synced_store_client.pipeline(transaction=True) as pipeline:
-            pipeline.delete(SyncedStoreKeyStrings.VALID_KEYS)
-            pipeline.lpush(*keys)
-            await pipeline.execute()
-
     async def set_operation_cooldown(self, cooldown: timedelta | int) -> None:
         await self.synced_store_client.set(
             SyncedStoreKeyStrings.KEY_ROTATION_COOLDOWN,
@@ -273,14 +86,34 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
             ex=cooldown,
         )
 
+    async def get_jwks(self) -> list[EllipticCurveJWKResult]:
+        raw_jwks: str = await self.synced_store_client.get(
+            SyncedStoreKeyStrings.JWKS_KEY
+        )
+        return [
+            KeyPublicDataResult.construct_from_cache(k).as_jwk()
+            for k in orjson.loads(raw_jwks)
+        ]
+
+    async def set_jwks(
+        self, keys: Sequence[EllipticCurveJWKResult] | Sequence[KeyPublicDataResult]
+    ) -> None:
+        if isinstance(keys[0], KeyPublicDataResult):
+            keys = list(map(KeyPublicDataResult.as_jwk, keys))
+        await self.synced_store_client.set(
+            SyncedStoreKeyStrings.JWKS_KEY,
+            orjson.dumps({"keys": [json_repr(k) for k in keys]}),
+        )
+
 
 @dataclass(slots=True, frozen=True)
 class KeyLifecycleManager(AntiSingletonMixin):
     keydata_repository: KeydataRepository
     token_manager: TokenManager
-    filesystem_key_manager: FileSystemKeyManager
+    key_config: KeyConfigModel
     synced_store_key_manager: SyncedStoreKeyStateManager
     redis_lock_factory: RedisInstanceLockFactory
+    jwks_update_announcer: JWKSUpdateAnnouncer
 
     _lock_value: str = field(default="LOCK", kw_only=True)
     _lock_prefix: str = field(default="LOCK", kw_only=True)
@@ -298,7 +131,6 @@ class KeyLifecycleManager(AntiSingletonMixin):
             self,
             "_transactional_stack_order",
             (
-                self.filesystem_key_manager,
                 self.synced_store_key_manager,
                 self.token_manager,
             ),
@@ -365,81 +197,58 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     raise Exception(f"Key {key_id} has already been expired")
                 await self.keydata_repository.expire_keydata(key_id)
 
-                # Before committing to DB, and update JWKS
-                await self.filesystem_key_manager.invalidate_keys((target_key.kid,))
-
                 # Key invalidation successful, update local token manager
                 self.token_manager.invalidate_key(key_id)
-
                 # Update distributed state
-                valid_keys: list[
-                    str
-                ] = await self.synced_store_key_manager.get_valid_keys_ids()
+                jwks: list[
+                    EllipticCurveJWKResult
+                ] = await self.synced_store_key_manager.get_jwks()
 
                 # Should never happen, but in case it does we fall back and regenerate the entire list
-                if not valid_keys or key_id not in valid_keys:
+                if not (jwks and any(j.kid == key_id for j in jwks)):
                     if intermediate_message_mapping:
                         intermediate_message_mapping["keylist_integrity_warning"] = (
                             "Synced keylist state was inconsistent and hence regenerated through database"
                         )
-                    valid_keys: list[str] = [
-                        k.kid
-                        for k in await self.keydata_repository.get_relevant_keydata(
-                            None
-                        )
-                    ]
+                    jwks = list(await self.keydata_repository.get_jwks())
                 else:
-                    valid_keys.remove(key_id)
+                    jwks = list(filter(lambda x: x.kid != key_id, jwks))
 
-                await self.synced_store_key_manager.overwrite_valid_keys(valid_keys)
+                await self.synced_store_key_manager.set_jwks(jwks)
+        await self.jwks_update_announcer.stream_update(
+            VariableJWKS.model_validate({"keys": jwks})
+        )
 
     async def clean_keystore(
         self, cooldown_duration: int | None = None
     ) -> tuple[str, tuple[str, ...]]:
         """Invalidate all keys except for the currently active key"""
-        jwks_data: Final[
-            VariableJWKS
-        ] = await self.filesystem_key_manager.load_jwks_data()
-        if len(jwks_data.keys) == 1:
-            raise Exception("No active keys present to invalidate")
         async with self._transactional_block(
             operation=SyncedStoreKeyStrings.INVALIDATE_KEY,
             lock_duration=LockTIme.MEDIUM,
             operational_cooldown_duration=cooldown_duration,
         ):
             async with self.keydata_repository.unit_of_work():
-                valid_inactive_keys: list[
-                    KeyPublicDataResult
-                ] = await self.keydata_repository.get_valid_inactive_keys(
-                    lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ)
+                jwks_data: list[EllipticCurveJWKResult] = list(
+                    await self.keydata_repository.get_jwks()
                 )
+                if len(jwks_data) == 1:
+                    raise Exception("No inactive keys present to invalidate")
+                active_key: Final[EllipticCurveJWKResult] = jwks_data.pop(0)
+
+                # Prune JWKS
                 await self.keydata_repository.batch_expire_keydata(
-                    tuple(k.kid for k in valid_inactive_keys)
+                    tuple(k.kid for k in jwks_data)
                 )
-
-                # Fetch latest KID to prune JWKS accordingly
-                active_key: (
-                    KeyPublicDataResult | None
-                ) = await self.keydata_repository.get_active_key()
-                if not active_key:  # Violates business invariant, should never happen
-                    raise Exception("Invalid keystore state!")
-
-                await self.filesystem_key_manager.invalidate_keys(
-                    tuple(
-                        kid
-                        for key_data in jwks_data.keys
-                        if (kid := key_data.kid) != active_key.kid
-                    )
-                )
-
-                await self.synced_store_key_manager.overwrite_valid_keys(
-                    (active_key.kid,)
-                )
-
-                for key in valid_inactive_keys:
+                await self.synced_store_key_manager.set_jwks((active_key,))
+                for key in jwks_data:
                     self.token_manager.invalidate_key(key.kid)
 
-        return active_key.kid, tuple(i.kid for i in valid_inactive_keys)
+        await self.jwks_update_announcer.stream_update(
+            VariableJWKS.model_validate({"keys": jwks_data})
+        )
+
+        return active_key.kid, tuple(i.kid for i in jwks_data)
 
     async def rotate_key(
         self,
@@ -452,19 +261,16 @@ class KeyLifecycleManager(AntiSingletonMixin):
             lock_duration=LockTIme.MEDIUM,
             operational_cooldown_duration=cooldown_duration,
         ):
-            kid, signing_key, verification_key = generate_ecdsa_pair(
-                self.filesystem_key_manager.keys_config
-            )
+            kid, signing_key, verification_key = generate_ecdsa_pair(self.key_config)
             generation_epoch: Final[datetime] = datetime.now(UTC)
             private_pem: Final[bytes] = pem_serialize_private_key(
-                signing_key, self.filesystem_key_manager.keys_config.PRIVATE_PEM_FORMAT
+                signing_key, self.key_config.PRIVATE_PEM_FORMAT
             )
             public_pem: Final[bytes] = pem_serialize_public_key(
                 verification_key,
-                self.filesystem_key_manager.keys_config.PUBLIC_PEM_FORMAT,
+                self.key_config.PUBLIC_PEM_FORMAT,
             )
 
-            target_id: str | None = None
             async with self.keydata_repository.unit_of_work():
                 # Update currently active key
                 previous_key: (
@@ -490,54 +296,41 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 )
 
                 # Check whether max capacity has been reached. If so, purge oldest key
-                valid_inactive_key_data: list[tuple[str, datetime]] = [
-                    (i.kid, i.rotated_out_at)
-                    for i in (
-                        await self.keydata_repository.get_valid_inactive_keys(
-                            lock_args=(
-                                SelectionLockOption.READ,
-                                SelectionLockOption.KEY_SHARE,
+                valid_inactive_key_data: list[tuple[str, datetime]] = sorted(
+                    [
+                        (i.kid, i.rotated_out_at)
+                        for i in (
+                            await self.keydata_repository.get_valid_inactive_keys(
+                                lock_args=(
+                                    SelectionLockOption.READ,
+                                    SelectionLockOption.KEY_SHARE,
+                                )
                             )
                         )
-                    )
-                ]
-
-                if (
-                    len(valid_inactive_key_data)
-                    > self.filesystem_key_manager.keys_config.MAX_VALID_KEYS
-                ):
-                    target_id = sorted(valid_inactive_key_data, key=lambda x: x[1])[0][
-                        0
-                    ]
-                    await self.keydata_repository.expire_keydata(target_id)
-
-                # Update files
-                await self.filesystem_key_manager.update_jwks(
-                    verification_key,
-                    kid,
+                    ],
+                    key=lambda x: x[1],
                 )
+
+                if len(valid_inactive_key_data) > self.key_config.MAX_VALID_KEYS:
+                    await self.keydata_repository.batch_expire_keydata(
+                        tuple(
+                            i[0]
+                            for i in valid_inactive_key_data[
+                                self.key_config.MAX_VALID_KEYS :
+                            ]
+                        )
+                    )
+
                 # Update token manager's mapping to use this newly created ECDSA pair
                 self.token_manager.update_keydata(kid, new_key)
-
                 # Update distributed state
-                valid_keys: list[
-                    str
-                ] = await self.synced_store_key_manager.get_valid_keys_ids()
+                jwks: list[EllipticCurveJWKResult] = list(
+                    await self.keydata_repository.get_jwks()
+                )
+                await self.synced_store_key_manager.set_jwks(jwks)
 
-                # Should never happen, but in case it does we fall back and regenerate the entire list
-                if not valid_keys or kid not in valid_keys:
-                    valid_keys: list[str] = [
-                        k.kid
-                        for k in await self.keydata_repository.get_relevant_keydata(
-                            None
-                        )
-                    ]
-                elif target_id in valid_keys:
-                    # Remove invalidated key ID
-                    # in this branch, target_id will always be str since valid_keys is always Sequence[str]
-                    valid_keys.remove(target_id)  # pyrefly: ignore[bad-argument-type]
+        await self.jwks_update_announcer.stream_update(
+            VariableJWKS.model_validate({"keys": jwks})
+        )
 
-                # At this state, valid_keys is a consistent list of key IDs
-                # Set global cooldown for key rotation, update global state, and release rotation lock
-                await self.synced_store_key_manager.overwrite_valid_keys(valid_keys)
         return new_key.create_public_copy()

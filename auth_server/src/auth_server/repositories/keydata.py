@@ -1,19 +1,34 @@
 """Data access repository for Keydata SA model"""
 
 from collections.abc import MutableMapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, ClassVar, Final, Literal, overload
 
 from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
-from auxillary.utils import cache_repr
+from auxillary.security.data_structures.jwks_enums import ECAlg, JWKKty, JWKUse
+from auxillary.utils import cache_repr, to_base64url
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from redis.typing import EncodableT, FieldT
 from sqlalchemy import insert, select, update
 
 from auth_server.models.database import KeyData
 from auth_server.strings import SelectionLockOption
+
+
+@dataclass(slots=True)
+class EllipticCurveJWKResult(AbstractResult):
+    resource_name: ClassVar[str] = "EllipticCurveJWK"
+    alg: ECAlg
+    crv: str
+    kid: str
+    x: str
+    y: str
+    kty: Literal[JWKKty.EC] = field(default=JWKKty.EC)
+    use: Literal[JWKUse.SIG] = field(default=JWKUse.SIG)
 
 
 @dataclass(slots=True, init=False)
@@ -51,6 +66,21 @@ class KeyPublicDataResult(AbstractResult):
         cache_mapping: dict[FieldT, EncodableT] = super().__cache_repr__()
         self.stringify_binary_fields(cache_mapping)
         return cache_mapping
+
+    def as_jwk(self) -> EllipticCurveJWKResult:
+        verification_key: PublicKeyTypes = load_pem_public_key(self.public_pem)
+        if not isinstance(verification_key, ec.EllipticCurvePublicKey):
+            raise TypeError("Expected an elliptic-curve public key")
+        public_numbers: ec.EllipticCurvePublicNumbers = (
+            verification_key.public_numbers()
+        )
+        return EllipticCurveJWKResult(
+            ECAlg(self.alg),
+            str(verification_key.curve),
+            self.kid,
+            to_base64url(public_numbers.x),
+            to_base64url(public_numbers.y),
+        )
 
 
 @dataclass(slots=True, init=False)
@@ -588,3 +618,9 @@ class KeydataRepository(AbstractWorkRepository):
                 if public_only:
                     return KeyPublicDataResult.construct_from_orm(new_key)
                 return KeyPrivateDataResult.construct_from_orm(new_key)
+
+    async def get_jwks(self) -> tuple[EllipticCurveJWKResult, ...]:
+        return tuple(
+            i.as_jwk()
+            for i in await self.get_relevant_keydata(limit=None, public_data_only=True)
+        )
