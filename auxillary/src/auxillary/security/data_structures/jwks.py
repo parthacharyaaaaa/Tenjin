@@ -40,7 +40,6 @@ class EllipticCurveJWK(GenericJWKMixin, BaseModel):
     @model_serializer(mode="wrap")
     def serialize_model(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         model_dump: dict[str, Any] = handler(self)
-        model_dump.pop("public_members")
         model_dump["x"] = to_base64url(self.public_members.x)
         model_dump["y"] = to_base64url(self.public_members.y)
         return model_dump
