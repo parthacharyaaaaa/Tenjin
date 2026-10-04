@@ -28,7 +28,6 @@ from auth_server.dependencies.local import (
     get_synced_store_key_state_manager,
     get_token_manager,
 )
-from auth_server.keys.key_manager import SyncedStoreKeyStateManager
 from auth_server.keys.keygen import generate_ecdsa_pair
 from auth_server.repositories.keydata import (
     EllipticCurveJWKResult,
@@ -38,7 +37,8 @@ from auth_server.repositories.keydata import (
 )
 from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
 from auth_server.strings import SyncedStoreCommandStrings
-from auth_server.tokens.token_manager import TokenManager
+from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
+from auth_server.subsystems.token_manager import TokenManager
 
 
 def register_routers(

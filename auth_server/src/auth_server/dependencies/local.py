@@ -14,17 +14,17 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from auth_server.admin.session_manager import AdminSessionManager
 from auth_server.config import AppConfig
-from auth_server.keys.key_manager import (
-    KeyLifecycleManager,
-    SyncedStoreKeyStateManager,
-)
 from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.keydata import KeydataRepository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.subsystems.jwks_announcer import JWKSUpdateAnnouncer
-from auth_server.tokens.token_manager import TokenManager
+from auth_server.subsystems.key_manager import (
+    KeyLifecycleManager,
+    SyncedStoreKeyStateManager,
+)
+from auth_server.subsystems.session_manager import AdminSessionManager
+from auth_server.subsystems.token_manager import TokenManager
 
 
 def get_hypermedia_link_builder(request: Request) -> HypermediaLinkBuilder:

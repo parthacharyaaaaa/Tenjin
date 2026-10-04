@@ -17,9 +17,9 @@ from auth_server.dependencies.local import (
     get_synced_store_key_state_manager,
     get_token_manager,
 )
-from auth_server.keys.key_manager import SyncedStoreKeyStateManager
 from auth_server.models.auth_requests import AuthenticationModel, RegistrationModel
-from auth_server.tokens.token_manager import TokenManager
+from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
+from auth_server.subsystems.token_manager import TokenManager
 from auth_server.tokens.typing import StandardRefreshTokenClaims, TokenType
 from auth_server.utils.auth_auxillary import attach_tokens
 from auth_server.utils.hypermedia import login_hypermedia, token_hypermedia

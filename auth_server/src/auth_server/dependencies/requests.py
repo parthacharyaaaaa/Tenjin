@@ -6,13 +6,13 @@ from fastapi import Depends, HTTPException, Request
 
 from auth_server.admin.permissions import Permission
 from auth_server.admin.roles import ROLE_PERMISSIONS
-from auth_server.admin.session_manager import AdminSessionManager
 from auth_server.dependencies.local import (
     get_admin_session_manager,
     get_hypermedia_link_builder,
 )
 from auth_server.models.session import AdminSession
 from auth_server.strings import AdminStrings
+from auth_server.subsystems.session_manager import AdminSessionManager
 from auth_server.utils.hypermedia import login_hypermedia
 
 

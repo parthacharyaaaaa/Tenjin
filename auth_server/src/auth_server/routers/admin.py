@@ -15,7 +15,6 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from auth_server.admin.permissions import Permission
 from auth_server.admin.roles import AdminRole
-from auth_server.admin.session_manager import AdminSessionManager
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies.local import (
     get_admin_repository,
@@ -37,6 +36,7 @@ from auth_server.repositories.admin import (
     AdminRepository,
 )
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
+from auth_server.subsystems.session_manager import AdminSessionManager
 from auth_server.utils.auth_auxillary import (
     report_suspicious_activity,
 )

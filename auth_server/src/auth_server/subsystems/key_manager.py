@@ -30,7 +30,7 @@ from auth_server.strings import (
     SyncedStoreKeyStrings,
 )
 from auth_server.subsystems.jwks_announcer import JWKSUpdateAnnouncer
-from auth_server.tokens.token_manager import TokenManager
+from auth_server.subsystems.token_manager import TokenManager
 
 
 class KeyOperationLocks(IntFlag):

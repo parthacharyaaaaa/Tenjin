@@ -15,13 +15,13 @@ import jwt.exceptions as jwt_exceptions
 from redis.asyncio import Redis
 
 from auth_server.config.sub_config import KeyConfigModel, TokenManagerConfigModel
-from auth_server.keys.key_manager import SyncedStoreKeyStateManager
 from auth_server.repositories.keydata import (
     EllipticCurveJWKResult,
     KeydataRepository,
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
+from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
 from auth_server.tokens.typing import (
     StandardAccessTokenClaims,
     StandardRefreshTokenClaims,

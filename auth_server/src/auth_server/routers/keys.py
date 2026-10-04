@@ -16,15 +16,15 @@ from auth_server.dependencies.local import (
     get_synced_store_key_state_manager,
 )
 from auth_server.dependencies.requests import require_permissions
-from auth_server.keys.key_manager import (
-    KeyLifecycleManager,
-    SyncedStoreKeyStateManager,
-)
 from auth_server.models.session import AdminSession
 from auth_server.repositories.keydata import (
     KeydataRepository,
     KeyPrivateDataResult,
     KeyPublicDataResult,
+)
+from auth_server.subsystems.key_manager import (
+    KeyLifecycleManager,
+    SyncedStoreKeyStateManager,
 )
 from auth_server.utils.hypermedia import (
     jwks_hypermedia,
