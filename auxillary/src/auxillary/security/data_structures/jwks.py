@@ -24,7 +24,7 @@ class GenericJWKMixin:
 class EllipticCurveJWK(GenericJWKMixin, BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    public_memebrs: Annotated[EllipticCurvePublicNumbers, Field(exclude=True)]
+    public_members: Annotated[EllipticCurvePublicNumbers, Field(exclude=True)]
     kty: Annotated[Literal[JWKKty.EC], Field(init=False, frozen=True)] = JWKKty.EC
     alg: Annotated[Literal[ECAlg.ES256], Field(init=False, frozen=True)] = ECAlg.ES256
     crv: Annotated[
@@ -34,8 +34,8 @@ class EllipticCurveJWK(GenericJWKMixin, BaseModel):
     @model_serializer(mode="wrap")
     def serialize_model(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         model_dump: dict[str, Any] = handler(self)
-        model_dump["x"] = to_base64url(self.public_memebrs.x)
-        model_dump["y"] = to_base64url(self.public_memebrs.y)
+        model_dump["x"] = to_base64url(self.public_members.x)
+        model_dump["y"] = to_base64url(self.public_members.y)
         return model_dump
 
 

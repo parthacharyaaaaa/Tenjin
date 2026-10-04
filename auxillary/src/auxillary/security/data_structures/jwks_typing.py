@@ -68,7 +68,7 @@ class SupportsJWKSerialization(SupportsJWK, SupportsPydanticModelSerialization):
 
 class SupportsEllipticCurveJWK(SupportsJWK):
     crv: type[EllipticCurve]
-    public_memebrs: EllipticCurvePublicNumbers
+    public_members: EllipticCurvePublicNumbers
 
 
 class JWKS(Protocol):
