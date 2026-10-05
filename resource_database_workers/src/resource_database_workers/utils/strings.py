@@ -1,12 +1,10 @@
 import random
 import time
-from typing import Final, LiteralString
 
 from redis.typing import EncodableT
-from resource_auxillary.strings import NAME_SEPERATOR, StreamName
+from resource_auxillary.strings import StreamName
 
-INTERNAL_NAME_SEPERATOR: Final[LiteralString] = "-"
-assert INTERNAL_NAME_SEPERATOR != NAME_SEPERATOR  # nosec
+from resource_database_workers.constants.strings import INTERNAL_NAME_SEPERATOR
 
 
 def derive_lock_key(name: str) -> str:
