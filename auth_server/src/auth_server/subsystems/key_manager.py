@@ -8,7 +8,7 @@ from typing import Final, Protocol
 import orjson
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from auxillary.mixins.metaclass import AntiSingletonMixin
-from auxillary.security.data_structures.jwks import VariableJWKS
+from auxillary.security.data_structures.jwks.models import VariableJWKS
 from auxillary.security.serialization import (
     pem_serialize_private_key,
     pem_serialize_public_key,

@@ -8,11 +8,11 @@ from uuid import uuid4
 import httpx
 import orjson
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
-from auxillary.security.data_structures.jwks import (
+from auxillary.security.data_structures.jwks.enums import JWKKty
+from auxillary.security.data_structures.jwks.models import (
     EllipticCurveJWK,
     EllipticCurveJWKS,
 )
-from auxillary.security.data_structures.jwks_enums import JWKKty
 from auxillary.security.serialization import pem_serialize_public_key
 from auxillary.singleton import SingletonMetaclass
 from cryptography.hazmat.primitives.asymmetric import ec

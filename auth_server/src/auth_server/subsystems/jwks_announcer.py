@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 import orjson
-from auxillary.security.data_structures.jwks import VariableJWKS
+from auxillary.security.data_structures.jwks.models import VariableJWKS
 from auxillary.singleton import SingletonMetaclass
 from redis.asyncio.client import Redis
 

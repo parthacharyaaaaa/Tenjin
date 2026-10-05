@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives.asymmetric.ec import (
 )
 from pydantic.main import IncEx
 
-from auxillary.security.data_structures.jwks_enums import JWKKty, JWKUse
+from auxillary.security.data_structures.jwks.enums import JWKKty, JWKUse
 
 
 class SupportsJWK(Protocol):

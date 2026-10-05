@@ -11,8 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler
 from pydantic.functional_serializers import PlainSerializer, model_serializer
 from pydantic.functional_validators import BeforeValidator
 
-from auxillary.security.data_structures.jwks_enums import ECAlg, JWKKty, JWKUse
-from auxillary.security.data_structures.jwks_typing import (
+from auxillary.security.data_structures.jwks.enums import ECAlg, JWKKty, JWKUse
+from auxillary.security.data_structures.jwks.typing import (
     SupportsJWK,
     SupportsJWKSerialization,
 )

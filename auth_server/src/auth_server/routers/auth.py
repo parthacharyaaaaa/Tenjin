@@ -5,7 +5,7 @@ import httpx
 from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
 from auxillary.data_structures.enriched.response import EnrichedJSONResponse
-from auxillary.security.data_structures.jwks_typing import SupportsJWK
+from auxillary.security.data_structures.jwks.typing import SupportsJWK
 from fastapi import APIRouter, Depends
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response

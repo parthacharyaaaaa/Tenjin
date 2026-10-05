@@ -7,7 +7,7 @@ from typing import Any, ClassVar, Final, Literal, overload
 
 from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
-from auxillary.security.data_structures.jwks_enums import ECAlg, JWKKty, JWKUse
+from auxillary.security.data_structures.jwks.enums import ECAlg, JWKKty, JWKUse
 from auxillary.utils import cache_repr, to_base64url
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
