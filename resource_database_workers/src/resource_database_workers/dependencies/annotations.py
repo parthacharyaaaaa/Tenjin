@@ -27,7 +27,7 @@ from resource_database_workers.dependencies.injections import (
     get_queue_registry,
     get_stream_manager,
 )
-from resource_database_workers.utils.typing import t_action_literal
+from resource_database_workers.typing import t_action_literal
 
 _DEFAULT_METADATA_STRING: Final[LiteralString] = "DI Annotation"
 
