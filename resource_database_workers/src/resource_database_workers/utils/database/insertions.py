@@ -35,7 +35,7 @@ from resource_database_workers.datastructures.side_effects import (
     DownstreamCacheInvalidationPayload,
     DownstreamDeletionPayload,
 )
-from resource_database_workers.utils.db import fan_out_side_effect
+from resource_database_workers.utils.database.side_effects import fan_out_side_effect
 from resource_database_workers.utils.sql_templates import (
     FORMATTED_CACHE_SIDE_EFFECTS_INSERTION_STATEMENT,
     format_strong_insertion_sql,

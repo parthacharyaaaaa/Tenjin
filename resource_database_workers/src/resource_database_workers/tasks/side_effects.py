@@ -22,14 +22,14 @@ from resource_database_workers.dependencies.annotations import (
     INTERNAL_REDIS,
     STATUS_PROXY,
 )
-from resource_database_workers.tasks.deletions import (
+from resource_database_workers.utils.database.deletions import (
     downstream_soft_delete_strong_entity,
 )
-from resource_database_workers.tasks.selections import (
+from resource_database_workers.utils.database.selections import (
     select_cache_invalidation_entries,
     select_decrement_deltas,
 )
-from resource_database_workers.utils.db import (
+from resource_database_workers.utils.database.side_effects import (
     get_side_effect_row,
     side_effects_processing_context,
 )

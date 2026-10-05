@@ -30,8 +30,8 @@ from resource_database_workers.dependencies.annotations import (
     STREAM_NAME,
     TABLE,
 )
-from resource_database_workers.tasks.deletions import soft_delete_strong_entity
-from resource_database_workers.tasks.insertions import (
+from resource_database_workers.utils.database.deletions import soft_delete_strong_entity
+from resource_database_workers.utils.database.insertions import (
     batch_insert_with_isolation,
     insert_downstream_deletion_outbox_entries,
     outbox_insertion,
