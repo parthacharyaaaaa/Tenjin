@@ -13,14 +13,14 @@ from resource_database_workers.dependencies.annotations import (
     IDENTIFIER_COLUMN,
     TABLE,
 )
-from resource_database_workers.tasks.consumer import (
+from resource_database_workers.tasks.dlq import dlq_consumer
+from resource_database_workers.tasks.side_effects import (
+    downstream_deletion_worker,
+)
+from resource_database_workers.tasks.standard_events import (
     queue_deletion_consumer,
     queue_insertion_consumer,
     user_orphan_consumer,
-)
-from resource_database_workers.tasks.dlq_workers import dlq_consumer
-from resource_database_workers.tasks.side_effects import (
-    downstream_deletion_worker,
 )
 
 type t_event_worker_data = tuple[Callable[..., Any], dict[Any, Any]]
