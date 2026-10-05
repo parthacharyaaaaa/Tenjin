@@ -33,7 +33,7 @@ from resource_database_workers.utils.database.side_effects import (
     get_side_effect_row,
     side_effects_processing_context,
 )
-from resource_database_workers.workers.redis.downstream_post_processing import (
+from resource_database_workers.utils.redis.downstream_post_processing import (
     clear_downstream_checkpoint,
     fetch_event_processing_checkpoint,
     register_cache_invalidation_updates,

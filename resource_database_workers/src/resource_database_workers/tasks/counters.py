@@ -25,22 +25,22 @@ from resource_database_workers.dependencies.annotations import (
     INTERNAL_REDIS,
     STATUS_PROXY,
 )
-from resource_database_workers.utils.strings import (
-    derive_lock_key,
-    extract_batch_metadata,
-)
-from resource_database_workers.workers.database.counters import (
+from resource_database_workers.utils.database.counters import (
     flush_counter_updates,
 )
-from resource_database_workers.workers.redis.cache import (
+from resource_database_workers.utils.redis.cache import (
     reflect_processed_counters,
 )
-from resource_database_workers.workers.redis.counters import (
+from resource_database_workers.utils.redis.counters import (
     dispatch_to_retrier,
     retrieve_counter_group_names,
 )
-from resource_database_workers.workers.redis.declarations import (
+from resource_database_workers.utils.redis.declarations import (
     declare_counters_event_dead,
+)
+from resource_database_workers.utils.strings import (
+    derive_lock_key,
+    extract_batch_metadata,
 )
 
 
