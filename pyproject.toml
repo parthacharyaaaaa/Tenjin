@@ -39,6 +39,7 @@ skips=[
 ]
 exclude_dirs=[
     ".venv",
+    "tests",
     ".pre-commit/utilities"
 ]
 

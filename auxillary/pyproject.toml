@@ -22,6 +22,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.bandit]
+exclude_dirs=["tests"]
+
 [tool.deptry]
 known_first_party=["auxillary"]
 extend_exclude = [".*/tests"]
