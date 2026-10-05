@@ -24,5 +24,11 @@ where = ["src"]
 
 [tool.deptry]
 known_first_party=["auxillary"]
+extend_exclude = [".*/tests"]
 
 [tool.pyrefly]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
