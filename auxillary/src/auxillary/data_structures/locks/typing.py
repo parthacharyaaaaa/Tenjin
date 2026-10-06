@@ -1,6 +1,8 @@
 from types import TracebackType
 from typing import Protocol, Self
 
+from redis.typing import EncodableT
+
 
 class SupportsBasicLockContext(Protocol):
     @property
@@ -27,4 +29,4 @@ class SupportsDistributedLocking(Protocol):
     async def lock(
         self, resource: str, value: str, ttl: int
     ) -> SupportsBasicLockContext: ...
-    async def release(self, lock_name: str, value: int) -> None: ...
+    async def release(self, lock_name: str, value: EncodableT) -> None: ...

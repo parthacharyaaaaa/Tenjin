@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from redis.asyncio.client import Redis
 from redis.commands.core import AsyncScript
+from redis.typing import EncodableT
 
 from auxillary.data_structures.locks.lua_scripts import (
     CONDITIONAL_LOCK_UNSETTING_SCRIPT,
@@ -30,7 +31,7 @@ class BasicLockContext:
         exc_tb: TracebackType | None,
     ) -> None:
         if self.valid:
-            await self.client.release(self.resource, self.valid)
+            await self.client.release(self.resource, self.value)
 
 
 @dataclass(slots=True, weakref_slot=True, frozen=True)
@@ -68,7 +69,7 @@ class RedisInstanceLockFactory(metaclass=SingletonMetaclass):
             bool(await self.redis_client.set(resource, value, px=ttl, nx=True)),
         )
 
-    async def release(self, lock_name: str, value: int) -> None:
+    async def release(self, lock_name: str, value: EncodableT) -> None:
         await self.redis_client.evalsha(  # pyrefly: ignore[not-async]
             self._registrered_release_script.sha, 1, lock_name, value
         )
