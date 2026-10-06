@@ -12,10 +12,6 @@ from auxillary.mixins.metaclass import AntiSingletonMixin
 
 @dataclass(slots=True, weakref_slot=False)
 class AbstractRepository(StrictAbstractMixin, abstract=True):
-    """
-    Basic skeletol repository to contain
-    """
-
     session_maker: Final[async_sessionmaker[AsyncSession]]
 
 
