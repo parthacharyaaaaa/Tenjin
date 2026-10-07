@@ -92,12 +92,14 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
         )
         return [
             KeyPublicDataResult.construct_from_cache(k).as_jwk()
-            for k in orjson.loads(raw_jwks)
+            for k in orjson.loads(raw_jwks)["keys"]
         ]
 
     async def set_jwks(
         self, keys: Sequence[EllipticCurveJWKResult] | Sequence[KeyPublicDataResult]
     ) -> None:
+        if not keys:
+            raise ValueError("keys must be non-empty")
         if isinstance(keys[0], KeyPublicDataResult):
             keys = list(map(KeyPublicDataResult.as_jwk, keys))
         await self.synced_store_client.set(
