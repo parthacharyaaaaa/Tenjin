@@ -10,7 +10,7 @@ def redis_client_container():
         yield container
 
 
-@pytest_asyncio.fixture(scope="package")
+@pytest_asyncio.fixture
 async def async_redis_client(
     redis_client_container: redis.AsyncRedisContainer,
 ) -> Redis:

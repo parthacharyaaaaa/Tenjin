@@ -32,10 +32,11 @@ async def test_invalid_lock_context_does_not_release() -> None:
 
 def make_lock_factory() -> tuple[RedisInstanceLockFactory, Mock]:
     redis_client = Mock()
-    redis_client.register_script.return_value = SimpleNamespace(sha="script-sha")
+    redis_client.register_script.return_value = AsyncMock()
     redis_client.set = AsyncMock()
-    redis_client.evalsha = AsyncMock()
-    return RedisInstanceLockFactory(redis_client), redis_client
+    factory = RedisInstanceLockFactory(redis_client)
+    object.__setattr__(factory, "_registrered_release_script", AsyncMock())
+    return factory, redis_client
 
 
 @pytest.mark.asyncio
@@ -63,6 +64,7 @@ async def test_lock_uses_requested_ttl_unit(
 async def test_release_runs_registered_conditional_script() -> None:
     factory, redis_client = make_lock_factory()
 
-    await factory.release("resource", "token")  # type: ignore[arg-type]
-
-    redis_client.evalsha.assert_awaited_once_with("script-sha", 1, "resource", "token")
+    await factory.release("resource", "token")
+    factory._registrered_release_script.assert_awaited_once_with(  # type: ignore
+        keys=["resource"], args=["token"]
+    )
