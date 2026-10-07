@@ -88,6 +88,13 @@ dependencies = [
     { name = "types-aiofiles" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "testcontainers", extra = ["redis"] },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.18.4,<2" },
@@ -105,6 +112,13 @@ requires-dist = [
     { name = "redis", specifier = ">=7.0.0,<8" },
     { name = "sqlalchemy", specifier = ">=2.0.51" },
     { name = "types-aiofiles", specifier = ">=25.1.0.20260518" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-asyncio", specifier = ">=1.4.0" },
+    { name = "testcontainers", extras = ["postgres", "redis"], specifier = ">=4.15.0" },
 ]
 
 [[package]]

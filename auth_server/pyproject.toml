@@ -34,6 +34,7 @@ known_first_party=[
     "auth_server",
     "auxillary"
 ]
+extend_exclude = [".*/tests"]
 
 [tool.deptry.package_module_name_map]
 python-dotenv = "dotenv"
@@ -45,4 +46,11 @@ DEP002 = ["psycopg", "mako", "types-aiofiles"]
 [tool.pyrefly]
 project-excludes=[
     "**/alembic/versions"
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "testcontainers[postgres,redis]>=4.15.0",
 ]
