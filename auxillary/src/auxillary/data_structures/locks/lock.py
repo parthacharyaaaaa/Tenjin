@@ -70,6 +70,4 @@ class RedisInstanceLockFactory(metaclass=SingletonMetaclass):
         )
 
     async def release(self, lock_name: str, value: EncodableT) -> None:
-        await self.redis_client.evalsha(  # pyrefly: ignore[not-async]
-            self._registrered_release_script.sha, 1, lock_name, value
-        )
+        await self._registrered_release_script(keys=[lock_name], args=[value])
