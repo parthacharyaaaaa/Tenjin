@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 
-import orjson
-from auxillary.security.data_structures.jwks.models import VariableJWKS
+from auxillary.security.data_structures.jwks.typing import JWKS
 from auxillary.singleton import SingletonMetaclass
 from redis.asyncio.client import Redis
 
@@ -13,8 +12,8 @@ class JWKSUpdateAnnouncer(metaclass=SingletonMetaclass):
     redis_client: Redis
     jwks_config: JWKSConfigModel
 
-    async def stream_update(self, jwks: VariableJWKS) -> None:
+    async def stream_update(self, jwks: JWKS) -> None:
         await self.redis_client.xadd(
             self.jwks_config.UPDATION_STREAM_NAME,
-            fields={"keys": orjson.dumps(jwks.model_dump(mode="json"))},
+            fields={"jwks": jwks.model_dump_json()},
         )
