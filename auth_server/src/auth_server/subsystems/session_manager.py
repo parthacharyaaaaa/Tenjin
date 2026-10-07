@@ -56,7 +56,7 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
             raise ValueError(f"No session found with ID: {session_id}")
 
         try:
-            return AdminSession.model_validate(**admin_session_dict)
+            return AdminSession.model_validate(admin_session_dict)
         except pydantic.ValidationError as e:
             await self.terminate_malformed_session(
                 session_name, admin_id=admin_session_dict.get("admin_id")
@@ -107,6 +107,7 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
             pipeline.hsetex(
                 self.admin_session_reverse_mapping_name,
                 str(admin_session.admin_id),
+                admin_session.session_id,
                 ex=self.admin_config.ADMIN_SESSION_DURATION
                 * self.admin_config.MAX_SESSION_ITERATIONS,
             )
@@ -114,7 +115,7 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
                 pipeline.hdel(
                     self.admin_session_reverse_mapping_name, str(admin_session.admin_id)
                 )
-                pipeline.delete(preceding_session_id)
+                pipeline.delete(self.generate_admin_session_name(preceding_session_id))
             await pipeline.execute()
 
         return admin_session.session_id, admin_session.revival_digest
@@ -153,10 +154,10 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
             await pipeline.execute()
 
     async def terminate_malformed_session(
-        self, session_id: str, *, admin_id: int | None = None
+        self, session_name: str, *, admin_id: int | None = None
     ) -> None:
         async with self.session_store.pipeline() as pipeline:
-            pipeline.delete(self.generate_admin_session_name(session_id))
+            pipeline.delete(session_name)
             if admin_id:
                 pipeline.hdel(self.admin_session_reverse_mapping_name, str(admin_id))
             await pipeline.execute()
