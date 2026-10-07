@@ -34,4 +34,6 @@ extend_exclude = [".*/tests"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "testcontainers[redis]>=4.15.0",
 ]
