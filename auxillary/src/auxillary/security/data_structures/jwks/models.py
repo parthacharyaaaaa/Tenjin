@@ -93,11 +93,11 @@ class EllipticCurveJWK(GenericJWKMixin, BaseModel):
 
 
 class EllipticCurveJWKS(BaseModel):
-    keys: list[EllipticCurveJWK]
+    keys: tuple[EllipticCurveJWK, ...]
 
     @classmethod
     def construct_from_jwks_list(cls, jwks_list: Sequence[Mapping[str, Any]]) -> Self:
-        parsed_keydata: Final[list[SupportsJWK]] = []
+        parsed_keydata: Final[list[EllipticCurveJWK]] = []
         for jwks_entry in jwks_list:
             parsed_keydata.append(EllipticCurveJWK.model_validate(jwks_entry))
         return cls(keys=parsed_keydata)
@@ -114,7 +114,7 @@ class VariableJWKS(BaseModel):
             }
         )
     )
-    keys: list[EllipticCurveJWK]  # To be unionized if we add other key types
+    keys: tuple[EllipticCurveJWK, ...]  # To be unionized if we add other key types
 
     @classmethod
     def construct_from_jwks_list(cls, jwks_list: Sequence[Mapping[str, Any]]) -> Self:

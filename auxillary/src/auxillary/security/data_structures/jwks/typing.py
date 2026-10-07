@@ -1,10 +1,6 @@
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal, Protocol, Self
 
-from cryptography.hazmat.primitives.asymmetric.ec import (
-    EllipticCurve,
-    EllipticCurvePublicNumbers,
-)
 from pydantic.main import IncEx
 
 from auxillary.security.data_structures.jwks.enums import JWKKty, JWKUse
@@ -49,6 +45,26 @@ class SupportsPydanticModelSerialization(Protocol):
         polymorphic_serialization: bool | None = None,
     ) -> dict[str, Any]: ...
 
+    def model_dump_json(
+        self,
+        *,
+        indent: int | None = None,
+        ensure_ascii: bool = False,
+        include: IncEx | None = None,
+        exclude: IncEx | None = None,
+        context: Any | None = None,
+        by_alias: bool | None = None,
+        exclude_unset: bool = False,
+        exclude_defaults: bool = False,
+        exclude_none: bool = False,
+        exclude_computed_fields: bool = False,
+        round_trip: bool = False,
+        warnings: bool | Literal["none", "warn", "error"] = True,
+        fallback: Callable[[Any], Any] | None = None,
+        serialize_as_any: bool = False,
+        polymorphic_serialization: bool | None = None,
+    ) -> str: ...
+
     @classmethod
     def model_validate(
         cls,
@@ -63,14 +79,11 @@ class SupportsPydanticModelSerialization(Protocol):
     ) -> Self: ...
 
 
-class SupportsJWKSerialization(SupportsJWK, SupportsPydanticModelSerialization): ...
+class SupportsJWKSerialization(
+    SupportsJWK, SupportsPydanticModelSerialization, Protocol
+): ...
 
 
-class SupportsEllipticCurveJWK(SupportsJWK):
-    crv: type[EllipticCurve]
-    public_members: EllipticCurvePublicNumbers
-
-
-class JWKS(Protocol):
+class JWKS(SupportsPydanticModelSerialization, Protocol):
     @property
     def keys(self) -> Sequence[SupportsJWKSerialization]: ...
