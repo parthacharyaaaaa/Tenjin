@@ -11,7 +11,6 @@ from auxillary.data_structures.locks.lua_scripts import (
     CONDITIONAL_LOCK_UNSETTING_SCRIPT,
 )
 from auxillary.data_structures.locks.typing import SupportsDistributedLocking
-from auxillary.singleton import SingletonMetaclass
 
 
 @dataclass(slots=True, frozen=True)
@@ -34,8 +33,8 @@ class BasicLockContext:
             await self.client.release(self.resource, self.value)
 
 
-@dataclass(slots=True, weakref_slot=True, frozen=True)
-class RedisInstanceLockFactory(metaclass=SingletonMetaclass):
+@dataclass(slots=True, frozen=True)
+class RedisInstanceLockFactory:
     redis_client: Redis
     _registrered_release_script: AsyncScript = field(init=False)
 
