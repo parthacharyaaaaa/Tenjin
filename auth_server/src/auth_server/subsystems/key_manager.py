@@ -177,7 +177,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
         cooldown_duration: int | None = None,
     ) -> None:
         async with self._transactional_block(
-            operation=SyncedStoreKeyStrings.INVALIDATE_KEY,
+            operation=SyncedStoreKeyStrings.JWKS_WRITE_LOCK,
             lock_duration=LockTIme.MEDIUM,
             operational_cooldown_duration=cooldown_duration,
         ):
@@ -208,7 +208,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
 
                 # Should never happen, but in case it does we fall back and regenerate the entire list
                 if not (jwks and any(j.kid == key_id for j in jwks)):
-                    if intermediate_message_mapping:
+                    if intermediate_message_mapping is not None:
                         intermediate_message_mapping["keylist_integrity_warning"] = (
                             "Synced keylist state was inconsistent and hence regenerated through database"
                         )
@@ -226,7 +226,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
     ) -> tuple[str, tuple[str, ...]]:
         """Invalidate all keys except for the currently active key"""
         async with self._transactional_block(
-            operation=SyncedStoreKeyStrings.INVALIDATE_KEY,
+            operation=SyncedStoreKeyStrings.JWKS_WRITE_LOCK,
             lock_duration=LockTIme.MEDIUM,
             operational_cooldown_duration=cooldown_duration,
         ):
@@ -247,7 +247,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     self.token_manager.invalidate_key(key.kid)
 
         await self.jwks_update_announcer.stream_update(
-            VariableJWKS.model_validate({"keys": jwks_data})
+            VariableJWKS.model_validate({"keys": [active_key]})
         )
 
         return active_key.kid, tuple(i.kid for i in jwks_data)
@@ -259,7 +259,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
         rotation_author: int | None = None,
     ) -> KeyPublicDataResult:
         async with self._transactional_block(
-            operation=SyncedStoreKeyStrings.INVALIDATE_KEY,
+            operation=SyncedStoreKeyStrings.JWKS_WRITE_LOCK,
             lock_duration=LockTIme.MEDIUM,
             operational_cooldown_duration=cooldown_duration,
         ):
@@ -318,7 +318,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                         tuple(
                             i[0]
                             for i in valid_inactive_key_data[
-                                self.key_config.MAX_VALID_KEYS :
+                                : -self.key_config.MAX_VALID_KEYS
                             ]
                         )
                     )
