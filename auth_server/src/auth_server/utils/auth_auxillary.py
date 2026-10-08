@@ -61,7 +61,8 @@ async def report_suspicious_activity(
         if force_logout and (
             (len(activities) > config.ADMIN.MAX_ACTIVITY_LIMIT)
             or (
-                activities[-1].time_logged
+                activities
+                and activities[-1].time_logged
                 > current_time - config.ADMIN.SUSPICIOUS_LOOKBACK_TIME
             )
         ):
