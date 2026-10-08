@@ -15,7 +15,7 @@ from auth_server.models.session import AdminSession
 from auth_server.strings import GENERIC_SESSION_SEPARATOR
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class AdminSessionManager(metaclass=SingletonMetaclass):
     session_store: Redis
     admin_config: AdminConfigModel
