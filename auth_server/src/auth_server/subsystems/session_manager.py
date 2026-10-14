@@ -104,12 +104,16 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
                 self.generate_admin_session_name(admin_session.session_id),
                 mapping=admin_session.model_dump_redis(),
             )
-            pipeline.hsetex(
+            pipeline.hset(
                 self.admin_session_reverse_mapping_name,
                 str(admin_session.admin_id),
                 admin_session.session_id,
-                ex=self.admin_config.ADMIN_SESSION_DURATION
+            )
+            pipeline.hexpire(
+                self.admin_session_reverse_mapping_name,
+                self.admin_config.ADMIN_SESSION_DURATION
                 * self.admin_config.MAX_SESSION_ITERATIONS,
+                str(admin_session.admin_id),
             )
             if preceding_session_id is not None:
                 pipeline.hdel(

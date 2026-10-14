@@ -53,6 +53,7 @@ def redis_harness() -> RedisHarness:
     calls.attach_mock(store.pipeline, "pipeline")
     calls.attach_mock(context.__aenter__, "enter")
     calls.attach_mock(pipeline.hset, "hset")
+    calls.attach_mock(pipeline.hexpire, "hexpire")
     calls.attach_mock(pipeline.hsetex, "hsetex")
     calls.attach_mock(pipeline.hdel, "hdel")
     calls.attach_mock(pipeline.delete, "delete")
@@ -270,11 +271,15 @@ async def test_register_admin_session_queues_initial_registration_in_order(
         call.pipeline(transaction=True),
         call.enter(),
         call.hset("admin.session-id", mapping=session.model_dump_redis()),
-        call.hsetex(
+        call.hset(
             "active_admins",
             str(ADMIN_ID),
             SESSION_ID,
-            ex=timedelta(seconds=180),
+        ),
+        call.hexpire(
+            "active_admins",
+            timedelta(seconds=180),
+            str(ADMIN_ID),
         ),
         call.execute(),
         call.exit(None, None, None),
@@ -296,11 +301,15 @@ async def test_register_admin_session_replaces_preceding_session_in_order(
         call.pipeline(transaction=True),
         call.enter(),
         call.hset("admin.session-id", mapping=session.model_dump_redis()),
-        call.hsetex(
+        call.hset(
             "active_admins",
             str(ADMIN_ID),
             SESSION_ID,
-            ex=timedelta(seconds=180),
+        ),
+        call.hexpire(
+            "active_admins",
+            timedelta(seconds=180),
+            str(ADMIN_ID),
         ),
         call.hdel(manager.admin_session_reverse_mapping_name, str(session.admin_id)),
         call.delete("admin.preceding-id"),
