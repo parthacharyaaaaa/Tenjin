@@ -116,9 +116,6 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
                 str(admin_session.admin_id),
             )
             if preceding_session_id is not None:
-                pipeline.hdel(
-                    self.admin_session_reverse_mapping_name, str(admin_session.admin_id)
-                )
                 pipeline.delete(self.generate_admin_session_name(preceding_session_id))
             await pipeline.execute()
 
