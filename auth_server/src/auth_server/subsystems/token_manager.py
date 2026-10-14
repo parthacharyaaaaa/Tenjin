@@ -63,7 +63,9 @@ class TokenManager:
 
     @asynccontextmanager
     async def transactional_block(self) -> AsyncGenerator[None, None]:
-        keys_snapshot: Final[MappingProxyType] = MappingProxyType(self._key_mapping)
+        keys_snapshot: Final[MappingProxyType] = MappingProxyType(
+            self._key_mapping.copy()
+        )
         active_key_id_snapshot: Final[str] = self._active_key
         active_key_pem_snapshot: Final[bytes] = self._active_key_private_pem
         try:
@@ -89,7 +91,10 @@ class TokenManager:
 
     @overload
     async def decode_token(
-        self, token: str, token_type: Literal[TokenType.StandardAccess], **kwargs
+        self,
+        token: str,
+        token_type: Literal[TokenType.StandardAccess] = TokenType.StandardAccess,
+        **kwargs,
     ) -> StandardAccessTokenClaims: ...
 
     @overload
