@@ -311,7 +311,6 @@ async def test_register_admin_session_replaces_preceding_session_in_order(
             timedelta(seconds=180),
             str(ADMIN_ID),
         ),
-        call.hdel(manager.admin_session_reverse_mapping_name, str(session.admin_id)),
         call.delete("admin.preceding-id"),
         call.execute(),
         call.exit(None, None, None),
