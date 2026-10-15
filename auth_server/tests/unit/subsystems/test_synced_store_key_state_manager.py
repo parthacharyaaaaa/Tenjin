@@ -141,7 +141,7 @@ async def test_get_jwks_converts_each_cached_key(
 ) -> None:
     cached_keys = [{"kid": "key-1"}, {"kid": "key-2"}]
     public_results = [Mock(), Mock()]
-    public_results[0].as_jwk.return_value = jwk
+    public_results[0] = jwk
     second_jwk = EllipticCurveJWKResult(
         alg=ECAlg.ES256,
         crv="secp256k1",
@@ -149,14 +149,15 @@ async def test_get_jwks_converts_each_cached_key(
         x="x-2",
         y="y-2",
     )
-    public_results[1].as_jwk.return_value = second_jwk
+    public_results[1] = second_jwk
     redis_harness.store.get.return_value = orjson.dumps({"keys": cached_keys})
 
     with patch.object(
-        KeyPublicDataResult,
-        "construct_from_cache",
+        EllipticCurveJWKResult,
+        "initialize_from_cache",
         side_effect=public_results,
     ) as construct:
+        print(jwk)
         assert (await manager.get_jwks()) == [jwk, second_jwk]
 
     assert construct.call_args_list == [call(cached_keys[0]), call(cached_keys[1])]
