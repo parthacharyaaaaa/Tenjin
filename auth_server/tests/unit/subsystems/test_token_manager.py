@@ -1,4 +1,3 @@
-import asyncio
 from dataclasses import dataclass
 from datetime import timedelta
 from types import SimpleNamespace
@@ -34,10 +33,6 @@ class TokenManagerHarness:
     pipeline: Mock
     pipeline_context: AsyncContext
     redis_calls: Mock
-    poll_store: Mock
-    create_task: Mock
-    polling_result: object
-    polling_task: Mock
 
 
 @pytest.fixture
@@ -83,26 +78,17 @@ def token_manager_harness() -> TokenManagerHarness:
         MAX_TOKENS_PER_FAMILY=3,
         POLL_INTERVAL=timedelta(seconds=15),
     )
-    polling_result = object()
-    polling_task = Mock()
-    poll_store = Mock(return_value=polling_result)
-    create_task = Mock(return_value=polling_task)
 
-    with (
-        patch.object(TokenManager, "poll_store", poll_store),
-        patch("auth_server.subsystems.token_manager.asyncio.create_task", create_task),
-    ):
-        manager = TokenManager(
-            token_store,
-            synced_store,
-            repository,
-            synced_state,
-            key_config,  # type: ignore
-            token_config,  # type: ignore
-            logger=logger,
-            universal_claims={"iss": "tenjin"},
-            universal_headers={"aud": "admins"},
-        )
+    manager = TokenManager(
+        token_store,
+        synced_store,
+        repository,
+        key_config,  # type: ignore
+        token_config,  # type: ignore
+        logger=logger,
+        universal_claims={"iss": "tenjin"},
+        universal_headers={"aud": "admins"},
+    )
 
     return TokenManagerHarness(
         manager,
@@ -114,10 +100,6 @@ def token_manager_harness() -> TokenManagerHarness:
         pipeline,
         pipeline_context,
         redis_calls,
-        poll_store,
-        create_task,
-        polling_result,
-        polling_task,
     )
 
 
@@ -142,12 +124,6 @@ def test_post_init_sets_headers_and_schedules_polling(
         "typ": "JWT",
         "alg": "ES256",
     }
-    harness.poll_store.assert_called_once_with(timedelta(seconds=15))
-    harness.create_task.assert_called_once_with(
-        harness.polling_result,
-        name="polling_task",
-    )
-    assert harness.manager._polling_task is harness.polling_task
 
 
 @pytest.mark.asyncio
@@ -649,67 +625,6 @@ def test_invalidate_key_silently_removes_non_active_key(
     manager.invalidate_key("other")
 
     assert "other" not in manager._key_mapping
-
-
-@pytest.mark.asyncio
-async def test_poll_store_reconciles_one_iteration_then_sleeps(
-    token_manager_harness: TokenManagerHarness,
-) -> None:
-    harness = token_manager_harness
-    manager = harness.manager
-    manager._active_key = "active"
-    manager._key_mapping = {"active": Mock(), "expired": Mock()}
-    harness.synced_state.get_jwks.return_value = [
-        SimpleNamespace(kid="active"),
-        SimpleNamespace(kid="new"),
-    ]
-    rotated_out_at = object()
-    new_keydata = SimpleNamespace(rotated_out_at=rotated_out_at)
-    harness.repository.get_keydata.return_value = new_keydata
-
-    with (
-        patch.object(TokenManager, "update_keydata") as update_keydata,
-        patch.object(TokenManager, "invalidate_key") as invalidate_key,
-        patch(
-            "auth_server.subsystems.token_manager.asyncio.sleep",
-            new=AsyncMock(side_effect=asyncio.CancelledError),
-        ) as sleep,
-    ):
-        with pytest.raises(asyncio.CancelledError):
-            await manager.poll_store(timedelta(seconds=15))
-
-    harness.synced_state.get_jwks.assert_awaited_once_with()
-    harness.repository.get_keydata.assert_awaited_once_with("new", public_only=False)
-    update_keydata.assert_called_once_with(
-        "new",
-        new_keydata,
-        active=rotated_out_at is None,
-    )
-    invalidate_key.assert_called_once_with("expired")
-    sleep.assert_awaited_once_with(15)
-
-
-@pytest.mark.asyncio
-async def test_poll_store_logs_empty_global_state_before_sleeping(
-    token_manager_harness: TokenManagerHarness,
-) -> None:
-    harness = token_manager_harness
-    harness.synced_state.get_jwks.return_value = []
-
-    with patch(
-        "auth_server.subsystems.token_manager.asyncio.sleep",
-        new=AsyncMock(side_effect=asyncio.CancelledError),
-    ):
-        with pytest.raises(asyncio.CancelledError):
-            await harness.manager.poll_store(timedelta(seconds=15))
-
-    assert harness.logger.error.call_args_list[0] == call(
-        "Exception encountered. Traceback:"
-    )
-    assert (
-        "Global key state empty or not found"
-        in harness.logger.error.call_args_list[1].args[0]
-    )
 
 
 def test_generate_unique_identifier_returns_uuid_hex() -> None:
