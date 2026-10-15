@@ -1,9 +1,9 @@
 """Data access repository for Keydata SA model"""
 
-from collections.abc import MutableMapping, Sequence
+from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, ClassVar, Final, Literal, overload
+from typing import Any, ClassVar, Final, Literal, Self, overload
 
 from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
@@ -58,14 +58,22 @@ class KeyPublicDataResult(AbstractResult):
                 d[k] = v.decode(encoding)
 
     def __json_repr__(self) -> dict[str, Any]:
-        json_mapping: dict[str, Any] = super().__json_repr__()
+        json_mapping: dict[str, Any] = super(KeyPublicDataResult, self).__json_repr__()
         self.stringify_binary_fields(json_mapping)
         return json_mapping
 
     def __cache_repr__(self) -> dict[FieldT, EncodableT]:
-        cache_mapping: dict[FieldT, EncodableT] = super().__cache_repr__()
+        cache_mapping: dict[FieldT, EncodableT] = super(
+            KeyPublicDataResult, self
+        ).__cache_repr__()
         self.stringify_binary_fields(cache_mapping)
         return cache_mapping
+
+    @classmethod
+    def construct_from_cache(cls, mapping: Mapping[str, Any], *args, **kwargs) -> Self:
+        instance: cls = super(KeyPublicDataResult, cls).construct_from_cache(mapping)
+        instance.public_pem = instance.public_pem.encode(encoding="ascii")  # type: ignore
+        return instance
 
     def as_jwk(self) -> EllipticCurveJWKResult:
         verification_key: PublicKeyTypes = load_pem_public_key(self.public_pem)
@@ -90,6 +98,12 @@ class KeyPrivateDataResult(KeyPublicDataResult):
     """
 
     private_pem: bytes
+
+    @classmethod
+    def construct_from_cache(cls, mapping: Mapping[str, Any], *args, **kwargs) -> Self:
+        instance: cls = super(KeyPublicDataResult, cls).construct_from_cache(mapping)
+        instance.private_pem = instance.private_pem.encode(encoding="ascii")  # type: ignore
+        return instance
 
     def create_public_copy(self) -> KeyPublicDataResult:
         return KeyPublicDataResult.construct_from_cache(cache_repr(self))  # pyrefly: ignore
@@ -195,7 +209,7 @@ class KeydataRepository(AbstractWorkRepository):
         curve: ec.EllipticCurve,
         epoch: datetime | None = None,
         *,
-        returning: Literal[False],
+        returning: Literal[False] = False,
     ) -> None: ...
 
     @overload
@@ -208,7 +222,7 @@ class KeydataRepository(AbstractWorkRepository):
         curve: ec.EllipticCurve,
         epoch: datetime | None = None,
         *,
-        returning: Literal[True],
+        returning: Literal[True] = True,
     ) -> KeyPrivateDataResult: ...
 
     async def insert_keydata(
@@ -282,7 +296,9 @@ class KeydataRepository(AbstractWorkRepository):
                 (
                     await session.execute(
                         update(KeyData)
-                        .where(KeyData.epoch < threshold)
+                        .where(
+                            (KeyData.epoch < threshold) & (KeyData.expired_at.is_(None))
+                        )
                         .values(expired_at=expiry_time or datetime.now(UTC))
                         .returning(KeyData)
                     )
@@ -605,7 +621,7 @@ class KeydataRepository(AbstractWorkRepository):
                     insert(KeyData)
                     .values(
                         kid=new_key_id,
-                        curve=curve,
+                        curve=curve.name,
                         private_pem=new_key_private_pem,
                         public_pem=new_key_public_pem,
                         alg=alg,
