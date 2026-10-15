@@ -7,6 +7,7 @@ from auth_server.admin.roles import AdminRole
 from auth_server.models.database import Admin
 from auth_server.repositories.admin import AdminRepository
 from auth_server.strings import SelectionLockOption
+from freezegun import freeze_time
 from sqlalchemy import insert
 from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -16,6 +17,8 @@ from sqlalchemy.util.typing import Final, LiteralString
 TEST_ACTIVITY_COUNT: Final[int] = 5
 TEST_ADMIN_ID: Final[int] = 1
 TEST_ADMIN_NAME: Final[LiteralString] = "test_foobar_admin"
+
+DUMMY_DATETIME: Final[datetime] = datetime(1, 1, 1, tzinfo=UTC)
 
 
 @pytest_asyncio.fixture(scope="package", autouse=True)
@@ -97,6 +100,20 @@ async def test_admin_deletion(
 
 
 @pytest.mark.asyncio
+async def test_admin_repeated_deletion(
+    admin_repository: AdminRepository,
+    pg_async_sessionmaker: async_sessionmaker[AsyncSession],
+) -> None:
+    async with pg_async_sessionmaker() as session:
+        async with admin_repository.external_unit_of_work(session):
+            await admin_repository.delete_admin(TEST_ADMIN_ID)
+            assert (
+                await admin_repository.delete_admin(TEST_ADMIN_ID, returning=True)
+                is None
+            )
+
+
+@pytest.mark.asyncio
 async def test_locking(
     admin_repository: AdminRepository,
     pg_async_sessionmaker: async_sessionmaker[AsyncSession],
@@ -145,6 +162,22 @@ async def test_admin_insertion(
                 creation_author=TEST_ADMIN_ID,
             )
             assert await admin_repository.get_admin_by_username("foobar") is not None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("login_time", (DUMMY_DATETIME, None))
+@freeze_time(DUMMY_DATETIME)
+async def test_last_login_updation(
+    admin_repository: AdminRepository,
+    pg_async_sessionmaker: async_sessionmaker[AsyncSession],
+    login_time: datetime | None,
+) -> None:
+    async with pg_async_sessionmaker() as session:
+        async with admin_repository.external_unit_of_work(session):
+            await admin_repository.update_last_login(TEST_ADMIN_ID, login_time)
+            assert (  # type: ignore
+                await admin_repository.get_admin(TEST_ADMIN_ID)
+            ).last_login == DUMMY_DATETIME
 
 
 INVALID_ADMIN_KWARGS: tuple[dict[str, Any], ...] = (
