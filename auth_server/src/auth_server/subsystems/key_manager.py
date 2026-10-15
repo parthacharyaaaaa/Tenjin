@@ -144,6 +144,8 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 self.token_manager,
             ),
         )
+
+    def start_token_manager_polling(self) -> None:
         _token_manager_polling_task: Final[asyncio.Task[None]] = asyncio.create_task(
             self.token_manager_updation_poller(
                 self.token_manager.token_manager_config.POLL_INTERVAL
@@ -152,6 +154,14 @@ class KeyLifecycleManager(AntiSingletonMixin):
         object.__setattr__(
             self, "_token_manager_polling_task", _token_manager_polling_task
         )
+
+    async def stop_token_manager_polling(self) -> None:
+        self._token_manager_polling_task.cancel()
+        try:
+            await self._token_manager_polling_task
+        except asyncio.CancelledError:
+            pass
+        object.__setattr__(self, "_token_manager_polling_task", None)
 
     @asynccontextmanager
     async def _transactional_block(

@@ -24,6 +24,7 @@ from auth_server.dependencies.local import (
     get_app_config,
     get_database_session_maker,
     get_distributed_lock_factory,
+    get_key_lifecycle_manager,
     get_synced_store_client,
     get_synced_store_key_state_manager,
     get_token_manager,
@@ -37,7 +38,10 @@ from auth_server.repositories.keydata import (
 )
 from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
 from auth_server.strings import SyncedStoreCommandStrings
-from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
+from auth_server.subsystems.key_manager import (
+    KeyLifecycleManager,
+    SyncedStoreKeyStateManager,
+)
 from auth_server.subsystems.token_manager import TokenManager
 
 
@@ -197,6 +201,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     synced_state_manager: Final[SyncedStoreKeyStateManager] = (
         get_synced_store_key_state_manager()
     )
+    lifecycle_manager: Final[KeyLifecycleManager] = get_key_lifecycle_manager()
 
     master_lock_context: Final[BasicLockContext] = await lock_factory.lock(
         SyncedStoreCommandStrings.AUTH_BOOTUP_MASTER,
@@ -220,5 +225,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         )
 
     register_routers(app, ROUTER_URL_MAPPING, config.CORE.APPLICATION_ROOT)
-
+    lifecycle_manager.start_token_manager_polling()
     yield
+    await lifecycle_manager.stop_token_manager_polling()
