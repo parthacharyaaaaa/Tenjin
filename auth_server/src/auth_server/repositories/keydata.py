@@ -358,7 +358,7 @@ class KeydataRepository(AbstractWorkRepository):
             expired_key: KeyData | None = (
                 await session.execute(
                     update(KeyData)
-                    .where(KeyData.kid == kid)
+                    .where((KeyData.kid == kid) & (KeyData.expired_at.is_(None)))
                     .values(expired_at=expiry_time or datetime.now(UTC))
                     .returning(KeyData)
                 )
@@ -413,7 +413,7 @@ class KeydataRepository(AbstractWorkRepository):
                 (
                     await session.execute(
                         update(KeyData)
-                        .where(KeyData.kid.in_(kids))
+                        .where((KeyData.kid.in_(kids)) & (KeyData.expired_at.is_(None)))
                         .values(expired_at=expiry_time or datetime.now(UTC))
                         .returning(KeyData)
                     )
