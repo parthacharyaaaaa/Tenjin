@@ -94,7 +94,7 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
             SyncedStoreKeyStrings.JWKS_KEY
         )
         return [
-            KeyPublicDataResult.construct_from_cache(k).as_jwk()
+            EllipticCurveJWKResult.initialize_from_cache(k)
             for k in orjson.loads(raw_jwks)["keys"]
         ]
 

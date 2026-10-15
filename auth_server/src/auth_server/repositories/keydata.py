@@ -30,6 +30,10 @@ class EllipticCurveJWKResult(AbstractResult):
     kty: Literal[JWKKty.EC] = field(default=JWKKty.EC)
     use: Literal[JWKUse.SIG] = field(default=JWKUse.SIG)
 
+    @classmethod
+    def initialize_from_cache(cls, cache_mapping: Mapping[str, Any]) -> Self:
+        return cls(**cache_mapping)
+
 
 @dataclass(slots=True, init=False)
 class KeyPublicDataResult(AbstractResult):
