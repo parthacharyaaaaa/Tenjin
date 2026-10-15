@@ -1,26 +1,73 @@
 from dataclasses import dataclass, fields
-from datetime import datetime
+from datetime import UTC, datetime
 from types import MappingProxyType, NoneType
-from typing import Any, Callable, ClassVar, Final, Mapping, Self
+from typing import Any, Callable, ClassVar, Final, LiteralString, Mapping, Self
 
+import orjson
 from redis.typing import EncodableT, FieldT
 from sqlalchemy.orm import DeclarativeBase
 
 type t_dto_casting_map = MappingProxyType[type, Callable[[Any], Any]]
 
+NONETYPE_CACHE_SUBSTITUTE: Final[LiteralString] = "__NONETYPE__"
+
+
+def _json_convert_datetime(d: datetime) -> str:
+    return d.isoformat()
+
+
+def _reverse_json_convert_datetime(d: str | int | float) -> datetime:
+    if isinstance(d, str):
+        return datetime.fromisoformat(d)
+    if isinstance(d, (int, float)):
+        return datetime.fromtimestamp(d, tz=UTC)
+    raise ValueError("Unsupported format for datetime")
+
+
+def _cache_convert_nonetype(n: NoneType) -> str:
+    return NONETYPE_CACHE_SUBSTITUTE
+
+
+def _reverse_cache_convert_list(l: str) -> list[Any]:
+    converted = orjson.loads(l)
+    if not isinstance(converted, list):
+        raise ValueError(f"{l} not a list")
+    return converted
+
+
+def _reverse_cache_convert_dict(d: str) -> dict[str, Any]:
+    converted = orjson.loads(d)
+    if not isinstance(converted, dict):
+        raise ValueError(f"{d} not a dictionary")
+    return converted
+
+
 JSON_TYPE_MAPPING: Final[t_dto_casting_map] = MappingProxyType(
     {
-        datetime: lambda x: x.isoformat(),
+        datetime: _json_convert_datetime,
     }
+)
+
+REVERSE_JSON_TYPE_MAPPING: Final[t_dto_casting_map] = MappingProxyType(
+    {datetime: _reverse_json_convert_datetime}
 )
 
 CACHE_TYPE_MAPPING: Final[t_dto_casting_map] = MappingProxyType(
     JSON_TYPE_MAPPING
     | {
-        NoneType: lambda _: "",
+        NoneType: _cache_convert_nonetype,
         bool: int,
         list: str,
         dict: str,
+    }
+)
+
+REVERSE_CACHE_TYPE_MAPPING: Final[t_dto_casting_map] = MappingProxyType(
+    REVERSE_JSON_TYPE_MAPPING
+    | {
+        bool: bool,
+        list: _reverse_cache_convert_list,
+        dict: _reverse_cache_convert_dict,
     }
 )
 
@@ -38,10 +85,14 @@ class AbstractResult:
     @classmethod
     def construct_from_cache(cls, mapping: Mapping[str, Any], *args, **kwargs) -> Self:
         instance = cls()
-
-        for k, v in mapping.items():
-            if k in cls._fields:
-                setattr(instance, k, v)
+        for field in fields(instance):
+            setattr(
+                instance,
+                field.name,
+                REVERSE_CACHE_TYPE_MAPPING.get(field.type, lambda x: x)(value)
+                if (value := mapping[field.name]) != NONETYPE_CACHE_SUBSTITUTE
+                else None,
+            )
         return instance
 
     @classmethod
@@ -57,7 +108,7 @@ class AbstractResult:
         self, casting_map: Mapping[type, Callable[[Any], Any]]
     ) -> dict[str, Any]:
         return {
-            field.name.strip("_"): casting_map.get(field.type, lambda x: x)(  # type: ignore
+            field.name: casting_map.get(type(getattr(self, field.name)), lambda x: x)(  # type: ignore
                 getattr(self, field.name)
             )
             for field in fields(self)
@@ -68,4 +119,10 @@ class AbstractResult:
         return self.map_fields(JSON_TYPE_MAPPING)
 
     def __cache_repr__(self) -> dict[FieldT, EncodableT]:
-        return self.map_fields(CACHE_TYPE_MAPPING)  # type: ignore
+        return {
+            field.name: CACHE_TYPE_MAPPING.get(field.type, lambda x: x)(field_value)
+            if (field_value := getattr(self, field.name)) is not None
+            else NONETYPE_CACHE_SUBSTITUTE
+            for field in fields(self)
+            if not field.name.startswith("_")
+        }
