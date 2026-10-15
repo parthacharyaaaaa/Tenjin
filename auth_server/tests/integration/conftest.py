@@ -6,6 +6,7 @@ import pytest_asyncio
 from auth_server.config import AdminConfigModel
 from auth_server.dependencies.local import KeydataRepository
 from auth_server.models.database import Base
+from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
 from auth_server.subsystems.session_manager import AdminSessionManager
@@ -62,6 +63,13 @@ def suspicious_activity_repository(
     pg_async_sessionmaker: async_sessionmaker[AsyncSession],
 ):
     return SuspiciousActivityRepository(pg_async_sessionmaker)
+
+
+@pytest.fixture
+def admin_repository(
+    pg_async_sessionmaker: async_sessionmaker[AsyncSession],
+):
+    return AdminRepository(pg_async_sessionmaker)
 
 
 @pytest.fixture(scope="package")
