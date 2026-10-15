@@ -1,11 +1,9 @@
-import asyncio
 import logging
 import time
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import timedelta
 from traceback import format_exc
 from types import MappingProxyType
 from typing import Any, Final, Literal, Optional, overload
@@ -21,7 +19,6 @@ from auth_server.repositories.keydata import (
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
-from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
 from auth_server.tokens.typing import (
     StandardAccessTokenClaims,
     StandardRefreshTokenClaims,
@@ -37,13 +34,11 @@ class TokenManager:
     _token_store_client: Redis
     _synced_store_client: Redis
     _keydata_repository: KeydataRepository
-    _synced_state_manager: SyncedStoreKeyStateManager
     key_config: KeyConfigModel
     token_manager_config: TokenManagerConfigModel
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__file__))
     universal_claims: dict[str, Any] = field(default_factory=dict)
     universal_headers: dict[str, Any] = field(default_factory=dict)
-    _polling_task: asyncio.Task[None] = field(init=False)
     _key_mapping: dict[str, KeyPublicDataResult] = field(
         default_factory=dict, init=False
     )
@@ -54,11 +49,6 @@ class TokenManager:
         # Initialize universal headers, common to all tokens issued in any context
         self.universal_headers.update(
             {"typ": "JWT", "alg": str(self.key_config.SIGNATURE_ALGORITHM)}
-        )
-        # Start background task for polling
-        self._polling_task = asyncio.create_task(
-            self.poll_store(self.token_manager_config.POLL_INTERVAL),
-            name="polling_task",
         )
 
     @asynccontextmanager
@@ -287,49 +277,40 @@ class TokenManager:
 
         self._key_mapping.pop(kid, None)
 
-    async def poll_store(self, interval: timedelta) -> None:
+    async def update_local_store(
+        self, global_jwks: Iterable[EllipticCurveJWKResult]
+    ) -> None:
         """
         Check synced store to keep local keys updated with global keys.
         Intended to be run as a non-blocking, background task upon instantiation
         """
-        while True:
-            try:
-                global_jwks: Final[tuple[EllipticCurveJWKResult, ...]] = tuple(
-                    await self._synced_state_manager.get_jwks()
-                )
-                if not global_jwks:
-                    raise RuntimeError("Global key state empty or not found")
+        try:
+            global_valid_keyset: frozenset[str] = frozenset(k.kid for k in global_jwks)
+            local_valid_keyset: frozenset[str] = frozenset(self._key_mapping.keys())
 
-                global_valid_keyset: frozenset[str] = frozenset(
-                    k.kid for k in global_jwks
+            for new_key in global_valid_keyset - local_valid_keyset:
+                self.logger.info(f"Adding verification new key {new_key}...")
+                result: (
+                    KeyPrivateDataResult | None
+                ) = await self._keydata_repository.get_keydata(
+                    new_key, public_only=False
                 )
-                local_valid_keyset: frozenset[str] = frozenset(self._key_mapping.keys())
-
-                for new_key in global_valid_keyset - local_valid_keyset:
-                    self.logger.info(f"Adding verification new key {new_key}...")
-                    result: (
-                        KeyPrivateDataResult | None
-                    ) = await self._keydata_repository.get_keydata(
-                        new_key, public_only=False
+                if result:
+                    self.update_keydata(
+                        new_key, result, active=result.rotated_out_at is None
                     )
-                    if result:
-                        self.update_keydata(
-                            new_key, result, active=result.rotated_out_at is None
-                        )
-                        self.logger.info(
-                            f"Added verification new key {new_key} to local token manager"
-                        )
+                    self.logger.info(
+                        f"Added verification new key {new_key} to local token manager"
+                    )
 
-                for expired_key in local_valid_keyset - global_valid_keyset:
-                    self.logger.info(f"Invalidating local key {expired_key}...")
-                    self.invalidate_key(expired_key)
-                    self.logger.info(f"Invalidated local key {expired_key}")
+            for expired_key in local_valid_keyset - global_valid_keyset:
+                self.logger.info(f"Invalidating local key {expired_key}...")
+                self.invalidate_key(expired_key)
+                self.logger.info(f"Invalidated local key {expired_key}")
 
-            except Exception:
-                self.logger.error("Exception encountered. Traceback:")
-                self.logger.error(format_exc())
-            finally:
-                await asyncio.sleep(interval.total_seconds())
+        except Exception:
+            self.logger.error("Exception encountered. Traceback:")
+            self.logger.error(format_exc())
 
     @staticmethod
     def generate_unique_identifier():

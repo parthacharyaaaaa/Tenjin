@@ -1,8 +1,11 @@
+import asyncio
 from collections.abc import AsyncGenerator, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum, IntFlag
+from logging import Logger, getLogger
+from traceback import format_exc
 from typing import Final, Protocol
 
 import orjson
@@ -120,6 +123,10 @@ class KeyLifecycleManager(AntiSingletonMixin):
     _lock_value: str = field(default="LOCK", kw_only=True)
     _lock_prefix: str = field(default="LOCK", kw_only=True)
     _string_separator: str = field(default=GENERIC_SEPARATOR, kw_only=True)
+    _logger: Logger = field(
+        default_factory=lambda: getLogger(name="key_lifecycle_manager_logger")
+    )
+    _token_manager_polling_task: asyncio.Task[None] = field(init=False)
 
     def generate_distributed_lock_name(self, operation: str) -> str:
         return self._string_separator.join((self._lock_prefix, operation))
@@ -136,6 +143,14 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 self.synced_store_key_manager,
                 self.token_manager,
             ),
+        )
+        _token_manager_polling_task: Final[asyncio.Task[None]] = asyncio.create_task(
+            self.token_manager_updation_poller(
+                self.token_manager.token_manager_config.POLL_INTERVAL
+            )
+        )
+        object.__setattr__(
+            self, "_token_manager_polling_task", _token_manager_polling_task
         )
 
     @asynccontextmanager
@@ -336,3 +351,18 @@ class KeyLifecycleManager(AntiSingletonMixin):
         )
 
         return new_key.create_public_copy()
+
+    async def token_manager_updation_poller(self, interval: timedelta) -> None:
+        while True:
+            try:
+                global_jwks: Final[tuple[EllipticCurveJWKResult, ...]] = tuple(
+                    await self.synced_store_key_manager.get_jwks()
+                )
+                if not global_jwks:
+                    raise RuntimeError("Global key state empty or not found")
+                await self.token_manager.update_local_store(global_jwks)
+            except Exception:
+                self._logger.error("Exception encountered. Traceback:")
+                self._logger.error(format_exc())
+            finally:
+                await asyncio.sleep(interval.total_seconds())

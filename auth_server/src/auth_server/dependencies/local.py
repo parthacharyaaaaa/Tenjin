@@ -112,7 +112,6 @@ def get_token_manager() -> TokenManager:
         get_token_store_client(),
         get_synced_store_client(),
         get_keydata_repository(),
-        get_synced_store_key_state_manager(),
         app_config.KEYS,
         app_config.JWKS.TOKEN_MANAGER,
     )
