@@ -101,63 +101,6 @@ class AdminRepository(AbstractWorkRepository):
                 return None
             return AdminPublicResult.construct_from_orm(admin)
 
-    @overload
-    async def insert_admin(
-        self,
-        username: str,
-        password_hash: bytes,
-        role: str,
-        created_by: int,
-        signing_key: bytes,
-        verification_key: bytes,
-        *,
-        returning: Literal[False] = False,
-    ) -> None: ...
-
-    @overload
-    async def insert_admin(
-        self,
-        username: str,
-        password_hash: bytes,
-        role: str,
-        created_by: int,
-        signing_key: bytes,
-        verification_key: bytes,
-        *,
-        returning: Literal[True],
-    ) -> AdminPublicResult: ...
-
-    async def insert_admin(
-        self,
-        username: str,
-        password_hash: bytes,
-        role: str,
-        created_by: int,
-        signing_key: bytes,
-        verification_key: bytes,
-        *,
-        returning: bool = False,
-    ) -> AdminPublicResult | None:
-        async with self._work_scoped_session() as session:
-            admin: Admin = (
-                await session.execute(
-                    insert(Admin)
-                    .values(
-                        username=username,
-                        password_hash=password_hash,
-                        role=role,
-                        created_by=created_by,
-                        signing_key=signing_key,
-                        verification_key=verification_key,
-                    )
-                    .returning(Admin)
-                )
-            ).scalar_one()
-
-            if returning:
-                return AdminPublicResult.construct_from_orm(admin)
-            return None
-
     async def update_last_login(
         self, admin_id: int, login_time: datetime | None = None
     ) -> None:
