@@ -3,8 +3,8 @@ APPLICATION_ROOT="/api/v1"
 PORT=8080
 
 [jwks]
-JWKS_FILENAME="jwks.json"
 JWKS_CAP=3
+UPDATION_STREAM_NAME="JWKS_ANNOUNCEMENTS"
 
 [jwks.token_manager]
 REFRESH_LIFETIME=10800      # seconds

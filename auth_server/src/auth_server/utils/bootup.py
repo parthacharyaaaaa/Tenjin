@@ -187,9 +187,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     synced_store_client: Final[Redis] = get_synced_store_client()
     lock_factory: Final[RedisInstanceLockFactory] = get_distributed_lock_factory()
 
-    # Additional filepaths depending on instance/static directories
-    config.JWKS.resolve_jwks_filepath(config.CORE.instance_path)
-
     # Error handler
     app.add_exception_handler(EnrichedHTTPException, generic_error_handler)
     app.add_exception_handler(Exception, generic_error_handler)

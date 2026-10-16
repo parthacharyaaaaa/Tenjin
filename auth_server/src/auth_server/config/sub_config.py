@@ -1,7 +1,7 @@
 import re
 from functools import cached_property
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Self
 
 from auxillary.mixins.annotations import timedelta_s
 from auxillary.mixins.db_config import (
@@ -18,7 +18,6 @@ from cryptography.hazmat.primitives.serialization import (
 )
 from pydantic import (
     BaseModel,
-    BeforeValidator,
     Field,
     computed_field,
     model_validator,
@@ -108,33 +107,9 @@ class TokenManagerConfigModel(BaseModel):
 
 
 class JWKSConfigModel(BaseModel):
-    JWKS_FILEPATH: Annotated[
-        Path,
-        BeforeValidator(_parse_jwks_path),
-        Field(default="jwks.json", alias="JWKS_FILENAME"),
-    ]
     JWKS_CAP: Annotated[int, Field(ge=1)]
     UPDATION_STREAM_NAME: str
     TOKEN_MANAGER: Annotated[TokenManagerConfigModel, Field(alias="token_manager")]
-
-    def _resolve_path_attr(
-        self, attr_name: str, rootpath: Path, path_type: Literal["file", "dir"] = "dir"
-    ) -> None:
-        path: Path = rootpath / getattr(self, attr_name)
-
-        if not path.is_absolute():
-            raise ValueError(f"Resolved path {path} is not absolute")
-
-        if path_type == "dir":
-            path.mkdir(parents=True, exist_ok=True)
-        else:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.touch(exist_ok=True)
-
-        setattr(self, attr_name, path)
-
-    def resolve_jwks_filepath(self, rootpath: Path) -> None:
-        self._resolve_path_attr("JWKS_FILEPATH", rootpath, "file")
 
 
 class KeyConfigModel(BaseModel):
