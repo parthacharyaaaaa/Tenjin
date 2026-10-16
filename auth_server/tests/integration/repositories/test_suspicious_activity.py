@@ -11,6 +11,7 @@ from auth_server.repositories.suspicious_activity import (
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.ext.asyncio.session import AsyncSession
+from sqlalchemy.sql import text
 
 TEST_ACTIVITY_COUNT: Final[int] = 5
 TEST_ADMIN_ID: Final[int] = 1
@@ -29,6 +30,15 @@ async def seed_db(pg_async_sessionmaker: async_sessionmaker[AsyncSession]):
                 password_hash=b"x" * 32,
                 created_by=TEST_ADMIN_ID,
             )
+        )
+        await session.execute(
+            text("""
+                SELECT setval(
+                    pg_get_serial_sequence('admins', 'id_'),
+                    COALESCE((SELECT MAX(id_) FROM admins), 1),
+                    EXISTS (SELECT 1 FROM admins)
+                )
+            """)
         )
         for i in range(TEST_ACTIVITY_COUNT):
             await session.execute(
