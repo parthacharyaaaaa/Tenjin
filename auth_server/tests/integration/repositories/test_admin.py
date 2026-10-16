@@ -43,7 +43,6 @@ async def seed_db(pg_async_sessionmaker: async_sessionmaker[AsyncSession]):
             """)
         )
         await session.commit()
-        await session.commit()
 
 
 @pytest.mark.asyncio
