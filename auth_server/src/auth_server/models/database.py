@@ -27,10 +27,12 @@ class Admin(Base):
     password_hash: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
 
     time_deleted: Mapped[datetime.datetime | None] = mapped_column(
-        TIMESTAMP, server_default=text("null")
+        TIMESTAMP(timezone=True), server_default=text("null")
     )
     last_login: Mapped[datetime.datetime] = mapped_column(
-        TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     locked: Mapped[bool] = mapped_column(
         BOOLEAN, nullable=False, server_default=text("false")
@@ -52,7 +54,9 @@ class SuspiciousActivity(Base):
         INTEGER, ForeignKey("admins.id_"), nullable=False
     )
     time_logged: Mapped[datetime.datetime] = mapped_column(
-        TIMESTAMP, nullable=False, server_default=text("CURRENT_TIMESTAMP")
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     description: Mapped[str] = mapped_column(VARCHAR(64), nullable=False)
 
@@ -71,10 +75,10 @@ class KeyData(Base):
         server_default=text("CURRENT_TIMESTAMP"),
     )
     rotated_out_at: Mapped[datetime.datetime] = mapped_column(
-        TIMESTAMP, server_default=text("null"), nullable=True
+        TIMESTAMP(timezone=True), server_default=text("null"), nullable=True
     )
     expired_at: Mapped[datetime.datetime] = mapped_column(
-        TIMESTAMP, server_default=text("null"), nullable=True
+        TIMESTAMP(timezone=True), server_default=text("null"), nullable=True
     )
     private_pem: Mapped[bytes] = mapped_column(BYTEA, nullable=False, unique=True)
     public_pem: Mapped[bytes] = mapped_column(BYTEA, nullable=False, unique=True)
