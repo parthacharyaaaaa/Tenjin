@@ -7,6 +7,7 @@ import jwt.exceptions as jwt_exceptions
 import pytest
 from auth_server.subsystems.token_manager import TokenManager
 from auth_server.tokens.typing import TokenType
+from sqlalchemy.util.typing import Final
 
 
 class AsyncContext:
@@ -346,7 +347,7 @@ async def test_reissue_token_pair_runs_refresh_flow_in_order(
             exp=500,
         ),
         call.shift("family"),
-        call.issue_access("7", 3, "family"),
+        call.issue_access("7", 3, family_id="family"),
     ]
 
 
@@ -418,11 +419,11 @@ async def test_issue_refresh_token_writes_family_metadata_before_encoding(
 
     assert result == "encoded-refresh"
     assert harness.redis_calls.mock_calls == [
-        call.lindex("FID:family", 0),
+        call.lindex("family", 0),
         call.pipeline(transaction=False),
         call.enter(),
-        call.lpush("FID:family", "new-jti:4600"),
-        call.expireat("FID:family", 4600),
+        call.lpush("family", "new-jti:4600"),
+        call.expireat("family", 4600),
         call.execute(),
         call.exit(None, None, None),
     ]
@@ -452,14 +453,14 @@ async def test_issue_fresh_refresh_token_checks_stale_empty_family(
     existing_family: bool,
 ) -> None:
     harness = token_manager_harness
-    harness.token_store.lrange.return_value = ["stale"] if existing_family else []
-
+    harness.token_store.llen.return_value = 1 if existing_family else 0
+    family_id: Final[str] = signing_manager.generate_family_list_id("7")
     with (
         patch.object(
             TokenManager,
             "invalidate_family",
             new_callable=AsyncMock,
-        ) as invalidate_family,
+        ),
         patch("auth_server.subsystems.token_manager.time.time", return_value=1000),
         patch.object(TokenManager, "generate_unique_identifier", return_value="jti"),
         patch(
@@ -467,13 +468,17 @@ async def test_issue_fresh_refresh_token_checks_stale_empty_family(
             return_value="encoded",
         ),
     ):
-        assert await signing_manager.issue_refresh_token("7", 3, "") == "encoded"
-
-    harness.token_store.lrange.assert_awaited_once_with("FID:", 0, -1)
-    if existing_family:
-        invalidate_family.assert_awaited_once_with("")
-    else:
-        invalidate_family.assert_not_awaited()
+        if existing_family:
+            with pytest.raises(
+                ValueError,
+                match=f"Family ID {family_id} exists in token store when implied not to",
+            ):
+                assert (
+                    await signing_manager.issue_refresh_token("7", 3, "") == "encoded"
+                )
+        else:
+            assert await signing_manager.issue_refresh_token("7", 3, "") == "encoded"
+    harness.token_store.llen.assert_awaited_once_with(family_id)
 
 
 def test_issue_access_token_builds_and_encodes_payload(
@@ -490,8 +495,8 @@ def test_issue_access_token_builds_and_encodes_payload(
         result = signing_manager.issue_access_token(
             "7",
             3,
-            "family",
-            {"custom": True},
+            family_id="family",
+            additional_claims={"custom": True},
         )
 
     assert result == "encoded-access"
@@ -527,12 +532,12 @@ async def test_shift_token_window_removes_required_oldest_tokens(
 
     await harness.manager.shift_token_window("family")
 
-    harness.token_store.llen.assert_awaited_once_with("FID:family")
+    harness.token_store.llen.assert_awaited_once_with("family")
     if expected_count is None:
         harness.token_store.rpop.assert_not_awaited()
     else:
         harness.token_store.rpop.assert_awaited_once_with(
-            "FID:family",
+            "family",
             expected_count,
         )
 
@@ -558,9 +563,9 @@ async def test_invalidate_family_deletes_existing_or_logs_missing(
 
     await harness.manager.invalidate_family("family")
 
-    harness.token_store.lrange.assert_awaited_once_with("FID:family", 0, -1)
+    harness.token_store.lrange.assert_awaited_once_with("family", 0, -1)
     if stored_family:
-        harness.token_store.delete.assert_awaited_once_with("FID:family")
+        harness.token_store.delete.assert_awaited_once_with("family")
         harness.logger.info.assert_not_called()
     else:
         harness.token_store.delete.assert_not_awaited()
