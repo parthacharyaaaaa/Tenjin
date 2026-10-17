@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from traceback import format_exc
 from types import MappingProxyType
-from typing import Any, Final, Literal, Optional, overload
+from typing import Any, Final, Literal, overload
 
 import jwt
 import jwt.exceptions as jwt_exceptions
@@ -48,12 +48,16 @@ class TokenManager:
     def __post_init__(self):
         # Initialize universal headers, common to all tokens issued in any context
         self.universal_headers.update(
-            {"typ": "JWT", "alg": str(self.key_config.SIGNATURE_ALGORITHM)}
+            {"typ": "JWT", "alg": self.key_config.SIGNATURE_ALGORITHM}
         )
 
     @staticmethod
     def generate_family_list_id(identifier: str) -> str:
         return f"FID:{identifier}"
+
+    @staticmethod
+    def generate_family_record(jti: str, exp: int | float) -> str:
+        return f"{jti}:{exp}"
 
     @asynccontextmanager
     async def transactional_block(self) -> AsyncGenerator[None, None]:
@@ -135,17 +139,14 @@ class TokenManager:
         decoded_token: StandardRefreshTokenClaims = await self.decode_token(
             refresh_token, token_type=TokenType.StandardRefresh
         )
-
         refresh_token = await self.issue_refresh_token(
             decoded_token["sub"],
             decoded_token["sid"],
-            jti=decoded_token["jti"],
-            family_id=decoded_token["fid"],
-            exp=decoded_token["exp"],
+            existing_family_validation_data=(
+                decoded_token["jti"],
+                decoded_token["exp"],
+            ),
         )
-
-        await self.shift_token_window(decoded_token["fid"])
-
         access_token: str = self.issue_access_token(
             decoded_token["sub"],
             decoded_token["sid"],
@@ -158,12 +159,12 @@ class TokenManager:
         self,
         sub: str,
         sid: int,
-        family_id: str | None,
-        additional_claims: Optional[dict] = None,
-        jti: Optional[str] = None,
-        exp: Optional[int | float] = None,
+        *,
+        existing_family_validation_data: tuple[str, int] | None = None,
+        additional_claims: dict | None = None,
     ) -> str:
-        if family_id:
+        family_id: Final[str] = self.generate_family_list_id(sub)
+        if existing_family_validation_data:
             # Check for replay attack
             key: str | None = await self._token_store_client.lindex(  # pyrefly: ignore[not-async]
                 family_id, 0
@@ -173,13 +174,15 @@ class TokenManager:
                 raise ValueError(f"Token family {family_id} is invalid or empty")
 
             key_metadata = key.split(":")
-            if key_metadata[0] != jti or float(key_metadata[1]) != exp:
+            if (
+                key_metadata[0] != existing_family_validation_data[0]
+                or int(key_metadata[1]) != existing_family_validation_data[1]
+            ):
                 await self.invalidate_family(family_id)
                 raise ValueError(
                     f"Replay attack detected or token metadata mismatch for family {family_id}"
                 )
         else:
-            family_id = self.generate_family_list_id(sub)
             if await self._token_store_client.llen(family_id) != 0:  # pyrefly: ignore[not-async]
                 raise ValueError(
                     f"Family ID {family_id} exists in token store when implied not to"
@@ -204,9 +207,26 @@ class TokenManager:
         if additional_claims:
             payload.update(additional_claims)
 
-        async with self._token_store_client.pipeline(transaction=False) as pipe:
-            pipe.lpush(family_id, f"{payload['jti']}:{payload['exp']}")
+        previous_family_length: Final[int] = await self._token_store_client.llen(
+            family_id
+        )  # pyrefly: ignore[not-async]
+        async with self._token_store_client.pipeline(transaction=True) as pipe:
+            pipe.lpush(
+                family_id, self.generate_family_record(payload["jti"], payload["exp"])
+            )
             pipe.expireat(family_id, payload["exp"])
+            if (
+                previous_family_length
+                >= self.token_manager_config.MAX_TOKENS_PER_FAMILY
+            ):
+                pipe.rpop(
+                    family_id,
+                    max(
+                        1,
+                        previous_family_length
+                        - self.token_manager_config.MAX_TOKENS_PER_FAMILY,
+                    ),
+                )
             await pipe.execute()
 
         return jwt.encode(
@@ -246,22 +266,6 @@ class TokenManager:
             algorithm=self._key_mapping[self._active_key].alg,
             headers=self.universal_headers | {"kid": self._active_key},
         )
-
-    async def shift_token_window(self, family_id: str) -> None:
-        """Revokes the oldest refresh token from a family if capacity is reached, without invalidating the entire family"""
-        try:
-            llen: int = await self._token_store_client.llen(family_id)  # type: ignore[reportAssignmentType]
-
-            if llen == 0:
-                return
-
-            if llen >= self.token_manager_config.MAX_TOKENS_PER_FAMILY:
-                await self._token_store_client.rpop(  # pyrefly: ignore[not-async]
-                    family_id,
-                    max(1, llen - self.token_manager_config.MAX_TOKENS_PER_FAMILY),
-                )
-        except Exception as e:
-            raise RuntimeError("Failed to perform operation on token store") from e
 
     async def invalidate_family(self, family_id: str) -> None:
         """Remove entire token family from revocation list and token store"""

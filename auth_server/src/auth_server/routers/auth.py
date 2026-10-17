@@ -1,4 +1,3 @@
-from hashlib import sha256
 from typing import Annotated, Final
 
 import httpx
@@ -67,11 +66,8 @@ async def login(
 
     response_contents: dict[str, str | int] = resource_response.json()
     sub, sid = str(response_contents.pop("sub")), int(response_contents.pop("sid"))
-    family_id: str = sha256(f"{sub}:{sid}".encode()).hexdigest()
-    access_token: str = token_manager.issue_access_token(sub, sid, family_id=family_id)
-    refresh_token: str = await token_manager.issue_refresh_token(
-        sub, sid, family_id=family_id
-    )
+    refresh_token: str = await token_manager.issue_refresh_token(sub, sid)
+    access_token: str = token_manager.issue_access_token(sub, sid)
 
     response: JSONResponse = EnrichedJSONResponse(
         {
@@ -126,11 +122,8 @@ async def register(
 
     response_contents: dict[str, str | int] = resource_response.json()
     sub, sid = str(response_contents.pop("sub")), int(response_contents.pop("sid"))
-    family_id: str = sha256(f"{sub}:{sid}".encode()).hexdigest()
-    access_token: str = token_manager.issue_access_token(sub, sid, family_id=family_id)
-    refresh_token: str = await token_manager.issue_refresh_token(
-        sub, sid, family_id=family_id
-    )
+    refresh_token: str = await token_manager.issue_refresh_token(sub, sid)
+    access_token: str = token_manager.issue_access_token(sub, sid)
     response: JSONResponse = EnrichedJSONResponse(
         {
             "message": response_contents.pop("message", "Registration complete."),

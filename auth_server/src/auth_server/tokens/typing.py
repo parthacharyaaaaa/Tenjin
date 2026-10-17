@@ -17,11 +17,11 @@ class TokenType(StrEnum):
 
 class StandardAccessTokenClaims(TypedDict):
     iat: float
-    exp: float
+    exp: int
     fid: str
     sub: str
     sid: int
-    jti: str | None
+    jti: str
 
 
 class StandardRefreshTokenClaims(StandardAccessTokenClaims):

@@ -319,17 +319,14 @@ async def test_reissue_token_pair_runs_refresh_flow_in_order(
     }
     decode = AsyncMock(return_value=decoded)
     issue_refresh = AsyncMock(return_value="new-refresh")
-    shift = AsyncMock()
     issue_access = Mock(return_value="new-access")
     calls.attach_mock(decode, "decode")
     calls.attach_mock(issue_refresh, "issue_refresh")
-    calls.attach_mock(shift, "shift")
     calls.attach_mock(issue_access, "issue_access")
 
     with (
         patch.object(TokenManager, "decode_token", decode),
         patch.object(TokenManager, "issue_refresh_token", issue_refresh),
-        patch.object(TokenManager, "shift_token_window", shift),
         patch.object(TokenManager, "issue_access_token", issue_access),
     ):
         assert await manager.reissue_token_pair("old-refresh") == (
@@ -339,14 +336,7 @@ async def test_reissue_token_pair_runs_refresh_flow_in_order(
 
     assert calls.mock_calls == [
         call.decode("old-refresh", token_type=TokenType.StandardRefresh),
-        call.issue_refresh(
-            "7",
-            3,
-            jti="old-jti",
-            family_id="family",
-            exp=500,
-        ),
-        call.shift("family"),
+        call.issue_refresh("7", 3, existing_family_validation_data=("old-jti", 500)),
         call.issue_access("7", 3, family_id="family"),
     ]
 
@@ -377,14 +367,10 @@ async def test_issue_refresh_token_invalidates_rejected_family(
     ) as invalidate_family:
         with pytest.raises(ValueError, match=message):
             await manager.issue_refresh_token(
-                "7",
-                3,
-                "family",
-                jti=jti,
-                exp=expiry,
+                "7", 3, existing_family_validation_data=(jti, expiry)
             )
 
-    invalidate_family.assert_awaited_once_with("family")
+    invalidate_family.assert_awaited_once_with(manager.generate_family_list_id("7"))
     token_manager_harness.token_store.pipeline.assert_not_called()
 
 
@@ -407,23 +393,22 @@ async def test_issue_refresh_token_writes_family_metadata_before_encoding(
             "auth_server.subsystems.token_manager.jwt.encode",
             return_value="encoded-refresh",
         ) as encode,
+        patch.object(signing_manager._token_store_client, "llen", return_value=1),
     ):
         result = await signing_manager.issue_refresh_token(
             "7",
             3,
-            "family",
+            existing_family_validation_data=("old-jti", 4600),
             additional_claims={"custom": True},
-            jti="old-jti",
-            exp=4600,
         )
-
+    expected_family_id: Final[str] = signing_manager.generate_family_list_id("7")
     assert result == "encoded-refresh"
     assert harness.redis_calls.mock_calls == [
-        call.lindex("family", 0),
-        call.pipeline(transaction=False),
+        call.lindex(expected_family_id, 0),
+        call.pipeline(transaction=True),
         call.enter(),
-        call.lpush("family", "new-jti:4600"),
-        call.expireat("family", 4600),
+        call.lpush(expected_family_id, "new-jti:4600"),
+        call.expireat(expected_family_id, 4600),
         call.execute(),
         call.exit(None, None, None),
     ]
@@ -432,7 +417,7 @@ async def test_issue_refresh_token_writes_family_metadata_before_encoding(
             "iat": 1000,
             "exp": 4600,
             "nbf": 1270,
-            "fid": "family",
+            "fid": expected_family_id,
             "sub": "7",
             "sid": 3,
             "jti": "new-jti",
@@ -467,18 +452,31 @@ async def test_issue_fresh_refresh_token_checks_stale_empty_family(
             "auth_server.subsystems.token_manager.jwt.encode",
             return_value="encoded",
         ),
+        patch.object(
+            harness.token_store,
+            "lindex",
+            new_callable=AsyncMock,
+            return_value="jti:1000" if existing_family else 0,
+        ),
     ):
         if existing_family:
+            assert (
+                await signing_manager.issue_refresh_token(
+                    "7", 3, existing_family_validation_data=("jti", 1000)
+                )
+                == "encoded"
+            )
+            harness.token_store.llen.assert_awaited_with(family_id)
+        else:
             with pytest.raises(
-                ValueError,
-                match=f"Family ID {family_id} exists in token store when implied not to",
+                ValueError, match=f"Token family {family_id} is invalid or empty"
             ):
                 assert (
-                    await signing_manager.issue_refresh_token("7", 3, "") == "encoded"
+                    await signing_manager.issue_refresh_token(
+                        "7", 3, existing_family_validation_data=("jti", 1000)
+                    )
+                    == "encoded"
                 )
-        else:
-            assert await signing_manager.issue_refresh_token("7", 3, "") == "encoded"
-    harness.token_store.llen.assert_awaited_once_with(family_id)
 
 
 def test_issue_access_token_builds_and_encodes_payload(
@@ -515,41 +513,6 @@ def test_issue_access_token_builds_and_encodes_payload(
         algorithm="ES256",
         headers={"aud": "admins", "typ": "JWT", "alg": "ES256", "kid": "key-1"},
     )
-
-
-@pytest.mark.parametrize(
-    ("family_size", "expected_count"),
-    ((0, None), (2, None), (3, 1), (5, 2)),
-)
-@pytest.mark.asyncio
-async def test_shift_token_window_removes_required_oldest_tokens(
-    token_manager_harness: TokenManagerHarness,
-    family_size: int,
-    expected_count: int | None,
-) -> None:
-    harness = token_manager_harness
-    harness.token_store.llen.return_value = family_size
-
-    await harness.manager.shift_token_window("family")
-
-    harness.token_store.llen.assert_awaited_once_with("family")
-    if expected_count is None:
-        harness.token_store.rpop.assert_not_awaited()
-    else:
-        harness.token_store.rpop.assert_awaited_once_with(
-            "family",
-            expected_count,
-        )
-
-
-@pytest.mark.asyncio
-async def test_shift_token_window_wraps_store_errors(
-    token_manager_harness: TokenManagerHarness,
-) -> None:
-    token_manager_harness.token_store.llen.side_effect = OSError("redis failed")
-
-    with pytest.raises(RuntimeError, match="Failed to perform operation"):
-        await token_manager_harness.manager.shift_token_window("family")
 
 
 @pytest.mark.parametrize("stored_family", ([], ["token"]))
