@@ -124,12 +124,12 @@ class TokenManager:
             jwt_exceptions.ImmatureSignatureError,
             jwt_exceptions.InvalidIssuedAtError,
             jwt_exceptions.InvalidIssuerError,
-        ) as e:
+        ):
             if token_type == TokenType.StandardRefresh:
                 await self.invalidate_family(
                     jwt.decode(token, options={"verify_signature": False})["fid"]
                 )
-            raise ValueError("Invalid Token") from e
+            raise
         except KeyError as e:
             raise jwt_exceptions.InvalidTokenError(
                 "Token headers missing key ID"
