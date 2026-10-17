@@ -16,7 +16,7 @@ from auxillary.security.serialization import (
     pem_serialize_public_key,
 )
 from cryptography.hazmat.primitives.asymmetric.ec import (
-    SECP256K1,
+    SECP256R1,
     EllipticCurvePrivateKey,
     derive_private_key,
 )
@@ -32,10 +32,10 @@ EXPIRATION_THRESHOLD: Final[int] = 2
 
 @pytest_asyncio.fixture(autouse=True, scope="module")
 async def seed_keydata(pg_async_sessionmaker: async_sessionmaker[AsyncSession]) -> None:
-    values_dict: dict[str, Any] = {"curve": SECP256K1().name, "alg": ECAlg.ES256}
+    values_dict: dict[str, Any] = {"curve": SECP256R1().name, "alg": ECAlg.ES256}
     async with pg_async_sessionmaker() as session:
         for i in KEY_IDS:
-            dummy_key = derive_private_key(private_value=i, curve=SECP256K1())
+            dummy_key = derive_private_key(private_value=i, curve=SECP256R1())
             values_dict.update(
                 {
                     "kid": str(i),
@@ -220,7 +220,7 @@ async def test_keydata_insertion(
 ) -> None:
     key_name: str = "test_key::foobar"
     dummy_key: Final[EllipticCurvePrivateKey] = derive_private_key(
-        private_value=67, curve=SECP256K1()
+        private_value=67, curve=SECP256R1()
     )
     async with pg_async_sessionmaker(autocommit=False) as session:
         async with keydata_repository.external_unit_of_work(session):
@@ -232,7 +232,7 @@ async def test_keydata_insertion(
                         dummy_key.public_key(), PublicFormat.SubjectPublicKeyInfo
                     ),
                     ECAlg.ES256,
-                    curve=SECP256K1(),
+                    curve=SECP256R1(),
                     returning=True,
                 )
             )
@@ -246,7 +246,7 @@ async def test_key_rotation(
     keydata_repository: KeydataRepository,
     pg_async_sessionmaker: async_sessionmaker[AsyncSession],
 ) -> None:
-    dummy_key: Final[EllipticCurvePrivateKey] = derive_private_key(67, SECP256K1())
+    dummy_key: Final[EllipticCurvePrivateKey] = derive_private_key(67, SECP256R1())
     new_key_id: Final[str] = "__NEW_KEY__"
     async with pg_async_sessionmaker(autocommit=False) as session:
         async with keydata_repository.external_unit_of_work(session):

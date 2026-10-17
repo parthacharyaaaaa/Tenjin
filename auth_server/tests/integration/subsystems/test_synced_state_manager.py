@@ -6,7 +6,7 @@ from auth_server.strings import SyncedStoreKeyStrings
 from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
 from auxillary.security.data_structures.jwks.enums import ECAlg
 from auxillary.security.data_structures.jwks.models import EllipticCurveJWK
-from cryptography.hazmat.primitives.asymmetric.ec import SECP256K1, derive_private_key
+from cryptography.hazmat.primitives.asymmetric.ec import SECP256R1, derive_private_key
 from redis.asyncio.client import Redis
 
 
@@ -15,11 +15,11 @@ def dummy_elliptic_jwks() -> list[EllipticCurveJWKResult]:
     return [
         EllipticCurveJWKResult(
             ECAlg.ES256,
-            SECP256K1.name,
+            SECP256R1.name,
             str(i),
             EllipticCurveJWK.b64url_encode_point(
                 (
-                    pub_nums := derive_private_key(private_value=i, curve=SECP256K1())
+                    pub_nums := derive_private_key(private_value=i, curve=SECP256R1())
                     .public_key()
                     .public_numbers()
                 ).x

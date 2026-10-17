@@ -71,7 +71,7 @@ class KeyData(Base):
     epoch: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP,
         nullable=False,
-        unique=True,
+        index=True,
         server_default=text("CURRENT_TIMESTAMP"),
     )
     rotated_out_at: Mapped[datetime.datetime] = mapped_column(

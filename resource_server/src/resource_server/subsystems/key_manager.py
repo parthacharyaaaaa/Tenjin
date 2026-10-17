@@ -116,7 +116,7 @@ class KeyManager(metaclass=SingletonMetaclass):
                 continue
             # Welcome to the club >:3
             public_numbers = ec.EllipticCurvePublicNumbers(
-                jwk.public_members.x, jwk.public_members.y, ec.SECP256K1()
+                jwk.public_members.x, jwk.public_members.y, ec.SECP256R1()
             )
             verification_key = public_numbers.public_key()
             self._current_mapping[jwk.kid] = pem_serialize_public_key(

@@ -7,7 +7,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 @pytest.fixture
 def deterministic_ec_jwk() -> EllipticCurveJWK:
-    dummy_key = ec.derive_private_key(private_value=1, curve=ec.SECP256K1())
+    dummy_key = ec.derive_private_key(private_value=1, curve=ec.SECP256R1())
     public_numbers = dummy_key.public_key().public_numbers()
     return EllipticCurveJWK(
         kid="foo", x=to_base64url(public_numbers.x), y=to_base64url(public_numbers.y)

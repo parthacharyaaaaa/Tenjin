@@ -9,9 +9,7 @@ from auxillary.mixins.db_config import (
     BasicSQLAlchemyConfigMixin,
 )
 from auxillary.mixins.redis_config import BasicRedisConfigMixin
-from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.hashes import HashAlgorithm
 from cryptography.hazmat.primitives.serialization import (
     PrivateFormat,
     PublicFormat,
@@ -118,18 +116,12 @@ class KeyConfigModel(BaseModel):
     MAX_VALID_KEYS: Annotated[int, Field(ge=1)]
     KEY_ROTATION_COOLDOWN: timedelta_s
     KEY_IDENTIFIER_LENGTH: Annotated[int, Field(ge=1)]
-    SIGNATURE_HASHFUNC: Annotated[HashAlgorithm, Field(default_factory=hashes.SHA256)]
-    SIGNATURE_ALGORITHM: Annotated[type[ec.ECDSA], Field(default=ec.ECDSA)]
-    EC_TYPE: Annotated[ec.EllipticCurve, Field(default_factory=ec.SECP256K1)]
+    SIGNATURE_ALGORITHM: Annotated[str, Field(default="ES256")]
+    EC_TYPE: Annotated[ec.EllipticCurve, Field(default_factory=ec.SECP256R1)]
     PRIVATE_PEM_FORMAT: Annotated[PrivateFormat, Field(default=PrivateFormat.PKCS8)]
     PUBLIC_PEM_FORMAT: Annotated[
         PublicFormat, Field(default=PublicFormat.SubjectPublicKeyInfo)
     ]
-
-    @computed_field
-    @cached_property
-    def PREHASHED_SIGNATURE_ALGORITHM(self) -> ec.ECDSA:  # noqa: N802
-        return self.SIGNATURE_ALGORITHM(self.SIGNATURE_HASHFUNC)
 
 
 class AdminConfigModel(BaseModel):

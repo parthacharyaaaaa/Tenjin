@@ -64,7 +64,7 @@ class EllipticCurveJWK(GenericJWKMixin, BaseModel):
     alg: Annotated[Literal[ECAlg.ES256], Field(init=False, frozen=True)] = ECAlg.ES256
     crv: Annotated[
         EllipticCurve,
-        Field(frozen=True, default=SECP256K1()),
+        Field(frozen=True, default=SECP256R1()),
         PlainSerializer(lambda curve: curve.name),
     ]
 
