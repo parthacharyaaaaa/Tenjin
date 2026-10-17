@@ -34,9 +34,9 @@ async def seed_db(pg_async_sessionmaker: async_sessionmaker[AsyncSession]):
         await session.execute(
             text("""
                 SELECT setval(
-                    pg_get_serial_sequence('admins', 'id_'),
-                    COALESCE((SELECT MAX(id_) FROM admins), 1),
-                    EXISTS (SELECT 1 FROM admins)
+                    pg_get_serial_sequence('suspicious_activities', 'id_'),
+                    COALESCE((SELECT MAX(id_) FROM suspicious_activities), 1),
+                    EXISTS (SELECT 1 FROM suspicious_activities)
                 )
             """)
         )
