@@ -21,7 +21,7 @@ TEST_ADMIN_NAME: Final[LiteralString] = "test_foobar_admin"
 DUMMY_DATETIME: Final[datetime] = datetime(1, 1, 1, tzinfo=UTC)
 
 
-@pytest_asyncio.fixture(scope="package", autouse=True)
+@pytest_asyncio.fixture(scope="module", autouse=True)
 async def seed_db(pg_async_sessionmaker: async_sessionmaker[AsyncSession]):
     async with pg_async_sessionmaker() as session:
         await session.execute(

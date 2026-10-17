@@ -30,7 +30,7 @@ ROTATION_THRESHOLD: Final[int] = 4
 EXPIRATION_THRESHOLD: Final[int] = 2
 
 
-@pytest_asyncio.fixture(autouse=True, scope="module")
+@pytest_asyncio.fixture(scope="module", autouse=True)
 async def seed_keydata(pg_async_sessionmaker: async_sessionmaker[AsyncSession]) -> None:
     values_dict: dict[str, Any] = {"curve": SECP256R1().name, "alg": ECAlg.ES256}
     async with pg_async_sessionmaker() as session:
