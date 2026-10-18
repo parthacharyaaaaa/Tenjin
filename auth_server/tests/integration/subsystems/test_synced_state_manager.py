@@ -1,6 +1,7 @@
 from typing import Final
 
 import pytest
+import pytest_asyncio
 from auth_server.repositories.keydata import EllipticCurveJWKResult
 from auth_server.strings import SyncedStoreKeyStrings
 from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
@@ -28,6 +29,11 @@ def dummy_elliptic_jwks() -> list[EllipticCurveJWKResult]:
         )
         for i in range(1, 4)
     ]
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def prep_synced_store(clean_synced_store: None) -> None:
+    return
 
 
 @pytest.mark.asyncio
