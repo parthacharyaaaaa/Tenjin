@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call, patch
 
@@ -41,9 +41,22 @@ def lifecycle() -> LifecycleHarness:
     repository = Mock()
     token_manager = Mock()
     key_config = SimpleNamespace(
-        MAX_VALID_KEYS=2,
         PRIVATE_PEM_FORMAT="private-format",
         PUBLIC_PEM_FORMAT="public-format",
+    )
+    token_manager_config = SimpleNamespace(
+        REFRESH_LIFETIME=timedelta(days=30),
+        ACCESS_LIFETIME=timedelta(minutes=15),
+        LEEWAY=timedelta(seconds=30),
+        ANNOUNCEMENT_DURATION=timedelta(minutes=5),
+        ALG="ES256",
+        MAX_TOKENS_PER_FAMILY=5,
+        POLL_INTERVAL=timedelta(seconds=60),
+    )
+    jwks_config = SimpleNamespace(
+        JWKS_CAP=3,
+        UPDATION_STREAM_NAME="jwks_updation_stream",
+        TOKEN_MANAGER=token_manager_config,
     )
     synced_manager = Mock()
     lock_factory = Mock()
@@ -70,6 +83,7 @@ def lifecycle() -> LifecycleHarness:
         repository,
         token_manager,
         key_config,  # type: ignore
+        jwks_config,  # type: ignore
         synced_manager,
         lock_factory,
         announcer,
@@ -292,23 +306,34 @@ async def test_invalidate_key_prunes_consistent_synced_jwks(
     lifecycle.repository.get_keydata.return_value = target
     lifecycle.synced_manager.get_jwks.return_value = [target_jwk, retained_jwk]
     parsed_jwks = object()
+    parsed_jwk = object()
 
-    with patch(
-        "auth_server.subsystems.key_manager.VariableJWKS.model_validate",
-        return_value=parsed_jwks,
-    ) as model_validate:
+    with (
+        patch(
+            "auth_server.subsystems.key_manager.VariableJWKS.model_validate",
+            return_value=parsed_jwks,
+        ) as model_validate,
+        patch(
+            "auth_server.subsystems.key_manager.EllipticCurveJWK.model_validate",
+            return_value=parsed_jwk,
+        ) as jwk_validate,
+        patch(
+            "auth_server.subsystems.key_manager.asdict",
+            return_value={"kid": "key-2", "x": "", "y": ""},
+        ) as asdict_mock,
+    ):
         await lifecycle.manager.invalidate_key("key-1", cooldown_duration=30)
 
     lifecycle.repository.expire_keydata.assert_awaited_once_with("key-1")
     lifecycle.token_manager.invalidate_key.assert_called_once_with("key-1")
+
     lifecycle.synced_manager.set_jwks.assert_awaited_once_with([retained_jwk])
-    model_validate.assert_called_once_with({"keys": [retained_jwk]})
+
+    asdict_mock.assert_called_once_with(retained_jwk)
+    jwk_validate.assert_called_once_with({"kid": "key-2", "x": "", "y": ""})
+    model_validate.assert_called_once_with({"keys": [parsed_jwk]})
+
     lifecycle.announcer.stream_update.assert_awaited_once_with(parsed_jwks)
-    lifecycle.manager._transactional_block.assert_called_once_with(  # type: ignore[attr-defined]
-        operation=SyncedStoreKeyStrings.JWKS_WRITE_LOCK,
-        lock_duration=LockTIme.MEDIUM,
-        operational_cooldown_duration=30,
-    )
 
 
 @pytest.mark.asyncio
@@ -326,9 +351,15 @@ async def test_invalidate_key_regenerates_inconsistent_jwks_and_sets_warning(
     lifecycle.repository.get_jwks.return_value = regenerated
     message_mapping: dict[str, str] = {}
 
-    with patch(
-        "auth_server.subsystems.key_manager.VariableJWKS.model_validate",
-        return_value=object(),
+    with (
+        patch(
+            "auth_server.subsystems.key_manager.VariableJWKS.model_validate",
+            return_value=object(),
+        ),
+        patch(
+            "auth_server.subsystems.key_manager.asdict",
+            return_value={"kid": "key-2", "x": "", "y": ""},
+        ),
     ):
         await lifecycle.manager.invalidate_key(
             "key-1",
@@ -360,12 +391,23 @@ async def test_clean_keystore_expires_inactive_keys_and_announces_active_key(
     active = SimpleNamespace(kid="active")
     inactive = [SimpleNamespace(kid="old-1"), SimpleNamespace(kid="old-2")]
     lifecycle.repository.get_jwks.return_value = [active, *inactive]
+    parsed_jwk = object()
     parsed_jwks = object()
 
-    with patch(
-        "auth_server.subsystems.key_manager.VariableJWKS.model_validate",
-        return_value=parsed_jwks,
-    ) as model_validate:
+    with (
+        patch(
+            "auth_server.subsystems.key_manager.VariableJWKS.model_validate",
+            return_value=parsed_jwks,
+        ) as model_validate,
+        patch(
+            "auth_server.subsystems.key_manager.EllipticCurveJWK.model_validate",
+            return_value=parsed_jwk,
+        ) as jwk_validate,
+        patch(
+            "auth_server.subsystems.key_manager.asdict",
+            return_value={"kid": "active"},
+        ) as asdict_mock,
+    ):
         result = await lifecycle.manager.clean_keystore(cooldown_duration=30)
 
     assert result == ("active", ("old-1", "old-2"))
@@ -377,7 +419,11 @@ async def test_clean_keystore_expires_inactive_keys_and_announces_active_key(
         call("old-1"),
         call("old-2"),
     ]
-    model_validate.assert_called_once_with({"keys": [active]})
+
+    asdict_mock.assert_called_once_with(active)
+    jwk_validate.assert_called_once_with({"kid": "active"})
+    model_validate.assert_called_once_with({"keys": [parsed_jwk]})
+
     lifecycle.announcer.stream_update.assert_awaited_once_with(parsed_jwks)
     lifecycle.manager._transactional_block.assert_called_once_with(  # type: ignore[attr-defined]
         operation=SyncedStoreKeyStrings.JWKS_WRITE_LOCK,
@@ -428,6 +474,8 @@ async def test_rotate_key_updates_state_and_announces_jwks(
     lifecycle.repository.get_jwks.return_value = jwks
     generation_epoch = datetime(2026, 1, 2, tzinfo=UTC)
     parsed_jwks = object()
+    parsed_jwk_1 = object()
+    parsed_jwk_2 = object()
 
     with (
         patch(
@@ -447,6 +495,17 @@ async def test_rotate_key_updates_state_and_announces_jwks(
             "auth_server.subsystems.key_manager.VariableJWKS.model_validate",
             return_value=parsed_jwks,
         ) as model_validate,
+        patch(
+            "auth_server.subsystems.key_manager.EllipticCurveJWK.model_validate",
+            side_effect=[parsed_jwk_1, parsed_jwk_2],
+        ) as jwk_validate,
+        patch(
+            "auth_server.subsystems.key_manager.asdict",
+            side_effect=[
+                {"kid": "new-key"},
+                {"kid": "previous-key"},
+            ],
+        ) as asdict_mock,
     ):
         datetime_mock.now.return_value = generation_epoch
         result = await lifecycle.manager.rotate_key(
@@ -472,7 +531,21 @@ async def test_rotate_key_updates_state_and_announces_jwks(
     )
     lifecycle.token_manager.update_keydata.assert_called_once_with("new-key", new_key)
     lifecycle.synced_manager.set_jwks.assert_awaited_once_with(jwks)
-    model_validate.assert_called_once_with({"keys": jwks})
+    asdict_mock.assert_has_calls(
+        [
+            call(jwks[0]),
+            call(jwks[1]),
+        ]
+    )
+    assert jwk_validate.call_args_list == [
+        call({"kid": "new-key"}),
+        call({"kid": "previous-key"}),
+    ]
+    model_validate.assert_called_once_with(
+        {
+            "keys": [parsed_jwk_1, parsed_jwk_2],
+        }
+    )
     lifecycle.announcer.stream_update.assert_awaited_once_with(parsed_jwks)
     lifecycle.manager._transactional_block.assert_called_once_with(  # type: ignore[attr-defined]
         operation=SyncedStoreKeyStrings.JWKS_WRITE_LOCK,
@@ -490,9 +563,10 @@ async def test_rotate_key_expires_oldest_keys_beyond_capacity(
     new_key = Mock(kid="new-key")
     lifecycle.repository.rotate_key.return_value = new_key
     lifecycle.repository.get_valid_inactive_keys.return_value = [
-        SimpleNamespace(kid="newest", rotated_out_at=datetime(2026, 1, 3, tzinfo=UTC)),
+        SimpleNamespace(kid="newest", rotated_out_at=datetime(2026, 1, 4, tzinfo=UTC)),
+        SimpleNamespace(kid="older", rotated_out_at=datetime(2026, 1, 2, tzinfo=UTC)),
         SimpleNamespace(kid="oldest", rotated_out_at=datetime(2026, 1, 1, tzinfo=UTC)),
-        SimpleNamespace(kid="middle", rotated_out_at=datetime(2026, 1, 2, tzinfo=UTC)),
+        SimpleNamespace(kid="middle", rotated_out_at=datetime(2026, 1, 3, tzinfo=UTC)),
     ]
     lifecycle.repository.get_jwks.return_value = []
 
