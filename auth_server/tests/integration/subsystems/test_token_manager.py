@@ -5,15 +5,12 @@ from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
-from auth_server.admin.roles import AdminRole
-from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.keydata import (
     KeydataRepository,
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
 from auth_server.subsystems.token_manager import TokenManager
-from auxillary.security.data_structures.jwks.enums import ECAlg
 from auxillary.security.serialization import (
     pem_serialize_private_key,
     pem_serialize_public_key,
@@ -26,7 +23,6 @@ from cryptography.hazmat.primitives.asymmetric.ec import (
 from cryptography.hazmat.primitives.serialization import PrivateFormat, PublicFormat
 from jwt import ImmatureSignatureError
 from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.util.typing import Final, LiteralString
 
 TEST_ADMIN_NAME: Final[LiteralString] = "test_foobar_admin"
@@ -59,42 +55,11 @@ def dummy_user_identification() -> DummyUserIdentification:
     return DummyUserIdentification("foo", 100)
 
 
-@pytest_asyncio.fixture(scope="module", autouse=True)
-async def initialize_database_state(
-    pg_async_sessionmaker: async_sessionmaker[AsyncSession],
+@pytest_asyncio.fixture(scope="module")
+async def token_manager_initialize_database_state(
+    initialize_database_state: None,
 ) -> None:
-    keydata_repository = KeydataRepository(pg_async_sessionmaker)
-    admin_repository = AdminRepository(pg_async_sessionmaker)
-    await admin_repository.create_admin(TEST_ADMIN_NAME, b"x" * 32, 1, AdminRole.SUPER)
-    async with keydata_repository.unit_of_work():
-        dummy_key: EllipticCurvePrivateKey = derive_private_key(1, SECP256R1())
-        await keydata_repository.insert_keydata(
-            "1",
-            pem_serialize_private_key(dummy_key, PrivateFormat.PKCS8),
-            pem_serialize_public_key(
-                dummy_key.public_key(), PublicFormat.SubjectPublicKeyInfo
-            ),
-            ECAlg.ES256,
-            SECP256R1(),
-            epoch=datetime(2026, 1, 1, tzinfo=UTC),
-        )
-        for i in range(2, 6):
-            dummy_key: EllipticCurvePrivateKey = derive_private_key(i, SECP256R1())
-            await keydata_repository.rotate_key(
-                str(i - 1),
-                str(i),
-                pem_serialize_public_key(
-                    dummy_key.public_key(), PublicFormat.SubjectPublicKeyInfo
-                ),
-                pem_serialize_private_key(dummy_key, PrivateFormat.PKCS8),
-                alg=ECAlg.ES256,
-                curve=SECP256R1,
-                epoch=datetime(2026, 1, i, tzinfo=UTC),
-            )
-            if i > 2:
-                await keydata_repository.expire_keydata(
-                    str(i - 1), expiry_time=datetime(2026, 1, i, tzinfo=UTC)
-                )
+    return
 
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
@@ -104,6 +69,7 @@ async def token_manager(
     async_redis_client: Redis,
     dummy_key_config: SimpleNamespace,
     dummy_token_manager_config: SimpleNamespace,
+    token_manager_initialize_database_state: None,
 ) -> TokenManager:
     token_manager: Final[TokenManager] = TokenManager(
         token_store_client,

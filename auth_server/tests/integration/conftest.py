@@ -1,19 +1,35 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Final
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from auth_server.admin.roles import AdminRole
 from auth_server.config import AdminConfigModel
 from auth_server.dependencies.local import KeydataRepository
 from auth_server.models.database import Base
 from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
-from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
+from auth_server.subsystems.jwks_announcer import JWKSUpdateAnnouncer
+from auth_server.subsystems.key_manager import (
+    KeyLifecycleManager,
+    SyncedStoreKeyStateManager,
+)
 from auth_server.subsystems.session_manager import AdminSessionManager
 from auth_server.subsystems.token_manager import TokenManager
+from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
+from auxillary.security.data_structures.jwks.enums import ECAlg
+from auxillary.security.serialization import (
+    pem_serialize_private_key,
+    pem_serialize_public_key,
+)
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.ec import (
+    SECP256R1,
+    EllipticCurvePrivateKey,
+    derive_private_key,
+)
 from cryptography.hazmat.primitives.serialization import PrivateFormat, PublicFormat
 from redis.asyncio.client import Redis
 from sqlalchemy.engine import URL
@@ -74,6 +90,15 @@ def dummy_admin_config() -> AdminConfigModel:
         MAX_SESSION_ITERATIONS=3,
         ADMIN_SESSION_DURATION=10,
         REVIVAL_DIGEST_LENGTH=32,
+    )
+
+
+@pytest.fixture(scope="package")
+def dummy_jwks_config(dummy_token_manager_config: SimpleNamespace) -> SimpleNamespace:
+    return SimpleNamespace(
+        JWKS_CAP=3,
+        UPDATION_STREAM_NAME="jwks_updation_stream",
+        TOKEN_MANAGER=dummy_token_manager_config,
     )
 
 
@@ -191,6 +216,11 @@ async def token_store_client(
 
 ### APPLICATION ###
 @pytest.fixture(scope="package")
+def redis_lock_factory(async_redis_client: Redis) -> RedisInstanceLockFactory:
+    return RedisInstanceLockFactory(async_redis_client)
+
+
+@pytest.fixture(scope="package")
 def admin_session_manager(
     async_redis_client: Redis, dummy_admin_config: AdminConfigModel
 ) -> AdminSessionManager:
@@ -202,7 +232,7 @@ def synced_key_store_manager(async_redis_client: Redis) -> SyncedStoreKeyStateMa
     return SyncedStoreKeyStateManager(async_redis_client)
 
 
-@pytest.fixture(scope="package")
+@pytest.fixture(scope="module")
 def token_manager(
     token_store_client: Redis,
     async_redis_client: Redis,
@@ -219,4 +249,84 @@ def token_manager(
     )
 
 
+@pytest.fixture(scope="package")
+def jwks_update_announcer(
+    async_redis_client: Redis, dummy_jwks_config: SimpleNamespace
+) -> JWKSUpdateAnnouncer:
+    return JWKSUpdateAnnouncer(
+        async_redis_client,
+        dummy_jwks_config,  # type: ignore
+    )
+
+
+@pytest.fixture(scope="module")
+def key_lifecycle_manager(
+    keydata_repository: KeydataRepository,
+    token_manager: TokenManager,
+    dummy_key_config: SimpleNamespace,
+    synced_key_store_manager: SyncedStoreKeyStateManager,
+    redis_lock_factory: RedisInstanceLockFactory,
+    jwks_update_announcer: JWKSUpdateAnnouncer,
+) -> KeyLifecycleManager:
+    return KeyLifecycleManager(
+        keydata_repository,
+        token_manager,
+        dummy_key_config,  # type: ignore
+        synced_key_store_manager,
+        redis_lock_factory,
+        jwks_update_announcer,
+    )
+
+
 ### END ###
+
+
+### RUNTIME FUNCTIONALITY ###
+@pytest.fixture(scope="module")
+def test_superuser_admin_name() -> str:
+    return "TEST_ADMIN"
+
+
+@pytest_asyncio.fixture(scope="module")
+async def initialize_database_state(
+    test_superuser_admin_name: str,
+    keydata_repository: KeydataRepository,
+    admin_repository: AdminRepository,
+) -> None:
+    await admin_repository.create_admin(
+        test_superuser_admin_name, b"x" * 32, 1, AdminRole.SUPER
+    )
+    async with keydata_repository.unit_of_work():
+        dummy_key: EllipticCurvePrivateKey = derive_private_key(1, SECP256R1())
+        await keydata_repository.insert_keydata(
+            "1",
+            pem_serialize_private_key(dummy_key, PrivateFormat.PKCS8),
+            pem_serialize_public_key(
+                dummy_key.public_key(), PublicFormat.SubjectPublicKeyInfo
+            ),
+            ECAlg.ES256,
+            SECP256R1(),
+            epoch=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        for i in range(2, 6):
+            dummy_key: EllipticCurvePrivateKey = derive_private_key(i, SECP256R1())
+            await keydata_repository.rotate_key(
+                str(i - 1),
+                str(i),
+                pem_serialize_public_key(
+                    dummy_key.public_key(), PublicFormat.SubjectPublicKeyInfo
+                ),
+                pem_serialize_private_key(dummy_key, PrivateFormat.PKCS8),
+                alg=ECAlg.ES256,
+                curve=SECP256R1,
+                epoch=datetime(2026, 1, i, tzinfo=UTC),
+            )
+            if i > 2:
+                await keydata_repository.expire_keydata(
+                    str(i - 1), expiry_time=datetime(2026, 1, i, tzinfo=UTC)
+                )
+
+
+@pytest_asyncio.fixture
+async def clean_synced_store(async_redis_client: Redis) -> None:
+    await async_redis_client.flushall()
