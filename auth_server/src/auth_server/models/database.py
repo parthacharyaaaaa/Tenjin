@@ -7,7 +7,11 @@ from sqlalchemy.schema import CheckConstraint
 from sqlalchemy.sql.functions import func
 
 from auth_server.admin.roles import AdminRole
-from auth_server.config.constants import MAX_IDENTITY_LENGTH, MIN_IDENTITY_LENGTH
+from auth_server.config.constants import (
+    KEY_IDENTIFIER_LENGTH,
+    MAX_IDENTITY_LENGTH,
+    MIN_IDENTITY_LENGTH,
+)
 from auth_server.models.database_enums import ADMIN_ROLES
 
 
@@ -63,7 +67,7 @@ class SuspiciousActivity(Base):
 
 class KeyData(Base):
     __tablename__ = "keydata"
-    kid: Mapped[str] = mapped_column(VARCHAR(16), primary_key=True)
+    kid: Mapped[str] = mapped_column(VARCHAR(KEY_IDENTIFIER_LENGTH), primary_key=True)
     alg: Mapped[str] = mapped_column(
         VARCHAR(8), nullable=False, server_default=text("'ES256'")
     )

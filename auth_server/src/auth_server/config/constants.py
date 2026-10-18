@@ -16,3 +16,6 @@ MAX_EMAIL_LENGTH: Final[int] = 254
 
 # Admin Sessions
 REVIVAL_DIGEST_LENGTH: Final[int] = 256
+
+# Key-related
+KEY_IDENTIFIER_LENGTH: Final[int] = 32

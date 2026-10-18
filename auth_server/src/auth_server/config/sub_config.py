@@ -23,6 +23,7 @@ from pydantic import (
 from pydantic.config import ConfigDict
 
 from auth_server.config import utils
+from auth_server.config.constants import KEY_IDENTIFIER_LENGTH
 
 __all__ = (
     "CoreConfigModel",
@@ -115,7 +116,7 @@ class KeyConfigModel(BaseModel):
 
     MAX_VALID_KEYS: Annotated[int, Field(ge=1)]
     KEY_ROTATION_COOLDOWN: timedelta_s
-    KEY_IDENTIFIER_LENGTH: Annotated[int, Field(ge=1)]
+    KEY_IDENTIFIER_LENGTH: Annotated[int, Field(ge=1, default=KEY_IDENTIFIER_LENGTH)]
     SIGNATURE_ALGORITHM: Annotated[str, Field(default="ES256")]
     EC_TYPE: Annotated[ec.EllipticCurve, Field(default_factory=ec.SECP256R1)]
     PRIVATE_PEM_FORMAT: Annotated[PrivateFormat, Field(default=PrivateFormat.PKCS8)]
