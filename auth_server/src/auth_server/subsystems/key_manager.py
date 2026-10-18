@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncGenerator, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum, IntFlag
 from logging import Logger, getLogger
@@ -11,7 +11,10 @@ from typing import Final, Protocol
 import orjson
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from auxillary.mixins.metaclass import AntiSingletonMixin
-from auxillary.security.data_structures.jwks.models import VariableJWKS
+from auxillary.security.data_structures.jwks.models import (
+    EllipticCurveJWK,
+    VariableJWKS,
+)
 from auxillary.security.serialization import (
     pem_serialize_private_key,
     pem_serialize_public_key,
@@ -19,7 +22,7 @@ from auxillary.security.serialization import (
 from auxillary.utils import json_repr
 from redis.asyncio.client import Redis
 
-from auth_server.config.sub_config import KeyConfigModel
+from auth_server.config.sub_config import JWKSConfigModel, KeyConfigModel
 from auth_server.keys.keygen import generate_ecdsa_pair
 from auth_server.repositories.keydata import (
     EllipticCurveJWKResult,
@@ -116,6 +119,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
     keydata_repository: KeydataRepository
     token_manager: TokenManager
     key_config: KeyConfigModel
+    jwks_config: JWKSConfigModel
     synced_store_key_manager: SyncedStoreKeyStateManager
     redis_lock_factory: RedisInstanceLockFactory
     jwks_update_announcer: JWKSUpdateAnnouncer
@@ -176,7 +180,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 lock_name: Final[str] = self.generate_distributed_lock_name(operation)
                 lock_set = await stack.enter_async_context(
                     await self.redis_lock_factory.lock(
-                        lock_name, self._lock_value, lock_duration
+                        lock_name, self._lock_value, lock_duration.value
                     )
                 )
                 if not lock_set.valid:
@@ -242,8 +246,11 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     jwks = list(filter(lambda x: x.kid != key_id, jwks))
 
                 await self.synced_store_key_manager.set_jwks(jwks)
+
         await self.jwks_update_announcer.stream_update(
-            VariableJWKS.model_validate({"keys": jwks})
+            VariableJWKS.model_validate(
+                {"keys": [EllipticCurveJWK.model_validate(asdict(jwk)) for jwk in jwks]}
+            )
         )
 
     async def clean_keystore(
@@ -262,7 +269,6 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 if len(jwks_data) == 1:
                     raise Exception("No inactive keys present to invalidate")
                 active_key: Final[EllipticCurveJWKResult] = jwks_data.pop(0)
-
                 # Prune JWKS
                 await self.keydata_repository.batch_expire_keydata(
                     tuple(k.kid for k in jwks_data)
@@ -272,7 +278,9 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     self.token_manager.invalidate_key(key.kid)
 
         await self.jwks_update_announcer.stream_update(
-            VariableJWKS.model_validate({"keys": [active_key]})
+            VariableJWKS.model_validate(
+                {"keys": [EllipticCurveJWK.model_validate(asdict(active_key))]}
+            )
         )
 
         return active_key.kid, tuple(i.kid for i in jwks_data)
@@ -338,12 +346,12 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     key=lambda x: x[1],
                 )
 
-                if len(valid_inactive_key_data) > self.key_config.MAX_VALID_KEYS:
+                if len(valid_inactive_key_data) > self.jwks_config.JWKS_CAP:
                     await self.keydata_repository.batch_expire_keydata(
                         tuple(
                             i[0]
                             for i in valid_inactive_key_data[
-                                : -self.key_config.MAX_VALID_KEYS
+                                : -self.jwks_config.JWKS_CAP
                             ]
                         )
                     )
@@ -357,7 +365,9 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 await self.synced_store_key_manager.set_jwks(jwks)
 
         await self.jwks_update_announcer.stream_update(
-            VariableJWKS.model_validate({"keys": jwks})
+            VariableJWKS.model_validate(
+                {"keys": [EllipticCurveJWK.model_validate(asdict(jwk)) for jwk in jwks]}
+            )
         )
 
         return new_key.create_public_copy()

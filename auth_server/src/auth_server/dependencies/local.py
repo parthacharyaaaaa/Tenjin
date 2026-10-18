@@ -132,10 +132,12 @@ def get_jwks_update_announcer() -> JWKSUpdateAnnouncer:
 
 
 def get_key_lifecycle_manager() -> KeyLifecycleManager:
+    app_config: Final[AppConfig] = get_app_config()
     return KeyLifecycleManager(
         get_keydata_repository(),
         get_token_manager(),
-        get_app_config().KEYS,
+        app_config.KEYS,
+        app_config.JWKS,
         get_synced_store_key_state_manager(),
         get_distributed_lock_factory(),
         get_jwks_update_announcer(),

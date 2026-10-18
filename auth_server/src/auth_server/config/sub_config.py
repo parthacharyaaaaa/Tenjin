@@ -114,7 +114,6 @@ class JWKSConfigModel(BaseModel):
 class KeyConfigModel(BaseModel):
     model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
 
-    MAX_VALID_KEYS: Annotated[int, Field(ge=1)]
     KEY_ROTATION_COOLDOWN: timedelta_s
     KEY_IDENTIFIER_LENGTH: Annotated[int, Field(ge=1, default=KEY_IDENTIFIER_LENGTH)]
     SIGNATURE_ALGORITHM: Annotated[str, Field(default="ES256")]
