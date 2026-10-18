@@ -7,6 +7,7 @@ import pytest
 import pytest_asyncio
 from auth_server.admin.roles import AdminRole
 from auth_server.config import AdminConfigModel
+from auth_server.config.sub_config import JWKSConfigModel
 from auth_server.dependencies.local import KeydataRepository
 from auth_server.models.database import Base
 from auth_server.repositories.admin import AdminRepository
@@ -72,7 +73,6 @@ def dummy_token_manager_config() -> SimpleNamespace:
 @pytest.fixture(scope="package")
 def dummy_key_config() -> SimpleNamespace:
     return SimpleNamespace(
-        MAX_VALID_KEYS=3,
         KEY_ROTATION_COOLDOWN=timedelta(hours=1),
         KEY_IDENTIFIER_LENGTH=16,
         SIGNATURE_ALGORITHM="ES256",
@@ -267,11 +267,13 @@ def key_lifecycle_manager(
     synced_key_store_manager: SyncedStoreKeyStateManager,
     redis_lock_factory: RedisInstanceLockFactory,
     jwks_update_announcer: JWKSUpdateAnnouncer,
+    dummy_jwks_config: SimpleNamespace,
 ) -> KeyLifecycleManager:
     return KeyLifecycleManager(
         keydata_repository,
         token_manager,
         dummy_key_config,  # type: ignore
+        dummy_jwks_config,  # type: ignore
         synced_key_store_manager,
         redis_lock_factory,
         jwks_update_announcer,
@@ -292,6 +294,7 @@ async def initialize_database_state(
     test_superuser_admin_name: str,
     keydata_repository: KeydataRepository,
     admin_repository: AdminRepository,
+    dummy_jwks_config: JWKSConfigModel,
 ) -> None:
     await admin_repository.create_admin(
         test_superuser_admin_name, b"x" * 32, 1, AdminRole.SUPER
@@ -308,7 +311,7 @@ async def initialize_database_state(
             SECP256R1(),
             epoch=datetime(2026, 1, 1, tzinfo=UTC),
         )
-        for i in range(2, 6):
+        for i in range(2, dummy_jwks_config.JWKS_CAP * 2):
             dummy_key: EllipticCurvePrivateKey = derive_private_key(i, SECP256R1())
             await keydata_repository.rotate_key(
                 str(i - 1),
@@ -321,9 +324,10 @@ async def initialize_database_state(
                 curve=SECP256R1,
                 epoch=datetime(2026, 1, i, tzinfo=UTC),
             )
-            if i > 2:
+            if i > dummy_jwks_config.JWKS_CAP:
                 await keydata_repository.expire_keydata(
-                    str(i - 1), expiry_time=datetime(2026, 1, i, tzinfo=UTC)
+                    str(i - dummy_jwks_config.JWKS_CAP),
+                    expiry_time=datetime(2026, 1, i, tzinfo=UTC),
                 )
 
 
