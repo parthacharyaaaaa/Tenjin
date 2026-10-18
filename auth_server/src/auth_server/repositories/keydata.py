@@ -88,7 +88,7 @@ class KeyPublicDataResult(AbstractResult):
         )
         return EllipticCurveJWKResult(
             ECAlg(self.alg),
-            str(verification_key.curve),
+            verification_key.curve.name,
             self.kid,
             to_base64url(public_numbers.x),
             to_base64url(public_numbers.y),
@@ -488,6 +488,7 @@ class KeydataRepository(AbstractWorkRepository):
             .where(
                 (KeyData.expired_at.is_(None)) & (KeyData.rotated_out_at.isnot(None))
             )
+            .order_by(KeyData.epoch.desc())
             .limit(limit)
         )
         if lock_args:
@@ -629,6 +630,7 @@ class KeydataRepository(AbstractWorkRepository):
                         private_pem=new_key_private_pem,
                         public_pem=new_key_public_pem,
                         alg=alg,
+                        epoch=epoch,
                     )
                     .returning(KeyData)
                 )

@@ -120,7 +120,7 @@ async def test_rotated_out_keys_retrieval(
 ) -> None:
     valid_inactive_keys = await keydata_repository.get_valid_inactive_keys()
     assert len(valid_inactive_keys) == 2
-    assert KEY_IDS[EXPIRATION_THRESHOLD:ROTATION_THRESHOLD] == tuple(
+    assert KEY_IDS[EXPIRATION_THRESHOLD:ROTATION_THRESHOLD][::-1] == tuple(
         map(lambda x: int(x.kid), valid_inactive_keys)
     )
 
