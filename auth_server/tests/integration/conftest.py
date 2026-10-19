@@ -9,7 +9,7 @@ from auth_server.admin.roles import AdminRole
 from auth_server.config import AdminConfigModel
 from auth_server.config.sub_config import JWKSConfigModel
 from auth_server.dependencies.local import KeydataRepository
-from auth_server.models.database import Base
+from auth_server.models.database import Admin, Base, KeyData
 from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.subsystems.jwks_announcer import JWKSUpdateAnnouncer
@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.sql.expression import delete, insert, select
 from testcontainers.community import redis
 from testcontainers.community.postgres import PostgresContainer
 
@@ -284,21 +285,49 @@ def key_lifecycle_manager(
 
 
 ### RUNTIME FUNCTIONALITY ###
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="package")
 def test_superuser_admin_name() -> str:
     return "TEST_ADMIN"
 
 
-@pytest_asyncio.fixture(scope="module")
-async def initialize_database_state(
+@pytest.fixture(scope="package")
+def test_superuser_admin_id() -> int:
+    return 1
+
+
+@pytest.fixture(scope="package")
+def test_superuser_admin_password_hash() -> bytes:
+    return b"x" * 32
+
+
+@pytest_asyncio.fixture(scope="function")
+async def prepare_database_state(
     test_superuser_admin_name: str,
+    test_superuser_admin_id: int,
+    test_superuser_admin_password_hash: bytes,
+    pg_async_sessionmaker: async_sessionmaker[AsyncSession],
     keydata_repository: KeydataRepository,
-    admin_repository: AdminRepository,
     dummy_jwks_config: JWKSConfigModel,
 ) -> None:
-    await admin_repository.create_admin(
-        test_superuser_admin_name, b"x" * 32, 1, AdminRole.SUPER
-    )
+    async with pg_async_sessionmaker() as session:
+        super_admin = (
+            await session.execute(
+                select(Admin).where(Admin.id_ == test_superuser_admin_id)
+            )
+        ).scalar_one_or_none()
+        if not super_admin:
+            await session.execute(
+                insert(Admin).values(
+                    id_=test_superuser_admin_id,
+                    username=test_superuser_admin_name,
+                    role=AdminRole.SUPER,
+                    password_hash=test_superuser_admin_password_hash,
+                    created_by=test_superuser_admin_id,
+                )
+            )
+        await session.execute(delete(KeyData))
+        await session.commit()
+
     async with keydata_repository.unit_of_work():
         dummy_key: EllipticCurvePrivateKey = derive_private_key(1, SECP256R1())
         await keydata_repository.insert_keydata(

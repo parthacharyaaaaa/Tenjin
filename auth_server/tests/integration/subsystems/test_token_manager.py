@@ -55,14 +55,14 @@ def dummy_user_identification() -> DummyUserIdentification:
     return DummyUserIdentification("foo", 100)
 
 
-@pytest_asyncio.fixture(scope="module")
+@pytest_asyncio.fixture(scope="function", autouse=True)
 async def token_manager_initialize_database_state(
-    initialize_database_state: None,
+    prepare_database_state: None,
 ) -> None:
     return
 
 
-@pytest_asyncio.fixture(scope="module", autouse=True)
+@pytest_asyncio.fixture(scope="function", autouse=True)
 async def token_manager(
     keydata_repository: KeydataRepository,
     token_store_client: Redis,
