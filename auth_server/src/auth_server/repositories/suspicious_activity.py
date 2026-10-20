@@ -1,7 +1,7 @@
 """Data access repository for Keydata SA model"""
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import ClassVar
 
 from auxillary.data_structures.dto import AbstractResult
@@ -52,6 +52,8 @@ class SuspiciousActivityRepository(AbstractWorkRepository):
         async with self._work_scoped_session() as session:
             await session.execute(
                 insert(SuspiciousActivity).values(
-                    suspect=admin_id, description=description, time_logged=time_logged
+                    suspect=admin_id,
+                    description=description,
+                    time_logged=time_logged or datetime.now(tz=UTC),
                 )
             )

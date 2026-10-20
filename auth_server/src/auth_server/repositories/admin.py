@@ -1,13 +1,12 @@
 """Data access repository for Keydata SA model"""
 
-from collections.abc import MutableMapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, ClassVar, Literal, overload
+from typing import ClassVar, Literal, overload
 
 from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
-from redis.typing import EncodableT, FieldT
 from sqlalchemy import insert, select, update
 
 from auth_server.admin.roles import AdminRole
@@ -27,30 +26,10 @@ class AdminPublicResult(AbstractResult):
     username: str
     role: AdminRole
 
-    password_hash: bytes
-
     time_deleted: datetime | None
     last_login: datetime
     locked: bool
     created_by: int
-
-    @staticmethod
-    def stringify_binary_fields(
-        d: MutableMapping[Any, Any], *, encoding: str = "utf-8"
-    ) -> None:
-        for k, v in d.items():
-            if isinstance(v, (bytes, bytearray)):
-                d[k] = v.decode(encoding)
-
-    def __json_repr__(self) -> dict[str, Any]:
-        json_mapping: dict[str, Any] = super().__json_repr__()
-        self.stringify_binary_fields(json_mapping)
-        return json_mapping
-
-    def __cache_repr__(self) -> dict[FieldT, EncodableT]:
-        cache_mapping: dict[FieldT, EncodableT] = super().__cache_repr__()
-        self.stringify_binary_fields(cache_mapping)
-        return cache_mapping
 
 
 @dataclass(slots=True)
@@ -78,13 +57,34 @@ class AdminRepository(AbstractWorkRepository):
                 return None
             return AdminPublicResult.construct_from_orm(admin)
 
+    @overload
     async def get_admin_by_username(
         self,
         username: str,
         *,
         include_deleted: bool = False,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> AdminPublicResult | None:
+        include_password_hash: Literal[False] = False,
+    ) -> AdminPublicResult | None: ...
+
+    @overload
+    async def get_admin_by_username(
+        self,
+        username: str,
+        *,
+        include_deleted: bool = False,
+        lock_args: Sequence[SelectionLockOption] | None = None,
+        include_password_hash: Literal[True] = True,
+    ) -> tuple[AdminPublicResult, bytes] | None: ...
+
+    async def get_admin_by_username(
+        self,
+        username: str,
+        *,
+        include_deleted: bool = False,
+        lock_args: Sequence[SelectionLockOption] | None = None,
+        include_password_hash: bool = False,
+    ) -> tuple[AdminPublicResult, bytes] | AdminPublicResult | None:
         statement = select(Admin).where(Admin.username == username)
         if not include_deleted:
             statement = statement.where(Admin.time_deleted.is_(None))
@@ -99,6 +99,8 @@ class AdminRepository(AbstractWorkRepository):
             ).scalar_one_or_none()
             if not admin:
                 return None
+            if include_password_hash:
+                return AdminPublicResult.construct_from_orm(admin), admin.password_hash
             return AdminPublicResult.construct_from_orm(admin)
 
     async def update_last_login(
