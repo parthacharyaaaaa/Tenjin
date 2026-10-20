@@ -20,6 +20,7 @@ from auth_server.subsystems.key_manager import (
 from auth_server.subsystems.session_manager import AdminSessionManager
 from auth_server.subsystems.token_manager import TokenManager
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
+from auxillary.mixins.db_config import BasicPostgresDatabaseConfigMixin
 from auxillary.security.data_structures.jwks.enums import ECAlg
 from auxillary.security.serialization import (
     pem_serialize_private_key,
@@ -45,17 +46,16 @@ from sqlalchemy.sql.expression import delete, insert, select
 from testcontainers.community import redis
 from testcontainers.community.postgres import PostgresContainer
 
-
 ### CONFIGURATIONS ###
-@pytest.fixture(scope="package")
-def dummy_sqlalchemy_config() -> SimpleNamespace:
-    return SimpleNamespace(
-        SQLALCHEMY_POOL_SIZE=1,
-        SQLALCHEMY_MAX_OVERFLOW=0,
-        SQLALCHEMY_POOL_RECYCLE=0,
-        SQLALCHEMY_POOL_TIMEOUT=8,
-        SQLALCHEMY_TRACK_MODIFICATIONS=False,
-    )
+# @pytest.fixture(scope="package")
+# def dummy_sqlalchemy_config() -> SimpleNamespace:
+#     return SimpleNamespace(
+#         SQLALCHEMY_POOL_SIZE=1,
+#         SQLALCHEMY_MAX_OVERFLOW=0,
+#         SQLALCHEMY_POOL_RECYCLE=0,
+#         SQLALCHEMY_POOL_TIMEOUT=8,
+#         SQLALCHEMY_TRACK_MODIFICATIONS=False,
+#     )
 
 
 @pytest.fixture(scope="package")
@@ -100,6 +100,70 @@ def dummy_jwks_config(dummy_token_manager_config: SimpleNamespace) -> SimpleName
         JWKS_CAP=3,
         UPDATION_STREAM_NAME="jwks_updation_stream",
         TOKEN_MANAGER=dummy_token_manager_config,
+    )
+
+
+@pytest.fixture(scope="package")
+def dummy_bootup_config() -> SimpleNamespace:
+    return SimpleNamespace(
+        SLAVE_SLEEP_POLLING_INTERVAL=timedelta(seconds=1),
+        MASTER_BOOTUP_LOCK_LIFESPAN=timedelta(seconds=1),
+    )
+
+
+@pytest.fixture(scope="package")
+def dummy_sqlalchemy_config() -> SimpleNamespace:
+    return SimpleNamespace(
+        SQLALCHEMY_DATABASE_URI_TEMPLATE=(
+            "postgresql+psycopg://{username}:{password}@{host}:{port}/{database}"
+        ),
+        SQLALCHEMY_POOL_SIZE=4,
+        SQLALCHEMY_MAX_OVERFLOW=4,
+        SQLALCHEMY_POOL_RECYCLE=60,
+        SQLALCHEMY_POOL_TIMEOUT=10,
+        SQLALCHEMY_TRACK_MODIFICATIONS=False,
+    )
+
+
+class DummyPostgresConfig(BasicPostgresDatabaseConfigMixin):
+    def __init__(self, host, port, database) -> None:
+        self.POSTGRES_HOST = host
+        self.POSTGRES_PORT = port
+        self.POSTGRES_DATABASE = database
+
+
+@pytest.fixture(scope="package")
+def dummy_database_config(
+    postgres_client_container: PostgresContainer,
+) -> DummyPostgresConfig:
+    return DummyPostgresConfig(
+        host=postgres_client_container.get_container_host_ip(),
+        port=postgres_client_container.port,
+        database=postgres_client_container.dbname,
+    )
+
+
+@pytest.fixture(scope="package")
+def dummy_core_config() -> SimpleNamespace:
+    return SimpleNamespace(APPLICATION_ROOT="")
+
+
+@pytest.fixture(scope="package")
+def dummy_app_config(
+    dummy_core_config: SimpleNamespace,
+    dummy_jwks_config: SimpleNamespace,
+    dummy_key_config: SimpleNamespace,
+    dummy_admin_config: SimpleNamespace,
+    dummy_bootup_config: SimpleNamespace,
+    dummy_database_config: DummyPostgresConfig,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        CORE=dummy_core_config,
+        JWKS=dummy_jwks_config,
+        KEYS=dummy_key_config,
+        ADMIN=dummy_admin_config,
+        BOOTUP=dummy_bootup_config,
+        DATABASE=dummy_database_config,
     )
 
 
