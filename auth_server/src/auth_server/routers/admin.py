@@ -186,7 +186,7 @@ async def admin_delete(
             "message": "Admin deleted",
             "admin_id": admin.id,
             "admin_username": admin.username,
-            "time_deleted": deletion_time,
+            "time_deleted": deletion_time.isoformat(),
         }
     )
 
