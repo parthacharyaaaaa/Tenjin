@@ -68,15 +68,18 @@ async def admin_login(
     ],
 ) -> JSONResponse:
     try:
-        admin: AdminPublicResult | None = await admin_repository.get_admin_by_username(
-            auth_model.identity, include_deleted=True
+        admin_result: (
+            tuple[AdminPublicResult, bytes] | None
+        ) = await admin_repository.get_admin_by_username(
+            auth_model.identity, include_deleted=True, include_password_hash=True
         )
 
-        if not admin:
+        if not admin_result:
             raise HTTPException(
                 404, f"No admin with identity {auth_model.identity} found"
             )
-
+        admin, pw_hash = admin_result
+        del admin_result
         if admin.time_deleted is not None:
             raise HTTPException(410, f"Admin {admin.username} has been deleted")
 
@@ -98,7 +101,7 @@ async def admin_login(
     except SQLAlchemyError:
         raise HTTPException(500, "Failed to fetch admin information")
 
-    if not bcrypt_check_password(auth_model.password, admin.password_hash):
+    if not bcrypt_check_password(auth_model.password, pw_hash):
         await report_suspicious_activity(
             config,
             admin.id_,
@@ -228,7 +231,7 @@ async def admin_refresh(
     ):
         await report_suspicious_activity(
             config,
-            refresh_model.id_,
+            admin_session.admin_id,
             "Invalid session revival digest",
             suspicious_activity_repository,
             admin_repository,
@@ -264,7 +267,9 @@ async def admin_logout(
 
 @ADMIN.post("/admins/locks")
 async def admin_lock(
-    admin_session: Annotated[AdminSession, Depends(get_admin_session)],
+    admin_session: Annotated[
+        AdminSession, Depends(require_permissions(Permission.LOCK_ADMIN))
+    ],
     identification_model: AdminIdentificationModel,
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
     admin_session_manager: Annotated[
@@ -315,6 +320,9 @@ async def admin_lock(
 
 @ADMIN.delete("/admins/locks")
 async def admin_unlock(
+    admin_session: Annotated[
+        AdminSession, Depends(require_permissions(Permission.UNLOCK_ADMIN))
+    ],
     identification_model: AdminIdentificationModel,
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
     link_builder: Annotated[

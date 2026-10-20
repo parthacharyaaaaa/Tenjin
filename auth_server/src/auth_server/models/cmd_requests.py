@@ -13,5 +13,5 @@ class AdminIdentificationModel(BaseModel):
     id_: Annotated[int, Field(ge=1, frozen=True, alias="id")]
 
 
-class AdminRefreshModel(AdminIdentificationModel):
+class AdminRefreshModel:
     refresh_digest: Annotated[str, Field(frozen=True, alias="refresh-digest")]
