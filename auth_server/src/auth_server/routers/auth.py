@@ -53,7 +53,7 @@ async def login(
 
     async with httpx.AsyncClient() as http_client:
         resource_response: httpx.Response = await http_client.post(
-            url="", json=auth_model.model_dump()
+            url="http://resource_server:8081/login", json=auth_model.model_dump()
         )
 
     if resource_response.status_code != 200:
@@ -108,7 +108,7 @@ async def register(
 ):
     async with httpx.AsyncClient() as http_client:
         resource_response = await http_client.post(
-            "",
+            "http://resource_server:8081/register",
             json=registration_model.model_dump(),
         )
 
