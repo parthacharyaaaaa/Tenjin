@@ -36,7 +36,7 @@ from auth_server.repositories.keydata import (
     KeyPrivateDataResult,
     KeyPublicDataResult,
 )
-from auth_server.routers import ROUTER_URL_MAPPING, RouterName, URLPrefix
+from auth_server.routers import RouterName, URLPrefix
 from auth_server.strings import SyncedStoreCommandStrings
 from auth_server.subsystems.key_manager import (
     KeyLifecycleManager,
@@ -221,7 +221,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             config, synced_store_client, keydata_repository, token_manager, pid
         )
 
-    register_routers(app, ROUTER_URL_MAPPING, config.CORE.APPLICATION_ROOT)
     lifecycle_manager.start_token_manager_polling()
     yield
     await lifecycle_manager.stop_token_manager_polling()
