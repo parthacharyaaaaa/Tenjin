@@ -4,7 +4,7 @@ import httpx
 from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
 from auxillary.data_structures.enriched.response import EnrichedJSONResponse
-from auxillary.security.data_structures.jwks.typing import SupportsJWK
+from auxillary.utils import json_repr
 from fastapi import APIRouter, Depends
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response
@@ -17,6 +17,7 @@ from auth_server.dependencies.local import (
     get_token_manager,
 )
 from auth_server.models.auth_requests import AuthenticationModel, RegistrationModel
+from auth_server.repositories.keydata import EllipticCurveJWKResult
 from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
 from auth_server.subsystems.token_manager import TokenManager
 from auth_server.tokens.typing import StandardRefreshTokenClaims, TokenType
@@ -35,8 +36,8 @@ async def jwks(
         SyncedStoreKeyStateManager, Depends(get_synced_store_key_state_manager)
     ],
 ) -> JSONResponse:
-    jwks_list: tuple[SupportsJWK, ...] = tuple(await synced_keystate_manager.get_jwks())
-    return JSONResponse({"keys": jwks_list})
+    jwks_list: list[EllipticCurveJWKResult] = await synced_keystate_manager.get_jwks()
+    return JSONResponse({"keys": [json_repr(key) for key in jwks_list]})
 
 
 @AUTH.post("/login")
@@ -52,7 +53,7 @@ async def login(
 
     async with httpx.AsyncClient() as http_client:
         resource_response: httpx.Response = await http_client.post(
-            url="", json=auth_model.model_dump_json()
+            url="", json=auth_model.model_dump()
         )
 
     if resource_response.status_code != 200:
@@ -108,7 +109,7 @@ async def register(
     async with httpx.AsyncClient() as http_client:
         resource_response = await http_client.post(
             "",
-            json=registration_model.model_dump_json(),
+            json=registration_model.model_dump(),
         )
 
     if resource_response.status_code != 201:
@@ -166,11 +167,11 @@ async def reissue(
     )
 
     if not refresh_token:
-        e = KeyError()
-        setattr(
-            e, "description", "Refresh Token missing from request, reissuance denied"
+        raise EnrichedHTTPException(
+            400,
+            "Refresh token missing from request, reissuance denied",
+            hypermedia=login_hypermedia(link_builder),
         )
-        raise e
 
     new_refresh_token, new_access_token = await token_manager.reissue_token_pair(
         refresh_token
