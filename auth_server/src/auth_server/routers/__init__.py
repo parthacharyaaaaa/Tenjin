@@ -26,7 +26,7 @@ class RouterName(StrEnum):
 
 class URLPrefix(StrEnum):
     CMD = "cmd"
-    ADMIN = "admin"
+    ADMIN = "admins"
     AUTH = "auth"
     KEYS = "keys"
 

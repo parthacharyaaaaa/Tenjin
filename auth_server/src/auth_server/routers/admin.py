@@ -49,7 +49,7 @@ from auth_server.utils.hypermedia import (
 ADMIN: Final[APIRouter] = APIRouter()
 
 
-@ADMIN.post("/admins/login")
+@ADMIN.post("/login")
 async def admin_login(
     auth_model: AdminAuthenticationModel,
     config: Annotated[AppConfig, Depends(get_app_config)],
@@ -154,22 +154,22 @@ async def admin_login(
     )
 
 
-@ADMIN.delete("/admins")
+@ADMIN.delete("/{admin_id}")
 async def admin_delete(
-    deletion_model: AdminIdentificationModel,
     admin_session: Annotated[
         AdminSession, Depends(require_permissions(Permission.DELETE_ADMIN))
     ],
     admin_repository: Annotated[AdminRepository, Depends(get_admin_repository)],
+    admin_id: int,
 ) -> JSONResponse:
     try:
         admin: AdminPublicResult | None = await admin_repository.get_admin(
-            deletion_model.id_, include_deleted=True
+            admin_id, include_deleted=True
         )
     except SQLAlchemyError:
         generic_database_fetch_exception()
     if not admin:
-        raise HTTPException(404, f"No admin with ID {deletion_model.id_} found")
+        raise HTTPException(404, f"No admin with ID {admin_id} found")
     if admin.time_deleted:
         raise HTTPException(
             410, f"Admin {admin.username} (ID: {admin.id}) already deleted"
@@ -177,7 +177,7 @@ async def admin_delete(
 
     deletion_time: datetime = datetime.now(UTC)
     try:
-        await admin_repository.delete_admin(deletion_model.id_, deletion_time)
+        await admin_repository.delete_admin(admin_id, deletion_time)
     except Exception as e:
         raise HTTPException(500, "Failed to delete admin account") from e
 
@@ -191,7 +191,7 @@ async def admin_delete(
     )
 
 
-@ADMIN.post("/admins/refresh")
+@ADMIN.post("/refresh")
 async def admin_refresh(
     refresh_model: AdminRefreshModel,
     admin_session: Annotated[AdminSession, Depends(get_admin_session)],
@@ -254,7 +254,7 @@ async def admin_refresh(
     )
 
 
-@ADMIN.patch("/admins/logout")
+@ADMIN.patch("/logout")
 async def admin_logout(
     admin_session: Annotated[AdminSession, Depends(get_admin_session)],
     admin_session_manager: Annotated[
@@ -265,7 +265,7 @@ async def admin_logout(
     return JSONResponse({"message": "Logout successful"})
 
 
-@ADMIN.post("/admins/locks")
+@ADMIN.post("/locks/lock")
 async def admin_lock(
     admin_session: Annotated[
         AdminSession, Depends(require_permissions(Permission.LOCK_ADMIN))
@@ -318,7 +318,7 @@ async def admin_lock(
     return JSONResponse({"message": "Admin locked succesfully"})
 
 
-@ADMIN.delete("/admins/locks")
+@ADMIN.delete("/locks/unlock")
 async def admin_unlock(
     admin_session: Annotated[
         AdminSession, Depends(require_permissions(Permission.UNLOCK_ADMIN))
@@ -358,7 +358,7 @@ async def admin_unlock(
     return JSONResponse({"message": "Admin unlocked succesfully"})
 
 
-@ADMIN.post("/admins")
+@ADMIN.post("/")
 async def create_admin(
     admin_model: AdminAuthenticationModel,
     admin_session: Annotated[

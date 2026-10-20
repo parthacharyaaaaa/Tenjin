@@ -21,7 +21,7 @@ from redis.asyncio.client import Redis
 from sqlalchemy import delete, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-ADMIN_ROOT: Final[str] = "/cmd/admin/admins"
+ADMIN_ROOT: Final[str] = "/cmd/admins"
 ADMIN_PASSWORD: Final[str] = "correct-password"
 STAFF_USERNAME: Final[str] = "staff_admin"
 INITIAL_LAST_LOGIN: Final[datetime] = datetime(2020, 1, 1, tzinfo=UTC)
@@ -290,14 +290,14 @@ async def test_login_rejects_malformed_or_injection_like_payloads(
 @pytest.mark.parametrize(
     ("method", "path", "payload"),
     (
-        ("DELETE", ADMIN_ROOT, {"id": 1}),
+        ("DELETE", f"{ADMIN_ROOT}/1", None),
         ("POST", f"{ADMIN_ROOT}/refresh", {"refresh-digest": "digest"}),
         ("PATCH", f"{ADMIN_ROOT}/logout", None),
-        ("POST", f"{ADMIN_ROOT}/locks", {"id": 1}),
-        ("DELETE", f"{ADMIN_ROOT}/locks", {"id": 1}),
+        ("POST", f"{ADMIN_ROOT}/locks/lock", {"id": 1}),
+        ("DELETE", f"{ADMIN_ROOT}/locks/unlock", {"id": 1}),
         (
             "POST",
-            ADMIN_ROOT,
+            f"{ADMIN_ROOT}/",
             {"identity": "new_admin", "password": ADMIN_PASSWORD},
         ),
     ),
@@ -323,7 +323,7 @@ async def test_super_admin_can_create_staff_admin(
     test_superuser_admin_id: int,
 ) -> None:
     response = await super_admin_test_client.post(
-        ADMIN_ROOT,
+        f"{ADMIN_ROOT}/",
         json={"identity": "created_admin", "password": ADMIN_PASSWORD},
     )
     created_admin_result = await admin_repository.get_admin_by_username(
@@ -346,10 +346,9 @@ async def test_create_admin_rejects_duplicate_username(
     staff_admin: AdminPublicResult,
 ) -> None:
     response = await super_admin_test_client.post(
-        ADMIN_ROOT,
+        f"{ADMIN_ROOT}/",
         json={"identity": staff_admin.username, "password": ADMIN_PASSWORD},
     )
-
     assert response.status_code == 409
     assert response.json() == {
         "detail": f"Admin with username {staff_admin.username} already exists"
@@ -361,7 +360,7 @@ async def test_staff_cannot_create_admin(
     staff_admin_test_client: httpx.AsyncClient,
 ) -> None:
     response = await staff_admin_test_client.post(
-        ADMIN_ROOT,
+        f"{ADMIN_ROOT}/",
         json={"identity": "forbidden_admin", "password": ADMIN_PASSWORD},
     )
 
@@ -375,9 +374,7 @@ async def test_super_admin_can_delete_staff_admin(
     staff_admin: AdminPublicResult,
     admin_repository: AdminRepository,
 ) -> None:
-    response = await super_admin_test_client.request(
-        "DELETE", ADMIN_ROOT, json={"id": staff_admin.id}
-    )
+    response = await super_admin_test_client.delete(f"{ADMIN_ROOT}/{staff_admin.id}")
     deleted_admin = await admin_repository.get_admin(
         staff_admin.id, include_deleted=True
     )
@@ -395,9 +392,7 @@ async def test_super_admin_can_delete_staff_admin(
 async def test_delete_admin_rejects_missing_admin(
     super_admin_test_client: httpx.AsyncClient,
 ) -> None:
-    response = await super_admin_test_client.request(
-        "DELETE", ADMIN_ROOT, json={"id": 999_999}
-    )
+    response = await super_admin_test_client.delete(f"{ADMIN_ROOT}/999999")
 
     assert response.status_code == 404
     assert response.json() == {"detail": "No admin with ID 999999 found"}
@@ -411,9 +406,7 @@ async def test_delete_admin_rejects_already_deleted_admin(
 ) -> None:
     await admin_repository.delete_admin(staff_admin.id)
 
-    response = await super_admin_test_client.request(
-        "DELETE", ADMIN_ROOT, json={"id": staff_admin.id}
-    )
+    response = await super_admin_test_client.delete(f"{ADMIN_ROOT}/{staff_admin.id}")
 
     assert response.status_code == 410
     assert response.json() == {
@@ -428,8 +421,8 @@ async def test_staff_cannot_delete_admin(
     staff_admin_test_client: httpx.AsyncClient,
     test_superuser_admin_id: int,
 ) -> None:
-    response = await staff_admin_test_client.request(
-        "DELETE", ADMIN_ROOT, json={"id": test_superuser_admin_id}
+    response = await staff_admin_test_client.delete(
+        f"{ADMIN_ROOT}/{test_superuser_admin_id}"
     )
 
     assert response.status_code == 403
@@ -576,7 +569,7 @@ async def test_lock_admin_updates_database_and_terminates_target_session(
     )
 
     response = await super_admin_test_client.post(
-        f"{ADMIN_ROOT}/locks", json={"id": staff_admin.id}
+        f"{ADMIN_ROOT}/locks/lock", json={"id": staff_admin.id}
     )
     persisted_admin = await admin_repository.get_admin(staff_admin.id)
 
@@ -592,7 +585,7 @@ async def test_lock_admin_rejects_missing_admin(
     super_admin_test_client: httpx.AsyncClient,
 ) -> None:
     response = await super_admin_test_client.post(
-        f"{ADMIN_ROOT}/locks", json={"id": 999_999}
+        f"{ADMIN_ROOT}/locks/lock", json={"id": 999_999}
     )
 
     assert response.status_code == 404
@@ -608,7 +601,7 @@ async def test_lock_admin_rejects_already_locked_admin(
     await admin_repository.set_admin_locked(staff_admin.id, True)
 
     response = await super_admin_test_client.post(
-        f"{ADMIN_ROOT}/locks", json={"id": staff_admin.id}
+        f"{ADMIN_ROOT}/locks/lock", json={"id": staff_admin.id}
     )
 
     assert response.status_code == 409
@@ -624,7 +617,7 @@ async def test_unlock_admin_updates_database(
     await admin_repository.set_admin_locked(staff_admin.id, True)
 
     response = await super_admin_test_client.request(
-        "DELETE", f"{ADMIN_ROOT}/locks", json={"id": staff_admin.id}
+        "DELETE", f"{ADMIN_ROOT}/locks/unlock", json={"id": staff_admin.id}
     )
     persisted_admin = await admin_repository.get_admin(staff_admin.id)
 
@@ -639,7 +632,7 @@ async def test_unlock_admin_rejects_missing_admin(
     super_admin_test_client: httpx.AsyncClient,
 ) -> None:
     response = await super_admin_test_client.request(
-        "DELETE", f"{ADMIN_ROOT}/locks", json={"id": 999_999}
+        "DELETE", f"{ADMIN_ROOT}/locks/unlock", json={"id": 999_999}
     )
 
     assert response.status_code == 404
@@ -652,7 +645,7 @@ async def test_unlock_admin_rejects_already_unlocked_admin(
     staff_admin: AdminPublicResult,
 ) -> None:
     response = await super_admin_test_client.request(
-        "DELETE", f"{ADMIN_ROOT}/locks", json={"id": staff_admin.id}
+        "DELETE", f"{ADMIN_ROOT}/locks/unlock", json={"id": staff_admin.id}
     )
 
     assert response.status_code == 409
