@@ -5,7 +5,6 @@ import traceback
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Final, Mapping
 
-from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.data_structures.locks.lock import (
     BasicLockContext,
     RedisInstanceLockFactory,
@@ -14,7 +13,7 @@ from auxillary.security.serialization import (
     pem_serialize_private_key,
     pem_serialize_public_key,
 )
-from auxillary.utils import generic_error_handler
+from auxillary.utils import ExceptionHandler
 from fastapi import APIRouter, FastAPI
 from redis.asyncio import Redis
 
@@ -43,6 +42,13 @@ from auth_server.subsystems.key_manager import (
     SyncedStoreKeyStateManager,
 )
 from auth_server.subsystems.token_manager import TokenManager
+
+
+def register_exception_handler(
+    app: FastAPI, exception_handler_mapping: Mapping[type[Exception], ExceptionHandler]
+) -> None:
+    for exception, handler in exception_handler_mapping.items():
+        app.add_exception_handler(exception, handler)
 
 
 def register_routers(
@@ -186,10 +192,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     config: Final[AppConfig] = get_app_config()
     synced_store_client: Final[Redis] = get_synced_store_client()
     lock_factory: Final[RedisInstanceLockFactory] = get_distributed_lock_factory()
-
-    # Error handler
-    app.add_exception_handler(EnrichedHTTPException, generic_error_handler)
-    app.add_exception_handler(Exception, generic_error_handler)
 
     keydata_repository: Final[KeydataRepository] = KeydataRepository(
         get_database_session_maker()
