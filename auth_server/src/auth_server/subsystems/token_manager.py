@@ -13,6 +13,15 @@ import jwt.exceptions as jwt_exceptions
 from redis.asyncio import Redis
 
 from auth_server.config.sub_config import KeyConfigModel, TokenManagerConfigModel
+from auth_server.datastructures.exceptions.token import (
+    ImmatureRefreshAttemptError,
+    InvalidKeyError,
+    InvalidTokenError,
+    MissingTokenFamilyError,
+    TamperedTokenError,
+    TokenFamilyExistsError,
+    TokenMismatchError,
+)
 from auth_server.repositories.keydata import (
     EllipticCurveJWKResult,
     KeydataRepository,
@@ -106,7 +115,7 @@ class TokenManager:
         try:
             kid: int = jwt.get_unverified_header(token)["kid"]
             if kid not in self._key_mapping:
-                raise jwt_exceptions.InvalidKeyError(
+                raise InvalidKeyError(
                     "This key is not recognised, meaning it is possibly tampered, forged, or simply expired a long time ago."
                 )
 
@@ -120,20 +129,18 @@ class TokenManager:
             if token_type == TokenType.StandardAccess:
                 return StandardAccessTokenClaims(**decoded_token)
             return StandardRefreshTokenClaims(**decoded_token)
-        except (
-            jwt_exceptions.ImmatureSignatureError,
-            jwt_exceptions.InvalidIssuedAtError,
-            jwt_exceptions.InvalidIssuerError,
-        ):
+        except jwt_exceptions.InvalidSignatureError:
             if token_type == TokenType.StandardRefresh:
                 await self.invalidate_family(
                     jwt.decode(token, options={"verify_signature": False})["fid"]
                 )
-            raise
+            raise TamperedTokenError("Token is tampered, please login again")
+        except jwt_exceptions.ImmatureSignatureError:
+            raise ImmatureRefreshAttemptError("Premature token reissuance")
+        except jwt_exceptions.InvalidTokenError:
+            raise InvalidTokenError("Invalid token, please login again")
         except KeyError as e:
-            raise jwt_exceptions.InvalidTokenError(
-                "Token headers missing key ID"
-            ) from e
+            raise InvalidTokenError("Token headers missing key ID") from e
 
     async def reissue_token_pair(self, refresh_token: str) -> TokenPair:
         decoded_token: StandardRefreshTokenClaims = await self.decode_token(
@@ -171,7 +178,9 @@ class TokenManager:
             )
             if not key:
                 await self.invalidate_family(family_id)
-                raise ValueError(f"Token family {family_id} is invalid or empty")
+                raise MissingTokenFamilyError(
+                    f"Token family {family_id} is invalid or empty"
+                )
 
             key_metadata = key.split(":")
             if (
@@ -179,12 +188,12 @@ class TokenManager:
                 or int(key_metadata[1]) != existing_family_validation_data[1]
             ):
                 await self.invalidate_family(family_id)
-                raise ValueError(
+                raise TokenMismatchError(
                     f"Replay attack detected or token metadata mismatch for family {family_id}"
                 )
         else:
             if await self._token_store_client.llen(family_id) != 0:  # pyrefly: ignore[not-async]
-                raise ValueError(
+                raise TokenFamilyExistsError(
                     f"Family ID {family_id} exists in token store when implied not to"
                 )
 

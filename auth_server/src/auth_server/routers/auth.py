@@ -5,11 +5,12 @@ from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
 from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.utils import json_repr
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response
 
 from auth_server.config.app_config import AppConfig
+from auth_server.datastructures.exceptions.token import TokenError
 from auth_server.dependencies.local import (
     get_app_config,
     get_hypermedia_link_builder,
@@ -67,7 +68,11 @@ async def login(
 
     response_contents: dict[str, str | int] = resource_response.json()
     sub, sid = str(response_contents.pop("sub")), int(response_contents.pop("sid"))
-    refresh_token: str = await token_manager.issue_refresh_token(sub, sid)
+
+    try:
+        refresh_token: str = await token_manager.issue_refresh_token(sub, sid)
+    except TokenError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     access_token: str = token_manager.issue_access_token(sub, sid)
 
     response: JSONResponse = EnrichedJSONResponse(
@@ -123,7 +128,12 @@ async def register(
 
     response_contents: dict[str, str | int] = resource_response.json()
     sub, sid = str(response_contents.pop("sub")), int(response_contents.pop("sid"))
-    refresh_token: str = await token_manager.issue_refresh_token(sub, sid)
+    try:
+        refresh_token: str = await token_manager.issue_refresh_token(sub, sid)
+    except TokenError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    access_token: str = token_manager.issue_access_token(sub, sid)
+
     access_token: str = token_manager.issue_access_token(sub, sid)
     response: JSONResponse = EnrichedJSONResponse(
         {
@@ -173,9 +183,12 @@ async def reissue(
             hypermedia=login_hypermedia(link_builder),
         )
 
-    new_refresh_token, new_access_token = await token_manager.reissue_token_pair(
-        refresh_token
-    )
+    try:
+        new_refresh_token, new_access_token = await token_manager.reissue_token_pair(
+            refresh_token
+        )
+    except TokenError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     response: Response = EnrichedJSONResponse(
         {
             "message": "Reissuance successful",
@@ -229,11 +242,7 @@ async def purge_family(
             options={"verify_nbf": False},
         )
         await token_manager.invalidate_family(refresh_token["fid"])
-    except Exception as e:
-        raise EnrichedHTTPException(
-            401,
-            "Failed to validate this refresh token",
-            hypermedia=login_hypermedia(link_builder),
-        ) from e
+    except TokenError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
     return JSONResponse({"message": "Token Revoked"})
