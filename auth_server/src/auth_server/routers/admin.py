@@ -86,7 +86,7 @@ async def admin_login(
         if admin.locked:
             await report_suspicious_activity(
                 config,
-                admin.id_,
+                admin.id,
                 "Attempt to log into a locked account",
                 suspicious_activity_repository,
                 admin_repository,
@@ -104,7 +104,7 @@ async def admin_login(
     if not bcrypt_check_password(auth_model.password, pw_hash):
         await report_suspicious_activity(
             config,
-            admin.id_,
+            admin.id,
             "Incorrect password",
             suspicious_activity_repository,
             admin_repository,
@@ -115,7 +115,7 @@ async def admin_login(
         raise HTTPException(401, "Incorrect passwword")
 
     try:
-        await admin_repository.update_last_login(admin.id_)
+        await admin_repository.update_last_login(admin.id)
     except SQLAlchemyError as e:
         raise HTTPException(500, "An error occured when logging you in") from e
 
@@ -124,12 +124,12 @@ async def admin_login(
         # Single sign-in policy, invalidate existing session and add entry in logs
         if (
             existing_session
-            := await admin_session_manager.get_admin_session_via_admin_id(admin.id_)
+            := await admin_session_manager.get_admin_session_via_admin_id(admin.id)
         ):
-            # await admin_session_manager.terminate_session(existing_session.session_id, admin.id_)
+            # await admin_session_manager.terminate_session(existing_session.session_id, admin.id)
             await report_suspicious_activity(
                 config,
-                admin.id_,
+                admin.id,
                 "Session already active",
                 suspicious_activity_repository,
                 admin_repository,
@@ -144,7 +144,7 @@ async def admin_login(
             (
                 session_token,
                 revival_digest,
-            ) = await admin_session_manager.initialize_session(admin.id_, admin.role)
+            ) = await admin_session_manager.initialize_session(admin.id, admin.role)
     except RedisError as e:
         raise HTTPException(500, "Failed to perform login") from e
 
@@ -172,7 +172,7 @@ async def admin_delete(
         raise HTTPException(404, f"No admin with ID {deletion_model.id_} found")
     if admin.time_deleted:
         raise HTTPException(
-            410, f"Admin {admin.username} (ID: {admin.id_}) already deleted"
+            410, f"Admin {admin.username} (ID: {admin.id}) already deleted"
         )
 
     deletion_time: datetime = datetime.now(UTC)
@@ -184,7 +184,7 @@ async def admin_delete(
     return JSONResponse(
         {
             "message": "Admin deleted",
-            "admin_id": admin.id_,
+            "admin_id": admin.id,
             "admin_username": admin.username,
             "time_deleted": deletion_time,
         }
@@ -299,16 +299,16 @@ async def admin_lock(
         )
 
     try:
-        await admin_repository.set_admin_locked(admin.id_, True)
+        await admin_repository.set_admin_locked(admin.id, True)
     except SQLAlchemyError:
         raise HTTPException(
-            500, f"Failed to lock admin {admin.username} (ID: {admin.id_})"
+            500, f"Failed to lock admin {admin.username} (ID: {admin.id})"
         )
 
     try:
         if (
             existing_session
-            := await admin_session_manager.get_admin_session_via_admin_id(admin.id_)
+            := await admin_session_manager.get_admin_session_via_admin_id(admin.id)
         ):
             await admin_session_manager.terminate_session_via_object(existing_session)
     except RedisError:
@@ -349,10 +349,10 @@ async def admin_unlock(
         )
 
     try:
-        await admin_repository.set_admin_locked(admin.id_, False)
+        await admin_repository.set_admin_locked(admin.id, False)
     except SQLAlchemyError:
         raise HTTPException(
-            500, f"Failed to unlock admin {admin.username} (ID: {admin.id_})"
+            500, f"Failed to unlock admin {admin.username} (ID: {admin.id})"
         )
 
     return JSONResponse({"message": "Admin unlocked succesfully"})

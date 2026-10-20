@@ -22,7 +22,7 @@ class AdminPublicResult(AbstractResult):
 
     resource_name: ClassVar[str] = Admin.__tablename__
 
-    id_: int
+    id: int
     username: str
     role: AdminRole
 
