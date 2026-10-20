@@ -23,6 +23,13 @@ from auxillary.utils import json_repr
 from redis.asyncio.client import Redis
 
 from auth_server.config.sub_config import JWKSConfigModel, KeyConfigModel
+from auth_server.datastructures.exceptions.keys import (
+    EmptyKeysError,
+    ExpiredKeyError,
+    InvalidKeyOperationError,
+    KeyNotFoundError,
+    KeyStateError,
+)
 from auth_server.keys.keygen import generate_ecdsa_pair
 from auth_server.repositories.keydata import (
     EllipticCurveJWKResult,
@@ -105,7 +112,7 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
         self, keys: Sequence[EllipticCurveJWKResult] | Sequence[KeyPublicDataResult]
     ) -> None:
         if not keys:
-            raise ValueError("keys must be non-empty")
+            raise EmptyKeysError("keys must be non-empty")
         if isinstance(keys[0], KeyPublicDataResult):
             keys = list(map(KeyPublicDataResult.as_jwk, keys))
         await self.synced_store_client.set(
@@ -184,7 +191,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     )
                 )
                 if not lock_set.valid:
-                    raise Exception(
+                    raise RuntimeError(
                         f"Failed to acquire operational lock for {operation}"
                     )
             for transactional_worker in self._transactional_stack_order:
@@ -221,11 +228,13 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ),
                 )
                 if not target_key:
-                    raise ValueError(f"No key with ID {key_id} found")
+                    raise KeyNotFoundError(f"No key with ID {key_id} found")
                 if not target_key.rotated_out_at:
-                    raise Exception(f"Cannot invalidate active key {key_id}")
+                    raise InvalidKeyOperationError(
+                        f"Cannot invalidate active key {key_id}"
+                    )
                 if target_key.expired_at is not None:
-                    raise Exception(f"Key {key_id} has already been expired")
+                    raise ExpiredKeyError(f"Key {key_id} has already been expired")
                 await self.keydata_repository.expire_keydata(key_id)
 
                 # Key invalidation successful, update local token manager
@@ -267,7 +276,9 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     await self.keydata_repository.get_jwks()
                 )
                 if len(jwks_data) == 1:
-                    raise Exception("No inactive keys present to invalidate")
+                    raise InvalidKeyOperationError(
+                        "No inactive keys present to invalidate"
+                    )
                 active_key: Final[EllipticCurveJWKResult] = jwks_data.pop(0)
                 # Prune JWKS
                 await self.keydata_repository.batch_expire_keydata(
@@ -314,7 +325,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     lock_args=(SelectionLockOption.READ, SelectionLockOption.KEY_SHARE)
                 )
                 if not previous_key:
-                    raise Exception("Invalid key state!")
+                    raise KeyStateError("Invalid key state!")
 
                 # Reflect rotation in DB
                 new_key: Final[
@@ -379,7 +390,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     await self.synced_store_key_manager.get_jwks()
                 )
                 if not global_jwks:
-                    raise RuntimeError("Global key state empty or not found")
+                    raise KeyStateError("Global key state empty or not found")
                 await self.token_manager.update_local_store(global_jwks)
             except Exception:
                 self._logger.error("Exception encountered. Traceback:")
