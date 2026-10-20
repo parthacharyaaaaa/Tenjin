@@ -524,7 +524,9 @@ class KeydataRepository(AbstractWorkRepository):
         public_data_only: bool = True,
         lock_args: Sequence[SelectionLockOption] | None = None,
     ) -> KeyPublicDataResult | KeyPrivateDataResult | None:
-        statement = select(KeyData).where(KeyData.rotated_out_at.is_(None))
+        statement = select(KeyData).where(
+            (KeyData.rotated_out_at.is_(None)) & (KeyData.expired_at.is_(None))
+        )
         if lock_args:
             statement = statement.with_for_update(
                 **{i: True for i in lock_args}  # pyrefly: ignore

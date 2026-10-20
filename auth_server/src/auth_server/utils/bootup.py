@@ -70,7 +70,7 @@ async def _initialize_active_key(
         key_id,
         pem_serialize_private_key(private_key, key_config.PRIVATE_PEM_FORMAT),
         pem_serialize_public_key(public_key, key_config.PUBLIC_PEM_FORMAT),
-        "ES256",
+        key_config.SIGNATURE_ALGORITHM,
         key_config.EC_TYPE,
         returning=True,
     )
@@ -108,13 +108,13 @@ async def master_bootup(
                 filter(lambda x: x.rotated_out_at is not None, keydata)
             )
             missing_active: bool = len(keydata) == len(verification_only_keys)
-
+            retained_key_count: int = config.JWKS.JWKS_CAP - int(missing_active)
             # Atleast 1 non-expired key exists in DB
-            if len(keydata) > config.JWKS.JWKS_CAP:
+            if len(keydata) > retained_key_count:
                 await keydata_repository.expire_keydata_with_threshold(
-                    keydata[config.JWKS.JWKS_CAP - (1 + missing_active)].epoch
+                    keydata[retained_key_count - 1].epoch
                 )
-                keydata = keydata[: config.JWKS.JWKS_CAP]
+                keydata = keydata[:retained_key_count]
 
             if missing_active:
                 active_keydata = await _initialize_active_key(
