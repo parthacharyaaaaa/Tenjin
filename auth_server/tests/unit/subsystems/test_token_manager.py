@@ -293,7 +293,7 @@ async def test_decode_token_normalizes_time_and_issuer_errors(
             side_effect=decode_results,
         ),
     ):
-        with pytest.raises(ValueError, match="Invalid Token"):
+        with pytest.raises(type(error), match=error.args[0]):
             await signing_manager.decode_token("token", token_type)
 
     if token_type is TokenType.StandardRefresh:
