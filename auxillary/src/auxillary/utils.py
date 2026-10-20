@@ -2,7 +2,7 @@
 
 import base64
 import traceback
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
@@ -11,6 +11,16 @@ from redis.typing import EncodableT, FieldT
 from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.typing_utils import SupportsCache, SupportsJSON
+
+
+class ExceptionHandler(Protocol):
+    def __call__(
+        self,
+        r: Request,
+        e: Exception,
+        *,
+        attach_exception_args: bool = False,
+    ) -> Response: ...
 
 
 def generic_error_handler(
