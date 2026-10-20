@@ -50,6 +50,7 @@ project-excludes=[
 
 [dependency-groups]
 dev = [
+    "asgi-lifespan>=2.1.0",
     "freezegun>=1.5.5",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
