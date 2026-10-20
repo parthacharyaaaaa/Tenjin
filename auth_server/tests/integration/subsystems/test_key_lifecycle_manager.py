@@ -1,4 +1,7 @@
-from datetime import UTC, datetime
+import asyncio
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 
 import orjson
 import pytest
@@ -239,3 +242,124 @@ async def test_standard_key_rotation(
     assert tuple(i.as_jwk() for i in new_db_relevant_keydata) == tuple(new_ss_jwks), (
         "post-invalidation JWKS states mismatch"
     )
+
+
+@pytest.mark.asyncio
+async def test_token_manager_updation_poller_starts_and_stops(
+    key_lifecycle_manager: KeyLifecycleManager,
+    token_manager: TokenManager,
+) -> None:
+    with patch.object(
+        token_manager.token_manager_config,
+        "POLL_INTERVAL",
+        timedelta(milliseconds=10),
+    ):
+        key_lifecycle_manager.start_token_manager_polling()
+        polling_task = key_lifecycle_manager._token_manager_polling_task
+        await asyncio.sleep(0)
+
+        assert polling_task.done() is False
+        assert (
+            getattr(polling_task.get_coro(), "__name__", None)
+            == "token_manager_updation_poller"
+        )
+
+        await key_lifecycle_manager.stop_token_manager_polling()
+
+    assert polling_task.cancelled()
+    assert key_lifecycle_manager._token_manager_polling_task is None
+
+
+@pytest.mark.asyncio
+async def test_token_manager_updation_poller_reconciles_local_key_state(
+    key_lifecycle_manager: KeyLifecycleManager,
+    keydata_repository: KeydataRepository,
+    synced_key_store_manager: SyncedStoreKeyStateManager,
+    token_manager: TokenManager,
+) -> None:
+    previous_active_key = await keydata_repository.get_active_key()
+    assert previous_active_key is not None
+    original_key_ids = set(token_manager._key_mapping)
+    oldest_key_id = (await keydata_repository.get_valid_inactive_keys())[-1].kid
+    new_private_key = derive_private_key(100, SECP256R1())
+
+    new_active_key = await keydata_repository.rotate_key(
+        previous_active_key.kid,
+        "poller-new-active",
+        pem_serialize_public_key(
+            new_private_key.public_key(), PublicFormat.SubjectPublicKeyInfo
+        ),
+        pem_serialize_private_key(new_private_key, PrivateFormat.PKCS8),
+        alg=ECAlg.ES256,
+        curve=SECP256R1,
+        epoch=datetime(2026, 2, 1, tzinfo=UTC),
+        returning=True,
+        public_only=False,
+    )
+    await keydata_repository.expire_keydata(oldest_key_id)
+    await synced_key_store_manager.set_jwks(await keydata_repository.get_jwks())
+    expected_key_ids = (original_key_ids - {oldest_key_id}) | {new_active_key.kid}
+    state_updated = asyncio.Event()
+    update_local_store = TokenManager.update_local_store
+
+    async def observed_update_local_store(
+        manager: TokenManager,
+        global_jwks: Iterable[EllipticCurveJWKResult],
+    ) -> None:
+        await update_local_store(manager, global_jwks)
+        if (
+            set(manager._key_mapping) == expected_key_ids
+            and manager._active_key == new_active_key.kid
+        ):
+            state_updated.set()
+
+    with (
+        patch.object(
+            token_manager.token_manager_config,
+            "POLL_INTERVAL",
+            timedelta(milliseconds=10),
+        ),
+        patch.object(
+            TokenManager,
+            "update_local_store",
+            new=observed_update_local_store,
+        ),
+    ):
+        key_lifecycle_manager.start_token_manager_polling()
+        polling_task = key_lifecycle_manager._token_manager_polling_task
+        try:
+            await asyncio.wait_for(state_updated.wait(), timeout=2)
+        finally:
+            await key_lifecycle_manager.stop_token_manager_polling()
+
+    assert polling_task.cancelled()
+    assert set(token_manager._key_mapping) == expected_key_ids
+    assert oldest_key_id not in token_manager._key_mapping
+    assert token_manager._active_key_private_pem == new_active_key.private_pem
+
+
+@pytest.mark.asyncio
+async def test_stopped_token_manager_updation_poller_no_longer_mutates_state(
+    key_lifecycle_manager: KeyLifecycleManager,
+    keydata_repository: KeydataRepository,
+    synced_key_store_manager: SyncedStoreKeyStateManager,
+    token_manager: TokenManager,
+) -> None:
+    initial_key_ids = set(token_manager._key_mapping)
+    active_key = await keydata_repository.get_active_key()
+    assert active_key is not None
+
+    with patch.object(
+        token_manager.token_manager_config,
+        "POLL_INTERVAL",
+        timedelta(milliseconds=10),
+    ):
+        key_lifecycle_manager.start_token_manager_polling()
+        await asyncio.sleep(0.025)
+        await key_lifecycle_manager.stop_token_manager_polling()
+
+        await synced_key_store_manager.set_jwks((active_key,))
+        await asyncio.sleep(0.025)
+
+    assert set(token_manager._key_mapping) == initial_key_ids
+    assert key_lifecycle_manager._token_manager_polling_task is None
