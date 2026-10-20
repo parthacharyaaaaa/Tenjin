@@ -35,7 +35,7 @@ from auth_server.utils.hypermedia import (
 KEY: Final[APIRouter] = APIRouter()
 
 
-@KEY.get("/keys/{kid}")
+@KEY.get("/{kid}")
 async def get_key(
     kid: str,
     admin_session: Annotated[
@@ -67,7 +67,7 @@ async def get_key(
     )
 
 
-@KEY.delete("/keys/{kid}")
+@KEY.delete("/{kid}")
 async def invalidate_key(
     kid: str,
     admin_session: Annotated[
@@ -89,14 +89,14 @@ async def invalidate_key(
     return JSONResponse(
         {
             "message": "Key invalidated successfully",
-            "purged_kid": kid,
+            "purged_key": kid,
             "valid_keys": valid_keys,
             "additional_info": additional_kw,
         }
     )
 
 
-@KEY.delete("/keys/clean")
+@KEY.delete("/")
 async def clean_keystore(
     admin_session: Annotated[
         AdminSession, Depends(require_permissions(Permission.INVALIDATE_KEY))
@@ -115,7 +115,7 @@ async def clean_keystore(
     )
 
 
-@KEY.post("/keys/rotate")
+@KEY.post("/rotate")
 async def rotate_keys(
     admin_session: Annotated[
         AdminSession, Depends(require_permissions(Permission.ROTATE_KEY))
