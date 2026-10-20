@@ -14,5 +14,5 @@ def generate_ecdsa_pair(
         key_config.EC_TYPE
     )
     public_key: Final[ec.EllipticCurvePublicKey] = private_key.public_key()
-    key_id: Final[str] = secrets.token_hex(key_config.KEY_IDENTIFIER_LENGTH)
+    key_id: Final[str] = secrets.token_hex(key_config.KEY_IDENTIFIER_LENGTH // 2)
     return key_id, private_key, public_key
