@@ -18,9 +18,9 @@ from auth_server.datastructures.exceptions.token import (
     InvalidKeyError,
     InvalidTokenError,
     MissingTokenFamilyError,
+    ReplayedTokenError,
     TamperedTokenError,
     TokenFamilyExistsError,
-    TokenMismatchError,
 )
 from auth_server.repositories.keydata import (
     EllipticCurveJWKResult,
@@ -63,10 +63,6 @@ class TokenManager:
     @staticmethod
     def generate_family_list_id(identifier: str) -> str:
         return f"FID:{identifier}"
-
-    @staticmethod
-    def generate_family_record(jti: str, exp: int | float) -> str:
-        return f"{jti}:{exp}"
 
     @asynccontextmanager
     async def transactional_block(self) -> AsyncGenerator[None, None]:
@@ -129,74 +125,91 @@ class TokenManager:
             if token_type == TokenType.StandardAccess:
                 return StandardAccessTokenClaims(**decoded_token)
             return StandardRefreshTokenClaims(**decoded_token)
-        except jwt_exceptions.InvalidSignatureError:
+        except jwt_exceptions.InvalidSignatureError as e:
             if token_type == TokenType.StandardRefresh:
                 await self.invalidate_family(
                     jwt.decode(token, options={"verify_signature": False})["fid"]
                 )
-            raise TamperedTokenError("Token is tampered, please login again")
-        except jwt_exceptions.ImmatureSignatureError:
-            raise ImmatureRefreshAttemptError("Premature token reissuance")
-        except jwt_exceptions.InvalidTokenError:
-            raise InvalidTokenError("Invalid token, please login again")
+            raise TamperedTokenError("Token is tampered, please login again") from e
+        except jwt_exceptions.ImmatureSignatureError as e:
+            raise ImmatureRefreshAttemptError("Premature token reissuance") from e
+        except jwt_exceptions.InvalidTokenError as e:
+            raise InvalidTokenError("Invalid token, please login again") from e
         except KeyError as e:
             raise InvalidTokenError("Token headers missing key ID") from e
 
+    async def issue_fresh_token_pair(self, sub: str, sid: int) -> TokenPair:
+        family_id: Final[str] = self.generate_family_list_id(sub)
+        await self.validate_fresh_issuance_integrity(family_id)
+        return await self._issue_token_pair(sub, sid)
+
     async def reissue_token_pair(self, refresh_token: str) -> TokenPair:
-        decoded_token: StandardRefreshTokenClaims = await self.decode_token(
+        decoded_token: Final[StandardRefreshTokenClaims] = await self.decode_token(
             refresh_token, token_type=TokenType.StandardRefresh
         )
-        refresh_token = await self.issue_refresh_token(
-            decoded_token["sub"],
-            decoded_token["sid"],
-            existing_family_validation_data=(
-                decoded_token["jti"],
-                decoded_token["exp"],
-            ),
-        )
-        access_token: str = self.issue_access_token(
-            decoded_token["sub"],
-            decoded_token["sid"],
-            family_id=decoded_token["fid"],
+        try:
+            await self.validate_reissuance_integrity(
+                decoded_token["fid"], decoded_token["jti"]
+            )
+        except ReplayedTokenError:
+            await self.invalidate_family(decoded_token["fid"])
+            raise
+        # NOTE: No additional claims for now, so not adding any checks/unwraps
+        return await self._issue_token_pair(
+            decoded_token["sub"], decoded_token["sid"], family_id=decoded_token["fid"]
         )
 
-        return refresh_token, access_token
+    async def _issue_token_pair(
+        self,
+        sub: str,
+        sid: int,
+        *,
+        family_id: str | None = None,
+        access_additional_claims: dict[str, int | str] | None = None,
+        refresh_additional_claims: dict[str, int | str] | None = None,
+    ) -> TokenPair:
+        return (
+            await self.issue_refresh_token(
+                sub, sid, additional_claims=refresh_additional_claims
+            ),
+            self.issue_access_token(
+                sub,
+                sid,
+                family_id=family_id,
+                additional_claims=access_additional_claims,
+            ),
+        )
+
+    async def validate_reissuance_integrity(
+        self, family_id: str, latest_jti: str
+    ) -> None:
+        family_history: list[str] = await self._token_store_client.lrange(  # pyrefly: ignore[not-async]
+            family_id, 0, -1
+        )
+        if not family_history:
+            raise MissingTokenFamilyError(f"Family ID {family_id} not found")
+        if latest_jti != family_history[0]:
+            if any(latest_jti == jti for jti in family_history[1:]):  # Replay
+                raise ReplayedTokenError("Replayed refresh token")
+            raise InvalidTokenError(
+                f"Unrecognized token for family {family_id}"
+            )  # Unknown/stale token JTI
+
+    async def validate_fresh_issuance_integrity(self, family_id: str) -> None:
+        family_history_length: int = await self._token_store_client.llen(family_id)  # pyrefly: ignore[not-async]
+        if family_history_length:
+            raise TokenFamilyExistsError(
+                f"Token family {family_id} exists when expected not to"
+            )
 
     async def issue_refresh_token(
         self,
         sub: str,
         sid: int,
         *,
-        existing_family_validation_data: tuple[str, int] | None = None,
         additional_claims: dict | None = None,
     ) -> str:
         family_id: Final[str] = self.generate_family_list_id(sub)
-        if existing_family_validation_data:
-            # Check for replay attack
-            key: str | None = await self._token_store_client.lindex(  # pyrefly: ignore[not-async]
-                family_id, 0
-            )
-            if not key:
-                await self.invalidate_family(family_id)
-                raise MissingTokenFamilyError(
-                    f"Token family {family_id} is invalid or empty"
-                )
-
-            key_metadata = key.split(":")
-            if (
-                key_metadata[0] != existing_family_validation_data[0]
-                or int(key_metadata[1]) != existing_family_validation_data[1]
-            ):
-                await self.invalidate_family(family_id)
-                raise TokenMismatchError(
-                    f"Replay attack detected or token metadata mismatch for family {family_id}"
-                )
-        else:
-            if await self._token_store_client.llen(family_id) != 0:  # pyrefly: ignore[not-async]
-                raise TokenFamilyExistsError(
-                    f"Family ID {family_id} exists in token store when implied not to"
-                )
-
         # All checks passed
         token_epoch_reference: Final[int] = int(time.time())
         payload: dict = {
@@ -220,9 +233,7 @@ class TokenManager:
             family_id
         )  # pyrefly: ignore[not-async]
         async with self._token_store_client.pipeline(transaction=True) as pipe:
-            pipe.lpush(
-                family_id, self.generate_family_record(payload["jti"], payload["exp"])
-            )
+            pipe.lpush(family_id, payload["jti"])
             pipe.expireat(family_id, payload["exp"])
             if (
                 previous_family_length

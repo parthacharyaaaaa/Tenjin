@@ -1,6 +1,9 @@
 class TokenError(Exception): ...
 
 
+class ReplayedTokenError(TokenError): ...
+
+
 class TamperedTokenError(TokenError): ...
 
 

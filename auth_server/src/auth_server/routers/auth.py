@@ -70,10 +70,11 @@ async def login(
     sub, sid = str(response_contents.pop("sub")), int(response_contents.pop("sid"))
 
     try:
-        refresh_token: str = await token_manager.issue_refresh_token(sub, sid)
+        refresh_token, access_token = await token_manager.issue_fresh_token_pair(
+            sub, sid
+        )
     except TokenError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    access_token: str = token_manager.issue_access_token(sub, sid)
 
     response: JSONResponse = EnrichedJSONResponse(
         {
@@ -129,12 +130,12 @@ async def register(
     response_contents: dict[str, str | int] = resource_response.json()
     sub, sid = str(response_contents.pop("sub")), int(response_contents.pop("sid"))
     try:
-        refresh_token: str = await token_manager.issue_refresh_token(sub, sid)
+        refresh_token, access_token = await token_manager.issue_fresh_token_pair(
+            sub, sid
+        )
     except TokenError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    access_token: str = token_manager.issue_access_token(sub, sid)
 
-    access_token: str = token_manager.issue_access_token(sub, sid)
     response: JSONResponse = EnrichedJSONResponse(
         {
             "message": response_contents.pop("message", "Registration complete."),
@@ -172,10 +173,7 @@ async def reissue(
         HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
     ],
 ):
-    refresh_token: str | None = request.cookies.get(
-        "refresh", request.cookies.get("Refresh")
-    )
-
+    refresh_token: str | None = request.cookies.get("refresh")
     if not refresh_token:
         raise EnrichedHTTPException(
             400,
@@ -225,9 +223,7 @@ async def purge_family(
     """
     Purges an entire token family in case of a reuse attack or a normal client logout
     """
-    encoded_refresh_token: str | None = request.cookies.get(
-        "Refresh", request.cookies.get("refresh")
-    )
+    encoded_refresh_token: str | None = request.cookies.get("refresh")
     if not encoded_refresh_token:
         raise EnrichedHTTPException(
             400,
@@ -236,7 +232,9 @@ async def purge_family(
         )
 
     try:
-        refresh_token: StandardRefreshTokenClaims = await token_manager.decode_token(
+        refresh_token: Final[
+            StandardRefreshTokenClaims
+        ] = await token_manager.decode_token(
             encoded_refresh_token,
             TokenType.StandardRefresh,
             options={"verify_nbf": False},
