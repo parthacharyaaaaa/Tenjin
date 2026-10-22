@@ -8,6 +8,10 @@ from sqlalchemy.sql.functions import func
 
 from auth_server.admin.roles import AdminRole
 from auth_server.config.constants import (
+    ALGORITHM_NAME_LEMGTH,
+    DESCRIPTION_MAX_LENGTH,
+    DESCRIPTION_MIN_LENGTH,
+    EC_CURVE_LENGTH,
     KEY_IDENTIFIER_LENGTH,
     MAX_IDENTITY_LENGTH,
     MIN_IDENTITY_LENGTH,
@@ -64,16 +68,25 @@ class SuspiciousActivity(Base):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
-    description: Mapped[str] = mapped_column(VARCHAR(64), nullable=False)
+    description: Mapped[str] = mapped_column(
+        VARCHAR(DESCRIPTION_MAX_LENGTH), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            func.length(description) >= DESCRIPTION_MIN_LENGTH,
+            "ck_suspicious_activities_description_length",
+        ),
+    )
 
 
 class KeyData(Base):
     __tablename__ = "keydata"
     kid: Mapped[str] = mapped_column(VARCHAR(KEY_IDENTIFIER_LENGTH), primary_key=True)
     alg: Mapped[str] = mapped_column(
-        VARCHAR(8), nullable=False, server_default=text("'ES256'")
+        VARCHAR(ALGORITHM_NAME_LEMGTH), nullable=False, server_default=text("'ES256'")
     )
-    curve: Mapped[str] = mapped_column(VARCHAR(16), nullable=False)
+    curve: Mapped[str] = mapped_column(VARCHAR(EC_CURVE_LENGTH), nullable=False)
     epoch: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP,
         nullable=False,
