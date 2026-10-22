@@ -119,25 +119,14 @@ class KeydataRepository(AbstractWorkRepository):
     async def get_relevant_keydata(
         self,
         *,
-        raise_on_empty: Literal[False] = False,
-        active_key_public_data_only: Literal[True] = True,
-        lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> tuple[ActiveKeyPublicDataResult, list[RotatedKeyDataResult]] | None: ...
-
-    @overload
-    async def get_relevant_keydata(
-        self,
-        *,
-        raise_on_empty: Literal[False] = False,
         active_key_public_data_only: Literal[False] = False,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> tuple[ActiveKeyPrivateDataResult, list[RotatedKeyDataResult]] | None: ...
+    ) -> tuple[ActiveKeyPrivateDataResult, list[RotatedKeyDataResult]]: ...
 
     @overload
     async def get_relevant_keydata(
         self,
         *,
-        raise_on_empty: Literal[True] = True,
         active_key_public_data_only: Literal[True] = True,
         lock_args: Sequence[SelectionLockOption] | None = None,
     ) -> tuple[ActiveKeyPublicDataResult, list[RotatedKeyDataResult]]: ...
@@ -146,7 +135,6 @@ class KeydataRepository(AbstractWorkRepository):
     async def get_relevant_keydata(
         self,
         *,
-        raise_on_empty: Literal[True] = True,
         active_key_public_data_only: Literal[False] = False,
         lock_args: Sequence[SelectionLockOption] | None = None,
     ) -> tuple[ActiveKeyPrivateDataResult, list[RotatedKeyDataResult]]: ...
@@ -154,13 +142,11 @@ class KeydataRepository(AbstractWorkRepository):
     async def get_relevant_keydata(
         self,
         *,
-        raise_on_empty: bool = False,
         active_key_public_data_only: bool = True,
         lock_args: Sequence[SelectionLockOption] | None = None,
     ) -> (
         tuple[ActiveKeyPublicDataResult, list[RotatedKeyDataResult]]
         | tuple[ActiveKeyPrivateDataResult, list[RotatedKeyDataResult]]
-        | None
     ):
         statement = (
             select(KeyData)
@@ -178,9 +164,7 @@ class KeydataRepository(AbstractWorkRepository):
                 (await session.execute(statement)).scalars().all()
             )
             if not keydata:
-                if raise_on_empty:
-                    raise EmptyKeysError("No relevant keydata found")
-                return None
+                raise EmptyKeysError("No relevant keydata found")
             active_private_keydata: ActiveKeyPrivateDataResult = (
                 ActiveKeyPrivateDataResult.construct_from_orm(keydata[0])
             )
@@ -546,10 +530,8 @@ class KeydataRepository(AbstractWorkRepository):
                 return ActiveKeyPublicDataResult.construct_from_orm(new_key)
 
     async def get_jwks(self) -> tuple[EllipticCurveJWKResult, ...]:
-        return tuple(
-            i.as_jwk()
-            for i in await self.get_relevant_keydata(limit=None, public_data_only=True)
-        )
+        active, rotated = await self.get_relevant_keydata()
+        return (active.as_jwk(), *(r.as_jwk() for r in rotated))
 
     async def get_active_private_pem(
         self, *, active_key_id: str | None = None
