@@ -31,7 +31,7 @@ class Admin(Base):
     password_hash: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
 
     time_deleted: Mapped[datetime.datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("null")
+        TIMESTAMP(timezone=True), server_default=text("null"), nullable=True
     )
     last_login: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -41,7 +41,9 @@ class Admin(Base):
     locked: Mapped[bool] = mapped_column(
         BOOLEAN, nullable=False, server_default=text("false")
     )
-    created_by: Mapped[int] = mapped_column(INTEGER, ForeignKey("admins.id_"))
+    created_by: Mapped[int] = mapped_column(
+        INTEGER, ForeignKey("admins.id_"), nullable=False
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -78,17 +80,36 @@ class KeyData(Base):
         index=True,
         server_default=text("CURRENT_TIMESTAMP"),
     )
-    rotated_out_at: Mapped[datetime.datetime] = mapped_column(
+    rotated_out_at: Mapped[datetime.datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("null"), nullable=True
     )
-    expired_at: Mapped[datetime.datetime] = mapped_column(
+    expired_at: Mapped[datetime.datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("null"), nullable=True
     )
-    private_pem: Mapped[bytes] = mapped_column(BYTEA, nullable=False, unique=True)
+    private_pem: Mapped[bytes | None] = mapped_column(BYTEA, nullable=True)
     public_pem: Mapped[bytes] = mapped_column(BYTEA, nullable=False, unique=True)
-    manual_rotation: Mapped[bool] = mapped_column(
+    manual_rotation: Mapped[bool | None] = mapped_column(
         BOOLEAN, server_default=text("null"), nullable=True
     )
-    rotated_by: Mapped[int] = mapped_column(
+    rotated_by: Mapped[int | None] = mapped_column(
         INTEGER, ForeignKey("admins.id_"), index=True, nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            (
+                (private_pem.is_(None) & (rotated_out_at.is_not(None)))
+                | (private_pem.is_not(None) & (rotated_out_at.is_(None)))
+            ),
+            "ck_private_pem_nullability",
+        ),
+        CheckConstraint(
+            (rotated_out_at.is_(None)) | (rotated_out_at >= epoch),
+            name="ck_rotation_after_creation",
+        ),
+        CheckConstraint(
+            (expired_at.is_(None))
+            | (rotated_out_at.is_not(None) & (expired_at >= rotated_out_at)),
+            name="ck_expiry_after_rotation",
+        ),
     )
