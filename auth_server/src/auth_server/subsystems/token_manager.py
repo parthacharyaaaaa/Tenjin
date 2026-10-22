@@ -22,11 +22,15 @@ from auth_server.datastructures.exceptions.token import (
     TamperedTokenError,
     TokenFamilyExistsError,
 )
+from auth_server.models.data_transport.keydata import (
+    ActiveKeyPrivateDataResult,
+    ActiveKeyPublicDataResult,
+    RotatedKeyDataResult,
+)
+from auth_server.models.data_transport.typing import SupportsBasicKeyData
 from auth_server.repositories.keydata import (
     EllipticCurveJWKResult,
     KeydataRepository,
-    KeyPrivateDataResult,
-    KeyPublicDataResult,
 )
 from auth_server.tokens.typing import (
     StandardAccessTokenClaims,
@@ -48,7 +52,7 @@ class TokenManager:
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__file__))
     universal_claims: dict[str, Any] = field(default_factory=dict)
     universal_headers: dict[str, Any] = field(default_factory=dict)
-    _key_mapping: dict[str, KeyPublicDataResult] = field(
+    _key_mapping: dict[str, SupportsBasicKeyData] = field(
         default_factory=dict, init=False
     )
     _active_key: str = field(init=False, default="__UNINITIALIZED__")
@@ -81,14 +85,13 @@ class TokenManager:
 
     def set_key_state(
         self,
-        active_key_data: KeyPrivateDataResult,
-        verification_keys_mapping: dict[str, KeyPublicDataResult] | None = None,
+        active_key_data: ActiveKeyPrivateDataResult,
+        verification_keys_mapping: dict[str, SupportsBasicKeyData] | None = None,
     ) -> None:
         verification_keys_mapping = verification_keys_mapping or {}
-        self._key_mapping: dict[str, KeyPublicDataResult] = (
-            verification_keys_mapping
-            | {active_key_data.kid: active_key_data.create_public_copy()}
-        )
+        self._key_mapping = verification_keys_mapping | {
+            active_key_data.kid: active_key_data.create_public_copy()
+        }
         self._active_key = active_key_data.kid
         self._active_key_private_pem = active_key_data.private_pem
 
@@ -229,9 +232,9 @@ class TokenManager:
         if additional_claims:
             payload.update(additional_claims)
 
-        previous_family_length: Final[int] = await self._token_store_client.llen(
+        previous_family_length: Final[int] = await self._token_store_client.llen(  # pyrefly: ignore[not-async]
             family_id
-        )  # pyrefly: ignore[not-async]
+        )
         async with self._token_store_client.pipeline(transaction=True) as pipe:
             pipe.lpush(family_id, payload["jti"])
             pipe.expireat(family_id, payload["exp"])
@@ -297,15 +300,18 @@ class TokenManager:
         except Exception as e:
             raise RuntimeError("Failed to perform operation on token store") from e
 
-    def update_keydata(
-        self, kid: str, new_keydata: KeyPrivateDataResult, active: bool = True
+    def update_signing_key(
+        self,
+        keydata: tuple[ActiveKeyPublicDataResult, bytes] | ActiveKeyPrivateDataResult,
     ) -> None:
-        """Update key mapping on key rotation"""
-        if active:
-            self._active_key = kid
-            self._active_key_private_pem = new_keydata.private_pem
+        if isinstance(keydata, ActiveKeyPrivateDataResult):
+            keydata = (keydata.create_public_copy(), keydata.private_pem)
+        self._active_key_private_pem = keydata[1]
+        self._active_key = keydata[0].kid
+        self.update_verification_key(keydata[0])
 
-        self._key_mapping[kid] = new_keydata.create_public_copy()
+    def update_verification_key(self, keydata: SupportsBasicKeyData) -> None:
+        self._key_mapping[keydata.kid] = keydata
 
     def invalidate_key(self, kid: str) -> None:
         """Invalidate a verification key"""
@@ -325,20 +331,27 @@ class TokenManager:
             global_valid_keyset: frozenset[str] = frozenset(k.kid for k in global_jwks)
             local_valid_keyset: frozenset[str] = frozenset(self._key_mapping.keys())
 
-            for new_key in global_valid_keyset - local_valid_keyset:
-                self.logger.info(f"Adding verification new key {new_key}...")
+            for new_key_id in global_valid_keyset - local_valid_keyset:
+                self.logger.info(f"Adding verification new key {new_key_id}...")
                 result: (
-                    KeyPrivateDataResult | None
+                    ActiveKeyPublicDataResult | RotatedKeyDataResult | None
                 ) = await self._keydata_repository.get_keydata(
-                    new_key, public_only=False
+                    new_key_id, include_expired=False
                 )
                 if result:
-                    self.update_keydata(
-                        new_key, result, active=result.rotated_out_at is None
-                    )
-                    self.logger.info(
-                        f"Added verification new key {new_key} to local token manager"
-                    )
+                    if isinstance(result, ActiveKeyPublicDataResult):
+                        self.update_signing_key(
+                            (
+                                result,
+                                await self._keydata_repository.get_active_private_pem(),
+                            )
+                        )
+                        self.logger.info(f"Updated active key: {new_key_id}")
+                    else:
+                        self.update_verification_key(result)
+                        self.logger.info(f"Added verification new key: {new_key_id}")
+                else:
+                    self.logger.error(f"Failed to fetch key: {new_key_id}")
 
             for expired_key in local_valid_keyset - global_valid_keyset:
                 self.logger.info(f"Invalidating local key {expired_key}...")

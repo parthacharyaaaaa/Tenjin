@@ -68,14 +68,14 @@ def key_hypermedia(
     builder: HypermediaLinkBuilder,
     kid: str,
     *,
-    public: bool = True,
+    include_expired: bool = False,
 ) -> HypermediaResponseSequence:
     return HypermediaResponseSequence(
         links=[
             builder.link(
                 "get_key",
                 "self",
-                query=None if public else {"public": False},
+                query=None if not include_expired else {"include_expired": True},
                 kid=kid,
             ),
             builder.link("jwks", "jwks"),

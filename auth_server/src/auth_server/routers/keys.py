@@ -17,11 +17,14 @@ from auth_server.dependencies.local import (
     get_synced_store_key_state_manager,
 )
 from auth_server.dependencies.requests import require_permissions
+from auth_server.models.data_transport.keydata import (
+    ActiveKeyPublicDataResult,
+    ExpiredKeyDataResult,
+    RotatedKeyDataResult,
+)
 from auth_server.models.session import AdminSession
 from auth_server.repositories.keydata import (
     KeydataRepository,
-    KeyPrivateDataResult,
-    KeyPublicDataResult,
 )
 from auth_server.subsystems.key_manager import (
     KeyLifecycleManager,
@@ -46,12 +49,15 @@ async def get_key(
     link_builder: Annotated[
         HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
     ],
-    public: bool = True,
+    include_expired: bool = False,
 ) -> JSONResponse:
     try:
         key: (
-            KeyPublicDataResult | KeyPrivateDataResult | None
-        ) = await keydata_repository.get_keydata(kid, public_only=public)
+            ActiveKeyPublicDataResult
+            | RotatedKeyDataResult
+            | ExpiredKeyDataResult
+            | None
+        ) = await keydata_repository.get_keydata(kid, include_expired=include_expired)
 
         if not key:
             raise EnrichedHTTPException(
@@ -59,12 +65,14 @@ async def get_key(
                 "No key with this ID found",
                 hypermedia=jwks_hypermedia(link_builder),
             )
-    except SQLAlchemyError:
-        raise Exception("Failed to fetch key")
+    except SQLAlchemyError as e:
+        raise Exception("Failed to fetch key") from e
 
     return EnrichedJSONResponse(
         json_repr(key),
-        hypermedia_data=key_hypermedia(link_builder, kid, public=public),
+        hypermedia_data=key_hypermedia(
+            link_builder, kid, include_expired=include_expired
+        ),
     )
 
 
@@ -144,7 +152,9 @@ async def rotate_keys(
         0
     ].kid
     try:
-        active_key: Final[KeyPublicDataResult] = await key_lifecycle_manager.rotate_key(
+        active_key: Final[
+            ActiveKeyPublicDataResult
+        ] = await key_lifecycle_manager.rotate_key(
             rotation_author=admin_session.admin_id
         )
     except KeyStateError as e:
