@@ -7,10 +7,12 @@ from typing import cast
 from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
-from auth_server.repositories.keydata import (
+from auth_server.datastructures.exceptions.keys import EmptyKeysError
+from auth_server.models.data_transport.keydata import (
+    ActiveKeyPrivateDataResult,
+    ActiveKeyPublicDataResult,
     EllipticCurveJWKResult,
-    KeyPrivateDataResult,
-    KeyPublicDataResult,
+    RotatedKeyDataResult,
 )
 from auth_server.strings import SyncedStoreCommandStrings
 from auth_server.utils.bootup import master_bootup, slave_bootup
@@ -75,17 +77,29 @@ def boot_harness() -> BootHarness:
 
 
 @pytest.fixture
-def key_factory() -> Callable[[str, int, bool], KeyPrivateDataResult]:
-    def make_key(kid: str, day: int, active: bool) -> KeyPrivateDataResult:
-        key = Mock(spec=KeyPrivateDataResult)
+def active_key_factory() -> Callable[[str, int], ActiveKeyPrivateDataResult]:
+    def make_key(kid: str, day: int) -> ActiveKeyPrivateDataResult:
+        key = Mock(spec=ActiveKeyPrivateDataResult)
         key.kid = kid
         key.epoch = datetime(2026, 1, day, tzinfo=UTC)
-        key.rotated_out_at = None if active else datetime(2026, 2, day, tzinfo=UTC)
+        key.private_pem = b"private"
         key.create_public_copy.return_value = Mock(
-            spec=KeyPublicDataResult,
+            spec=ActiveKeyPublicDataResult,
             kid=kid,
         )
-        return cast(KeyPrivateDataResult, key)
+        return cast(ActiveKeyPrivateDataResult, key)
+
+    return make_key
+
+
+@pytest.fixture
+def rotated_key_factory() -> Callable[[str, int], RotatedKeyDataResult]:
+    def make_key(kid: str, day: int) -> RotatedKeyDataResult:
+        key = Mock(spec=RotatedKeyDataResult)
+        key.kid = kid
+        key.epoch = datetime(2026, 1, day, tzinfo=UTC)
+        key.rotated_out_at = datetime(2026, 2, day, tzinfo=UTC)
+        return cast(RotatedKeyDataResult, key)
 
     return make_key
 
@@ -127,13 +141,15 @@ async def run_slave(harness: BootHarness, process_id: int = 202) -> None:
 
 
 @pytest.mark.asyncio
-async def test_master_initializes_clean_database_and_announces_key_state(
+async def test_master_initializes_clean_database_and_publishes_key_state(
     boot_harness: BootHarness,
-    key_factory: Callable[[str, int, bool], KeyPrivateDataResult],
+    active_key_factory: Callable[[str, int], ActiveKeyPrivateDataResult],
     jwks: tuple[EllipticCurveJWKResult, ...],
 ) -> None:
-    active_key = key_factory("active", 1, True)
-    boot_harness.repository.get_relevant_keydata.return_value = []
+    active_key = active_key_factory("active", 1)
+    boot_harness.repository.get_relevant_keydata.side_effect = EmptyKeysError(
+        "No relevant keydata found"
+    )
     boot_harness.repository.get_jwks.return_value = jwks
 
     with patch(
@@ -145,11 +161,11 @@ async def test_master_initializes_clean_database_and_announces_key_state(
         await run_master(boot_harness)
 
     assert boot_harness.calls.mock_calls == [
-        call.get_relevant(public_data_only=False),
+        call.get_relevant(active_key_public_data_only=False),
         call.initialize_active(boot_harness.config.KEYS, boot_harness.repository),
         call.get_jwks(),
         call.set_jwks(jwks),
-        call.set_key_state(active_key, None),
+        call.set_key_state(active_key, {}),
         call.delete(SyncedStoreCommandStrings.AUTH_BOOTUP_MASTER),
     ]
     boot_harness.repository.expire_keydata_with_threshold.assert_not_awaited()
@@ -159,15 +175,16 @@ async def test_master_initializes_clean_database_and_announces_key_state(
 @pytest.mark.asyncio
 async def test_master_reuses_populated_database_without_generating_or_expiring_keys(
     boot_harness: BootHarness,
-    key_factory: Callable[[str, int, bool], KeyPrivateDataResult],
+    active_key_factory: Callable[[str, int], ActiveKeyPrivateDataResult],
+    rotated_key_factory: Callable[[str, int], RotatedKeyDataResult],
     jwks: tuple[EllipticCurveJWKResult, ...],
 ) -> None:
-    active_key = key_factory("active", 3, True)
-    rotated_key = key_factory("rotated", 2, False)
-    boot_harness.repository.get_relevant_keydata.return_value = [
+    active_key = active_key_factory("active", 3)
+    rotated_key = rotated_key_factory("rotated", 2)
+    boot_harness.repository.get_relevant_keydata.return_value = (
         active_key,
-        rotated_key,
-    ]
+        [rotated_key],
+    )
     boot_harness.repository.get_jwks.return_value = jwks
 
     with patch(
@@ -189,21 +206,22 @@ async def test_master_reuses_populated_database_without_generating_or_expiring_k
 
 
 @pytest.mark.asyncio
-async def test_master_expires_oldest_keys_when_populated_database_exceeds_cap(
+async def test_master_expires_keys_beyond_total_jwks_cap(
     boot_harness: BootHarness,
-    key_factory: Callable[[str, int, bool], KeyPrivateDataResult],
+    active_key_factory: Callable[[str, int], ActiveKeyPrivateDataResult],
+    rotated_key_factory: Callable[[str, int], RotatedKeyDataResult],
     jwks: tuple[EllipticCurveJWKResult, ...],
 ) -> None:
-    active_key = key_factory("active", 5, True)
+    active_key = active_key_factory("active", 5)
     rotated_keys = [
-        key_factory("rotated-4", 4, False),
-        key_factory("rotated-3", 3, False),
-        key_factory("rotated-2", 2, False),
+        rotated_key_factory("rotated-4", 4),
+        rotated_key_factory("rotated-3", 3),
+        rotated_key_factory("rotated-2", 2),
     ]
-    boot_harness.repository.get_relevant_keydata.return_value = [
+    boot_harness.repository.get_relevant_keydata.return_value = (
         active_key,
-        *rotated_keys,
-    ]
+        rotated_keys,
+    )
     boot_harness.repository.get_jwks.return_value = jwks
 
     await run_master(boot_harness)
@@ -221,74 +239,6 @@ async def test_master_expires_oldest_keys_when_populated_database_exceeds_cap(
 
 
 @pytest.mark.asyncio
-async def test_master_replaces_missing_active_key_without_exceeding_cap(
-    boot_harness: BootHarness,
-    key_factory: Callable[[str, int, bool], KeyPrivateDataResult],
-    jwks: tuple[EllipticCurveJWKResult, ...],
-) -> None:
-    replacement_active_key = key_factory("replacement", 6, True)
-    rotated_keys = [
-        key_factory("rotated-5", 5, False),
-        key_factory("rotated-4", 4, False),
-        key_factory("rotated-3", 3, False),
-        key_factory("rotated-2", 2, False),
-    ]
-    boot_harness.repository.get_relevant_keydata.return_value = rotated_keys
-    boot_harness.repository.get_jwks.return_value = jwks
-
-    with patch(
-        "auth_server.utils.bootup._initialize_active_key",
-        new_callable=AsyncMock,
-        return_value=replacement_active_key,
-    ) as initialize_active_key:
-        await run_master(boot_harness)
-
-    initialize_active_key.assert_awaited_once_with(
-        boot_harness.config.KEYS,
-        boot_harness.repository,
-    )
-    boot_harness.repository.expire_keydata_with_threshold.assert_awaited_once_with(
-        rotated_keys[1].epoch
-    )
-    boot_harness.token_manager.set_key_state.assert_called_once_with(
-        replacement_active_key,
-        {
-            rotated_keys[0].kid: rotated_keys[0],
-            rotated_keys[1].kid: rotated_keys[1],
-        },
-    )
-
-
-@pytest.mark.asyncio
-async def test_master_replaces_missing_active_key_below_cap_without_expiry(
-    boot_harness: BootHarness,
-    key_factory: Callable[[str, int, bool], KeyPrivateDataResult],
-    jwks: tuple[EllipticCurveJWKResult, ...],
-) -> None:
-    replacement_active_key = key_factory("replacement", 3, True)
-    rotated_keys = [
-        key_factory("rotated-2", 2, False),
-        key_factory("rotated-1", 1, False),
-    ]
-    expected_rotated_keys = {key.kid: key for key in rotated_keys}
-    boot_harness.repository.get_relevant_keydata.return_value = rotated_keys
-    boot_harness.repository.get_jwks.return_value = jwks
-
-    with patch(
-        "auth_server.utils.bootup._initialize_active_key",
-        new_callable=AsyncMock,
-        return_value=replacement_active_key,
-    ):
-        await run_master(boot_harness)
-
-    boot_harness.repository.expire_keydata_with_threshold.assert_not_awaited()
-    boot_harness.token_manager.set_key_state.assert_called_once_with(
-        replacement_active_key,
-        expected_rotated_keys,
-    )
-
-
-@pytest.mark.asyncio
 async def test_master_announces_abort_and_releases_lock_after_failure(
     boot_harness: BootHarness,
 ) -> None:
@@ -300,7 +250,7 @@ async def test_master_announces_abort_and_releases_lock_after_failure(
 
     assert exc_info.value.__cause__ is failure
     assert boot_harness.calls.mock_calls == [
-        call.get_relevant(public_data_only=False),
+        call.get_relevant(active_key_public_data_only=False),
         call.set(
             SyncedStoreCommandStrings.ABORT,
             1,
@@ -312,46 +262,41 @@ async def test_master_announces_abort_and_releases_lock_after_failure(
 
 
 @pytest.mark.asyncio
-async def test_slave_loads_active_and_public_verification_keys(
+async def test_slave_loads_active_and_rotated_verification_keys(
     boot_harness: BootHarness,
-    key_factory: Callable[[str, int, bool], KeyPrivateDataResult],
+    active_key_factory: Callable[[str, int], ActiveKeyPrivateDataResult],
+    rotated_key_factory: Callable[[str, int], RotatedKeyDataResult],
 ) -> None:
-    active_key = key_factory("active", 3, True)
+    active_key = active_key_factory("active", 3)
     rotated_keys = [
-        key_factory("rotated-2", 2, False),
-        key_factory("rotated-1", 1, False),
+        rotated_key_factory("rotated-2", 2),
+        rotated_key_factory("rotated-1", 1),
     ]
     boot_harness.store.get.side_effect = (None, None)
-    boot_harness.repository.get_relevant_keydata.return_value = [
+    boot_harness.repository.get_relevant_keydata.return_value = (
         active_key,
-        *rotated_keys,
-    ]
+        rotated_keys,
+    )
 
     await run_slave(boot_harness)
 
     boot_harness.repository.get_relevant_keydata.assert_awaited_once_with(
-        limit=3,
-        raise_on_empty=True,
-        public_data_only=False,
+        active_key_public_data_only=False
     )
     boot_harness.token_manager.set_key_state.assert_called_once_with(
         active_key,
-        {
-            key.kid: cast(Mock, key.create_public_copy).return_value
-            for key in rotated_keys
-        },
+        {key.kid: key for key in rotated_keys},
     )
-    cast(Mock, active_key.create_public_copy).assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_slave_polls_until_master_releases_lock(
     boot_harness: BootHarness,
-    key_factory: Callable[[str, int, bool], KeyPrivateDataResult],
+    active_key_factory: Callable[[str, int], ActiveKeyPrivateDataResult],
 ) -> None:
-    active_key = key_factory("active", 1, True)
+    active_key = active_key_factory("active", 1)
     boot_harness.store.get.side_effect = ("master", "master", None, None)
-    boot_harness.repository.get_relevant_keydata.return_value = [active_key]
+    boot_harness.repository.get_relevant_keydata.return_value = (active_key, [])
 
     with patch(
         "auth_server.utils.bootup.asyncio.sleep",
@@ -397,11 +342,11 @@ async def test_slave_aborts_after_master_failure(
 async def test_slave_propagates_empty_database_failure(
     boot_harness: BootHarness,
 ) -> None:
-    failure = ValueError("Key data empty")
+    failure = EmptyKeysError("No relevant keydata found")
     boot_harness.store.get.side_effect = (None, None)
     boot_harness.repository.get_relevant_keydata.side_effect = failure
 
-    with pytest.raises(ValueError, match="Key data empty") as exc_info:
+    with pytest.raises(EmptyKeysError, match="No relevant keydata found") as exc_info:
         await run_slave(boot_harness)
 
     assert exc_info.value is failure
@@ -409,38 +354,23 @@ async def test_slave_propagates_empty_database_failure(
 
 
 @pytest.mark.asyncio
-async def test_slave_rejects_database_without_active_key(
-    boot_harness: BootHarness,
-    key_factory: Callable[[str, int, bool], KeyPrivateDataResult],
-) -> None:
-    rotated_key = key_factory("rotated", 1, False)
-    boot_harness.store.get.side_effect = (None, None)
-    boot_harness.repository.get_relevant_keydata.return_value = [rotated_key]
-
-    with pytest.raises(RuntimeError, match="No active key found"):
-        await run_slave(boot_harness)
-
-    cast(Mock, rotated_key.create_public_copy).assert_called_once_with()
-    boot_harness.token_manager.set_key_state.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_concurrent_slaves_wait_for_master_cleanup_before_loading_keys(
     boot_harness: BootHarness,
-    key_factory: Callable[[str, int, bool], KeyPrivateDataResult],
+    active_key_factory: Callable[[str, int], ActiveKeyPrivateDataResult],
+    rotated_key_factory: Callable[[str, int], RotatedKeyDataResult],
     jwks: tuple[EllipticCurveJWKResult, ...],
 ) -> None:
-    active_key = key_factory("active", 2, True)
-    rotated_key = key_factory("rotated", 1, False)
+    active_key = active_key_factory("active", 2)
+    rotated_key = rotated_key_factory("rotated", 1)
     master_started = asyncio.Event()
     release_master = asyncio.Event()
     both_slaves_waiting = asyncio.Event()
     state = {"locked": True, "waiting_slaves": 0}
 
-    async def master_keydata(**_: object) -> list[KeyPrivateDataResult]:
+    async def master_keydata(**_: object):
         master_started.set()
         await release_master.wait()
-        return [active_key, rotated_key]
+        return active_key, [rotated_key]
 
     async def get_synced_value(key: str) -> str | None:
         if key == SyncedStoreCommandStrings.AUTH_BOOTUP_MASTER:
@@ -456,12 +386,13 @@ async def test_concurrent_slaves_wait_for_master_cleanup_before_loading_keys(
         assert key == SyncedStoreCommandStrings.AUTH_BOOTUP_MASTER
         state["locked"] = False
 
-    async def slave_keydata(**_: object) -> list[KeyPrivateDataResult]:
+    async def slave_keydata(**_: object):
         assert state["locked"] is False
-        return [active_key, rotated_key]
+        return active_key, [rotated_key]
 
     master_repository = Mock()
     master_repository.get_relevant_keydata = AsyncMock(side_effect=master_keydata)
+    master_repository.expire_keydata_with_threshold = AsyncMock()
     master_repository.get_jwks = AsyncMock(return_value=jwks)
     boot_harness.store.get.side_effect = get_synced_value
     boot_harness.store.delete.side_effect = release_lock
@@ -522,12 +453,10 @@ async def test_concurrent_slaves_wait_for_master_cleanup_before_loading_keys(
     assert state["locked"] is False
     for repository in slave_repositories:
         repository.get_relevant_keydata.assert_awaited_once_with(
-            limit=3,
-            raise_on_empty=True,
-            public_data_only=False,
+            active_key_public_data_only=False
         )
     for token_manager in slave_token_managers:
         token_manager.set_key_state.assert_called_once_with(
             active_key,
-            {rotated_key.kid: cast(Mock, rotated_key.create_public_copy).return_value},
+            {rotated_key.kid: rotated_key},
         )

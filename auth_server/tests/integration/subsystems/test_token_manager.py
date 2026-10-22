@@ -1,15 +1,16 @@
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
-from auth_server.repositories.keydata import (
-    KeydataRepository,
-    KeyPrivateDataResult,
-    KeyPublicDataResult,
+from auth_server.datastructures.exceptions.token import ImmatureRefreshAttemptError
+from auth_server.models.data_transport.keydata import (
+    ActiveKeyPrivateDataResult,
+    ActiveKeyPublicDataResult,
 )
+from auth_server.repositories.keydata import KeydataRepository
 from auth_server.subsystems.token_manager import TokenManager
 from auxillary.security.serialization import (
     pem_serialize_private_key,
@@ -21,7 +22,6 @@ from cryptography.hazmat.primitives.asymmetric.ec import (
     derive_private_key,
 )
 from cryptography.hazmat.primitives.serialization import PrivateFormat, PublicFormat
-from jwt import ImmatureSignatureError
 from redis.asyncio import Redis
 from sqlalchemy.util.typing import Final, LiteralString
 
@@ -78,10 +78,10 @@ async def token_manager(
         dummy_key_config,  # type: ignore
         dummy_token_manager_config,  # type: ignore
     )
-    relevant_keys = await keydata_repository.get_relevant_keydata(
-        public_data_only=False
+    active_key, rotated_keys = await keydata_repository.get_relevant_keydata(
+        active_key_public_data_only=False
     )
-    token_manager.set_key_state(relevant_keys[0], {i.kid: i for i in relevant_keys[1:]})
+    token_manager.set_key_state(active_key, {key.kid: key for key in rotated_keys})
     return token_manager
 
 
@@ -117,29 +117,19 @@ async def test_repeat_refresh_token_issuance(
     dummy_user_identification: DummyUserIdentification,
 ) -> None:
     jti: Final[str] = "bar"
-    iat = int(datetime.now(tz=UTC).timestamp() + 1000)
     expected_family_id: Final[str] = token_manager.generate_family_list_id(
         dummy_user_identification.sub
     )
-    expected_exp: Final[int] = iat + int(
-        token_manager.token_manager_config.REFRESH_LIFETIME.total_seconds()
-    )
-    expected_family_record: Final[str] = token_manager.generate_family_record(
-        jti, expected_exp
-    )
-    with (
-        patch("time.time", return_value=iat),
-        patch(
-            "auth_server.subsystems.token_manager.uuid.uuid4",
-        ) as uuid_mock,
-    ):
+    with patch(
+        "auth_server.subsystems.token_manager.uuid.uuid4",
+    ) as uuid_mock:
         uuid_mock.return_value.hex = jti
         await token_manager.issue_refresh_token(
             dummy_user_identification.sub,
             dummy_user_identification.sid,
         )
         pushed_family_data = await token_store_client.lrange(expected_family_id, 0, -1)  # pyrefly: ignore[not-async]
-        assert pushed_family_data == [expected_family_record]
+        assert pushed_family_data == [jti]
 
 
 @pytest.mark.asyncio
@@ -164,9 +154,7 @@ async def test_token_reissuance_rejects_premature_refreshes(
     refresh_token: Final[str] = await token_manager.issue_refresh_token(
         dummy_user_identification.sub, dummy_user_identification.sid
     )
-    with pytest.raises(
-        ImmatureSignatureError, match=r"The token is not yet valid \(nbf\)"
-    ):
+    with pytest.raises(ImmatureRefreshAttemptError, match="Premature token reissuance"):
         await token_manager.reissue_token_pair(refresh_token)
 
 
@@ -201,21 +189,20 @@ async def test_token_reissuance_updates_family_list_in_bound(
                 last_refresh_token = refresh_token
         await token_manager.reissue_token_pair(last_refresh_token)
         assert (
-            await token_store_client.llen(family_id)
+            await token_store_client.llen(family_id)  # pyrefly: ignore[not-async]
             == token_manager.token_manager_config.MAX_TOKENS_PER_FAMILY
-        )  # pyrefly: ignore[not-async]
+        )
 
 
 @pytest.mark.asyncio
 async def test_local_keydata_updation(
     token_manager: TokenManager, keydata_repository: KeydataRepository
 ) -> None:
-    active_key: KeyPublicDataResult = await keydata_repository.get_active_key()  # pyrefly: ignore[bad-assignment]
-    assert active_key is not None  # Should always pass
+    active_key: ActiveKeyPublicDataResult = await keydata_repository.get_active_key()
     new_dummy_key: Final[EllipticCurvePrivateKey] = derive_private_key(
         private_value=67, curve=SECP256R1()
     )
-    new_key: Final[KeyPrivateDataResult] = await keydata_repository.rotate_key(
+    new_key: Final[ActiveKeyPrivateDataResult] = await keydata_repository.rotate_key(
         active_key.kid,
         "NEW_ROTATED_KEY",
         pem_serialize_public_key(
@@ -223,7 +210,7 @@ async def test_local_keydata_updation(
         ),
         pem_serialize_private_key(new_dummy_key, PrivateFormat.PKCS8),
         returning=True,
-        public_only=False,
+        return_public_only=False,
     )
     await token_manager.update_local_store(await keydata_repository.get_jwks())
     assert token_manager._active_key == new_key.kid

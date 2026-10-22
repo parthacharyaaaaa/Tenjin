@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 import pytest
 from auth_server.admin.roles import AdminRole
+from auth_server.datastructures.exceptions.admin import MissingSessionError
 from auth_server.models.session import AdminSession
 from auth_server.subsystems.session_manager import AdminSessionManager
 from redis.asyncio.client import Redis
@@ -16,8 +17,8 @@ async def assert_session_non_existence(
 ) -> None:
     assert await admin_session_manager.get_admin_session(session_id) is None
     assert (
-        await async_redis_client.hget(
-            admin_session_manager.admin_session_reverse_mapping_name, admin_id
+        await async_redis_client.hget(  # pyrefly: ignore[not-async]
+            admin_session_manager.admin_session_reverse_mapping_name, str(admin_id)
         )
         is None
     )  # type: ignore
@@ -37,7 +38,9 @@ async def test_get_admin_session_missing_behaviour(
             is None
         )
     else:
-        with pytest.raises(ValueError, match=f"No session found with ID: {session_id}"):
+        with pytest.raises(
+            MissingSessionError, match=f"No session found with ID: {session_id}"
+        ):
             await admin_session_manager.get_admin_session(
                 session_id, missing_ok=missing_ok
             )
@@ -58,7 +61,8 @@ async def test_get_admin_session_via_id_missing_behaviour(
         )
     else:
         with pytest.raises(
-            ValueError, match=f"No session found for admin with ID: {admin_id}"
+            MissingSessionError,
+            match=f"No session found for admin with ID: {admin_id}",
         ):
             await admin_session_manager.get_admin_session_via_admin_id(
                 admin_id, missing_ok=missing_ok
@@ -105,7 +109,7 @@ async def test_admin_session_initialization(
     ] = await admin_session_manager.get_admin_session(session_id)
     assert fetched_admin_session is not None
     assert (
-        await async_redis_client.hget(
+        await async_redis_client.hget(  # pyrefly: ignore[not-async]
             admin_session_manager.admin_session_reverse_mapping_name, str(admin_id)
         )
         == session_id
@@ -172,12 +176,12 @@ async def test_session_refresh(
                 | {"iteration": 2, "session_id": patched_refreshed_generated_session_id}
             )
             assert (
-                await async_redis_client.hget(
+                await async_redis_client.hget(  # pyrefly: ignore[not-async]
                     admin_session_manager.admin_session_reverse_mapping_name,
                     str(admin_id),
                 )
                 == new_session_id
-            )  # pyrefly: ignore[not-async]
+            )
 
 
 @pytest.mark.asyncio
