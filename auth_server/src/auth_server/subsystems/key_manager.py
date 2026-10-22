@@ -32,6 +32,7 @@ from auth_server.datastructures.exceptions.keys import (
 )
 from auth_server.keys.keygen import generate_ecdsa_pair
 from auth_server.models.data_transport.keydata import (
+    ActiveKeyPrivateDataResult,
     ActiveKeyPublicDataResult,
     ExpiredKeyDataResult,
     RotatedKeyDataResult,
@@ -327,7 +328,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
 
                 # Reflect rotation in DB
                 new_key: Final[
-                    ActiveKeyPublicDataResult
+                    ActiveKeyPrivateDataResult
                 ] = await self.keydata_repository.rotate_key(
                     previous_key.kid,
                     kid,
@@ -336,6 +337,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     rotation_author=rotation_author,
                     epoch=generation_epoch,
                     returning=True,
+                    return_public_only=False,
                 )
 
                 # Check whether max capacity has been reached. If so, purge oldest key
@@ -365,7 +367,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     )
 
                 # Update token manager's mapping to use this newly created ECDSA pair
-                self.token_manager.update_keydata(kid, new_key)
+                self.token_manager.update_signing_key(new_key)
                 # Update distributed state
                 jwks: list[EllipticCurveJWKResult] = list(
                     await self.keydata_repository.get_jwks()

@@ -455,6 +455,7 @@ class KeydataRepository(AbstractWorkRepository):
         epoch: datetime | None = None,
         previous_key_rotation_time: datetime | None = None,
         returning: Literal[False] = False,
+        return_public_only: bool = False,
     ) -> None: ...
 
     @overload
@@ -470,7 +471,25 @@ class KeydataRepository(AbstractWorkRepository):
         rotation_author: int | None = None,
         epoch: datetime | None = None,
         previous_key_rotation_time: datetime | None = None,
-        returning: Literal[True],
+        returning: Literal[True] = True,
+        return_public_only: Literal[False] = False,
+    ) -> ActiveKeyPrivateDataResult: ...
+
+    @overload
+    async def rotate_key(
+        self,
+        previous_key_id: str,
+        new_key_id: str,
+        new_key_public_pem: bytes | bytearray,
+        new_key_private_pem: bytes | bytearray,
+        *,
+        alg: str = "ES256",
+        curve: type[ec.EllipticCurve] = ec.SECP256R1,
+        rotation_author: int | None = None,
+        epoch: datetime | None = None,
+        previous_key_rotation_time: datetime | None = None,
+        returning: Literal[True] = True,
+        return_public_only: Literal[True] = True,
     ) -> ActiveKeyPublicDataResult: ...
 
     async def rotate_key(
@@ -486,7 +505,8 @@ class KeydataRepository(AbstractWorkRepository):
         epoch: datetime | None = None,
         previous_key_rotation_time: datetime | None = None,
         returning: bool = False,
-    ) -> ActiveKeyPublicDataResult | None:
+        return_public_only: bool = False,
+    ) -> ActiveKeyPublicDataResult | ActiveKeyPrivateDataResult | None:
         epoch = epoch or datetime.now(UTC)
         previous_key_rotation_time = previous_key_rotation_time or epoch
 
@@ -519,7 +539,9 @@ class KeydataRepository(AbstractWorkRepository):
             ).scalar_one()
 
             if returning:
-                return ActiveKeyPublicDataResult.construct_from_orm(new_key)
+                if return_public_only:
+                    return ActiveKeyPublicDataResult.construct_from_orm(new_key)
+                return ActiveKeyPrivateDataResult.construct_from_orm(new_key)
 
     async def get_jwks(self) -> tuple[EllipticCurveJWKResult, ...]:
         active, rotated = await self.get_relevant_keydata()
