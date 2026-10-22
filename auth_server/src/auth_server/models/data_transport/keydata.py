@@ -142,7 +142,7 @@ class ActiveKeyPrivateDataResult(ActiveKeyPublicDataResult):
 
     @classmethod
     def construct_from_cache(cls, mapping: Mapping[str, Any], *args, **kwargs) -> Self:
-        instance: cls = super(BasicKeyPublicDataResult, cls).construct_from_cache(
+        instance: cls = super(ActiveKeyPrivateDataResult, cls).construct_from_cache(
             mapping
         )
         instance.private_pem = instance.private_pem.encode(encoding="ascii")  # type: ignore

@@ -10,7 +10,6 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from sqlalchemy import insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.expression import ColumnExpressionArgument
-from sqlalchemy.sql.operators import and_
 
 from auth_server.datastructures.exceptions.keys import EmptyKeysError
 from auth_server.models.data_transport.keydata import (
@@ -56,7 +55,7 @@ class KeydataRepository(AbstractWorkRepository):
         selection_clauses: list[ColumnExpressionArgument] = [KeyData.kid == key_id]
         if not include_expired:
             selection_clauses.append(KeyData.expired_at.is_(None))
-        statement = select(KeyData).where(and_(*selection_clauses))
+        statement = select(KeyData).where(*selection_clauses)
         if lock_args:
             statement = statement.with_for_update(
                 **{lock_arg: True for lock_arg in lock_args}  # pyrefly: ignore
@@ -363,7 +362,7 @@ class KeydataRepository(AbstractWorkRepository):
                 (
                     await session.execute(
                         select(KeyData)
-                        .where(and_(*selection_clauses))
+                        .where(*selection_clauses)
                         .limit(limit)
                         .order_by(KeyData.expired_at)
                     )
@@ -388,7 +387,7 @@ class KeydataRepository(AbstractWorkRepository):
             selection_clauses.append(KeyData.kid > offset_id)
         statement = (
             select(KeyData)
-            .where(and_(*selection_clauses))
+            .where(*selection_clauses)
             .order_by(KeyData.epoch.desc())
             .limit(limit)
         )
@@ -408,14 +407,14 @@ class KeydataRepository(AbstractWorkRepository):
         *,
         public_data_only: Literal[True] = True,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> ActiveKeyPrivateDataResult: ...
+    ) -> ActiveKeyPublicDataResult: ...
     @overload
     async def get_active_key(
         self,
         *,
         public_data_only: Literal[False] = False,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> ActiveKeyPublicDataResult: ...
+    ) -> ActiveKeyPrivateDataResult: ...
 
     async def get_active_key(
         self,
@@ -515,7 +514,7 @@ class KeydataRepository(AbstractWorkRepository):
                 update(KeyData)
                 .where(KeyData.kid == previous_key_id)
                 .values(
-                    rotated_out_at=datetime.now(UTC),
+                    rotated_out_at=previous_key_rotation_time,
                     manual_rotation=True,
                     rotated_by=rotation_author,
                     private_pem=None,

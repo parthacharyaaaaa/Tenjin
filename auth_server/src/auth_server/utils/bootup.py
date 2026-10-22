@@ -111,7 +111,7 @@ async def master_bootup(
             )
         if len(rotated_verifying_keys) > config.JWKS.JWKS_CAP - 1:
             await keydata_repository.expire_keydata_with_threshold(
-                rotated_verifying_keys[config.JWKS.JWKS_CAP - 1].epoch
+                rotated_verifying_keys[config.JWKS.JWKS_CAP - 2].epoch
             )
             rotated_verifying_keys = rotated_verifying_keys[: config.JWKS.JWKS_CAP - 1]
         await synced_store_manager.set_jwks(await keydata_repository.get_jwks())

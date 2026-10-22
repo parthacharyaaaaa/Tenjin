@@ -356,14 +356,11 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     key=lambda x: x[1],
                 )
 
-                if len(valid_inactive_key_data) > self.jwks_config.JWKS_CAP:
+                rotated_capacity = self.jwks_config.JWKS_CAP - 1
+                excess_count = len(valid_inactive_key_data) - rotated_capacity
+                if excess_count > 0:
                     await self.keydata_repository.batch_expire_keydata(
-                        tuple(
-                            i[0]
-                            for i in valid_inactive_key_data[
-                                : -self.jwks_config.JWKS_CAP
-                            ]
-                        )
+                        tuple(kid for kid, _ in valid_inactive_key_data[:excess_count])
                     )
 
                 # Update token manager's mapping to use this newly created ECDSA pair
@@ -378,7 +375,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 {"keys": [EllipticCurveJWK.model_validate(asdict(jwk)) for jwk in jwks]}
             )
         )
-        return new_key
+        return new_key.create_public_copy()
 
     async def token_manager_updation_poller(self, interval: timedelta) -> None:
         while True:
