@@ -119,14 +119,6 @@ class KeydataRepository(AbstractWorkRepository):
     async def get_relevant_keydata(
         self,
         *,
-        active_key_public_data_only: Literal[False] = False,
-        lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> tuple[ActiveKeyPrivateDataResult, list[RotatedKeyDataResult]]: ...
-
-    @overload
-    async def get_relevant_keydata(
-        self,
-        *,
         active_key_public_data_only: Literal[True] = True,
         lock_args: Sequence[SelectionLockOption] | None = None,
     ) -> tuple[ActiveKeyPublicDataResult, list[RotatedKeyDataResult]]: ...
