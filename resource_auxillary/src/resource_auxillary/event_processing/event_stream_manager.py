@@ -88,7 +88,7 @@ class RedisStreamManager:
         )
         malformed_events: list[StreamedEvent] = []
 
-        if len(result[0][1]) == 0:
+        if len(result) == 0 or len(result[0][1]) == 0:
             return [], malformed_events
 
         events: list[StreamedEvent] = []
