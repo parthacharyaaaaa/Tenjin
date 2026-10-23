@@ -47,9 +47,11 @@ class StreamWorkersMixin:
                 except ValueError as e:
                     raise ValueError(f"Invalid stream name: {_stream_name}") from e
 
-                for event_name in worker_count_data.keys():
+                for event_name, worker_count in worker_count_data.items():
                     try:
-                        worker_mapping[stream_name][EventName(event_name)] = count
+                        worker_mapping[stream_name][EventName(event_name)] = (
+                            worker_count
+                        )
                     except ValueError as e:
                         raise ValueError(
                             f"Invalid event name in {stream_name}: {event_name}"

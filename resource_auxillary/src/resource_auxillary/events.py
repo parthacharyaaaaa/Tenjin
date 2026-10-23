@@ -3,7 +3,6 @@ from functools import cached_property, partial
 from typing import Annotated, Any, Literal, Self
 
 import orjson
-from auxillary.utils import cache_repr, json_repr
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 from redis.typing import EncodableT, FieldT
 
@@ -30,14 +29,6 @@ class CounterUpdate(BaseModel):
             "delta": self.delta,
         }
 
-    def __json_repr__(self) -> dict[str, Any]:
-        return {
-            "counter_group": self.counter_group,
-            "cache_key": self.cache_key,
-            "field_name": self.field_name,
-            "delta": self.delta,
-        }
-
 
 class IntentUpdate(BaseModel):
     model_config = ConfigDict(frozen=True)
@@ -57,13 +48,6 @@ class IntentUpdate(BaseModel):
             "intent_id": self.intent_id,
         }
 
-    def __json_repr__(self) -> dict[str, Any]:
-        return {
-            "intent_name": self.intent_name,
-            "intent_flag": self.intent_flag.value,
-            "intent_id": self.intent_id,
-        }
-
 
 class CacheUpdate(BaseModel):
     cache_key: str
@@ -74,12 +58,7 @@ class CacheUpdate(BaseModel):
         return {
             "cache_key": self.cache_key,
             "operation": self.operation,
-        }
-
-    def __json_repr__(self) -> dict[str, Any]:
-        return {
-            "cache_key": self.cache_key,
-            "operation": self.operation,
+            "resource_type": self.resource_type,
         }
 
 
@@ -93,26 +72,22 @@ class CacheSideEffects(BaseModel):
     def __cache_repr__(self) -> dict[FieldT, EncodableT]:
         return {
             "counter_updates": orjson.dumps(
-                [cache_repr(i) for i in self.counter_updates]
+                [i.model_dump(mode="json") for i in self.counter_updates]
             ),
             "intent_updates": orjson.dumps(
-                [cache_repr(i) for i in self.intent_updates]
+                [i.model_dump(mode="json") for i in self.intent_updates]
             ),
             "cache_invalidations": orjson.dumps(
-                [cache_repr(i) for i in self.cache_invalidations]
+                [i.model_dump(mode="json") for i in self.cache_invalidations]
             ),
-        }
-
-    def __json_repr__(self) -> dict[str, Any]:
-        return {
-            "counter_updates": list(self.counter_updates),
-            "intent_updates": list(self.intent_updates),
-            "cache_invalidations": list(self.cache_invalidations),
         }
 
 
 class EventSideEffects(BaseModel):
     cache: Annotated[CacheSideEffects, Field(default_factory=CacheSideEffects)]
+
+    def __cache_repr__(self) -> dict[FieldT, EncodableT]:
+        return {"cache": orjson.dumps(self.cache.model_dump(mode="json"))}
 
 
 class Event(BaseModel):
@@ -135,85 +110,52 @@ class Event(BaseModel):
         return {
             "name": self.name,
             "payload": orjson.dumps(self.payload),
-            "side_effects": orjson.dumps(cache_repr(self.side_effects)),
-        }
-
-    def __json_repr__(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "payload": self.payload,
-            "side_effects": json_repr(self.side_effects),
+            "side_effects": orjson.dumps(self.side_effects.model_dump(mode="json")),
+            "creation_time": self.creation_time.isoformat(),
         }
 
     @classmethod
     def reconstruct_from_stream(cls, stream_entry: dict[str, str]) -> Self:
         try:
-            name: EventName = EventName(stream_entry["name"])
-            payload: dict[str, Any] = orjson.loads(stream_entry["payload"])
-            raw_side_effects: dict[str, Any] = orjson.loads(
-                stream_entry["side_effects"]
-            )
-
-            counter_updates = tuple(
-                CounterUpdate(**cu)
-                for cu in orjson.loads(raw_side_effects.get("counter_updates", b"[]"))
-            )
-            intent_updates = tuple(
-                IntentUpdate(**iu)
-                for iu in orjson.loads(raw_side_effects.get("intent_updates", b"[]"))
-            )
-            cache_invalidations = tuple(
-                CacheUpdate(**ci)
-                for ci in orjson.loads(
-                    raw_side_effects.get("cache_invalidations", b"[]")
-                )
-            )
-
             return cls(
-                name=name,
-                payload=payload,
-                side_effects=EventSideEffects(
-                    counter_updates=counter_updates,
-                    intent_updates=intent_updates,
-                    cache_invalidations=cache_invalidations,
+                name=stream_entry["name"],
+                payload=orjson.loads(stream_entry["payload"]),
+                side_effects=EventSideEffects.model_validate(
+                    orjson.loads(stream_entry["side_effects"])
                 ),
+                creation_time=datetime.fromisoformat(stream_entry["creation_time"]),
             )
-        except (KeyError, ValueError, orjson.JSONDecodeError) as e:
+        except (KeyError, ValueError) as e:
             raise ValueError(f"Malformed stream entry: {e}") from e
 
 
 class StreamedEvent(Event):
     """Event that has been streamed to Redis and is assosciated with a unique, chronological ID"""
 
-    event_id: int
+    event_id: str
 
     def __cache_repr__(self) -> dict[FieldT, EncodableT]:
-        return super().__cache_repr__() | {"event_id": self.event_id}
-
-    def __json_repr__(self) -> dict[str, Any]:
-        return super().__json_repr__() | {"event_id": self.event_id}
+        return super(StreamedEvent, self).__cache_repr__() | {"event_id": self.event_id}
 
     @classmethod
     def construct_from_stream_record(cls, stream: tuple[str, dict[str, str]]) -> Self:
         stream_id, stream_entry = stream
-        event_id: int = int(stream_id.replace("-", ""))
         base_event: Event = Event.reconstruct_from_stream(stream_entry)
         return cls(
-            event_id=event_id,
+            event_id=stream_id,
             name=base_event.name,
             payload=base_event.payload,
             side_effects=base_event.side_effects,
+            creation_time=base_event.creation_time,
         )
 
     @classmethod
     def safe_construct_from_malformed_stream(
         cls, stream_entry: tuple[str, dict[str, str]]
     ) -> Self:
-        event_id: int = int(stream_entry[0].replace("-", ""))
-
-        return StreamedEvent(
+        return cls(
             name=EventName.MALFORMED,
             payload=stream_entry[1],
-            event_id=event_id,
-            side_effects=EventSideEffects(),  # type: ignore[reportCallIssue]
+            event_id=stream_entry[0],
+            side_effects=EventSideEffects(),
         )
