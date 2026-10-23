@@ -21,3 +21,10 @@ known_first_party=[
 ]
 
 [tool.pyrefly]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "testcontainers[postgres,redis]>=4.15.0",
+]
