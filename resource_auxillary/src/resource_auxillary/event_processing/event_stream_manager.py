@@ -91,11 +91,8 @@ class RedisStreamManager:
         if len(result[0][1]) == 0:
             return [], malformed_events
 
-        event_stream_subset = result[0][1]
-        del result
-
         events: list[StreamedEvent] = []
-        for event_data in event_stream_subset:
+        for event_data in result[0][1]:
             try:
                 event: StreamedEvent = StreamedEvent.construct_from_stream_record(
                     event_data
