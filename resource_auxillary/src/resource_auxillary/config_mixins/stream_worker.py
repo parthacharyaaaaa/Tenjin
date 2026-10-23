@@ -26,7 +26,7 @@ class StreamWorkersMixin:
         with open(toml_filepath, "r", encoding="utf-8") as toml_file:
             config_mapping: dict[str, Any] = tomllib.loads(toml_file.read())
             readers_context: dict[StreamName, int] = config_mapping[cls.READERS_KEY][
-                cls.cls.STREAM_KEY
+                cls.STREAM_KEY
             ]
             for _stream_name, count in readers_context.items():
                 try:
