@@ -11,6 +11,10 @@ from sqlalchemy.util.typing import Final
 
 from auth_server.admin.roles import AdminRole
 from auth_server.config import AdminConfigModel
+from auth_server.datastructures.exceptions.admin import (
+    InvalidaSessionError,
+    MissingSessionError,
+)
 from auth_server.models.session import AdminSession
 from auth_server.strings import GENERIC_SESSION_SEPARATOR
 
@@ -53,7 +57,7 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
         if not admin_session_dict:
             if missing_ok:
                 return None
-            raise ValueError(f"No session found with ID: {session_id}")
+            raise MissingSessionError(f"No session found with ID: {session_id}")
 
         try:
             return AdminSession.model_validate(admin_session_dict)
@@ -61,7 +65,7 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
             await self.terminate_malformed_session(
                 session_name, admin_id=admin_session_dict.get("admin_id")
             )
-            raise ValueError("Invalid session, please login again") from e
+            raise InvalidaSessionError("Invalid session, please login again") from e
 
     @overload
     async def get_admin_session_via_admin_id(
@@ -82,7 +86,7 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
         if not session_id:
             if missing_ok:
                 return None
-            raise ValueError(f"No session found for admin with ID: {admin_id}")
+            raise MissingSessionError(f"No session found for admin with ID: {admin_id}")
         return await self.get_admin_session(session_id, missing_ok=missing_ok)
 
     def derive_session_expiry(self, session_epoch: int) -> int:

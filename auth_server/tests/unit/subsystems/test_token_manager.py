@@ -1,10 +1,19 @@
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call, patch
 
 import jwt.exceptions as jwt_exceptions
 import pytest
+from auth_server.datastructures.exceptions.token import (
+    ImmatureRefreshAttemptError,
+    InvalidKeyError,
+    InvalidTokenError,
+    MissingTokenFamilyError,
+    ReplayedTokenError,
+    TokenFamilyExistsError,
+)
+from auth_server.models.data_transport.keydata import ActiveKeyPrivateDataResult
 from auth_server.subsystems.token_manager import TokenManager
 from auth_server.tokens.typing import TokenType
 from sqlalchemy.util.typing import Final
@@ -55,6 +64,7 @@ def token_manager_harness() -> TokenManagerHarness:
     token_store.pipeline = Mock(return_value=pipeline_context)
     pipeline.lpush = Mock(return_value=pipeline)
     pipeline.expireat = Mock(return_value=pipeline)
+    pipeline.rpop = Mock(return_value=pipeline)
     pipeline.execute = AsyncMock(return_value=[])
     repository.get_keydata = AsyncMock()
     synced_state.get_jwks = AsyncMock()
@@ -68,6 +78,7 @@ def token_manager_harness() -> TokenManagerHarness:
     redis_calls.attach_mock(pipeline_context.enter, "enter")
     redis_calls.attach_mock(pipeline.lpush, "lpush")
     redis_calls.attach_mock(pipeline.expireat, "expireat")
+    redis_calls.attach_mock(pipeline.rpop, "rpop")
     redis_calls.attach_mock(pipeline.execute, "execute")
     redis_calls.attach_mock(pipeline_context.exit, "exit")
 
@@ -242,7 +253,7 @@ async def test_decode_token_rejects_unknown_key(signing_manager: TokenManager) -
         "auth_server.subsystems.token_manager.jwt.get_unverified_header",
         return_value={"kid": "unknown"},
     ):
-        with pytest.raises(jwt_exceptions.InvalidKeyError):
+        with pytest.raises(InvalidKeyError, match="key is not recognised"):
             await signing_manager.decode_token("token")
 
 
@@ -253,18 +264,30 @@ async def test_decode_token_wraps_missing_key_id(signing_manager: TokenManager) 
         return_value={},
     ):
         with pytest.raises(
-            jwt_exceptions.InvalidTokenError,
+            InvalidTokenError,
             match="Token headers missing key ID",
         ):
             await signing_manager.decode_token("token")
 
 
 @pytest.mark.parametrize(
-    "error",
+    ("error", "expected_error", "message"),
     (
-        jwt_exceptions.ImmatureSignatureError("immature"),
-        jwt_exceptions.InvalidIssuedAtError("issued-at"),
-        jwt_exceptions.InvalidIssuerError("issuer"),
+        (
+            jwt_exceptions.ImmatureSignatureError("immature"),
+            ImmatureRefreshAttemptError,
+            "Premature token reissuance",
+        ),
+        (
+            jwt_exceptions.InvalidIssuedAtError("issued-at"),
+            InvalidTokenError,
+            "Invalid token, please login again",
+        ),
+        (
+            jwt_exceptions.InvalidIssuerError("issuer"),
+            InvalidTokenError,
+            "Invalid token, please login again",
+        ),
     ),
 )
 @pytest.mark.parametrize("token_type", tuple(TokenType))
@@ -272,34 +295,22 @@ async def test_decode_token_wraps_missing_key_id(signing_manager: TokenManager) 
 async def test_decode_token_normalizes_time_and_issuer_errors(
     signing_manager: TokenManager,
     error: Exception,
+    expected_error: type[Exception],
+    message: str,
     token_type: TokenType,
 ) -> None:
-    decode_results = [error]
-    if token_type is TokenType.StandardRefresh:
-        decode_results.append({"fid": "family"})  # type: ignore
-
     with (
-        patch.object(
-            TokenManager,
-            "invalidate_family",
-            new_callable=AsyncMock,
-        ) as invalidate_family,
         patch(
             "auth_server.subsystems.token_manager.jwt.get_unverified_header",
             return_value={"kid": "key-1"},
         ),
         patch(
             "auth_server.subsystems.token_manager.jwt.decode",
-            side_effect=decode_results,
+            side_effect=error,
         ),
     ):
-        with pytest.raises(type(error), match=error.args[0]):
+        with pytest.raises(expected_error, match=message):
             await signing_manager.decode_token("token", token_type)
-
-    if token_type is TokenType.StandardRefresh:
-        invalidate_family.assert_awaited_once_with("family")
-    else:
-        invalidate_family.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -318,16 +329,16 @@ async def test_reissue_token_pair_runs_refresh_flow_in_order(
         "jti": "old-jti",
     }
     decode = AsyncMock(return_value=decoded)
-    issue_refresh = AsyncMock(return_value="new-refresh")
-    issue_access = Mock(return_value="new-access")
+    validate = AsyncMock()
+    issue_pair = AsyncMock(return_value=("new-refresh", "new-access"))
     calls.attach_mock(decode, "decode")
-    calls.attach_mock(issue_refresh, "issue_refresh")
-    calls.attach_mock(issue_access, "issue_access")
+    calls.attach_mock(validate, "validate")
+    calls.attach_mock(issue_pair, "issue_pair")
 
     with (
         patch.object(TokenManager, "decode_token", decode),
-        patch.object(TokenManager, "issue_refresh_token", issue_refresh),
-        patch.object(TokenManager, "issue_access_token", issue_access),
+        patch.object(TokenManager, "validate_reissuance_integrity", validate),
+        patch.object(TokenManager, "_issue_token_pair", issue_pair),
     ):
         assert await manager.reissue_token_pair("old-refresh") == (
             "new-refresh",
@@ -336,41 +347,68 @@ async def test_reissue_token_pair_runs_refresh_flow_in_order(
 
     assert calls.mock_calls == [
         call.decode("old-refresh", token_type=TokenType.StandardRefresh),
-        call.issue_refresh("7", 3, existing_family_validation_data=("old-jti", 500)),
-        call.issue_access("7", 3, family_id="family"),
+        call.validate("family", "old-jti"),
+        call.issue_pair("7", 3, family_id="family"),
     ]
 
 
 @pytest.mark.parametrize(
-    ("stored_metadata", "jti", "expiry", "message"),
+    ("history", "jti", "expected_error", "message"),
     (
-        (None, "old-jti", 500, "invalid or empty"),
-        ("different:500", "old-jti", 500, "metadata mismatch"),
-        ("old-jti:499", "old-jti", 500, "metadata mismatch"),
+        ([], "old-jti", MissingTokenFamilyError, "Family ID family not found"),
+        (
+            ["latest", "old-jti"],
+            "old-jti",
+            ReplayedTokenError,
+            "Replayed refresh token",
+        ),
+        (
+            ["latest", "known-old"],
+            "unknown",
+            InvalidTokenError,
+            "Unrecognized token for family family",
+        ),
     ),
 )
 @pytest.mark.asyncio
-async def test_issue_refresh_token_invalidates_rejected_family(
+async def test_validate_reissuance_integrity_rejects_invalid_history(
     token_manager_harness: TokenManagerHarness,
-    stored_metadata: str | None,
+    history: list[str],
     jti: str,
-    expiry: int,
+    expected_error: type[Exception],
     message: str,
 ) -> None:
     manager = token_manager_harness.manager
-    token_manager_harness.token_store.lindex.return_value = stored_metadata
+    token_manager_harness.token_store.lrange.return_value = history
 
-    with patch.object(
-        TokenManager,
-        "invalidate_family",
-        new_callable=AsyncMock,
-    ) as invalidate_family:
-        with pytest.raises(ValueError, match=message):
-            await manager.issue_refresh_token(
-                "7", 3, existing_family_validation_data=(jti, expiry)
-            )
+    with pytest.raises(expected_error, match=message):
+        await manager.validate_reissuance_integrity("family", jti)
 
-    invalidate_family.assert_awaited_once_with(manager.generate_family_list_id("7"))
+    token_manager_harness.token_store.lrange.assert_awaited_once_with("family", 0, -1)
+
+
+@pytest.mark.asyncio
+async def test_validate_reissuance_integrity_accepts_latest_jti(
+    token_manager_harness: TokenManagerHarness,
+) -> None:
+    token_manager_harness.token_store.lrange.return_value = ["latest", "older"]
+
+    await token_manager_harness.manager.validate_reissuance_integrity(
+        "family", "latest"
+    )
+
+
+@pytest.mark.asyncio
+async def test_issue_fresh_token_pair_rejects_existing_family(
+    token_manager_harness: TokenManagerHarness,
+) -> None:
+    manager = token_manager_harness.manager
+    family_id = manager.generate_family_list_id("7")
+    token_manager_harness.token_store.llen.return_value = 1
+
+    with pytest.raises(TokenFamilyExistsError, match=f"Token family {family_id}"):
+        await manager.issue_fresh_token_pair("7", 3)
+
     token_manager_harness.token_store.pipeline.assert_not_called()
 
 
@@ -380,8 +418,7 @@ async def test_issue_refresh_token_writes_family_metadata_before_encoding(
     signing_manager: TokenManager,
 ) -> None:
     harness = token_manager_harness
-    harness.token_store.lindex.return_value = "old-jti:4600"
-
+    harness.token_store.llen.return_value = 1
     with (
         patch("auth_server.subsystems.token_manager.time.time", return_value=1000),
         patch.object(
@@ -393,21 +430,19 @@ async def test_issue_refresh_token_writes_family_metadata_before_encoding(
             "auth_server.subsystems.token_manager.jwt.encode",
             return_value="encoded-refresh",
         ) as encode,
-        patch.object(signing_manager._token_store_client, "llen", return_value=1),
     ):
         result = await signing_manager.issue_refresh_token(
             "7",
             3,
-            existing_family_validation_data=("old-jti", 4600),
             additional_claims={"custom": True},
         )
     expected_family_id: Final[str] = signing_manager.generate_family_list_id("7")
     assert result == "encoded-refresh"
     assert harness.redis_calls.mock_calls == [
-        call.lindex(expected_family_id, 0),
+        call.llen(expected_family_id),
         call.pipeline(transaction=True),
         call.enter(),
-        call.lpush(expected_family_id, "new-jti:4600"),
+        call.lpush(expected_family_id, "new-jti"),
         call.expireat(expected_family_id, 4600),
         call.execute(),
         call.exit(None, None, None),
@@ -430,53 +465,25 @@ async def test_issue_refresh_token_writes_family_metadata_before_encoding(
     )
 
 
-@pytest.mark.parametrize("existing_family", (False, True))
 @pytest.mark.asyncio
-async def test_issue_fresh_refresh_token_checks_stale_empty_family(
+async def test_issue_fresh_token_pair_validates_then_issues_pair(
     token_manager_harness: TokenManagerHarness,
-    signing_manager: TokenManager,
-    existing_family: bool,
 ) -> None:
-    harness = token_manager_harness
-    harness.token_store.llen.return_value = 1 if existing_family else 0
-    family_id: Final[str] = signing_manager.generate_family_list_id("7")
+    manager = token_manager_harness.manager
+    validate = AsyncMock()
+    issue_pair = AsyncMock(return_value=("refresh", "access"))
+
     with (
-        patch.object(
-            TokenManager,
-            "invalidate_family",
-            new_callable=AsyncMock,
-        ),
-        patch("auth_server.subsystems.token_manager.time.time", return_value=1000),
-        patch.object(TokenManager, "generate_unique_identifier", return_value="jti"),
-        patch(
-            "auth_server.subsystems.token_manager.jwt.encode",
-            return_value="encoded",
-        ),
-        patch.object(
-            harness.token_store,
-            "lindex",
-            new_callable=AsyncMock,
-            return_value="jti:1000" if existing_family else 0,
-        ),
+        patch.object(TokenManager, "validate_fresh_issuance_integrity", validate),
+        patch.object(TokenManager, "_issue_token_pair", issue_pair),
     ):
-        if existing_family:
-            assert (
-                await signing_manager.issue_refresh_token(
-                    "7", 3, existing_family_validation_data=("jti", 1000)
-                )
-                == "encoded"
-            )
-            harness.token_store.llen.assert_awaited_with(family_id)
-        else:
-            with pytest.raises(
-                ValueError, match=f"Token family {family_id} is invalid or empty"
-            ):
-                assert (
-                    await signing_manager.issue_refresh_token(
-                        "7", 3, existing_family_validation_data=("jti", 1000)
-                    )
-                    == "encoded"
-                )
+        assert await manager.issue_fresh_token_pair("7", 3) == (
+            "refresh",
+            "access",
+        )
+
+    validate.assert_awaited_once_with(manager.generate_family_list_id("7"))
+    issue_pair.assert_awaited_once_with("7", 3)
 
 
 def test_issue_access_token_builds_and_encodes_payload(
@@ -545,27 +552,44 @@ async def test_invalidate_family_wraps_store_errors(
         await token_manager_harness.manager.invalidate_family("family")
 
 
-@pytest.mark.parametrize("active", (False, True))
-def test_update_keydata_adds_public_copy_and_optionally_selects_signing_key(
+def test_update_signing_key_selects_private_key_and_registers_public_copy(
     token_manager_harness: TokenManagerHarness,
-    active: bool,
 ) -> None:
     manager = token_manager_harness.manager
     manager._active_key = "old"
     manager._active_key_private_pem = b"old-private"
-    public_copy = Mock()
-    keydata = SimpleNamespace(
-        private_pem=b"new-private",
-        create_public_copy=Mock(return_value=public_copy),
-    )
+    keydata = object.__new__(ActiveKeyPrivateDataResult)
+    keydata.kid = "new"
+    keydata.alg = "ES256"
+    keydata.curve = "secp256r1"
+    keydata.epoch = datetime(2026, 1, 1, tzinfo=UTC)
+    keydata.public_pem = b"public"
+    keydata.rotated_out_at = None
+    keydata.expired_at = None
+    keydata.manual_rotation = None
+    keydata.rotated_by = None
+    keydata.private_pem = b"new-private"
 
-    manager.update_keydata("new", keydata, active=active)  # type: ignore[arg-type]
+    manager.update_signing_key(keydata)
 
-    assert manager._key_mapping["new"] is public_copy
-    assert manager._active_key == ("new" if active else "old")
-    assert manager._active_key_private_pem == (
-        b"new-private" if active else b"old-private"
-    )
+    assert manager._key_mapping["new"] == keydata.create_public_copy()
+    assert manager._active_key == "new"
+    assert manager._active_key_private_pem == b"new-private"
+
+
+def test_update_verification_key_does_not_replace_signing_key(
+    token_manager_harness: TokenManagerHarness,
+) -> None:
+    manager = token_manager_harness.manager
+    manager._active_key = "active"
+    manager._active_key_private_pem = b"active-private"
+    keydata = SimpleNamespace(kid="rotated")
+
+    manager.update_verification_key(keydata)  # type: ignore[arg-type]
+
+    assert manager._key_mapping["rotated"] is keydata
+    assert manager._active_key == "active"
+    assert manager._active_key_private_pem == b"active-private"
 
 
 def test_invalidate_key_rejects_active_key(

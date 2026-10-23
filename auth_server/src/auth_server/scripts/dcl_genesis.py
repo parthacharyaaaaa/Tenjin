@@ -35,6 +35,8 @@ AUTH_SERVER_DCL_TEMPLATE: Final[SQL] = SQL(
 
     GRANT SELECT, DELETE, UPDATE, INSERT ON {admins_table}, {sus_table}, {keys_table}
     TO {auth_server_username};
+
+    GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO {auth_server_username};
     """
 )
 

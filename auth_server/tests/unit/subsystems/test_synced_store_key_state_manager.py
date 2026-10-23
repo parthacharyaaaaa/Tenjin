@@ -4,10 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 
 import orjson
 import pytest
-from auth_server.repositories.keydata import (
-    EllipticCurveJWKResult,
-    KeyPublicDataResult,
-)
+from auth_server.datastructures.exceptions.keys import EmptyKeysError
+from auth_server.models.data_transport.keydata import EllipticCurveJWKResult
 from auth_server.strings import SyncedStoreKeyStrings
 from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
 from auxillary.security.data_structures.jwks.enums import ECAlg
@@ -178,44 +176,9 @@ async def test_set_jwks_serializes_jwk_results(
 
 
 @pytest.mark.asyncio
-async def test_set_jwks_converts_public_results_before_serializing(
-    manager: SyncedStoreKeyStateManager,
-    redis_harness: RedisHarness,
-    jwk: EllipticCurveJWKResult,
-) -> None:
-    public_results = (
-        object.__new__(KeyPublicDataResult),
-        object.__new__(KeyPublicDataResult),
-    )
-    second_jwk = EllipticCurveJWKResult(
-        alg=ECAlg.ES256,
-        crv="secp256k1",
-        kid="key-2",
-        x="x-2",
-        y="y-2",
-    )
-
-    with patch.object(
-        KeyPublicDataResult,
-        "as_jwk",
-        side_effect=(jwk, second_jwk),
-    ) as as_jwk:
-        await manager.set_jwks(public_results)
-
-    assert as_jwk.call_args_list == [
-        call(public_results[0]),
-        call(public_results[1]),
-    ]
-    redis_harness.store.set.assert_awaited_once_with(
-        SyncedStoreKeyStrings.JWKS_KEY,
-        orjson.dumps({"keys": [jwk.__json_repr__(), second_jwk.__json_repr__()]}),
-    )
-
-
-@pytest.mark.asyncio
 async def test_set_jwks_rejects_empty_key_sequence(
     manager: SyncedStoreKeyStateManager,
     redis_harness: RedisHarness,
 ) -> None:
-    with pytest.raises(ValueError, match="keys must be non-empty"):
+    with pytest.raises(EmptyKeysError, match="keys must be non-empty"):
         await manager.set_jwks(())

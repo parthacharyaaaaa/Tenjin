@@ -5,11 +5,12 @@ from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
 from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.utils import json_repr
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.requests import Request
 from fastapi.responses import JSONResponse, Response
 
 from auth_server.config.app_config import AppConfig
+from auth_server.datastructures.exceptions.token import TokenError
 from auth_server.dependencies.local import (
     get_app_config,
     get_hypermedia_link_builder,
@@ -53,7 +54,7 @@ async def login(
 
     async with httpx.AsyncClient() as http_client:
         resource_response: httpx.Response = await http_client.post(
-            url="", json=auth_model.model_dump()
+            url="http://resource_server:8081/login", json=auth_model.model_dump()
         )
 
     if resource_response.status_code != 200:
@@ -67,8 +68,13 @@ async def login(
 
     response_contents: dict[str, str | int] = resource_response.json()
     sub, sid = str(response_contents.pop("sub")), int(response_contents.pop("sid"))
-    refresh_token: str = await token_manager.issue_refresh_token(sub, sid)
-    access_token: str = token_manager.issue_access_token(sub, sid)
+
+    try:
+        refresh_token, access_token = await token_manager.issue_fresh_token_pair(
+            sub, sid
+        )
+    except TokenError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
     response: JSONResponse = EnrichedJSONResponse(
         {
@@ -108,7 +114,7 @@ async def register(
 ):
     async with httpx.AsyncClient() as http_client:
         resource_response = await http_client.post(
-            "",
+            "http://resource_server:8081/register",
             json=registration_model.model_dump(),
         )
 
@@ -123,8 +129,13 @@ async def register(
 
     response_contents: dict[str, str | int] = resource_response.json()
     sub, sid = str(response_contents.pop("sub")), int(response_contents.pop("sid"))
-    refresh_token: str = await token_manager.issue_refresh_token(sub, sid)
-    access_token: str = token_manager.issue_access_token(sub, sid)
+    try:
+        refresh_token, access_token = await token_manager.issue_fresh_token_pair(
+            sub, sid
+        )
+    except TokenError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
     response: JSONResponse = EnrichedJSONResponse(
         {
             "message": response_contents.pop("message", "Registration complete."),
@@ -162,10 +173,7 @@ async def reissue(
         HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
     ],
 ):
-    refresh_token: str | None = request.cookies.get(
-        "refresh", request.cookies.get("Refresh")
-    )
-
+    refresh_token: str | None = request.cookies.get("refresh")
     if not refresh_token:
         raise EnrichedHTTPException(
             400,
@@ -173,9 +181,12 @@ async def reissue(
             hypermedia=login_hypermedia(link_builder),
         )
 
-    new_refresh_token, new_access_token = await token_manager.reissue_token_pair(
-        refresh_token
-    )
+    try:
+        new_refresh_token, new_access_token = await token_manager.reissue_token_pair(
+            refresh_token
+        )
+    except TokenError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     response: Response = EnrichedJSONResponse(
         {
             "message": "Reissuance successful",
@@ -212,9 +223,7 @@ async def purge_family(
     """
     Purges an entire token family in case of a reuse attack or a normal client logout
     """
-    encoded_refresh_token: str | None = request.cookies.get(
-        "Refresh", request.cookies.get("refresh")
-    )
+    encoded_refresh_token: str | None = request.cookies.get("refresh")
     if not encoded_refresh_token:
         raise EnrichedHTTPException(
             400,
@@ -223,17 +232,15 @@ async def purge_family(
         )
 
     try:
-        refresh_token: StandardRefreshTokenClaims = await token_manager.decode_token(
+        refresh_token: Final[
+            StandardRefreshTokenClaims
+        ] = await token_manager.decode_token(
             encoded_refresh_token,
             TokenType.StandardRefresh,
             options={"verify_nbf": False},
         )
         await token_manager.invalidate_family(refresh_token["fid"])
-    except Exception as e:
-        raise EnrichedHTTPException(
-            401,
-            "Failed to validate this refresh token",
-            hypermedia=login_hypermedia(link_builder),
-        ) from e
+    except TokenError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
     return JSONResponse({"message": "Token Revoked"})

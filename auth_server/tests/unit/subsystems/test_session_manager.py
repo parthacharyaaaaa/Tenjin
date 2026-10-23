@@ -7,6 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, Mock, call, patch
 import pytest
 from auth_server.admin.roles import AdminRole
 from auth_server.config import AdminConfigModel
+from auth_server.datastructures.exceptions.admin import (
+    InvalidaSessionError,
+    MissingSessionError,
+)
 from auth_server.models.session import AdminSession
 from auth_server.subsystems.session_manager import AdminSessionManager
 from pydantic import ValidationError
@@ -120,7 +124,9 @@ async def test_get_admin_session_handles_missing_session(
     if missing_ok:
         assert await manager.get_admin_session("missing", missing_ok=True) is None
     else:
-        with pytest.raises(ValueError, match="No session found with ID: missing"):
+        with pytest.raises(
+            MissingSessionError, match="No session found with ID: missing"
+        ):
             await manager.get_admin_session("missing", missing_ok=False)
 
     assert redis_harness.calls.mock_calls == [call.hgetall("admin.missing")]
@@ -168,7 +174,9 @@ async def test_get_admin_session_terminates_malformed_session(
             new_callable=AsyncMock,
         ) as terminate,
     ):
-        with pytest.raises(ValueError, match="Invalid session, please login again"):
+        with pytest.raises(
+            InvalidaSessionError, match="Invalid session, please login again"
+        ):
             await manager.get_admin_session(SESSION_ID)
 
     terminate.assert_awaited_once_with(session_name, admin_id=ADMIN_ID)
@@ -191,7 +199,7 @@ async def test_get_admin_session_via_admin_id_handles_missing_mapping(
         )
     else:
         with pytest.raises(
-            ValueError,
+            MissingSessionError,
             match=f"No session found for admin with ID: {ADMIN_ID}",
         ):
             await manager.get_admin_session_via_admin_id(ADMIN_ID, missing_ok=False)

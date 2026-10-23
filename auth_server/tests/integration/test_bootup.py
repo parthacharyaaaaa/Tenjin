@@ -13,6 +13,7 @@ from typing import Any, Final, Literal, Protocol, cast
 
 import pytest
 import pytest_asyncio
+from auth_server.datastructures.exceptions.keys import EmptyKeysError
 from auth_server.models.database import KeyData
 from auth_server.repositories.keydata import KeydataRepository
 from auth_server.strings import SyncedStoreCommandStrings
@@ -367,15 +368,17 @@ async def test_concurrent_processes_elect_master_and_share_clean_boot_state(
     _assert_successful_election(results)
     active_key_ids = {result.active_key_id for result in results}
     local_keysets = {result.key_ids for result in results}
-    persisted_keys = await keydata_repository.get_relevant_keydata()
+    (
+        persisted_active_key,
+        persisted_rotated_keys,
+    ) = await keydata_repository.get_relevant_keydata()
     synced_jwks = await synced_key_store_manager.get_jwks()
 
     assert len(active_key_ids) == 1
     assert None not in active_key_ids
     assert len(local_keysets) == 1
-    assert len(persisted_keys) == 1
-    assert persisted_keys[0].rotated_out_at is None
-    assert {key.kid for key in persisted_keys} == active_key_ids
+    assert persisted_rotated_keys == []
+    assert persisted_active_key.kid in active_key_ids
     assert {key.kid for key in synced_jwks} == active_key_ids
     assert (
         await async_redis_client.get(SyncedStoreCommandStrings.AUTH_BOOTUP_MASTER)
@@ -385,7 +388,7 @@ async def test_concurrent_processes_elect_master_and_share_clean_boot_state(
 
 
 @pytest.mark.asyncio
-async def test_populated_missing_active_state_is_repaired_at_cap_across_processes(
+async def test_populated_state_is_pruned_to_cap_across_processes(
     process_context: BaseContext,
     process_services: ProcessServices,
     dummy_key_config: SimpleNamespace,
@@ -397,28 +400,28 @@ async def test_populated_missing_active_state_is_repaired_at_cap_across_processe
         dummy_key_config,
         process_services.jwks_cap + 1,
     )
-    await keydata_repository.expire_keydata(key_ids[-1])
-    assert (
-        len(await keydata_repository.get_relevant_keydata())
-        == process_services.jwks_cap
+    (
+        seeded_active_key,
+        seeded_rotated_keys,
+    ) = await keydata_repository.get_relevant_keydata()
+    assert len((seeded_active_key, *seeded_rotated_keys)) == (
+        process_services.jwks_cap + 1
     )
-    assert await keydata_repository.get_active_key() is None
 
     results = _run_processes(process_context, process_services, worker_count=2)
 
     _assert_successful_election(results)
-    relevant_keys = await keydata_repository.get_relevant_keydata()
+    active_key, rotated_keys = await keydata_repository.get_relevant_keydata()
+    relevant_keys = (active_key, *rotated_keys)
     expired_keys = await keydata_repository.get_expired_keys()
     synced_jwks = await synced_key_store_manager.get_jwks()
-    active_keys = [key for key in relevant_keys if key.rotated_out_at is None]
     expected_key_ids = {key.kid for key in relevant_keys}
 
     assert len(relevant_keys) == process_services.jwks_cap
-    assert len(active_keys) == 1
-    assert len(expired_keys) == 2
-    assert key_ids[-1] in {key.kid for key in expired_keys}
+    assert len(expired_keys) == 1
+    assert key_ids[0] in {key.kid for key in expired_keys}
     assert {key.kid for key in synced_jwks} == expected_key_ids
-    assert all(result.active_key_id == active_keys[0].kid for result in results)
+    assert all(result.active_key_id == active_key.kid for result in results)
     assert all(set(result.key_ids) == expected_key_ids for result in results)
 
 
@@ -459,4 +462,5 @@ async def test_master_database_failure_announces_abort_to_concurrent_slaves(
     )
     assert await async_redis_client.get(SyncedStoreCommandStrings.ABORT) == "1"
     assert await async_redis_client.ttl(SyncedStoreCommandStrings.ABORT) > 0
-    assert await keydata_repository.get_relevant_keydata() == []
+    with pytest.raises(EmptyKeysError, match="No relevant keydata found"):
+        await keydata_repository.get_relevant_keydata()

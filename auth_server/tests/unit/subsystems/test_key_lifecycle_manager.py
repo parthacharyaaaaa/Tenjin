@@ -4,6 +4,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
+from auth_server.datastructures.exceptions.keys import (
+    ExpiredKeyError,
+    KeyNotFoundError,
+)
+from auth_server.models.data_transport.keydata import ExpiredKeyDataResult
 from auth_server.strings import SelectionLockOption, SyncedStoreKeyStrings
 from auth_server.subsystems.key_manager import KeyLifecycleManager, LockTIme
 
@@ -64,7 +69,7 @@ def lifecycle() -> LifecycleHarness:
     repository_context = make_async_context()
 
     repository.unit_of_work = Mock(return_value=repository_context)
-    repository.get_keydata = AsyncMock()
+    repository.get_rotated_keydata = AsyncMock()
     repository.expire_keydata = AsyncMock()
     repository.get_jwks = AsyncMock()
     repository.batch_expire_keydata = AsyncMock()
@@ -72,7 +77,7 @@ def lifecycle() -> LifecycleHarness:
     repository.rotate_key = AsyncMock()
     repository.get_valid_inactive_keys = AsyncMock(return_value=[])
     token_manager.invalidate_key = Mock()
-    token_manager.update_keydata = Mock()
+    token_manager.update_signing_key = Mock()
     synced_manager.get_jwks = AsyncMock()
     synced_manager.set_jwks = AsyncMock()
     synced_manager.set_operation_cooldown = AsyncMock()
@@ -247,45 +252,33 @@ async def test_invalidate_key_rejects_missing_key(
     lifecycle: LifecycleHarness,
     bypass_transaction: AsyncContext,
 ) -> None:
-    lifecycle.repository.get_keydata.return_value = None
+    lifecycle.repository.get_rotated_keydata.return_value = None
 
-    with pytest.raises(ValueError, match="No key with ID missing found"):
+    with pytest.raises(KeyNotFoundError, match="No inactive key with ID missing found"):
         await lifecycle.manager.invalidate_key("missing")
 
-    lifecycle.repository.get_keydata.assert_awaited_once_with(
+    lifecycle.repository.get_rotated_keydata.assert_awaited_once_with(
         "missing",
-        public_only=False,
+        include_expired=True,
         lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ),
     )
     lifecycle.repository.expire_keydata.assert_not_awaited()
 
 
-@pytest.mark.parametrize(
-    ("rotated_out_at", "expired_at", "message"),
-    (
-        (None, None, "Cannot invalidate active key key-1"),
-        (
-            datetime(2026, 1, 1, tzinfo=UTC),
-            datetime(2026, 1, 2, tzinfo=UTC),
-            "Key key-1 has already been expired",
-        ),
-    ),
-)
 @pytest.mark.asyncio
-async def test_invalidate_key_rejects_invalid_key_state(
+async def test_invalidate_key_rejects_expired_key(
     lifecycle: LifecycleHarness,
     bypass_transaction: AsyncContext,
-    rotated_out_at: datetime | None,
-    expired_at: datetime | None,
-    message: str,
 ) -> None:
-    lifecycle.repository.get_keydata.return_value = SimpleNamespace(
-        kid="key-1",
-        rotated_out_at=rotated_out_at,
-        expired_at=expired_at,
-    )
+    expired_key = object.__new__(ExpiredKeyDataResult)
+    expired_key.kid = "key-1"
+    expired_key.expired_at = datetime(2026, 1, 2, tzinfo=UTC)
+    lifecycle.repository.get_rotated_keydata.return_value = expired_key
 
-    with pytest.raises(Exception, match=message):
+    with pytest.raises(
+        ExpiredKeyError,
+        match=r"Key key-1 already expired at 2026-01-02T00:00:00\+00:00",
+    ):
         await lifecycle.manager.invalidate_key("key-1")
 
     lifecycle.repository.expire_keydata.assert_not_awaited()
@@ -303,7 +296,7 @@ async def test_invalidate_key_prunes_consistent_synced_jwks(
     )
     target_jwk = SimpleNamespace(kid="key-1")
     retained_jwk = SimpleNamespace(kid="key-2")
-    lifecycle.repository.get_keydata.return_value = target
+    lifecycle.repository.get_rotated_keydata.return_value = target
     lifecycle.synced_manager.get_jwks.return_value = [target_jwk, retained_jwk]
     parsed_jwks = object()
     parsed_jwk = object()
@@ -341,7 +334,7 @@ async def test_invalidate_key_regenerates_inconsistent_jwks_and_sets_warning(
     lifecycle: LifecycleHarness,
     bypass_transaction: AsyncContext,
 ) -> None:
-    lifecycle.repository.get_keydata.return_value = SimpleNamespace(
+    lifecycle.repository.get_rotated_keydata.return_value = SimpleNamespace(
         kid="key-1",
         rotated_out_at=datetime(2026, 1, 1, tzinfo=UTC),
         expired_at=None,
@@ -527,9 +520,9 @@ async def test_rotate_key_updates_state_and_announces_jwks(
         rotation_author=7,
         epoch=generation_epoch,
         returning=True,
-        public_only=False,
+        return_public_only=False,
     )
-    lifecycle.token_manager.update_keydata.assert_called_once_with("new-key", new_key)
+    lifecycle.token_manager.update_signing_key.assert_called_once_with(new_key)
     lifecycle.synced_manager.set_jwks.assert_awaited_once_with(jwks)
     asdict_mock.assert_has_calls(
         [
@@ -590,4 +583,6 @@ async def test_rotate_key_expires_oldest_keys_beyond_capacity(
     ):
         await lifecycle.manager.rotate_key()
 
-    lifecycle.repository.batch_expire_keydata.assert_awaited_once_with(("oldest",))
+    lifecycle.repository.batch_expire_keydata.assert_awaited_once_with(
+        ("oldest", "older")
+    )

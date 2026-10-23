@@ -6,6 +6,10 @@ from fastapi import Depends, HTTPException, Request
 
 from auth_server.admin.permissions import Permission
 from auth_server.admin.roles import ROLE_PERMISSIONS
+from auth_server.datastructures.exceptions.admin import (
+    InvalidaSessionError,
+    MissingSessionError,
+)
 from auth_server.dependencies.local import (
     get_admin_session_manager,
     get_hypermedia_link_builder,
@@ -45,6 +49,13 @@ async def get_admin_session(
             e.args[0] if e.args else "Invalid session",
             hypermedia=login_hypermedia(link_builder, admin=True),
         ) from e
+    except MissingSessionError as e:
+        raise HTTPException(404, str(e)) from e
+    except InvalidaSessionError as e:
+        await admin_session_manager.terminate_malformed_session(
+            admin_session_manager.generate_admin_session_name(session_id)
+        )
+        raise HTTPException(401, str(e)) from e
     except Exception as e:
         raise HTTPException(
             500, f"Failed to fetch session information for session with ID {session_id}"

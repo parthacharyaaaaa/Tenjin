@@ -100,8 +100,10 @@ class AbstractResult:
         instance = cls()
 
         for attribute in obj.__table__.columns.keys():
-            if (dataclass_attribute := attribute.strip("_")) in cls._fields:
-                setattr(instance, dataclass_attribute, getattr(obj, attribute))
+            if attribute in cls._fields:
+                setattr(instance, attribute, getattr(obj, attribute))
+            elif (stripped_attribute := attribute.strip("_")) in cls._fields:
+                setattr(instance, stripped_attribute, getattr(obj, attribute))
         return instance
 
     def map_fields(

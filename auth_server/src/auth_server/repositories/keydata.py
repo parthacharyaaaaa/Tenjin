@@ -1,116 +1,26 @@
 """Data access repository for Keydata SA model"""
 
-from collections.abc import Mapping, MutableMapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, ClassVar, Final, Literal, Self, overload
+from typing import Final, Literal, overload
 
-from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
-from auxillary.security.data_structures.jwks.enums import ECAlg, JWKKty, JWKUse
-from auxillary.utils import cache_repr, to_base64url
 from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
-from cryptography.hazmat.primitives.serialization import load_pem_public_key
-from redis.typing import EncodableT, FieldT
 from sqlalchemy import insert, select, update
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.sql.expression import ColumnExpressionArgument
 
+from auth_server.datastructures.exceptions.keys import EmptyKeysError
+from auth_server.models.data_transport.keydata import (
+    ActiveKeyPrivateDataResult,
+    ActiveKeyPublicDataResult,
+    EllipticCurveJWKResult,
+    ExpiredKeyDataResult,
+    RotatedKeyDataResult,
+)
 from auth_server.models.database import KeyData
 from auth_server.strings import SelectionLockOption
-
-
-@dataclass(slots=True)
-class EllipticCurveJWKResult(AbstractResult):
-    resource_name: ClassVar[str] = "EllipticCurveJWK"
-    alg: ECAlg
-    crv: str
-    kid: str
-    x: str
-    y: str
-    kty: Literal[JWKKty.EC] = field(default=JWKKty.EC)
-    use: Literal[JWKUse.SIG] = field(default=JWKUse.SIG)
-
-    @classmethod
-    def initialize_from_cache(cls, cache_mapping: Mapping[str, Any]) -> Self:
-        return cls(**cache_mapping)
-
-
-@dataclass(slots=True, init=False)
-class KeyPublicDataResult(AbstractResult):
-    """
-    DTO for KeyData ORM object, excluding private PEM bytes
-    """
-
-    resource_name: ClassVar[str] = KeyData.__tablename__
-
-    kid: str
-    alg: str
-    curve: str
-    epoch: datetime
-    rotated_out_at: datetime
-    expired_at: datetime
-    public_pem: bytes
-    manual_rotation: bool
-    rotated_by: int
-
-    @staticmethod
-    def stringify_binary_fields(
-        d: MutableMapping[Any, Any], *, encoding: str = "utf-8"
-    ) -> None:
-        for k, v in d.items():
-            if isinstance(v, (bytes, bytearray)):
-                d[k] = v.decode(encoding)
-
-    def __json_repr__(self) -> dict[str, Any]:
-        json_mapping: dict[str, Any] = super(KeyPublicDataResult, self).__json_repr__()
-        self.stringify_binary_fields(json_mapping)
-        return json_mapping
-
-    def __cache_repr__(self) -> dict[FieldT, EncodableT]:
-        cache_mapping: dict[FieldT, EncodableT] = super(
-            KeyPublicDataResult, self
-        ).__cache_repr__()
-        self.stringify_binary_fields(cache_mapping)
-        return cache_mapping
-
-    @classmethod
-    def construct_from_cache(cls, mapping: Mapping[str, Any], *args, **kwargs) -> Self:
-        instance: cls = super(KeyPublicDataResult, cls).construct_from_cache(mapping)
-        instance.public_pem = instance.public_pem.encode(encoding="ascii")  # type: ignore
-        return instance
-
-    def as_jwk(self) -> EllipticCurveJWKResult:
-        verification_key: PublicKeyTypes = load_pem_public_key(self.public_pem)
-        if not isinstance(verification_key, ec.EllipticCurvePublicKey):
-            raise TypeError("Expected an elliptic-curve public key")
-        public_numbers: ec.EllipticCurvePublicNumbers = (
-            verification_key.public_numbers()
-        )
-        return EllipticCurveJWKResult(
-            ECAlg(self.alg),
-            verification_key.curve.name,
-            self.kid,
-            to_base64url(public_numbers.x),
-            to_base64url(public_numbers.y),
-        )
-
-
-@dataclass(slots=True, init=False)
-class KeyPrivateDataResult(KeyPublicDataResult):
-    """
-    DTO for KeyData ORM object, including private PEM bytes
-    """
-
-    private_pem: bytes
-
-    @classmethod
-    def construct_from_cache(cls, mapping: Mapping[str, Any], *args, **kwargs) -> Self:
-        instance: cls = super(KeyPublicDataResult, cls).construct_from_cache(mapping)
-        instance.private_pem = instance.private_pem.encode(encoding="ascii")  # type: ignore
-        return instance
-
-    def create_public_copy(self) -> KeyPublicDataResult:
-        return KeyPublicDataResult.construct_from_cache(cache_repr(self))  # pyrefly: ignore
 
 
 @dataclass(slots=True)
@@ -120,27 +30,32 @@ class KeydataRepository(AbstractWorkRepository):
         self,
         key_id: str,
         *,
-        public_only: Literal[True] = True,
+        include_expired: Literal[False] = False,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> KeyPublicDataResult | None: ...
+    ) -> ActiveKeyPublicDataResult | RotatedKeyDataResult | None: ...
 
     @overload
     async def get_keydata(
         self,
         key_id: str,
         *,
-        public_only: Literal[False] = False,
+        include_expired: Literal[True] = True,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> KeyPrivateDataResult | None: ...
+    ) -> (
+        ActiveKeyPublicDataResult | RotatedKeyDataResult | ExpiredKeyDataResult | None
+    ): ...
 
     async def get_keydata(
         self,
         key_id: str,
         *,
-        public_only: bool = True,
+        include_expired: bool = False,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> KeyPublicDataResult | KeyPrivateDataResult | None:
-        statement = select(KeyData).where(KeyData.kid == key_id)
+    ) -> ActiveKeyPublicDataResult | RotatedKeyDataResult | ExpiredKeyDataResult | None:
+        selection_clauses: list[ColumnExpressionArgument] = [KeyData.kid == key_id]
+        if not include_expired:
+            selection_clauses.append(KeyData.expired_at.is_(None))
+        statement = select(KeyData).where(*selection_clauses)
         if lock_args:
             statement = statement.with_for_update(
                 **{lock_arg: True for lock_arg in lock_args}  # pyrefly: ignore
@@ -149,43 +64,85 @@ class KeydataRepository(AbstractWorkRepository):
             keydata = (await session.execute(statement)).scalar_one_or_none()
             if not keydata:
                 return None
-            if public_only:
-                return KeyPublicDataResult.construct_from_orm(keydata)
-            return KeyPrivateDataResult.construct_from_orm(keydata)
+            if keydata.expired_at:
+                return ExpiredKeyDataResult.construct_from_orm(keydata)
+            if keydata.rotated_out_at:
+                return RotatedKeyDataResult.construct_from_orm(keydata)
+            return ActiveKeyPublicDataResult.construct_from_orm(keydata)
+
+    @overload
+    async def get_rotated_keydata(
+        self,
+        key_id: str,
+        *,
+        include_expired: Literal[False] = False,
+        lock_args: Sequence[SelectionLockOption] | None = None,
+    ) -> RotatedKeyDataResult | None: ...
+
+    @overload
+    async def get_rotated_keydata(
+        self,
+        key_id: str,
+        *,
+        include_expired: Literal[True] = True,
+        lock_args: Sequence[SelectionLockOption] | None = None,
+    ) -> RotatedKeyDataResult | ExpiredKeyDataResult | None: ...
+
+    async def get_rotated_keydata(
+        self,
+        key_id: str,
+        *,
+        include_expired: bool = False,
+        lock_args: Sequence[SelectionLockOption] | None = None,
+    ) -> RotatedKeyDataResult | ExpiredKeyDataResult | None:
+        statement = select(KeyData).where(
+            (KeyData.kid == key_id) & (KeyData.rotated_out_at.isnot(None))
+        )
+        if lock_args:
+            statement = statement.with_for_update(
+                **{lock_arg: True for lock_arg in lock_args}  # pyrefly: ignore
+            )
+        async with self._work_scoped_session() as session:
+            rotated_key: Final[KeyData | None] = (
+                await session.execute(statement)
+            ).scalar_one_or_none()
+            if not rotated_key or not (
+                include_expired or rotated_key.expired_at is None
+            ):
+                return None
+            if rotated_key.expired_at is None:
+                return RotatedKeyDataResult.construct_from_orm(rotated_key)
+            return ExpiredKeyDataResult.construct_from_orm(rotated_key)
 
     @overload
     async def get_relevant_keydata(
         self,
-        limit: int | None = None,
-        raise_on_empty: bool = False,
         *,
-        public_data_only: Literal[True] = True,
+        active_key_public_data_only: Literal[True] = True,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> list[KeyPublicDataResult]: ...
+    ) -> tuple[ActiveKeyPublicDataResult, list[RotatedKeyDataResult]]: ...
 
     @overload
     async def get_relevant_keydata(
         self,
-        limit: int | None = None,
-        raise_on_empty: bool = False,
         *,
-        public_data_only: Literal[False] = False,
+        active_key_public_data_only: Literal[False] = False,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> list[KeyPrivateDataResult]: ...
+    ) -> tuple[ActiveKeyPrivateDataResult, list[RotatedKeyDataResult]]: ...
 
     async def get_relevant_keydata(
         self,
-        limit: int | None = None,
-        raise_on_empty: bool = False,
         *,
-        public_data_only: bool = True,
+        active_key_public_data_only: bool = True,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> list[KeyPublicDataResult] | list[KeyPrivateDataResult]:
+    ) -> (
+        tuple[ActiveKeyPublicDataResult, list[RotatedKeyDataResult]]
+        | tuple[ActiveKeyPrivateDataResult, list[RotatedKeyDataResult]]
+    ):
         statement = (
             select(KeyData)
             .where(KeyData.expired_at.is_(None))
             .order_by(KeyData.epoch.desc())
-            .limit(limit)
         )
 
         if lock_args:
@@ -194,14 +151,20 @@ class KeydataRepository(AbstractWorkRepository):
             )
 
         async with self._work_scoped_session() as session:
-            keydata: list[KeyData] = list(
+            keydata: Sequence[KeyData] = (
                 (await session.execute(statement)).scalars().all()
             )
-            if not keydata and raise_on_empty:
-                raise ValueError("Key data empty")
-            if public_data_only:
-                return list(map(KeyPublicDataResult.construct_from_orm, keydata))
-            return list(map(KeyPrivateDataResult.construct_from_orm, keydata))
+            if not keydata:
+                raise EmptyKeysError("No relevant keydata found")
+            active_private_keydata: ActiveKeyPrivateDataResult = (
+                ActiveKeyPrivateDataResult.construct_from_orm(keydata[0])
+            )
+            rotated_keydata: Final[list[RotatedKeyDataResult]] = [
+                RotatedKeyDataResult.construct_from_orm(k) for k in keydata[1:]
+            ]
+            if active_key_public_data_only:
+                return active_private_keydata.create_public_copy(), rotated_keydata
+            return active_private_keydata, rotated_keydata
 
     @overload
     async def insert_keydata(
@@ -227,7 +190,7 @@ class KeydataRepository(AbstractWorkRepository):
         epoch: datetime | None = None,
         *,
         returning: Literal[True] = True,
-    ) -> KeyPrivateDataResult: ...
+    ) -> ActiveKeyPrivateDataResult: ...
 
     async def insert_keydata(
         self,
@@ -239,7 +202,7 @@ class KeydataRepository(AbstractWorkRepository):
         epoch: datetime | None = None,
         *,
         returning: bool = False,
-    ) -> KeyPrivateDataResult | None:
+    ) -> ActiveKeyPrivateDataResult | None:
         async with self._work_scoped_session() as session:
             keydata: KeyData = (
                 await session.execute(
@@ -257,7 +220,7 @@ class KeydataRepository(AbstractWorkRepository):
             ).scalar_one()
 
             if returning:
-                return KeyPrivateDataResult.construct_from_orm(keydata)
+                return ActiveKeyPrivateDataResult.construct_from_orm(keydata)
 
     @overload
     async def expire_keydata_with_threshold(
@@ -266,7 +229,6 @@ class KeydataRepository(AbstractWorkRepository):
         expiry_time: datetime | None = None,
         *,
         return_expired: Literal[False] = False,
-        public_data_only: bool = True,
     ) -> None: ...
     @overload
     async def expire_keydata_with_threshold(
@@ -275,17 +237,7 @@ class KeydataRepository(AbstractWorkRepository):
         expiry_time: datetime | None = None,
         *,
         return_expired: Literal[True] = True,
-        public_data_only: Literal[True] = True,
-    ) -> list[KeyPublicDataResult]: ...
-    @overload
-    async def expire_keydata_with_threshold(
-        self,
-        threshold: datetime,
-        expiry_time: datetime | None = None,
-        *,
-        return_expired: Literal[True] = True,
-        public_data_only: Literal[False] = False,
-    ) -> list[KeyPrivateDataResult]: ...
+    ) -> list[ExpiredKeyDataResult]: ...
 
     async def expire_keydata_with_threshold(
         self,
@@ -293,8 +245,7 @@ class KeydataRepository(AbstractWorkRepository):
         expiry_time: datetime | None = None,
         *,
         return_expired: bool = False,
-        public_data_only: bool = True,
-    ) -> list[KeyPublicDataResult] | list[KeyPrivateDataResult] | None:
+    ) -> list[ExpiredKeyDataResult] | None:
         async with self._work_scoped_session() as session:
             expired_keys: list[KeyData] = list(
                 (
@@ -312,11 +263,7 @@ class KeydataRepository(AbstractWorkRepository):
             )
 
             if return_expired:
-                if public_data_only:
-                    return list(
-                        map(KeyPublicDataResult.construct_from_orm, expired_keys)
-                    )
-                return list(map(KeyPrivateDataResult.construct_from_orm, expired_keys))
+                return list(map(ExpiredKeyDataResult.construct_from_orm, expired_keys))
 
     @overload
     async def expire_keydata(
@@ -325,7 +272,6 @@ class KeydataRepository(AbstractWorkRepository):
         expiry_time: datetime | None = None,
         *,
         return_expired: Literal[False] = False,
-        public_data_only: bool = True,
     ) -> None: ...
     @overload
     async def expire_keydata(
@@ -334,17 +280,7 @@ class KeydataRepository(AbstractWorkRepository):
         expiry_time: datetime | None = None,
         *,
         return_expired: Literal[True] = True,
-        public_data_only: Literal[True] = True,
-    ) -> KeyPublicDataResult | None: ...
-    @overload
-    async def expire_keydata(
-        self,
-        kid: str,
-        expiry_time: datetime | None = None,
-        *,
-        return_expired: Literal[True] = True,
-        public_data_only: Literal[False] = False,
-    ) -> KeyPrivateDataResult | None: ...
+    ) -> ExpiredKeyDataResult | None: ...
 
     async def expire_keydata(
         self,
@@ -352,8 +288,7 @@ class KeydataRepository(AbstractWorkRepository):
         expiry_time: datetime | None = None,
         *,
         return_expired: bool = False,
-        public_data_only: bool = True,
-    ) -> KeyPublicDataResult | KeyPrivateDataResult | None:
+    ) -> ExpiredKeyDataResult | None:
         async with self._work_scoped_session() as session:
             expired_key: KeyData | None = (
                 await session.execute(
@@ -368,9 +303,7 @@ class KeydataRepository(AbstractWorkRepository):
                 return None
 
             if return_expired:
-                if public_data_only:
-                    return KeyPublicDataResult.construct_from_orm(expired_key)
-                return KeyPrivateDataResult.construct_from_orm(expired_key)
+                return ExpiredKeyDataResult.construct_from_orm(expired_key)
 
     @overload
     async def batch_expire_keydata(
@@ -379,7 +312,6 @@ class KeydataRepository(AbstractWorkRepository):
         expiry_time: datetime | None = None,
         *,
         return_expired: Literal[False] = False,
-        public_data_only: bool = True,
     ) -> None: ...
     @overload
     async def batch_expire_keydata(
@@ -388,17 +320,7 @@ class KeydataRepository(AbstractWorkRepository):
         expiry_time: datetime | None = None,
         *,
         return_expired: Literal[True] = True,
-        public_data_only: Literal[True] = True,
-    ) -> list[KeyPublicDataResult]: ...
-    @overload
-    async def batch_expire_keydata(
-        self,
-        kids: Sequence[str],
-        expiry_time: datetime | None = None,
-        *,
-        return_expired: Literal[True] = True,
-        public_data_only: Literal[False] = False,
-    ) -> list[KeyPrivateDataResult]: ...
+    ) -> list[ExpiredKeyDataResult]: ...
 
     async def batch_expire_keydata(
         self,
@@ -406,8 +328,7 @@ class KeydataRepository(AbstractWorkRepository):
         expiry_time: datetime | None = None,
         *,
         return_expired: bool = False,
-        public_data_only: bool = True,
-    ) -> list[KeyPublicDataResult] | list[KeyPrivateDataResult] | None:
+    ) -> list[ExpiredKeyDataResult] | None:
         async with self._work_scoped_session() as session:
             expired_keys: list[KeyData] = list(
                 (
@@ -426,68 +347,47 @@ class KeydataRepository(AbstractWorkRepository):
                 return [] if return_expired else None
 
             if return_expired:
-                if public_data_only:
-                    return list(
-                        map(KeyPublicDataResult.construct_from_orm, expired_keys)
-                    )
-                return list(map(KeyPrivateDataResult.construct_from_orm, expired_keys))
-
-    @overload
-    async def get_expired_keys(
-        self, *, public_data_only: Literal[True] = True
-    ) -> list[KeyPublicDataResult]: ...
-    @overload
-    async def get_expired_keys(
-        self, *, public_data_only: Literal[False] = False
-    ) -> list[KeyPrivateDataResult]: ...
+                return list(map(ExpiredKeyDataResult.construct_from_orm, expired_keys))
 
     async def get_expired_keys(
-        self, *, public_data_only: bool = True
-    ) -> list[KeyPublicDataResult] | list[KeyPrivateDataResult]:
+        self, *, limit: int | None = None, offset_id: str | None = None
+    ) -> list[ExpiredKeyDataResult]:
+        selection_clauses: list[ColumnExpressionArgument] = [
+            KeyData.expired_at.isnot(None)
+        ]
+        if offset_id is not None:
+            selection_clauses.append(KeyData.kid > offset_id)
         async with self._work_scoped_session() as session:
             expired_keys: list[KeyData] = list(
                 (
                     await session.execute(
                         select(KeyData)
-                        .where(KeyData.expired_at.isnot(None))
+                        .where(*selection_clauses)
+                        .limit(limit)
                         .order_by(KeyData.expired_at)
                     )
                 )
                 .scalars()
                 .all()
             )
-            if public_data_only:
-                return list(map(KeyPublicDataResult.construct_from_orm, expired_keys))
-            return list(map(KeyPrivateDataResult.construct_from_orm, expired_keys))
+            return list(map(ExpiredKeyDataResult.construct_from_orm, expired_keys))
 
-    @overload
     async def get_valid_inactive_keys(
         self,
-        limit: int | None = None,
         *,
-        public_data_only: Literal[True] = True,
-        lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> list[KeyPublicDataResult]: ...
-    @overload
-    async def get_valid_inactive_keys(
-        self,
         limit: int | None = None,
-        *,
-        public_data_only: Literal[False] = False,
+        offset_id: str | None = None,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> list[KeyPrivateDataResult]: ...
-    async def get_valid_inactive_keys(
-        self,
-        limit: int | None = None,
-        *,
-        public_data_only: bool = True,
-        lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> list[KeyPublicDataResult] | list[KeyPrivateDataResult]:
+    ) -> list[RotatedKeyDataResult]:
+        selection_clauses: list[ColumnExpressionArgument] = [
+            KeyData.expired_at.is_(None),
+            KeyData.rotated_out_at.isnot(None),
+        ]
+        if offset_id is not None:
+            selection_clauses.append(KeyData.kid > offset_id)
         statement = (
             select(KeyData)
-            .where(
-                (KeyData.expired_at.is_(None)) & (KeyData.rotated_out_at.isnot(None))
-            )
+            .where(*selection_clauses)
             .order_by(KeyData.epoch.desc())
             .limit(limit)
         )
@@ -499,9 +399,7 @@ class KeydataRepository(AbstractWorkRepository):
             keys: list[KeyData] = list(
                 (await session.execute(statement)).scalars().all()
             )
-            if public_data_only:
-                return list(map(KeyPublicDataResult.construct_from_orm, keys))
-            return list(map(KeyPrivateDataResult.construct_from_orm, keys))
+            return list(map(RotatedKeyDataResult.construct_from_orm, keys))
 
     @overload
     async def get_active_key(
@@ -509,21 +407,21 @@ class KeydataRepository(AbstractWorkRepository):
         *,
         public_data_only: Literal[True] = True,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> KeyPublicDataResult | None: ...
+    ) -> ActiveKeyPublicDataResult: ...
     @overload
     async def get_active_key(
         self,
         *,
         public_data_only: Literal[False] = False,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> KeyPrivateDataResult | None: ...
+    ) -> ActiveKeyPrivateDataResult: ...
 
     async def get_active_key(
         self,
         *,
         public_data_only: bool = True,
         lock_args: Sequence[SelectionLockOption] | None = None,
-    ) -> KeyPublicDataResult | KeyPrivateDataResult | None:
+    ) -> ActiveKeyPublicDataResult | ActiveKeyPrivateDataResult | None:
         statement = select(KeyData).where(
             (KeyData.rotated_out_at.is_(None)) & (KeyData.expired_at.is_(None))
         )
@@ -537,10 +435,10 @@ class KeydataRepository(AbstractWorkRepository):
                 await session.execute(statement)
             ).scalar_one_or_none()
             if not active_key:
-                return None
+                raise EmptyKeysError("No active key found")
             if public_data_only:
-                return KeyPublicDataResult.construct_from_orm(active_key)
-            return KeyPrivateDataResult.construct_from_orm(active_key)
+                return ActiveKeyPublicDataResult.construct_from_orm(active_key)
+            return ActiveKeyPrivateDataResult.construct_from_orm(active_key)
 
     @overload
     async def rotate_key(
@@ -556,7 +454,7 @@ class KeydataRepository(AbstractWorkRepository):
         epoch: datetime | None = None,
         previous_key_rotation_time: datetime | None = None,
         returning: Literal[False] = False,
-        public_only: bool = True,
+        return_public_only: bool = False,
     ) -> None: ...
 
     @overload
@@ -572,9 +470,9 @@ class KeydataRepository(AbstractWorkRepository):
         rotation_author: int | None = None,
         epoch: datetime | None = None,
         previous_key_rotation_time: datetime | None = None,
-        returning: Literal[True],
-        public_only: Literal[True] = True,
-    ) -> KeyPublicDataResult: ...
+        returning: Literal[True] = True,
+        return_public_only: Literal[False] = False,
+    ) -> ActiveKeyPrivateDataResult: ...
 
     @overload
     async def rotate_key(
@@ -589,9 +487,9 @@ class KeydataRepository(AbstractWorkRepository):
         rotation_author: int | None = None,
         epoch: datetime | None = None,
         previous_key_rotation_time: datetime | None = None,
-        returning: Literal[True],
-        public_only: Literal[False],
-    ) -> KeyPrivateDataResult: ...
+        returning: Literal[True] = True,
+        return_public_only: Literal[True] = True,
+    ) -> ActiveKeyPublicDataResult: ...
 
     async def rotate_key(
         self,
@@ -606,8 +504,8 @@ class KeydataRepository(AbstractWorkRepository):
         epoch: datetime | None = None,
         previous_key_rotation_time: datetime | None = None,
         returning: bool = False,
-        public_only: bool = True,
-    ) -> KeyPublicDataResult | KeyPrivateDataResult | None:
+        return_public_only: bool = False,
+    ) -> ActiveKeyPublicDataResult | ActiveKeyPrivateDataResult | None:
         epoch = epoch or datetime.now(UTC)
         previous_key_rotation_time = previous_key_rotation_time or epoch
 
@@ -616,9 +514,10 @@ class KeydataRepository(AbstractWorkRepository):
                 update(KeyData)
                 .where(KeyData.kid == previous_key_id)
                 .values(
-                    rotated_out_at=datetime.now(UTC),
+                    rotated_out_at=previous_key_rotation_time,
                     manual_rotation=True,
                     rotated_by=rotation_author,
+                    private_pem=None,
                 )
             )
 
@@ -639,12 +538,31 @@ class KeydataRepository(AbstractWorkRepository):
             ).scalar_one()
 
             if returning:
-                if public_only:
-                    return KeyPublicDataResult.construct_from_orm(new_key)
-                return KeyPrivateDataResult.construct_from_orm(new_key)
+                if return_public_only:
+                    return ActiveKeyPublicDataResult.construct_from_orm(new_key)
+                return ActiveKeyPrivateDataResult.construct_from_orm(new_key)
 
     async def get_jwks(self) -> tuple[EllipticCurveJWKResult, ...]:
-        return tuple(
-            i.as_jwk()
-            for i in await self.get_relevant_keydata(limit=None, public_data_only=True)
+        active, rotated = await self.get_relevant_keydata()
+        return (active.as_jwk(), *(r.as_jwk() for r in rotated))
+
+    async def get_active_private_pem(
+        self, *, active_key_id: str | None = None
+    ) -> bytes:
+        statement = select(KeyData.private_pem).where(
+            KeyData.kid == active_key_id
+            if active_key_id is not None
+            else KeyData.rotated_out_at.is_(None)
         )
+        async with self._work_scoped_session() as session:
+            try:
+                private_pem: bytes | None = (
+                    await session.execute(statement)
+                ).scalar_one()
+                if private_pem is None:  # Should never happen!!!
+                    raise ValueError(
+                        "Invalid database state, active key has missing private PEM bytes"
+                    )
+                return private_pem
+            except SQLAlchemyError as e:
+                raise EmptyKeysError("No active key found") from e

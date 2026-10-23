@@ -2,27 +2,14 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import ClassVar
 
-from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
 from sqlalchemy import insert, select
 
+from auth_server.models.data_transport.suspicious_activity import (
+    SuspiciousActivityResult,
+)
 from auth_server.models.database import SuspiciousActivity
-
-
-@dataclass(slots=True, init=False)
-class SuspiciousActivityResult(AbstractResult):
-    """
-    DTO for SuspiciousActivity ORM object
-    """
-
-    resource_name: ClassVar[str] = SuspiciousActivity.__tablename__
-
-    id_: int
-    suspect: int
-    time_logged: datetime
-    description: str
 
 
 @dataclass(slots=True)

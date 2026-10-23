@@ -3,33 +3,15 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import ClassVar, Literal, overload
+from typing import Literal, overload
 
-from auxillary.data_structures.dto import AbstractResult
 from auxillary.data_structures.repository import AbstractWorkRepository
 from sqlalchemy import insert, select, update
 
 from auth_server.admin.roles import AdminRole
+from auth_server.models.data_transport.admin import AdminPublicResult
 from auth_server.models.database import Admin
 from auth_server.strings import SelectionLockOption
-
-
-@dataclass(slots=True, init=False)
-class AdminPublicResult(AbstractResult):
-    """
-    DTO for an Admin ORM object, excluding the private signing key.
-    """
-
-    resource_name: ClassVar[str] = Admin.__tablename__
-
-    id: int
-    username: str
-    role: AdminRole
-
-    time_deleted: datetime | None
-    last_login: datetime
-    locked: bool
-    created_by: int
 
 
 @dataclass(slots=True)

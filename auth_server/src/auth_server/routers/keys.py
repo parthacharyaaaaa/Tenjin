@@ -4,11 +4,12 @@ from auxillary.data_structures.enriched.exceptions import EnrichedHTTPException
 from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
 from auxillary.data_structures.enriched.response import EnrichedJSONResponse
 from auxillary.utils import json_repr
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from auth_server.admin.permissions import Permission
+from auth_server.datastructures.exceptions.keys import KeyStateError
 from auth_server.dependencies.local import (
     get_hypermedia_link_builder,
     get_key_lifecycle_manager,
@@ -16,11 +17,14 @@ from auth_server.dependencies.local import (
     get_synced_store_key_state_manager,
 )
 from auth_server.dependencies.requests import require_permissions
+from auth_server.models.data_transport.keydata import (
+    ActiveKeyPublicDataResult,
+    ExpiredKeyDataResult,
+    RotatedKeyDataResult,
+)
 from auth_server.models.session import AdminSession
 from auth_server.repositories.keydata import (
     KeydataRepository,
-    KeyPrivateDataResult,
-    KeyPublicDataResult,
 )
 from auth_server.subsystems.key_manager import (
     KeyLifecycleManager,
@@ -45,12 +49,15 @@ async def get_key(
     link_builder: Annotated[
         HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
     ],
-    public: bool = True,
+    include_expired: bool = False,
 ) -> JSONResponse:
     try:
         key: (
-            KeyPublicDataResult | KeyPrivateDataResult | None
-        ) = await keydata_repository.get_keydata(kid, public_only=public)
+            ActiveKeyPublicDataResult
+            | RotatedKeyDataResult
+            | ExpiredKeyDataResult
+            | None
+        ) = await keydata_repository.get_keydata(kid, include_expired=include_expired)
 
         if not key:
             raise EnrichedHTTPException(
@@ -58,12 +65,14 @@ async def get_key(
                 "No key with this ID found",
                 hypermedia=jwks_hypermedia(link_builder),
             )
-    except SQLAlchemyError:
-        raise Exception("Failed to fetch key")
+    except SQLAlchemyError as e:
+        raise Exception("Failed to fetch key") from e
 
     return EnrichedJSONResponse(
         json_repr(key),
-        hypermedia_data=key_hypermedia(link_builder, kid, public=public),
+        hypermedia_data=key_hypermedia(
+            link_builder, kid, include_expired=include_expired
+        ),
     )
 
 
@@ -81,9 +90,12 @@ async def invalidate_key(
     ],
 ) -> JSONResponse:
     additional_kw: dict[str, str] = {}
-    await key_lifecycle_manager.invalidate_key(
-        kid, intermediate_message_mapping=additional_kw
-    )
+    try:
+        await key_lifecycle_manager.invalidate_key(
+            kid, intermediate_message_mapping=additional_kw
+        )
+    except KeyStateError as e:
+        raise HTTPException(409, str(e)) from e
 
     valid_keys: list[str] = [i.kid for i in await synced_keystate_manager.get_jwks()]
     return JSONResponse(
@@ -105,7 +117,13 @@ async def clean_keystore(
         KeyLifecycleManager, Depends(get_key_lifecycle_manager)
     ],
 ) -> JSONResponse:
-    active_key_id, invalidated_key_ids = await key_lifecycle_manager.clean_keystore()
+    try:
+        (
+            active_key_id,
+            invalidated_key_ids,
+        ) = await key_lifecycle_manager.clean_keystore()
+    except KeyStateError as e:
+        raise HTTPException(409, str(e)) from e
     return JSONResponse(
         {
             "message": "All inactive keys have been invalidated",
@@ -133,9 +151,14 @@ async def rotate_keys(
     previous_active_key_id: Final[str] = (await synced_key_state_manager.get_jwks())[
         0
     ].kid
-    active_key: Final[KeyPublicDataResult] = await key_lifecycle_manager.rotate_key(
-        rotation_author=admin_session.admin_id
-    )
+    try:
+        active_key: Final[
+            ActiveKeyPublicDataResult
+        ] = await key_lifecycle_manager.rotate_key(
+            rotation_author=admin_session.admin_id
+        )
+    except KeyStateError as e:
+        raise HTTPException(409, str(e)) from e
     return EnrichedJSONResponse(
         {
             "message": "Key rotation successful",

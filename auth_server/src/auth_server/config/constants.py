@@ -19,3 +19,9 @@ REVIVAL_DIGEST_LENGTH: Final[int] = 256
 
 # Key-related
 KEY_IDENTIFIER_LENGTH: Final[int] = 32
+EC_CURVE_LENGTH: Final[int] = 32
+ALGORITHM_NAME_LEMGTH: Final[int] = 32
+
+# Suspicious-Activity related
+DESCRIPTION_MAX_LENGTH: Final[int] = 1024
+DESCRIPTION_MIN_LENGTH: Final[int] = 8

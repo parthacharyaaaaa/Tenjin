@@ -5,11 +5,12 @@ import httpx
 import pytest
 import pytest_asyncio
 from auth_server.admin.roles import AdminRole
-from auth_server.repositories.keydata import (
-    KeydataRepository,
-    KeyPrivateDataResult,
-    KeyPublicDataResult,
+from auth_server.models.data_transport.keydata import (
+    ActiveKeyPublicDataResult,
+    ExpiredKeyDataResult,
+    RotatedKeyDataResult,
 )
+from auth_server.repositories.keydata import KeydataRepository
 from auth_server.strings import AdminStrings, SyncedStoreKeyStrings
 from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
 from auth_server.subsystems.session_manager import AdminSessionManager
@@ -41,7 +42,7 @@ async def pre_test_prepper(
 @pytest_asyncio.fixture
 async def valid_inactive_keys(
     keydata_repository: KeydataRepository,
-) -> list[KeyPublicDataResult]:
+) -> list[RotatedKeyDataResult]:
     return await keydata_repository.get_valid_inactive_keys()
 
 
@@ -60,7 +61,8 @@ async def staff_admin_test_client(
 
 @pytest.mark.asyncio
 async def test_get_key(
-    super_admin_test_client: TestClient, valid_inactive_keys: list[KeyPublicDataResult]
+    super_admin_test_client: TestClient,
+    valid_inactive_keys: list[RotatedKeyDataResult],
 ) -> None:
     response: Final[httpx.Response] = await super_admin_test_client.get(
         f"cmd/keys/{valid_inactive_keys[0].kid}"
@@ -83,10 +85,10 @@ async def test_get_missing_key(
 @pytest.mark.asyncio
 async def test_normal_key_invalidation(
     super_admin_test_client: TestClient,
-    valid_inactive_keys: list[KeyPublicDataResult],
+    valid_inactive_keys: list[RotatedKeyDataResult],
     synced_key_store_manager: SyncedStoreKeyStateManager,
 ) -> None:
-    target_key: KeyPublicDataResult = valid_inactive_keys[0]
+    target_key: RotatedKeyDataResult = valid_inactive_keys[0]
     response: Final[httpx.Response] = await super_admin_test_client.delete(
         f"/cmd/keys/{target_key.kid}"
     )
@@ -98,29 +100,30 @@ async def test_normal_key_invalidation(
 
 
 @pytest.mark.asyncio
-async def test_get_private_key_when_requested(
+async def test_get_expired_key_when_requested(
     super_admin_test_client: TestClient,
-    valid_inactive_keys: list[KeyPublicDataResult],
+    valid_inactive_keys: list[RotatedKeyDataResult],
     keydata_repository: KeydataRepository,
 ) -> None:
-    target_key: Final[KeyPublicDataResult] = valid_inactive_keys[0]
-    private_key: Final[
-        KeyPrivateDataResult | None
-    ] = await keydata_repository.get_keydata(target_key.kid, public_only=False)
-    assert private_key is not None
+    target_key: Final[RotatedKeyDataResult] = valid_inactive_keys[0]
+    async with keydata_repository.unit_of_work():
+        expired_key = await keydata_repository.expire_keydata(
+            target_key.kid, return_expired=True
+        )
+    assert expired_key is not None
 
     response: Final[httpx.Response] = await super_admin_test_client.get(
-        f"/cmd/keys/{target_key.kid}", params={"public": "false"}
+        f"/cmd/keys/{target_key.kid}", params={"include_expired": "true"}
     )
     response_json: Final[dict[str, Any]] = response.json()
     links: Final[list[dict[str, str]]] = response_json.pop("_links")
 
     assert response.status_code == 200
-    assert response_json == json_repr(private_key)
-    assert "private_pem" in response_json
+    assert response_json == json_repr(expired_key)
+    assert "private_pem" not in response_json
     assert links == [
         {
-            "href": f"/cmd/keys/{target_key.kid}?public=False",
+            "href": f"/cmd/keys/{target_key.kid}?include_expired=True",
             "rel": "self",
             "type": "GET",
         },
@@ -134,7 +137,7 @@ async def test_get_private_key_when_requested(
     (
         ("GET", "/cmd/keys/5"),
         ("DELETE", "/cmd/keys/4"),
-        ("DELETE", "/cmd/keys/clean"),
+        ("DELETE", "/cmd/keys/"),
         ("POST", "/cmd/keys/rotate"),
     ),
 )
@@ -154,7 +157,7 @@ async def test_key_routes_require_an_admin_session(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "path",
-    ("/cmd/keys/4", "/cmd/keys/clean"),
+    ("/cmd/keys/4", "/cmd/keys/"),
 )
 async def test_staff_cannot_invalidate_keys(
     staff_admin_test_client: httpx.AsyncClient,
@@ -169,18 +172,18 @@ async def test_staff_cannot_invalidate_keys(
 @pytest.mark.asyncio
 async def test_invalidation_expires_key_and_updates_synced_state(
     super_admin_test_client: TestClient,
-    valid_inactive_keys: list[KeyPublicDataResult],
+    valid_inactive_keys: list[RotatedKeyDataResult],
     keydata_repository: KeydataRepository,
     synced_key_store_manager: SyncedStoreKeyStateManager,
 ) -> None:
-    target_key: Final[KeyPublicDataResult] = valid_inactive_keys[0]
+    target_key: Final[RotatedKeyDataResult] = valid_inactive_keys[0]
 
     response: Final[httpx.Response] = await super_admin_test_client.delete(
         f"/cmd/keys/{target_key.kid}"
     )
-    persisted_key: Final[
-        KeyPublicDataResult | None
-    ] = await keydata_repository.get_keydata(target_key.kid)
+    persisted_key = await keydata_repository.get_keydata(
+        target_key.kid, include_expired=True
+    )
     synced_key_ids: Final[list[str]] = [
         key.kid for key in await synced_key_store_manager.get_jwks()
     ]
@@ -192,7 +195,7 @@ async def test_invalidation_expires_key_and_updates_synced_state(
         "valid_keys": synced_key_ids,
         "additional_info": {},
     }
-    assert persisted_key is not None
+    assert isinstance(persisted_key, ExpiredKeyDataResult)
     assert persisted_key.expired_at is not None
     assert target_key.kid not in synced_key_ids
 
@@ -200,10 +203,10 @@ async def test_invalidation_expires_key_and_updates_synced_state(
 @pytest.mark.asyncio
 async def test_invalidation_repairs_inconsistent_synced_key_state(
     super_admin_test_client: TestClient,
-    valid_inactive_keys: list[KeyPublicDataResult],
+    valid_inactive_keys: list[RotatedKeyDataResult],
     synced_key_store_manager: SyncedStoreKeyStateManager,
 ) -> None:
-    target_key: Final[KeyPublicDataResult] = valid_inactive_keys[0]
+    target_key: Final[RotatedKeyDataResult] = valid_inactive_keys[0]
     synced_keys = await synced_key_store_manager.get_jwks()
     await synced_key_store_manager.set_jwks(
         tuple(key for key in synced_keys if key.kid != target_key.kid)
@@ -232,25 +235,25 @@ async def test_active_key_cannot_be_invalidated(
     synced_key_store_manager: SyncedStoreKeyStateManager,
 ) -> None:
     active_key: Final[
-        KeyPublicDataResult | None
+        ActiveKeyPublicDataResult
     ] = await keydata_repository.get_active_key()
-    assert active_key is not None
     initial_synced_key_ids: Final[list[str]] = [
         key.kid for key in await synced_key_store_manager.get_jwks()
     ]
 
-    with pytest.raises(
-        Exception, match=f"Cannot invalidate active key {active_key.kid}"
-    ):
-        await super_admin_test_client.delete(f"/cmd/keys/{active_key.kid}")
+    response = await super_admin_test_client.delete(f"/cmd/keys/{active_key.kid}")
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": f"No inactive key with ID {active_key.kid} found"
+    }
 
     assert [
         key.kid for key in await synced_key_store_manager.get_jwks()
     ] == initial_synced_key_ids
     persisted_active_key: Final[
-        KeyPublicDataResult | None
+        ActiveKeyPublicDataResult
     ] = await keydata_repository.get_active_key()
-    assert persisted_active_key is not None
     assert persisted_active_key.kid == active_key.kid
 
 
@@ -261,12 +264,11 @@ async def test_clean_keystore_preserves_only_active_key(
     synced_key_store_manager: SyncedStoreKeyStateManager,
 ) -> None:
     active_key: Final[
-        KeyPublicDataResult | None
+        ActiveKeyPublicDataResult
     ] = await keydata_repository.get_active_key()
     inactive_keys: Final[
-        list[KeyPublicDataResult]
+        list[RotatedKeyDataResult]
     ] = await keydata_repository.get_valid_inactive_keys()
-    assert active_key is not None
 
     response: Final[httpx.Response] = await super_admin_test_client.delete("/cmd/keys/")
 
@@ -276,9 +278,12 @@ async def test_clean_keystore_preserves_only_active_key(
         "invalidated keys": [key.kid for key in inactive_keys],
         "active_key": active_key.kid,
     }
-    assert [key.kid for key in await keydata_repository.get_relevant_keydata()] == [
-        active_key.kid
-    ]
+    (
+        persisted_active_key,
+        persisted_rotated_keys,
+    ) = await keydata_repository.get_relevant_keydata()
+    assert persisted_active_key.kid == active_key.kid
+    assert persisted_rotated_keys == []
     assert [key.kid for key in await synced_key_store_manager.get_jwks()] == [
         active_key.kid
     ]
@@ -292,21 +297,19 @@ async def test_rotate_key_updates_database_synced_state_and_response(
     test_superuser_admin_id: int,
 ) -> None:
     previous_active_key: Final[
-        KeyPublicDataResult | None
+        ActiveKeyPublicDataResult
     ] = await keydata_repository.get_active_key()
-    assert previous_active_key is not None
 
     response: Final[httpx.Response] = await super_admin_test_client.post(
         "/cmd/keys/rotate"
     )
     response_json: Final[dict[str, Any]] = response.json()
     active_key: Final[
-        KeyPublicDataResult | None
+        ActiveKeyPublicDataResult
     ] = await keydata_repository.get_active_key()
     rotated_key: Final[
-        KeyPublicDataResult | None
-    ] = await keydata_repository.get_keydata(previous_active_key.kid)
-    assert active_key is not None
+        RotatedKeyDataResult | None
+    ] = await keydata_repository.get_rotated_keydata(previous_active_key.kid)
     assert rotated_key is not None
 
     assert response.status_code == 201

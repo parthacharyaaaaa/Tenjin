@@ -2,6 +2,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
+from auth_server.config.constants import MAX_IDENTITY_LENGTH, MIN_IDENTITY_LENGTH
 from auth_server.models.auth_requests import AuthenticationModel, username_annotation
 
 
@@ -10,7 +11,12 @@ class AdminAuthenticationModel(AuthenticationModel):
 
 
 class AdminIdentificationModel(BaseModel):
-    id_: Annotated[int, Field(ge=1, frozen=True, alias="id")]
+    username: Annotated[
+        str,
+        Field(
+            min_length=MIN_IDENTITY_LENGTH, max_length=MAX_IDENTITY_LENGTH, frozen=True
+        ),
+    ]
 
 
 class AdminRefreshModel(BaseModel):

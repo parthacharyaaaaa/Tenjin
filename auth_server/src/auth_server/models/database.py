@@ -8,6 +8,10 @@ from sqlalchemy.sql.functions import func
 
 from auth_server.admin.roles import AdminRole
 from auth_server.config.constants import (
+    ALGORITHM_NAME_LEMGTH,
+    DESCRIPTION_MAX_LENGTH,
+    DESCRIPTION_MIN_LENGTH,
+    EC_CURVE_LENGTH,
     KEY_IDENTIFIER_LENGTH,
     MAX_IDENTITY_LENGTH,
     MIN_IDENTITY_LENGTH,
@@ -31,7 +35,7 @@ class Admin(Base):
     password_hash: Mapped[bytes] = mapped_column(BYTEA, nullable=False)
 
     time_deleted: Mapped[datetime.datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=text("null")
+        TIMESTAMP(timezone=True), server_default=text("null"), nullable=True
     )
     last_login: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -41,7 +45,9 @@ class Admin(Base):
     locked: Mapped[bool] = mapped_column(
         BOOLEAN, nullable=False, server_default=text("false")
     )
-    created_by: Mapped[int] = mapped_column(INTEGER, ForeignKey("admins.id_"))
+    created_by: Mapped[int] = mapped_column(
+        INTEGER, ForeignKey("admins.id_"), nullable=False
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -62,33 +68,61 @@ class SuspiciousActivity(Base):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
-    description: Mapped[str] = mapped_column(VARCHAR(64), nullable=False)
+    description: Mapped[str] = mapped_column(
+        VARCHAR(DESCRIPTION_MAX_LENGTH), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            func.length(description) >= DESCRIPTION_MIN_LENGTH,
+            "ck_suspicious_activities_description_length",
+        ),
+    )
 
 
 class KeyData(Base):
     __tablename__ = "keydata"
     kid: Mapped[str] = mapped_column(VARCHAR(KEY_IDENTIFIER_LENGTH), primary_key=True)
     alg: Mapped[str] = mapped_column(
-        VARCHAR(8), nullable=False, server_default=text("'ES256'")
+        VARCHAR(ALGORITHM_NAME_LEMGTH), nullable=False, server_default=text("'ES256'")
     )
-    curve: Mapped[str] = mapped_column(VARCHAR(16), nullable=False)
+    curve: Mapped[str] = mapped_column(VARCHAR(EC_CURVE_LENGTH), nullable=False)
     epoch: Mapped[datetime.datetime] = mapped_column(
         TIMESTAMP,
         nullable=False,
         index=True,
         server_default=text("CURRENT_TIMESTAMP"),
     )
-    rotated_out_at: Mapped[datetime.datetime] = mapped_column(
+    rotated_out_at: Mapped[datetime.datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("null"), nullable=True
     )
-    expired_at: Mapped[datetime.datetime] = mapped_column(
+    expired_at: Mapped[datetime.datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), server_default=text("null"), nullable=True
     )
-    private_pem: Mapped[bytes] = mapped_column(BYTEA, nullable=False, unique=True)
+    private_pem: Mapped[bytes | None] = mapped_column(BYTEA, nullable=True)
     public_pem: Mapped[bytes] = mapped_column(BYTEA, nullable=False, unique=True)
-    manual_rotation: Mapped[bool] = mapped_column(
+    manual_rotation: Mapped[bool | None] = mapped_column(
         BOOLEAN, server_default=text("null"), nullable=True
     )
-    rotated_by: Mapped[int] = mapped_column(
+    rotated_by: Mapped[int | None] = mapped_column(
         INTEGER, ForeignKey("admins.id_"), index=True, nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            (
+                (private_pem.is_(None) & (rotated_out_at.is_not(None)))
+                | (private_pem.is_not(None) & (rotated_out_at.is_(None)))
+            ),
+            "ck_private_pem_nullability",
+        ),
+        CheckConstraint(
+            (rotated_out_at.is_(None)) | (rotated_out_at >= epoch),
+            name="ck_rotation_after_creation",
+        ),
+        CheckConstraint(
+            (expired_at.is_(None))
+            | (rotated_out_at.is_not(None) & (expired_at >= rotated_out_at)),
+            name="ck_expiry_after_rotation",
+        ),
     )

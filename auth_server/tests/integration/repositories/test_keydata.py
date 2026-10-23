@@ -3,12 +3,13 @@ from typing import Final
 
 import pytest
 import pytest_asyncio
-from auth_server.models.database import KeyData
-from auth_server.repositories.keydata import (
-    KeydataRepository,
-    KeyPrivateDataResult,
-    KeyPublicDataResult,
+from auth_server.models.data_transport.keydata import (
+    ActiveKeyPrivateDataResult,
+    ActiveKeyPublicDataResult,
+    ExpiredKeyDataResult,
 )
+from auth_server.models.database import KeyData
+from auth_server.repositories.keydata import KeydataRepository
 from auth_server.strings import SelectionLockOption
 from auxillary.security.data_structures.jwks.enums import ECAlg
 from auxillary.security.serialization import (
@@ -38,8 +39,10 @@ async def prep_db(prepare_database_state: None) -> None:
 async def test_get_relevant_keydata_order(
     keydata_repository: KeydataRepository,
 ) -> None:
-    keydata = await keydata_repository.get_relevant_keydata()
-    assert keydata == sorted(keydata, reverse=True, key=lambda x: x.epoch)
+    active_key, rotated_keys = await keydata_repository.get_relevant_keydata()
+
+    assert active_key.kid == str(KEY_IDS[-1])
+    assert rotated_keys == sorted(rotated_keys, reverse=True, key=lambda key: key.epoch)
 
 
 @pytest.mark.asyncio
@@ -50,7 +53,9 @@ async def test_locking(
     key_id: Final[str] = "1"
     async with keydata_repository.unit_of_work():
         key = await keydata_repository.get_keydata(
-            key_id=key_id, lock_args=(SelectionLockOption.READ,)
+            key_id=key_id,
+            include_expired=True,
+            lock_args=(SelectionLockOption.READ,),
         )
         assert key is not None, "Locking prerequisite failed, key not found"
         # NOTE: A more canonical approach would've been using pytest.raises,
@@ -99,7 +104,8 @@ async def test_rotated_out_keys_retrieval(
 
 @pytest.mark.asyncio
 async def test_relevant_keys_retrieval(keydata_repository: KeydataRepository) -> None:
-    relevant_keys = await keydata_repository.get_relevant_keydata()
+    active_key, rotated_keys = await keydata_repository.get_relevant_keydata()
+    relevant_keys = (active_key, *rotated_keys)
     assert len(relevant_keys) == 3
     assert tuple(sorted(KEY_IDS[EXPIRATION_THRESHOLD:], reverse=True)) == tuple(
         map(lambda x: int(x.kid), relevant_keys)
@@ -112,7 +118,7 @@ async def test_batch_expiry(
 ) -> None:
     async with keydata_repository.unit_of_work():
         newly_expired_keys: list[
-            KeyPublicDataResult
+            ExpiredKeyDataResult
         ] = await keydata_repository.batch_expire_keydata(
             tuple(map(str, KEY_IDS[EXPIRATION_THRESHOLD:ROTATION_THRESHOLD])),
             return_expired=True,
@@ -132,10 +138,10 @@ async def test_batch_expiry(
 async def test_keydata_expiry(
     keydata_repository: KeydataRepository,
 ) -> None:
-    key_id: Final[str] = str(KEY_IDS[-1])
+    key_id: Final[str] = str(KEY_IDS[ROTATION_THRESHOLD - 1])
     async with keydata_repository.unit_of_work():
         expired_keydata: (
-            KeyPublicDataResult | None
+            ExpiredKeyDataResult | None
         ) = await keydata_repository.expire_keydata(key_id, return_expired=True)
         assert expired_keydata is not None
         assert expired_keydata.kid == key_id
@@ -148,7 +154,7 @@ async def test_non_existent_keydata_expiry(
     key_id: Final[str] = "__NON_EXISTING_KEY_ID__"
     async with keydata_repository.unit_of_work():
         expired_keydata: (
-            KeyPublicDataResult | None
+            ExpiredKeyDataResult | None
         ) = await keydata_repository.expire_keydata(key_id, return_expired=True)
         assert expired_keydata is None
 
@@ -162,7 +168,7 @@ async def test_keydata_threshold_expiry(
     )
     async with keydata_repository.unit_of_work():
         expired_keydata: list[
-            KeyPublicDataResult
+            ExpiredKeyDataResult
         ] = await keydata_repository.expire_keydata_with_threshold(
             expiry_threshold, return_expired=True
         )
@@ -181,7 +187,7 @@ async def test_keydata_insertion(
         private_value=67, curve=SECP256R1()
     )
     async with keydata_repository.unit_of_work():
-        inserted_keydata: KeyPrivateDataResult = (
+        inserted_keydata: ActiveKeyPrivateDataResult = (
             await keydata_repository.insert_keydata(
                 key_name,
                 pem_serialize_private_key(dummy_key, PrivateFormat.PKCS8),
@@ -205,14 +211,15 @@ async def test_key_rotation(
     dummy_key: Final[EllipticCurvePrivateKey] = derive_private_key(67, SECP256R1())
     new_key_id: Final[str] = "__NEW_KEY__"
     async with keydata_repository.unit_of_work():
-        new_active_key: KeyPublicDataResult = await keydata_repository.rotate_key(
+        new_active_key: ActiveKeyPublicDataResult = await keydata_repository.rotate_key(
             str(KEY_IDS[-1]),
             new_key_id,
-            pem_serialize_private_key(dummy_key, PrivateFormat.PKCS8),
             pem_serialize_public_key(
                 dummy_key.public_key(), PublicFormat.SubjectPublicKeyInfo
             ),
+            pem_serialize_private_key(dummy_key, PrivateFormat.PKCS8),
             returning=True,
+            return_public_only=True,
         )
 
         assert new_active_key == await keydata_repository.get_active_key()

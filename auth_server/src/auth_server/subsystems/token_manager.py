@@ -13,11 +13,24 @@ import jwt.exceptions as jwt_exceptions
 from redis.asyncio import Redis
 
 from auth_server.config.sub_config import KeyConfigModel, TokenManagerConfigModel
+from auth_server.datastructures.exceptions.token import (
+    ImmatureRefreshAttemptError,
+    InvalidKeyError,
+    InvalidTokenError,
+    MissingTokenFamilyError,
+    ReplayedTokenError,
+    TamperedTokenError,
+    TokenFamilyExistsError,
+)
+from auth_server.models.data_transport.keydata import (
+    ActiveKeyPrivateDataResult,
+    ActiveKeyPublicDataResult,
+    RotatedKeyDataResult,
+)
+from auth_server.models.data_transport.typing import SupportsBasicKeyData
 from auth_server.repositories.keydata import (
     EllipticCurveJWKResult,
     KeydataRepository,
-    KeyPrivateDataResult,
-    KeyPublicDataResult,
 )
 from auth_server.tokens.typing import (
     StandardAccessTokenClaims,
@@ -39,7 +52,7 @@ class TokenManager:
     logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__file__))
     universal_claims: dict[str, Any] = field(default_factory=dict)
     universal_headers: dict[str, Any] = field(default_factory=dict)
-    _key_mapping: dict[str, KeyPublicDataResult] = field(
+    _key_mapping: dict[str, SupportsBasicKeyData] = field(
         default_factory=dict, init=False
     )
     _active_key: str = field(init=False, default="__UNINITIALIZED__")
@@ -54,10 +67,6 @@ class TokenManager:
     @staticmethod
     def generate_family_list_id(identifier: str) -> str:
         return f"FID:{identifier}"
-
-    @staticmethod
-    def generate_family_record(jti: str, exp: int | float) -> str:
-        return f"{jti}:{exp}"
 
     @asynccontextmanager
     async def transactional_block(self) -> AsyncGenerator[None, None]:
@@ -76,14 +85,13 @@ class TokenManager:
 
     def set_key_state(
         self,
-        active_key_data: KeyPrivateDataResult,
-        verification_keys_mapping: dict[str, KeyPublicDataResult] | None = None,
+        active_key_data: ActiveKeyPrivateDataResult,
+        verification_keys_mapping: dict[str, SupportsBasicKeyData] | None = None,
     ) -> None:
         verification_keys_mapping = verification_keys_mapping or {}
-        self._key_mapping: dict[str, KeyPublicDataResult] = (
-            verification_keys_mapping
-            | {active_key_data.kid: active_key_data.create_public_copy()}
-        )
+        self._key_mapping = verification_keys_mapping | {
+            active_key_data.kid: active_key_data.create_public_copy()
+        }
         self._active_key = active_key_data.kid
         self._active_key_private_pem = active_key_data.private_pem
 
@@ -106,7 +114,7 @@ class TokenManager:
         try:
             kid: int = jwt.get_unverified_header(token)["kid"]
             if kid not in self._key_mapping:
-                raise jwt_exceptions.InvalidKeyError(
+                raise InvalidKeyError(
                     "This key is not recognised, meaning it is possibly tampered, forged, or simply expired a long time ago."
                 )
 
@@ -120,74 +128,91 @@ class TokenManager:
             if token_type == TokenType.StandardAccess:
                 return StandardAccessTokenClaims(**decoded_token)
             return StandardRefreshTokenClaims(**decoded_token)
-        except (
-            jwt_exceptions.ImmatureSignatureError,
-            jwt_exceptions.InvalidIssuedAtError,
-            jwt_exceptions.InvalidIssuerError,
-        ):
+        except jwt_exceptions.InvalidSignatureError as e:
             if token_type == TokenType.StandardRefresh:
                 await self.invalidate_family(
                     jwt.decode(token, options={"verify_signature": False})["fid"]
                 )
-            raise
+            raise TamperedTokenError("Token is tampered, please login again") from e
+        except jwt_exceptions.ImmatureSignatureError as e:
+            raise ImmatureRefreshAttemptError("Premature token reissuance") from e
+        except jwt_exceptions.InvalidTokenError as e:
+            raise InvalidTokenError("Invalid token, please login again") from e
         except KeyError as e:
-            raise jwt_exceptions.InvalidTokenError(
-                "Token headers missing key ID"
-            ) from e
+            raise InvalidTokenError("Token headers missing key ID") from e
+
+    async def issue_fresh_token_pair(self, sub: str, sid: int) -> TokenPair:
+        family_id: Final[str] = self.generate_family_list_id(sub)
+        await self.validate_fresh_issuance_integrity(family_id)
+        return await self._issue_token_pair(sub, sid)
 
     async def reissue_token_pair(self, refresh_token: str) -> TokenPair:
-        decoded_token: StandardRefreshTokenClaims = await self.decode_token(
+        decoded_token: Final[StandardRefreshTokenClaims] = await self.decode_token(
             refresh_token, token_type=TokenType.StandardRefresh
         )
-        refresh_token = await self.issue_refresh_token(
-            decoded_token["sub"],
-            decoded_token["sid"],
-            existing_family_validation_data=(
-                decoded_token["jti"],
-                decoded_token["exp"],
-            ),
-        )
-        access_token: str = self.issue_access_token(
-            decoded_token["sub"],
-            decoded_token["sid"],
-            family_id=decoded_token["fid"],
+        try:
+            await self.validate_reissuance_integrity(
+                decoded_token["fid"], decoded_token["jti"]
+            )
+        except ReplayedTokenError:
+            await self.invalidate_family(decoded_token["fid"])
+            raise
+        # NOTE: No additional claims for now, so not adding any checks/unwraps
+        return await self._issue_token_pair(
+            decoded_token["sub"], decoded_token["sid"], family_id=decoded_token["fid"]
         )
 
-        return refresh_token, access_token
+    async def _issue_token_pair(
+        self,
+        sub: str,
+        sid: int,
+        *,
+        family_id: str | None = None,
+        access_additional_claims: dict[str, int | str] | None = None,
+        refresh_additional_claims: dict[str, int | str] | None = None,
+    ) -> TokenPair:
+        return (
+            await self.issue_refresh_token(
+                sub, sid, additional_claims=refresh_additional_claims
+            ),
+            self.issue_access_token(
+                sub,
+                sid,
+                family_id=family_id,
+                additional_claims=access_additional_claims,
+            ),
+        )
+
+    async def validate_reissuance_integrity(
+        self, family_id: str, latest_jti: str
+    ) -> None:
+        family_history: list[str] = await self._token_store_client.lrange(  # pyrefly: ignore[not-async]
+            family_id, 0, -1
+        )
+        if not family_history:
+            raise MissingTokenFamilyError(f"Family ID {family_id} not found")
+        if latest_jti != family_history[0]:
+            if any(latest_jti == jti for jti in family_history[1:]):  # Replay
+                raise ReplayedTokenError("Replayed refresh token")
+            raise InvalidTokenError(
+                f"Unrecognized token for family {family_id}"
+            )  # Unknown/stale token JTI
+
+    async def validate_fresh_issuance_integrity(self, family_id: str) -> None:
+        family_history_length: int = await self._token_store_client.llen(family_id)  # pyrefly: ignore[not-async]
+        if family_history_length:
+            raise TokenFamilyExistsError(
+                f"Token family {family_id} exists when expected not to"
+            )
 
     async def issue_refresh_token(
         self,
         sub: str,
         sid: int,
         *,
-        existing_family_validation_data: tuple[str, int] | None = None,
         additional_claims: dict | None = None,
     ) -> str:
         family_id: Final[str] = self.generate_family_list_id(sub)
-        if existing_family_validation_data:
-            # Check for replay attack
-            key: str | None = await self._token_store_client.lindex(  # pyrefly: ignore[not-async]
-                family_id, 0
-            )
-            if not key:
-                await self.invalidate_family(family_id)
-                raise ValueError(f"Token family {family_id} is invalid or empty")
-
-            key_metadata = key.split(":")
-            if (
-                key_metadata[0] != existing_family_validation_data[0]
-                or int(key_metadata[1]) != existing_family_validation_data[1]
-            ):
-                await self.invalidate_family(family_id)
-                raise ValueError(
-                    f"Replay attack detected or token metadata mismatch for family {family_id}"
-                )
-        else:
-            if await self._token_store_client.llen(family_id) != 0:  # pyrefly: ignore[not-async]
-                raise ValueError(
-                    f"Family ID {family_id} exists in token store when implied not to"
-                )
-
         # All checks passed
         token_epoch_reference: Final[int] = int(time.time())
         payload: dict = {
@@ -207,13 +232,11 @@ class TokenManager:
         if additional_claims:
             payload.update(additional_claims)
 
-        previous_family_length: Final[int] = await self._token_store_client.llen(
+        previous_family_length: Final[int] = await self._token_store_client.llen(  # pyrefly: ignore[not-async]
             family_id
-        )  # pyrefly: ignore[not-async]
+        )
         async with self._token_store_client.pipeline(transaction=True) as pipe:
-            pipe.lpush(
-                family_id, self.generate_family_record(payload["jti"], payload["exp"])
-            )
+            pipe.lpush(family_id, payload["jti"])
             pipe.expireat(family_id, payload["exp"])
             if (
                 previous_family_length
@@ -277,15 +300,18 @@ class TokenManager:
         except Exception as e:
             raise RuntimeError("Failed to perform operation on token store") from e
 
-    def update_keydata(
-        self, kid: str, new_keydata: KeyPrivateDataResult, active: bool = True
+    def update_signing_key(
+        self,
+        keydata: tuple[ActiveKeyPublicDataResult, bytes] | ActiveKeyPrivateDataResult,
     ) -> None:
-        """Update key mapping on key rotation"""
-        if active:
-            self._active_key = kid
-            self._active_key_private_pem = new_keydata.private_pem
+        if isinstance(keydata, ActiveKeyPrivateDataResult):
+            keydata = (keydata.create_public_copy(), keydata.private_pem)
+        self._active_key_private_pem = keydata[1]
+        self._active_key = keydata[0].kid
+        self.update_verification_key(keydata[0])
 
-        self._key_mapping[kid] = new_keydata.create_public_copy()
+    def update_verification_key(self, keydata: SupportsBasicKeyData) -> None:
+        self._key_mapping[keydata.kid] = keydata
 
     def invalidate_key(self, kid: str) -> None:
         """Invalidate a verification key"""
@@ -305,20 +331,27 @@ class TokenManager:
             global_valid_keyset: frozenset[str] = frozenset(k.kid for k in global_jwks)
             local_valid_keyset: frozenset[str] = frozenset(self._key_mapping.keys())
 
-            for new_key in global_valid_keyset - local_valid_keyset:
-                self.logger.info(f"Adding verification new key {new_key}...")
+            for new_key_id in global_valid_keyset - local_valid_keyset:
+                self.logger.info(f"Adding verification new key {new_key_id}...")
                 result: (
-                    KeyPrivateDataResult | None
+                    ActiveKeyPublicDataResult | RotatedKeyDataResult | None
                 ) = await self._keydata_repository.get_keydata(
-                    new_key, public_only=False
+                    new_key_id, include_expired=False
                 )
                 if result:
-                    self.update_keydata(
-                        new_key, result, active=result.rotated_out_at is None
-                    )
-                    self.logger.info(
-                        f"Added verification new key {new_key} to local token manager"
-                    )
+                    if isinstance(result, ActiveKeyPublicDataResult):
+                        self.update_signing_key(
+                            (
+                                result,
+                                await self._keydata_repository.get_active_private_pem(),
+                            )
+                        )
+                        self.logger.info(f"Updated active key: {new_key_id}")
+                    else:
+                        self.update_verification_key(result)
+                        self.logger.info(f"Added verification new key: {new_key_id}")
+                else:
+                    self.logger.error(f"Failed to fetch key: {new_key_id}")
 
             for expired_key in local_valid_keyset - global_valid_keyset:
                 self.logger.info(f"Invalidating local key {expired_key}...")

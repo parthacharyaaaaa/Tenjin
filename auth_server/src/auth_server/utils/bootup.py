@@ -19,6 +19,7 @@ from redis.asyncio import Redis
 
 from auth_server.config.app_config import AppConfig
 from auth_server.config.sub_config import KeyConfigModel
+from auth_server.datastructures.exceptions.keys import EmptyKeysError
 from auth_server.dependencies.local import (
     get_app_config,
     get_database_session_maker,
@@ -29,11 +30,12 @@ from auth_server.dependencies.local import (
     get_token_manager,
 )
 from auth_server.keys.keygen import generate_ecdsa_pair
+from auth_server.models.data_transport.keydata import (
+    ActiveKeyPrivateDataResult,
+    RotatedKeyDataResult,
+)
 from auth_server.repositories.keydata import (
-    EllipticCurveJWKResult,
     KeydataRepository,
-    KeyPrivateDataResult,
-    KeyPublicDataResult,
 )
 from auth_server.routers import RouterName, URLPrefix
 from auth_server.strings import SyncedStoreCommandStrings
@@ -64,7 +66,7 @@ def register_routers(
 
 async def _initialize_active_key(
     key_config: KeyConfigModel, keydata_repository: KeydataRepository
-) -> KeyPrivateDataResult:
+) -> ActiveKeyPrivateDataResult:
     key_id, private_key, public_key = generate_ecdsa_pair(key_config)
     return await keydata_repository.insert_keydata(
         key_id,
@@ -89,50 +91,33 @@ async def master_bootup(
     logger = logger or logging.getLogger(f"{process_id}::{master_bootup.__name__}")
     logger.info("Serving as master")
 
-    active_keydata: KeyPrivateDataResult | None = None
-    rotated_verifying_keys: dict[str, KeyPublicDataResult] | None = None
-
+    active_keydata: ActiveKeyPrivateDataResult | None = None
+    rotated_verifying_keys: list[RotatedKeyDataResult] = []
     try:
-        keydata: list[
-            KeyPrivateDataResult
-        ] = await keydata_repository.get_relevant_keydata(public_data_only=False)
-        if not keydata:
+        try:
+            keydata: tuple[
+                ActiveKeyPrivateDataResult, list[RotatedKeyDataResult]
+            ] = await keydata_repository.get_relevant_keydata(
+                active_key_public_data_only=False
+            )
+            active_keydata = keydata[0]
+            rotated_verifying_keys = keydata[1]
+            del keydata
+        except EmptyKeysError:
             # No valid keys in DB, master must create new pair
             logger.info("Creating new key pair")
             active_keydata = await _initialize_active_key(
                 config.KEYS, keydata_repository
             )
-            keydata.append(active_keydata)
-        else:
-            verification_only_keys: list[KeyPrivateDataResult] = list(
-                filter(lambda x: x.rotated_out_at is not None, keydata)
+        if len(rotated_verifying_keys) > config.JWKS.JWKS_CAP - 1:
+            await keydata_repository.expire_keydata_with_threshold(
+                rotated_verifying_keys[config.JWKS.JWKS_CAP - 2].epoch
             )
-            missing_active: bool = len(keydata) == len(verification_only_keys)
-            retained_key_count: int = config.JWKS.JWKS_CAP - int(missing_active)
-            # Atleast 1 non-expired key exists in DB
-            if len(keydata) > retained_key_count:
-                await keydata_repository.expire_keydata_with_threshold(
-                    keydata[retained_key_count - 1].epoch
-                )
-                keydata = keydata[:retained_key_count]
-
-            if missing_active:
-                active_keydata = await _initialize_active_key(
-                    config.KEYS, keydata_repository
-                )
-                keydata.insert(0, active_keydata)
-            else:
-                active_keydata = keydata[0]
-
-            if len(keydata) > 1:
-                rotated_verifying_keys = {k.kid: k for k in keydata[1:]}
-
-        jwks: Final[tuple[EllipticCurveJWKResult, ...]] = tuple(
-            await keydata_repository.get_jwks()
+            rotated_verifying_keys = rotated_verifying_keys[: config.JWKS.JWKS_CAP - 1]
+        await synced_store_manager.set_jwks(await keydata_repository.get_jwks())
+        token_manager.set_key_state(
+            active_keydata, {i.kid: i for i in rotated_verifying_keys}
         )
-        await synced_store_manager.set_jwks(jwks)
-
-        token_manager.set_key_state(active_keydata, rotated_verifying_keys)
         logger.info("Master process bootup complete!")
     except Exception as e:
         logger.error("Master worker has encountered an irrecoverable error, details:")
@@ -165,24 +150,10 @@ async def slave_bootup(
         logger.error("Master failed to setup key configuration, aborting...")
         raise RuntimeError("Master failed to set up key configuration")
 
-    keys: list[KeyPrivateDataResult] = await keydata_repository.get_relevant_keydata(
-        limit=config.JWKS.JWKS_CAP, raise_on_empty=True, public_data_only=False
-    )
-
-    active_keydata: KeyPrivateDataResult | None = None
-    rotated_active_keys_mapping: dict[str, KeyPublicDataResult] = {}
-
-    for key in keys:
-        if key.rotated_out_at:
-            # Verification Key
-            rotated_active_keys_mapping[key.kid] = key.create_public_copy()
-        else:
-            active_keydata = key
-
-    if not active_keydata:
-        raise RuntimeError("No active key found")
-
-    token_manager.set_key_state(active_keydata, rotated_active_keys_mapping)
+    keydata: tuple[
+        ActiveKeyPrivateDataResult, list[RotatedKeyDataResult]
+    ] = await keydata_repository.get_relevant_keydata(active_key_public_data_only=False)
+    token_manager.set_key_state(keydata[0], {k.kid: k for k in keydata[1]})
 
 
 @asynccontextmanager

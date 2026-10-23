@@ -7,10 +7,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 import pytest_asyncio
-from auth_server.repositories.keydata import (
-    KeydataRepository,
-    KeyPrivateDataResult,
-)
+from auth_server.models.data_transport.keydata import ActiveKeyPrivateDataResult
+from auth_server.repositories.keydata import KeydataRepository
 from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
 from auth_server.subsystems.token_manager import TokenManager
 from auth_server.tokens.typing import TokenType
@@ -44,19 +42,13 @@ async def prepare_auth_test_state(
     await token_store_client.flushall()
     await async_redis_client.flushall()
 
-    keydata: Final[
-        list[KeyPrivateDataResult]
-    ] = await keydata_repository.get_relevant_keydata(public_data_only=False)
-    active_key: Final[KeyPrivateDataResult] = next(
-        key for key in keydata if key.rotated_out_at is None
+    active_key: Final[ActiveKeyPrivateDataResult]
+    active_key, rotated_keys = await keydata_repository.get_relevant_keydata(
+        active_key_public_data_only=False
     )
     token_manager.set_key_state(
         active_key,
-        {
-            key.kid: key.create_public_copy()
-            for key in keydata
-            if key.kid != active_key.kid
-        },
+        {key.kid: key for key in rotated_keys},
     )
     await synced_key_store_manager.set_jwks(await keydata_repository.get_jwks())
 
@@ -139,7 +131,7 @@ async def test_login_forwards_normalized_credentials_and_issues_tokens(
     )
 
     resource_post.assert_awaited_once_with(
-        url="",
+        url="http://resource_server:8081/login",
         json={"identity": "user_123", "password": VALID_PASSWORD},
     )
     assert response.status_code == 201
@@ -274,7 +266,7 @@ async def test_registration_forwards_normalized_data_and_issues_tokens(
     )
 
     resource_post.assert_awaited_once_with(
-        "",
+        "http://resource_server:8081/register",
         json={
             "identity": "new_user",
             "email": "new@example.com",
@@ -376,24 +368,24 @@ async def test_registration_rejects_invalid_requests_before_upstream_call(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cookie_name", ("refresh", "Refresh"))
 async def test_reissue_rotates_tokens_and_extends_existing_family(
     test_client: httpx.AsyncClient,
     token_manager: TokenManager,
     token_store_client: Redis,
-    cookie_name: str,
 ) -> None:
     with patch.object(
         token_manager.token_manager_config,
         "ACCESS_LIFETIME",
         timedelta(),
     ):
-        old_refresh_token = await token_manager.issue_refresh_token("user_123", 42)
+        old_refresh_token, _ = await token_manager.issue_fresh_token_pair(
+            "user_123", 42
+        )
         family_id = token_manager.generate_family_list_id("user_123")
 
         response = await test_client.get(
             f"{AUTH_ROOT}/reissue",
-            headers={"cookie": f"{cookie_name}={old_refresh_token}"},
+            headers={"cookie": f"refresh={old_refresh_token}"},
         )
 
     assert response.status_code == 201
@@ -432,19 +424,17 @@ async def test_reissue_requires_refresh_cookie(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cookie_name", ("refresh", "Refresh"))
 async def test_purge_family_revokes_valid_refresh_token(
     test_client: httpx.AsyncClient,
     token_manager: TokenManager,
     token_store_client: Redis,
-    cookie_name: str,
 ) -> None:
-    refresh_token = await token_manager.issue_refresh_token("user_123", 42)
+    refresh_token, _ = await token_manager.issue_fresh_token_pair("user_123", 42)
     family_id = token_manager.generate_family_list_id("user_123")
 
     response = await test_client.delete(
         f"{AUTH_ROOT}/tokens",
-        headers={"cookie": f"{cookie_name}={refresh_token}"},
+        headers={"cookie": f"refresh={refresh_token}"},
     )
 
     assert response.status_code == 200
@@ -473,5 +463,5 @@ async def test_purge_family_rejects_invalid_refresh_token(
         headers={"cookie": "refresh=not-a-jwt"},
     )
 
-    assert response.status_code == 401
-    assert response.json()["detail"] == "Failed to validate this refresh token"
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Invalid token, please login again"

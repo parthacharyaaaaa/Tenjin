@@ -23,12 +23,23 @@ from auxillary.utils import json_repr
 from redis.asyncio.client import Redis
 
 from auth_server.config.sub_config import JWKSConfigModel, KeyConfigModel
+from auth_server.datastructures.exceptions.keys import (
+    EmptyKeysError,
+    ExpiredKeyError,
+    InvalidKeyOperationError,
+    KeyNotFoundError,
+    KeyStateError,
+)
 from auth_server.keys.keygen import generate_ecdsa_pair
+from auth_server.models.data_transport.keydata import (
+    ActiveKeyPrivateDataResult,
+    ActiveKeyPublicDataResult,
+    ExpiredKeyDataResult,
+    RotatedKeyDataResult,
+)
 from auth_server.repositories.keydata import (
     EllipticCurveJWKResult,
     KeydataRepository,
-    KeyPrivateDataResult,
-    KeyPublicDataResult,
 )
 from auth_server.strings import (
     GENERIC_SEPARATOR,
@@ -101,13 +112,9 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
             for k in orjson.loads(raw_jwks)["keys"]
         ]
 
-    async def set_jwks(
-        self, keys: Sequence[EllipticCurveJWKResult] | Sequence[KeyPublicDataResult]
-    ) -> None:
+    async def set_jwks(self, keys: Sequence[EllipticCurveJWKResult]) -> None:
         if not keys:
-            raise ValueError("keys must be non-empty")
-        if isinstance(keys[0], KeyPublicDataResult):
-            keys = list(map(KeyPublicDataResult.as_jwk, keys))
+            raise EmptyKeysError("keys must be non-empty")
         await self.synced_store_client.set(
             SyncedStoreKeyStrings.JWKS_KEY,
             orjson.dumps({"keys": [json_repr(k) for k in keys]}),
@@ -184,7 +191,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     )
                 )
                 if not lock_set.valid:
-                    raise Exception(
+                    raise RuntimeError(
                         f"Failed to acquire operational lock for {operation}"
                     )
             for transactional_worker in self._transactional_stack_order:
@@ -210,22 +217,23 @@ class KeyLifecycleManager(AntiSingletonMixin):
             lock_duration=LockTIme.MEDIUM,
             operational_cooldown_duration=cooldown_duration,
         ):
-            target_key: KeyPrivateDataResult | None = None
             async with self.keydata_repository.unit_of_work():
                 # Select and lock key if exists
                 # Weaker, shared FOR KEY SHARE lock acquired since contention is
                 # handled above DB, and we only need to prevent DELETE and key-UPDATEs
-                target_key = await self.keydata_repository.get_keydata(
+                target_key: (
+                    RotatedKeyDataResult | ExpiredKeyDataResult | None
+                ) = await self.keydata_repository.get_rotated_keydata(
                     key_id,
-                    public_only=False,
+                    include_expired=True,
                     lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ),
                 )
                 if not target_key:
-                    raise ValueError(f"No key with ID {key_id} found")
-                if not target_key.rotated_out_at:
-                    raise Exception(f"Cannot invalidate active key {key_id}")
-                if target_key.expired_at is not None:
-                    raise Exception(f"Key {key_id} has already been expired")
+                    raise KeyNotFoundError(f"No inactive key with ID {key_id} found")
+                if isinstance(target_key, ExpiredKeyDataResult):
+                    raise ExpiredKeyError(
+                        f"Key {key_id} already expired at {target_key.expired_at.isoformat()}"
+                    )
                 await self.keydata_repository.expire_keydata(key_id)
 
                 # Key invalidation successful, update local token manager
@@ -267,7 +275,9 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     await self.keydata_repository.get_jwks()
                 )
                 if len(jwks_data) == 1:
-                    raise Exception("No inactive keys present to invalidate")
+                    raise InvalidKeyOperationError(
+                        "No inactive keys present to invalidate"
+                    )
                 active_key: Final[EllipticCurveJWKResult] = jwks_data.pop(0)
                 # Prune JWKS
                 await self.keydata_repository.batch_expire_keydata(
@@ -290,7 +300,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
         cooldown_duration: int | None = None,
         *,
         rotation_author: int | None = None,
-    ) -> KeyPublicDataResult:
+    ) -> ActiveKeyPublicDataResult:
         async with self._transactional_block(
             operation=SyncedStoreKeyStrings.JWKS_WRITE_LOCK,
             lock_duration=LockTIme.MEDIUM,
@@ -309,16 +319,16 @@ class KeyLifecycleManager(AntiSingletonMixin):
             async with self.keydata_repository.unit_of_work():
                 # Update currently active key
                 previous_key: (
-                    KeyPublicDataResult | None
+                    ActiveKeyPublicDataResult | None
                 ) = await self.keydata_repository.get_active_key(
                     lock_args=(SelectionLockOption.READ, SelectionLockOption.KEY_SHARE)
                 )
-                if not previous_key:
-                    raise Exception("Invalid key state!")
+                if not previous_key:  # Should never happen!!!
+                    raise KeyStateError("Invalid key state!")
 
                 # Reflect rotation in DB
                 new_key: Final[
-                    KeyPrivateDataResult
+                    ActiveKeyPrivateDataResult
                 ] = await self.keydata_repository.rotate_key(
                     previous_key.kid,
                     kid,
@@ -327,7 +337,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     rotation_author=rotation_author,
                     epoch=generation_epoch,
                     returning=True,
-                    public_only=False,
+                    return_public_only=False,
                 )
 
                 # Check whether max capacity has been reached. If so, purge oldest key
@@ -346,30 +356,25 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     key=lambda x: x[1],
                 )
 
-                if len(valid_inactive_key_data) > self.jwks_config.JWKS_CAP:
+                rotated_capacity = self.jwks_config.JWKS_CAP - 1
+                excess_count = len(valid_inactive_key_data) - rotated_capacity
+                if excess_count > 0:
                     await self.keydata_repository.batch_expire_keydata(
-                        tuple(
-                            i[0]
-                            for i in valid_inactive_key_data[
-                                : -self.jwks_config.JWKS_CAP
-                            ]
-                        )
+                        tuple(kid for kid, _ in valid_inactive_key_data[:excess_count])
                     )
 
                 # Update token manager's mapping to use this newly created ECDSA pair
-                self.token_manager.update_keydata(kid, new_key)
+                self.token_manager.update_signing_key(new_key)
                 # Update distributed state
                 jwks: list[EllipticCurveJWKResult] = list(
                     await self.keydata_repository.get_jwks()
                 )
                 await self.synced_store_key_manager.set_jwks(jwks)
-
         await self.jwks_update_announcer.stream_update(
             VariableJWKS.model_validate(
                 {"keys": [EllipticCurveJWK.model_validate(asdict(jwk)) for jwk in jwks]}
             )
         )
-
         return new_key.create_public_copy()
 
     async def token_manager_updation_poller(self, interval: timedelta) -> None:
@@ -379,7 +384,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     await self.synced_store_key_manager.get_jwks()
                 )
                 if not global_jwks:
-                    raise RuntimeError("Global key state empty or not found")
+                    raise KeyStateError("Global key state empty or not found")
                 await self.token_manager.update_local_store(global_jwks)
             except Exception:
                 self._logger.error("Exception encountered. Traceback:")
