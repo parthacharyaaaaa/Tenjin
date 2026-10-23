@@ -569,7 +569,7 @@ async def test_lock_admin_updates_database_and_terminates_target_session(
     )
 
     response = await super_admin_test_client.post(
-        f"{ADMIN_ROOT}/locks/lock", json={"id": staff_admin.id}
+        f"{ADMIN_ROOT}/locks/lock", json={"username": staff_admin.username}
     )
     persisted_admin = await admin_repository.get_admin(staff_admin.id)
 
@@ -585,11 +585,11 @@ async def test_lock_admin_rejects_missing_admin(
     super_admin_test_client: httpx.AsyncClient,
 ) -> None:
     response = await super_admin_test_client.post(
-        f"{ADMIN_ROOT}/locks/lock", json={"id": 999_999}
+        f"{ADMIN_ROOT}/locks/lock", json={"username": "__NOT_FOUND__"}
     )
 
     assert response.status_code == 404
-    assert response.json() == {"detail": "No admin with id 999999 could be found"}
+    assert response.json() == {"detail": "Admin __NOT_FOUND__ could not be found"}
 
 
 @pytest.mark.asyncio
@@ -601,7 +601,7 @@ async def test_lock_admin_rejects_already_locked_admin(
     await admin_repository.set_admin_locked(staff_admin.id, True)
 
     response = await super_admin_test_client.post(
-        f"{ADMIN_ROOT}/locks/lock", json={"id": staff_admin.id}
+        f"{ADMIN_ROOT}/locks/lock", json={"username": staff_admin.username}
     )
 
     assert response.status_code == 409
@@ -617,7 +617,7 @@ async def test_unlock_admin_updates_database(
     await admin_repository.set_admin_locked(staff_admin.id, True)
 
     response = await super_admin_test_client.request(
-        "DELETE", f"{ADMIN_ROOT}/locks/unlock", json={"id": staff_admin.id}
+        "DELETE", f"{ADMIN_ROOT}/locks/unlock", json={"username": staff_admin.username}
     )
     persisted_admin = await admin_repository.get_admin(staff_admin.id)
 
@@ -632,11 +632,11 @@ async def test_unlock_admin_rejects_missing_admin(
     super_admin_test_client: httpx.AsyncClient,
 ) -> None:
     response = await super_admin_test_client.request(
-        "DELETE", f"{ADMIN_ROOT}/locks/unlock", json={"id": 999_999}
+        "DELETE", f"{ADMIN_ROOT}/locks/unlock", json={"username": "__NOT_FOUND__"}
     )
 
     assert response.status_code == 404
-    assert response.json() == {"detail": "No admin with id 999999 could be found"}
+    assert response.json() == {"detail": "Admin __NOT_FOUND__ could not be found"}
 
 
 @pytest.mark.asyncio
@@ -645,7 +645,7 @@ async def test_unlock_admin_rejects_already_unlocked_admin(
     staff_admin: AdminPublicResult,
 ) -> None:
     response = await super_admin_test_client.request(
-        "DELETE", f"{ADMIN_ROOT}/locks/unlock", json={"id": staff_admin.id}
+        "DELETE", f"{ADMIN_ROOT}/locks/unlock", json={"username": staff_admin.username}
     )
 
     assert response.status_code == 409

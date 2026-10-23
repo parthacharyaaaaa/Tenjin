@@ -281,15 +281,15 @@ async def admin_lock(
 ) -> JSONResponse:
     """Lock a staff admin's account"""
     try:
-        admin: AdminPublicResult | None = await admin_repository.get_admin(
-            identification_model.id_
+        admin: AdminPublicResult | None = await admin_repository.get_admin_by_username(
+            identification_model.username
         )
     except SQLAlchemyError:
         generic_database_fetch_exception()
 
     if not admin:
         raise HTTPException(
-            404, f"No admin with id {identification_model.id_} could be found"
+            404, f"Admin {identification_model.username} could not be found"
         )
     if admin.locked:
         raise EnrichedHTTPException(
@@ -331,15 +331,15 @@ async def admin_unlock(
 ) -> JSONResponse:
     """Unlock a staff admin's account"""
     try:
-        admin: AdminPublicResult | None = await admin_repository.get_admin(
-            identification_model.id_
+        admin: AdminPublicResult | None = await admin_repository.get_admin_by_username(
+            identification_model.username
         )
     except SQLAlchemyError:
         generic_database_fetch_exception()
 
     if not admin:
         raise HTTPException(
-            404, f"No admin with id {identification_model.id_} could be found"
+            404, f"Admin {identification_model.username} could not be found"
         )
     if not admin.locked:
         raise EnrichedHTTPException(
