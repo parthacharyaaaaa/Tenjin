@@ -132,7 +132,7 @@ def prepare_fan_out_copy_insertion_sql(
     temp_table: str,
 ) -> Composed:
     return FAN_OUT_COPY_INSERTION_SQL.format(
-        target_table=SQL_Literal(target_table),
+        target_table=Identifier(target_table),
         event_id_col=Identifier(EventLiteral.EVENT_ID_COLUMN_NAME),
         event_emitted_column=Identifier(SideEffectsLiteral.SIDE_EFFECTS_EMITTED),
         event_payload_column=Identifier(SideEffectsLiteral.SIDE_EFFECTS_PAYLOAD),
@@ -154,7 +154,7 @@ SIDE_EFFECTS_TEMP_TABLE_SQL: Final[SQL] = SQL("""
 def prepare_side_effects_staging_table_sql(
     tablename: str, reference_table: str
 ) -> Composed:
-    return TEMP_TABLE_SQL.format(
+    return SIDE_EFFECTS_TEMP_TABLE_SQL.format(
         table=Identifier(tablename),
         reference=Identifier(reference_table),
         target_table_column=Identifier(SideEffectsLiteral.COPY_TARGET_TABLE),
