@@ -3,7 +3,6 @@
 from typing import Iterable, Sequence
 
 import orjson
-from redis.asyncio import Redis
 from redis.asyncio.client import Pipeline
 
 from resource_auxillary.cache import NF_MAPPING
@@ -11,7 +10,6 @@ from resource_auxillary.events import (
     CacheUpdate,
     CounterUpdate,
     IntentUpdate,
-    StreamedEvent,
 )
 from resource_auxillary.templates.lua import CONDITIIONAL_DELETE_TARGET_INTENT_TEMPLATE
 
@@ -57,19 +55,3 @@ def _emit_counter_side_effects(
             pipeline.hincrby(
                 side_effect.counter_group, side_effect.cache_key, side_effect.delta
             )
-
-
-async def atomic_emit_side_effects(
-    redis: Redis, events: Sequence[StreamedEvent]
-) -> None:
-    async with redis.pipeline(transaction=True) as pipeline:
-        _emit_intent_invalidations(
-            pipeline, (i.side_effects.intent_updates for i in events)
-        )
-        _emit_counter_side_effects(
-            pipeline, (i.side_effects.counter_updates for i in events)
-        )
-        _emit_cache_invalidation_side_effects(
-            pipeline, (i.side_effects.cache_invalidations for i in events)
-        )
-        await pipeline.execute()
