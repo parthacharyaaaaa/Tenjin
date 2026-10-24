@@ -17,4 +17,5 @@ class SupportsInternalQueueConsumerPolicy(Protocol):
 
 
 class HasEventID(Protocol):
-    event_id: int
+    @property
+    def event_id(self) -> str: ...

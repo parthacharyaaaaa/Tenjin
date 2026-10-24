@@ -1,9 +1,10 @@
 from datetime import UTC, datetime
 from functools import cached_property, partial
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, Self
 
 import orjson
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic.fields import computed_field
 from redis.typing import EncodableT, FieldT
 
 from resource_auxillary.strings import (
@@ -132,7 +133,22 @@ class Event(BaseModel):
 class StreamedEvent(Event):
     """Event that has been streamed to Redis and is assosciated with a unique, chronological ID"""
 
-    event_id: str
+    EVENT_ID_DELIMITER: ClassVar[str] = "-"
+
+    event_timestamp: Annotated[int, Field(ge=0)]
+    event_sequence: Annotated[int, Field(ge=0)]
+
+    @computed_field
+    @cached_property
+    def event_id(self) -> str:
+        return f"{self.event_timestamp}{self.EVENT_ID_DELIMITER}{self.event_sequence}"
+
+    @classmethod
+    def derive_event_identification(cls, stream_event_id: str) -> tuple[int, int]:
+        split = stream_event_id.split(cls.EVENT_ID_DELIMITER)
+        if len(split) != 2:
+            raise ValueError("Invalid stream event identification")
+        return int(split[0]), int(split[1])
 
     def __cache_repr__(self) -> dict[FieldT, EncodableT]:
         return super(StreamedEvent, self).__cache_repr__() | {"event_id": self.event_id}
@@ -141,8 +157,10 @@ class StreamedEvent(Event):
     def construct_from_stream_record(cls, stream: tuple[str, dict[str, str]]) -> Self:
         stream_id, stream_entry = stream
         base_event: Event = Event.reconstruct_from_stream(stream_entry)
+        event_timestamp, event_sequence = cls.derive_event_identification(stream_id)
         return cls(
-            event_id=stream_id,
+            event_timestamp=event_timestamp,
+            event_sequence=event_sequence,
             name=base_event.name,
             payload=base_event.payload,
             side_effects=base_event.side_effects,
@@ -153,9 +171,18 @@ class StreamedEvent(Event):
     def safe_construct_from_malformed_stream(
         cls, stream_entry: tuple[str, dict[str, str]]
     ) -> Self:
+        try:
+            event_timestamp, event_sequence = cls.derive_event_identification(
+                stream_entry[0]
+            )
+        except (
+            ValueError
+        ):  # Should never happen, indicates unexpected change in Redis stream semantics
+            raise RuntimeError("Unrecoverable redis entry")
         return cls(
+            event_timestamp=event_timestamp,
+            event_sequence=event_sequence,
             name=EventName.MALFORMED,
             payload=stream_entry[1],
-            event_id=stream_entry[0],
             side_effects=EventSideEffects(),
         )
