@@ -10,7 +10,7 @@ async def test_error_propagation(
     test_repo, multirepo_coordinator: MultiRepositoryWorkCoordinator
 ) -> None:
     with pytest.raises(RuntimeError):
-        async with multirepo_coordinator.multirepo_work_context(test_repo):
+        async with multirepo_coordinator.external_work_context(test_repo):
             raise RuntimeError()
 
 
@@ -24,7 +24,7 @@ async def test_commitment(test_repo_factory) -> None:
         MagicMock(return_value=session_context)
     )
 
-    async with multirepo_coordinator.multirepo_work_context(test_repo_factory()):
+    async with multirepo_coordinator.external_work_context(test_repo_factory()):
         pass
     session.commit.assert_awaited_once()
 
@@ -56,7 +56,7 @@ async def test_async_context_stacking(
     first_repo.external_unit_of_work = first_context
     second_repo.external_unit_of_work = second_context
 
-    async with multirepo_coordinator.multirepo_work_context(first_repo, second_repo):
+    async with multirepo_coordinator.external_work_context(first_repo, second_repo):
         calls.append("body")
 
     assert calls == [

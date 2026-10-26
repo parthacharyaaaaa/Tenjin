@@ -50,7 +50,7 @@ async def report_suspicious_activity(
 ) -> None:
     await suspicious_activity_repository.insert_activity(admin_id, desc)
     current_time: datetime = datetime.now(UTC)
-    async with coordinator.multirepo_work_context(
+    async with coordinator.external_work_context(
         suspicious_activity_repository, admin_repository
     ):
         activities: list[
