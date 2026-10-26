@@ -1,47 +1,14 @@
 from dataclasses import dataclass
-from datetime import datetime
-from typing import ClassVar, Self
 
 from auxillary.singleton import SingletonMetaclass
 from sqlalchemy import Row, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from resource_server.models.data_transport.comment import CommentResult
 from resource_server.models.database import Comment, CommentReport, CommentVote, User
 from resource_server.models.database_enums import ReportTags
-from resource_server.repositories.result_protocol import AbstractDTO
 
 type t_comment_result = Row[tuple[Comment, int, str]]
-
-
-@dataclass(slots=True, init=False)
-class CommentResult(AbstractDTO):
-    id_: int
-    author_id: int
-    author_username: str
-    parent_forum: int
-    parent_post: int
-
-    time_created: datetime
-    body: str
-
-    score: int
-    reports: int
-
-    resource_name: ClassVar[str] = Comment.__tablename__
-    COUNTER_FIELDS: ClassVar[tuple[str, ...]] = (
-        "score",
-        "reports",
-    )
-
-    @classmethod
-    def construct_from_orm(
-        cls, obj: Comment, author_id: int, author_username: str, *args, **kwargs
-    ) -> Self:
-        instance = super().construct_from_orm(obj, *args, **kwargs)
-        instance.author_id = author_id
-        instance.author_username = author_username
-
-        return instance
 
 
 @dataclass(slots=True, weakref_slot=True)

@@ -1,14 +1,13 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, Callable, ClassVar, Mapping, Self, Sequence
+from typing import Callable, Sequence
 
-import orjson
 from auxillary.singleton import SingletonMetaclass
-from redis.typing import EncodableT, FieldT
 from sqlalchemy import ColumnElement, Row, UnaryExpression, and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resource_server.datastructures.requests import SortOption
+from resource_server.models.data_transport.anime import AnimeResult
 from resource_server.models.database import (
     Anime,
     AnimeGenre,
@@ -16,58 +15,6 @@ from resource_server.models.database import (
     Genre,
     StreamLink,
 )
-from resource_server.repositories.result_protocol import AbstractDTO
-
-
-@dataclass(slots=True, init=False)
-class AnimeResult(AbstractDTO):
-    id_: int
-    title: str
-    members: int
-    synopsis: str
-
-    genres: list[str]
-    stream_links: dict[str, str]
-
-    COUNTER_FIELDS: ClassVar[tuple[str]] = ("members",)
-    resource_name: ClassVar[str] = Anime.__tablename__
-
-    @classmethod
-    def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
-        instance = super().construct_from_cache(mapping)
-        instance.genres = orjson.loads(mapping["genres"])
-        instance.stream_links = orjson.loads(mapping["stream_links"])
-        return instance
-
-    @classmethod
-    def construct_from_orm(
-        cls,
-        obj: Anime,
-        genres: list[Genre],
-        stream_links: list[StreamLink],
-        *args,
-        **kwargs,
-    ) -> Self:
-        instance = super().construct_from_orm(obj)
-        instance.genres = [g.name_ for g in genres]
-        instance.stream_links = {s.website: s.url for s in stream_links}
-        return instance
-
-    def __json_repr__(self) -> dict[str, Any]:
-        return {
-            "id": self.id_,
-            "title": self.title,
-            "members": self.members,
-            "synopsis": self.synopsis,
-        }
-
-    def __cache_repr__(self) -> dict[FieldT, EncodableT]:
-        return {
-            "id": self.id_,
-            "title": self.title,
-            "members": self.members,
-            "synopsis": self.synopsis,
-        }
 
 
 @dataclass(slots=True, weakref_slot=True)

@@ -558,17 +558,18 @@ def test_update_signing_key_selects_private_key_and_registers_public_copy(
     manager = token_manager_harness.manager
     manager._active_key = "old"
     manager._active_key_private_pem = b"old-private"
-    keydata = object.__new__(ActiveKeyPrivateDataResult)
-    keydata.kid = "new"
-    keydata.alg = "ES256"
-    keydata.curve = "secp256r1"
-    keydata.epoch = datetime(2026, 1, 1, tzinfo=UTC)
-    keydata.public_pem = b"public"
-    keydata.rotated_out_at = None
-    keydata.expired_at = None
-    keydata.manual_rotation = None
-    keydata.rotated_by = None
-    keydata.private_pem = b"new-private"
+    keydata = ActiveKeyPrivateDataResult(
+        kid="new",
+        alg="ES256",
+        curve="secp256r1",
+        epoch=datetime(2026, 1, 1, tzinfo=UTC),
+        public_pem=b"public",
+        rotated_out_at=None,
+        expired_at=None,
+        manual_rotation=None,
+        rotated_by=None,
+        private_pem=b"new-private",
+    )
 
     manager.update_signing_key(keydata)
 

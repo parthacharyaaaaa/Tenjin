@@ -1,57 +1,12 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, ClassVar, Mapping, Never, Self
 
 from auxillary.singleton import SingletonMetaclass
 from sqlalchemy import ColumnElement, Row, and_, delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from resource_server.models.data_transport.user import PrivateUserResult, UserResult
 from resource_server.models.database import PasswordRecoveryToken, User
-from resource_server.repositories.result_protocol import AbstractDTO
-
-
-@dataclass(slots=True, init=False)
-class UserResult(AbstractDTO):
-    id_: int
-    username: str
-    email: str
-
-    aura: int
-    total_posts: int
-    total_comments: int
-
-    time_joined: datetime
-    last_login: datetime
-
-    COUNTER_FIELDS: ClassVar[tuple[str, ...]] = (
-        "aura",
-        "total_posts",
-        "total_comments",
-    )
-    resource_name: ClassVar[str] = User.__tablename__
-
-
-@dataclass(slots=True, init=False)
-class PrivateUserResult(UserResult):
-    pw_hash: bytes
-    deleted: bool
-    time_deleted: datetime | None
-
-    @classmethod
-    def construct_from_cache(cls, mapping: Mapping[str, Any], *args, **kwargs) -> Never:
-        raise RuntimeError("Cache mapping of private user data violates policy")
-
-    def __cache_repr__(self) -> Never:
-        raise RuntimeError("Cannot create cache representation of private user data")
-
-    @classmethod
-    def construct_from_orm(cls, obj: User, *args, **kwargs) -> Self:
-        instance = super().construct_from_orm(obj, *args, **kwargs)
-        instance.pw_hash = obj.pw_hash
-        instance.deleted = obj.deleted
-        instance.time_deleted = obj.time_deleted
-
-        return instance
 
 
 @dataclass(slots=True, weakref_slot=True)
@@ -187,7 +142,9 @@ class UserRepository(metaclass=SingletonMetaclass):
     ) -> None:
         async with self.session_maker() as session:
             await session.execute(
-                update(User).where(User.id_ == user_id).values(pw_hash=password_hash)
+                update(User)
+                .where(User.id_ == user_id)
+                .values(pw_hash=bytes(password_hash))
             )
 
             await session.execute(

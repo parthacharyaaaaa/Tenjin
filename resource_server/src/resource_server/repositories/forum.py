@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Callable, ClassVar, Literal, Mapping, Self, overload
+from typing import Callable, Literal, overload
 
 from auxillary.singleton import SingletonMetaclass
 from sqlalchemy import (
@@ -16,6 +16,11 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resource_server.datastructures.requests import SortOption
+from resource_server.models.data_transport.forum import (
+    ForumAdminResult,
+    ForumAdminUserResult,
+    ForumResult,
+)
 from resource_server.models.database import (
     AdminRoles,
     Forum,
@@ -23,78 +28,7 @@ from resource_server.models.database import (
     ForumSubscription,
     User,
 )
-from resource_server.repositories.result_protocol import AbstractDTO
 from resource_server.repositories.user import UserResult
-
-
-@dataclass(slots=True, init=False)
-class ForumResult(AbstractDTO):
-    id_: int
-    name_: str
-    anime: int
-
-    description: str | None = None
-
-    subscribers: int
-    posts: int
-    created_at: datetime
-    admin_count: int
-
-    COUNTER_FIELDS: ClassVar[tuple[str, ...]] = ("subscribers", "posts")
-    resource_name: ClassVar[str] = Forum.__tablename__
-
-
-@dataclass(slots=True, init=False)
-class ForumAdminResult(AbstractDTO):
-    forum_id: int
-    user_id: int
-    role: AdminRoles
-
-    resource_name: ClassVar[str] = ForumAdmin.__tablename__
-
-    @classmethod
-    def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
-        instance = cls()
-        instance.user_id = mapping["user_id"]
-        instance.forum_id = mapping["forum_id"]
-        instance.role = AdminRoles(mapping["role"])
-
-        return instance
-
-    @classmethod
-    def construct_from_orm(
-        cls,
-        obj: ForumAdmin,
-        *args,
-        **kwargs,
-    ) -> Self:
-        instance = cls()
-        instance.user_id = obj.user_id
-        instance.forum_id = obj.forum_id
-        instance.role = AdminRoles(obj.role)
-
-        return instance
-
-
-@dataclass(slots=True, init=False)
-class ForumAdminUserResult(UserResult):
-    role: AdminRoles
-
-    @classmethod
-    def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
-        instance = super().construct_from_cache(mapping)
-        instance.role = AdminRoles(mapping["role"])
-        return instance
-
-    @classmethod
-    def construct_from_orm(
-        cls, obj: User, role: str | AdminRoles, *args, **kwargs
-    ) -> Self:
-        instance = super().construct_from_orm(obj, *args, **kwargs)
-        if not isinstance(role, AdminRoles):
-            role = AdminRoles(role)
-        instance.role = role
-        return instance
 
 
 @dataclass(slots=True, weakref_slot=True)
@@ -319,7 +253,7 @@ class ForumRepository(metaclass=SingletonMetaclass):
                 .where(
                     (ForumAdmin.forum_id == forum_id) & (ForumAdmin.user_id == admin_id)
                 )
-                .values(role=role.value)
+                .values(role=role)
             )
             await session.commit()
 
