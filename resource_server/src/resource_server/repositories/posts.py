@@ -1,55 +1,15 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, ClassVar, Mapping, Self
+from typing import Any
 
 from auxillary.singleton import SingletonMetaclass
 from sqlalchemy import Row, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase
 
 from resource_server.datastructures.requests import SortOption
+from resource_server.models.data_transport.posts import PostResult
 from resource_server.models.database import Post, PostReport, PostSave, PostVote, User
 from resource_server.models.database_enums import ReportTags
-from resource_server.repositories.result_protocol import AbstractDTO
-
-
-@dataclass(slots=True, init=False)
-class PostResult(AbstractDTO):
-    id_: int
-    author_id: int
-    forum_id: int
-    author_username: str
-
-    # Post statistics
-    score: int
-    total_comments: int
-    saves: int
-    reports: int
-
-    # Post details
-    title: str
-    body_text: str
-
-    flair: str | None
-    closed: bool
-    time_posted: datetime
-
-    COUNTER_FIELDS: ClassVar[tuple[str, ...]] = ("saves", "reports", "total_comments")
-    resource_name: ClassVar[str] = Post.__tablename__
-
-    @classmethod
-    def construct_from_cache(cls, mapping: Mapping[str, Any]) -> Self:
-        instance = super().construct_from_cache(mapping)
-        instance.author_username = mapping["author_username"]
-        return instance
-
-    @classmethod
-    def construct_from_orm(
-        cls, obj: DeclarativeBase, author_username: str, *args, **kwargs
-    ) -> Self:
-        instance = super().construct_from_orm(obj, *args, **kwargs)
-        instance.author_username = author_username
-        return instance
 
 
 @dataclass(slots=True, weakref_slot=True)

@@ -15,17 +15,17 @@ from redis.asyncio.client import Redis
 def dummy_elliptic_jwks() -> list[EllipticCurveJWKResult]:
     return [
         EllipticCurveJWKResult(
-            ECAlg.ES256,
-            SECP256R1.name,
-            str(i),
-            EllipticCurveJWK.b64url_encode_point(
+            alg=ECAlg.ES256,
+            crv=SECP256R1.name,
+            kid=str(i),
+            x=EllipticCurveJWK.b64url_encode_point(
                 (
                     pub_nums := derive_private_key(private_value=i, curve=SECP256R1())
                     .public_key()
                     .public_numbers()
                 ).x
             ),
-            EllipticCurveJWK.b64url_encode_point(pub_nums.y),
+            y=EllipticCurveJWK.b64url_encode_point(pub_nums.y),
         )
         for i in range(1, 4)
     ]

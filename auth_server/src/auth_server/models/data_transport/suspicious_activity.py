@@ -1,13 +1,12 @@
-from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar
+from typing import Annotated, ClassVar
 
 from auxillary.data_structures.dto import AbstractResult
+from pydantic import AliasChoices, Field
 
 from auth_server.models.database import SuspiciousActivity
 
 
-@dataclass(slots=True, init=False)
 class SuspiciousActivityResult(AbstractResult):
     """
     DTO for SuspiciousActivity ORM object
@@ -15,7 +14,7 @@ class SuspiciousActivityResult(AbstractResult):
 
     resource_name: ClassVar[str] = SuspiciousActivity.__tablename__
 
-    id_: int
+    id: Annotated[int, Field(validation_alias=AliasChoices("id", "id_"))]
     suspect: int
     time_logged: datetime
     description: str

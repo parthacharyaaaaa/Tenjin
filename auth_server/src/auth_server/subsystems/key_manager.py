@@ -1,7 +1,7 @@
 import asyncio
 from collections.abc import AsyncGenerator, MutableMapping, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import IntEnum, IntFlag
 from logging import Logger, getLogger
@@ -257,7 +257,12 @@ class KeyLifecycleManager(AntiSingletonMixin):
 
         await self.jwks_update_announcer.stream_update(
             VariableJWKS.model_validate(
-                {"keys": [EllipticCurveJWK.model_validate(asdict(jwk)) for jwk in jwks]}
+                {
+                    "keys": [
+                        EllipticCurveJWK.model_validate(jwk.model_dump())
+                        for jwk in jwks
+                    ]
+                }
             )
         )
 
@@ -289,7 +294,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
 
         await self.jwks_update_announcer.stream_update(
             VariableJWKS.model_validate(
-                {"keys": [EllipticCurveJWK.model_validate(asdict(active_key))]}
+                {"keys": [EllipticCurveJWK.model_validate(active_key.model_dump())]}
             )
         )
 
@@ -372,7 +377,12 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 await self.synced_store_key_manager.set_jwks(jwks)
         await self.jwks_update_announcer.stream_update(
             VariableJWKS.model_validate(
-                {"keys": [EllipticCurveJWK.model_validate(asdict(jwk)) for jwk in jwks]}
+                {
+                    "keys": [
+                        EllipticCurveJWK.model_validate(jwk.model_dump())
+                        for jwk in jwks
+                    ]
+                }
             )
         )
         return new_key.create_public_copy()

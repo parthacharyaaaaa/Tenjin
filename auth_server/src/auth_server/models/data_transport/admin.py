@@ -1,14 +1,13 @@
-from dataclasses import dataclass
 from datetime import datetime
-from typing import ClassVar
+from typing import Annotated, ClassVar
 
 from auxillary.data_structures.dto import AbstractResult
+from pydantic import AliasChoices, Field
 
 from auth_server.admin.roles import AdminRole
 from auth_server.models.database import Admin
 
 
-@dataclass(slots=True, init=False)
 class AdminPublicResult(AbstractResult):
     """
     DTO for an Admin ORM object
@@ -16,7 +15,7 @@ class AdminPublicResult(AbstractResult):
 
     resource_name: ClassVar[str] = Admin.__tablename__
 
-    id: int
+    id: Annotated[int, Field(validation_alias=AliasChoices("id", "id_"))]
     username: str
     role: AdminRole
 
