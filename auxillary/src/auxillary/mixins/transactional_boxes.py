@@ -50,12 +50,20 @@ class OutboxTableMixin(EventHolderMixin, RetriedProcessingMixin):
     # NOTE: Indexing decisions are to be made by the user of this mixin class
     @classmethod
     def outbox_constraints(cls) -> t_table_args:
-        parent_outbox_constraints: tuple[t_table_args] = tuple(
-            outbox_contraints
-            for s in cls.__mro__
-            if (outbox_contraints := getattr(s, "constraints", None)) is not None
-        )
-        return (*(j for i in parent_outbox_constraints for j in i),)
+        constraints: list[ColumnCollectionConstraint | Index] = []
+
+        for base in cls.__mro__:
+            contributor = base.__dict__.get("constraints")
+            if isinstance(contributor, classmethod):
+                constraints.extend(contributor.__func__(cls))
+
+        return tuple(constraints)
+        # parent_outbox_constraints: t_table_args = tuple(
+        #     outbox_contraints
+        #     for s in cls.__mro__
+        #     if (outbox_contraints := getattr(s, "constraints", None)) is not None
+        # )
+        # return (*(j for i in parent_outbox_constraints for j in i),)
 
     @declared_attr.directive
     @classmethod
@@ -72,12 +80,20 @@ class InboxTableMixin(EventHolderMixin, RetriedProcessingMixin):
     # NOTE: Indexing decisions are to be made by the user of this mixin class
     @classmethod
     def inbox_constraints(cls) -> t_table_args:
-        parent_inbox_constraints: tuple[t_table_args] = tuple(
-            outbox_contraints
-            for s in cls.__mro__
-            if (outbox_contraints := getattr(s, "constraints", None)) is not None
-        )
-        return (*(j for i in parent_inbox_constraints for j in i),)
+        constraints: list[ColumnCollectionConstraint | Index] = []
+
+        for base in cls.__mro__:
+            contributor = base.__dict__.get("constraints")
+            if isinstance(contributor, classmethod):
+                constraints.extend(contributor.__func__(cls))
+
+        return tuple(constraints)
+        # parent_inbox_constraints: t_table_args = tuple(
+        #     outbox_contraints()
+        #     for s in cls.__mro__
+        #     if (outbox_contraints := getattr(s, "constraints", None)) is not None
+        # )
+        # return (*(j for i in parent_inbox_constraints for j in i),)
 
     @declared_attr.directive
     @classmethod
