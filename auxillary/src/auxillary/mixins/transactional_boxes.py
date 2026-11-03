@@ -4,6 +4,7 @@ from typing import Any
 from sqlalchemy.dialects.postgresql.json import JSONB
 from sqlalchemy.orm import Mapped, declared_attr, mapped_column
 from sqlalchemy.schema import ColumnCollectionConstraint
+from sqlalchemy.sql.expression import text
 from sqlalchemy.sql.schema import CheckConstraint, Index
 from sqlalchemy.types import BIGINT, SMALLINT, TEXT, TIMESTAMP, VARCHAR
 
@@ -30,7 +31,9 @@ class RetriedProcessingMixin:
         SMALLINT, nullable=False, server_default="0"
     )  # Postgres autocasts to SMALLINT
     added_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False, server_default="CURRENT_TIMESTAMP"
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
     )
     last_attempt_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True

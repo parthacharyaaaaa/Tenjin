@@ -1,10 +1,16 @@
 import datetime
 
+from auxillary.mixins.transactional_boxes import (
+    InboxTableMixin,
+    TransactionalBoxDeadLetterMixin,
+    t_table_args,
+)
 from sqlalchemy import BOOLEAN, INTEGER, TIMESTAMP, VARCHAR, ForeignKey, text
 from sqlalchemy.dialects.postgresql import BYTEA
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 from sqlalchemy.schema import CheckConstraint
 from sqlalchemy.sql.functions import func
+from sqlalchemy.sql.schema import Index
 
 from auth_server.admin.roles import AdminRole
 from auth_server.config.constants import (
@@ -16,7 +22,11 @@ from auth_server.config.constants import (
     MAX_IDENTITY_LENGTH,
     MIN_IDENTITY_LENGTH,
 )
-from auth_server.models.database_enums import ADMIN_ROLES
+from auth_server.models.database_enums import (
+    ADMIN_ROLES,
+    INBOX_ERROR_TYPES,
+    InboxErrorTypes,
+)
 
 
 class Base(DeclarativeBase):
@@ -126,3 +136,52 @@ class KeyData(Base):
             name="ck_expiry_after_rotation",
         ),
     )
+
+
+class InboxTable(InboxTableMixin, Base):
+    __tablename__ = "event_inbox"
+
+    @declared_attr.directive
+    @classmethod
+    def __table_args__(cls) -> t_table_args:  # pyrefly: ignore[bad-override]
+        # NOTE: 'ix_pending_inbox_type_id' does not require sorting options
+        # since a default Postgres index already sorts in ascending order
+        inbox_implementation_constraints: t_table_args = (
+            Index(
+                "ix_pending_inbox_type_id",
+                cls.event_type,
+                cls.message_id,
+                postgresql_where=(cls.processed_at.is_(None)),
+            ),
+            Index(
+                "ix_partial_processed",
+                cls.processed_at,
+                postgresql_where=(cls.processed_at.isnot(None)),
+            ),
+        )
+        return cls.inbox_constraints() + inbox_implementation_constraints
+
+
+class InboxDeadLetter(TransactionalBoxDeadLetterMixin, Base):
+    __tablename__ = "inbox_dead_letter"
+
+    error_type: Mapped[InboxErrorTypes] = mapped_column(
+        INBOX_ERROR_TYPES,
+        nullable=False,
+        server_default=InboxErrorTypes.GENERAL_PROCESSING_ERROR,
+    )
+
+    @declared_attr.directive
+    @classmethod
+    def __table_args__(cls) -> t_table_args:  # pyrefly: ignore[bad-override]
+        # Composite index on last_attempt to sort by ascending order
+        implementation_constraints: t_table_args = (
+            Index(
+                "ix_event_type",
+                cls.event_type,
+                cls.last_attempt,
+                postgresql_where=(cls.event_type.isnot(None)),
+            ),
+            Index("ix_error_type", cls.error_type, cls.last_attempt),
+        )
+        return implementation_constraints + cls.constraints()
