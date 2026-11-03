@@ -119,6 +119,12 @@ class KeyData(Base):
     )
 
     __table_args__ = (
+        Index(
+            "uq_non_null_private_pem",
+            private_pem,
+            unique=True,
+            postgresql_where=private_pem.isnot(None),
+        ),
         CheckConstraint(
             (
                 (private_pem.is_(None) & (rotated_out_at.is_not(None)))
