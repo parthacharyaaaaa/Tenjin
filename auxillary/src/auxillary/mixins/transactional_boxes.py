@@ -83,7 +83,6 @@ class InboxTableMixin(EventHolderMixin, RetriedProcessingMixin):
     message_id: Mapped[int] = mapped_column(
         BIGINT, primary_key=True, autoincrement=True
     )
-    processing_state: Mapped[str] = mapped_column(VARCHAR(16), nullable=False)
 
     # NOTE: Indexing decisions are to be made by the user of this mixin class
     @classmethod
