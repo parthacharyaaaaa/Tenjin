@@ -15,24 +15,24 @@ from auxillary.mixins.transactional_boxes.auxillary import (
 
 
 class TransactionalBoxMixin(EventHolderMixin):
+    message_id: Mapped[int] = mapped_column(
+        BIGINT, primary_key=True, autoincrement=True
+    )
     added_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
     )
-    message_id: Mapped[int] = mapped_column(
-        BIGINT, primary_key=True, autoincrement=True
-    )
 
     # NOTE: Indexing decisions are to be made by the user of this mixin class
     @classmethod
-    def constraints(cls) -> t_table_args:
+    def table_constraints(cls) -> t_table_args:
         return get_mixin_constraints(cls)
 
     @declared_attr.directive
     @classmethod
     def __table_args__(cls):
-        return cls.constraints()
+        return cls.table_constraints()
 
 
 class TransactionalBoxDeadLetterMixin:
@@ -54,5 +54,5 @@ class TransactionalBoxDeadLetterMixin:
     )  # Postgres autocasts to SMALLINT
 
     @classmethod
-    def constraints(cls) -> t_table_args:
+    def table_constraints(cls) -> t_table_args:
         return (CheckConstraint(cls.attempt_count >= 0, "ck_attempts_lower_bound"),)

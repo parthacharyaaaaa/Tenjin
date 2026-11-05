@@ -55,10 +55,6 @@ class RetriedProcessingMixin:
                 | (cls.lease_expiry_at > cls.last_attempt_at),
                 "ck_lease_chronology",
             ),
-            CheckConstraint(
-                cls.lease_expiry_at > cls.last_attempt_at,
-                "ck_lease_chronology",
-            ),
             CheckConstraint(cls.attempts >= 0, "ck_attempts_lower_bound"),
         )
 
