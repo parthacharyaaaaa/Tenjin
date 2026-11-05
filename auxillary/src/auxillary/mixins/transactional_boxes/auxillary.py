@@ -29,48 +29,47 @@ class RetriedProcessingMixin:
     # Default to 1 and not 0 since subscribers record their entries
     # on their first attempts
     attempts: Mapped[int] = mapped_column(
-        SMALLINT, nullable=False, server_default="1"
+        SMALLINT, nullable=False, server_default="0"
     )  # Postgres autocasts to SMALLINT
-    last_attempt_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False
+    last_attempt_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
     )
     processed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
-    lease_expiry_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
-    lease_token: Mapped[str] = mapped_column(VARCHAR(32))
+    lease_expiry_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    lease_token: Mapped[str | None] = mapped_column(VARCHAR(32), nullable=True)
 
     @classmethod
     def constraints(cls) -> t_table_args:
         return (
             CheckConstraint(
-                cls.processed_at.is_(None) | (cls.last_attempt_at < cls.processed_at),
+                (cls.last_attempt_at.is_(None) | cls.processed_at.is_(None))
+                | (cls.last_attempt_at < cls.processed_at),
                 "ck_processed_timestamp_chronology",
+            ),
+            CheckConstraint(
+                (cls.lease_expiry_at.is_(None) | cls.last_attempt_at.is_(None))
+                | (cls.lease_expiry_at > cls.last_attempt_at),
+                "ck_lease_chronology",
             ),
             CheckConstraint(
                 cls.lease_expiry_at > cls.last_attempt_at,
                 "ck_lease_chronology",
             ),
-            CheckConstraint(cls.attempts >= 1, "ck_attempts_lower_bound"),
+            CheckConstraint(cls.attempts >= 0, "ck_attempts_lower_bound"),
         )
 
 
 class EventSchedulerMixin:
-    """
-    Singleton table to keep track of the last event in an inbox/outbox table
-    that was scheduled for processing
-    """
-
-    id_: Mapped[int] = mapped_column(
-        SMALLINT, primary_key=True, server_default=text("1")
-    )
+    # Recommended to be narrowed with an enum
+    subscriber_type: Mapped[str] = mapped_column(VARCHAR(64), primary_key=True)
     last_scheduled_id: Mapped[int] = mapped_column(
         BIGINT, nullable=False, server_default=text("0")
     )
 
     @classmethod
     def constraints(cls) -> t_table_args:
-        return (
-            CheckConstraint(cls.id_ == 1, "ck_singleton_id"),
-            CheckConstraint(cls.last_scheduled_id >= 0, "ck_last_scheduled_id"),
-        )
+        return (CheckConstraint(cls.last_scheduled_id >= 0, "ck_last_scheduled_id"),)
