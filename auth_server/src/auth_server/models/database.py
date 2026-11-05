@@ -166,7 +166,8 @@ class InboxTable(TransactionalBoxMixin, Base):
         return cls.constraints()
 
 
-class EventDeliveryMixin(RetriedProcessingMixin, Base):
+class EventDelivery(RetriedProcessingMixin, Base):
+    __tablename__ = "event_deliveries"
     message_id: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey(f"{InboxTable.__tablename__}.{InboxTable.message_id.name}"),
