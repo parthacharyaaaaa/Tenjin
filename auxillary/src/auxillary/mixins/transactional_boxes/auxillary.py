@@ -4,7 +4,8 @@ from typing import Any
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.schema import CheckConstraint, ColumnCollectionConstraint, Index
-from sqlalchemy.types import SMALLINT, TIMESTAMP, VARCHAR
+from sqlalchemy.sql.expression import text
+from sqlalchemy.types import BIGINT, SMALLINT, TIMESTAMP, VARCHAR
 
 type t_table_args = tuple[ColumnCollectionConstraint | Index, ...]
 
@@ -51,4 +52,25 @@ class RetriedProcessingMixin:
                 "ck_lease_chronology",
             ),
             CheckConstraint(cls.attempts >= 1, "ck_attempts_lower_bound"),
+        )
+
+
+class EventSchedulerMixin:
+    """
+    Singleton table to keep track of the last event in an inbox/outbox table
+    that was scheduled for processing
+    """
+
+    id_: Mapped[int] = mapped_column(
+        SMALLINT, primary_key=True, server_default=text("1")
+    )
+    last_scheduled_id: Mapped[int] = mapped_column(
+        BIGINT, nullable=False, server_default=text("0")
+    )
+
+    @classmethod
+    def constraints(cls) -> t_table_args:
+        return (
+            CheckConstraint(cls.id_ == 1, "ck_singleton_id"),
+            CheckConstraint(cls.last_scheduled_id >= 0, "ck_last_scheduled_id"),
         )

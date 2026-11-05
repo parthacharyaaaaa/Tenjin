@@ -1,16 +1,29 @@
 import datetime
 
-from auxillary.mixins.transactional_boxes import (
-    InboxTableMixin,
-    TransactionalBoxDeadLetterMixin,
+from auxillary.mixins.transactional_boxes.auxillary import (
+    EventSchedulerMixin,
+    RetriedProcessingMixin,
     t_table_args,
 )
-from sqlalchemy import BOOLEAN, INTEGER, TIMESTAMP, VARCHAR, ForeignKey, text
+from auxillary.mixins.transactional_boxes.transactional_boxes import (
+    TransactionalBoxDeadLetterMixin,
+    TransactionalBoxMixin,
+)
+from sqlalchemy import (
+    BOOLEAN,
+    INTEGER,
+    TIMESTAMP,
+    VARCHAR,
+    ForeignKey,
+    PrimaryKeyConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import BYTEA
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 from sqlalchemy.schema import CheckConstraint
 from sqlalchemy.sql.functions import func
 from sqlalchemy.sql.schema import Index
+from sqlalchemy.types import BIGINT
 
 from auth_server.admin.roles import AdminRole
 from auth_server.config.constants import (
@@ -144,28 +157,50 @@ class KeyData(Base):
     )
 
 
-class InboxTable(InboxTableMixin, Base):
+class InboxTable(TransactionalBoxMixin, Base):
     __tablename__ = "event_inbox"
 
     @declared_attr.directive
     @classmethod
     def __table_args__(cls) -> t_table_args:  # pyrefly: ignore[bad-override]
-        # NOTE: 'ix_pending_inbox_type_id' does not require sorting options
-        # since a default Postgres index already sorts in ascending order
-        inbox_implementation_constraints: t_table_args = (
+        return cls.constraints()
+
+
+class EventDeliveryMixin(RetriedProcessingMixin, Base):
+    message_id: Mapped[int] = mapped_column(
+        BIGINT,
+        ForeignKey(f"{InboxTable.__tablename__}.{InboxTable.message_id.name}"),
+        nullable=False,
+    )
+    subscriber_type: Mapped[str] = mapped_column(VARCHAR(64), nullable=False)
+
+    @declared_attr.directive
+    @classmethod
+    def __table_args__(cls) -> t_table_args:  # pyrefly: ignore[bad-override]
+        implementation_constraints: t_table_args = (
+            PrimaryKeyConstraint(cls.message_id, cls.subscriber_type),
             Index(
-                "ix_pending_inbox_type_id",
-                cls.event_type,
+                "ix_pending_inbox_id",
+                cls.subscriber_type,
                 cls.message_id,
                 postgresql_where=(cls.processed_at.is_(None)),
             ),
             Index(
-                "ix_partial_processed",
-                cls.processed_at,
+                "ix_processed",
+                cls.message_id,
                 postgresql_where=(cls.processed_at.isnot(None)),
             ),
         )
-        return cls.inbox_constraints() + inbox_implementation_constraints
+        return cls.constraints() + implementation_constraints
+
+
+class EventScheduleTrack(EventSchedulerMixin, Base):
+    __tablename__ = "event_schedule_track"
+
+    @declared_attr.directive
+    @classmethod
+    def __table_args__(cls) -> t_table_args:  # pyrefly: ignore[bad-override]
+        return cls.constraints()
 
 
 class InboxDeadLetter(TransactionalBoxDeadLetterMixin, Base):

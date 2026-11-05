@@ -6,7 +6,7 @@ from typing import Final
 from auth_server.admin.roles import AdminRole
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies.local import get_app_config
-from auth_server.models.database import Admin
+from auth_server.models.database import Admin, EventScheduleTrack
 from auxillary.security.hashing import bcrypt_hash_password
 from dotenv import load_dotenv
 from sqlalchemy import Engine, create_engine
@@ -50,6 +50,7 @@ def main(env_filepath: str | None = None) -> None:
                 )
             """)
         )
+        session.execute(insert(EventScheduleTrack))  # J Cole statement, so #humble
         session.commit()
 
 
