@@ -38,8 +38,11 @@ from auth_server.config.constants import (
 from auth_server.models.database_enums import (
     ADMIN_ROLES,
     INBOX_ERROR_TYPES,
+    INBOX_EVENT_SUBTYPES,
+    INBOX_EVENT_TYPES,
     InboxErrorTypes,
 )
+from auth_server.models.events.enums import EventSubtype, EventType
 
 
 class Base(DeclarativeBase):
@@ -160,10 +163,13 @@ class KeyData(Base):
 class InboxTable(TransactionalBoxMixin, Base):
     __tablename__ = "event_inbox"
 
+    # Override with narrowed EventType StrEnum
+    event_type: Mapped[EventType] = mapped_column(INBOX_EVENT_TYPES, nullable=False)
+
     @declared_attr.directive
     @classmethod
     def __table_args__(cls) -> t_table_args:  # pyrefly: ignore[bad-override]
-        return cls.constraints()
+        return cls.table_constraints()
 
 
 class EventDelivery(RetriedProcessingMixin, Base):
@@ -173,13 +179,14 @@ class EventDelivery(RetriedProcessingMixin, Base):
         ForeignKey(f"{InboxTable.__tablename__}.{InboxTable.message_id.name}"),
         nullable=False,
     )
-    subscriber_type: Mapped[str] = mapped_column(VARCHAR(64), nullable=False)
+    subscriber_type: Mapped[EventSubtype] = mapped_column(
+        INBOX_EVENT_SUBTYPES, nullable=False
+    )
 
-    @declared_attr.directive
     @classmethod
-    def __table_args__(cls) -> t_table_args:  # pyrefly: ignore[bad-override]
-        implementation_constraints: t_table_args = (
-            PrimaryKeyConstraint(cls.message_id, cls.subscriber_type),
+    def implementation_constraints(cls) -> t_table_args:
+        return (
+            PrimaryKeyConstraint(cls.subscriber_type, cls.message_id),
             Index(
                 "ix_pending_inbox_id",
                 cls.subscriber_type,
@@ -192,11 +199,25 @@ class EventDelivery(RetriedProcessingMixin, Base):
                 postgresql_where=(cls.processed_at.isnot(None)),
             ),
         )
-        return cls.constraints() + implementation_constraints
+
+    @declared_attr.directive
+    @classmethod
+    def __table_args__(cls) -> t_table_args:  # pyrefly: ignore[bad-override]
+        return cls.implementation_constraints() + cls.constraints()
 
 
-class EventScheduleTrack(EventSchedulerMixin, Base):
-    __tablename__ = "event_schedule_track"
+class SubEventScheduleTrack(EventSchedulerMixin, Base):
+    """
+    Singleton table to keep track of the last sub-event in an inbox/outbox table
+    that was scheduled for processing
+    """
+
+    __tablename__ = "sub_event_schedule_track"
+
+    # Override with narrowed EventSubtype StrEnum
+    subscriber_type: Mapped[EventSubtype] = mapped_column(
+        INBOX_EVENT_SUBTYPES, primary_key=True
+    )
 
     @declared_attr.directive
     @classmethod
@@ -207,6 +228,7 @@ class EventScheduleTrack(EventSchedulerMixin, Base):
 class InboxDeadLetter(TransactionalBoxDeadLetterMixin, Base):
     __tablename__ = "inbox_dead_letter"
 
+    # Override with narrowed InboxErrorTypes StrEnum
     error_type: Mapped[InboxErrorTypes] = mapped_column(
         INBOX_ERROR_TYPES,
         nullable=False,
@@ -226,4 +248,4 @@ class InboxDeadLetter(TransactionalBoxDeadLetterMixin, Base):
             ),
             Index("ix_error_type", cls.error_type, cls.last_attempt),
         )
-        return implementation_constraints + cls.constraints()
+        return implementation_constraints + cls.table_constraints()
