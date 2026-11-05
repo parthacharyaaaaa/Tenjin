@@ -9,26 +9,9 @@ from sqlalchemy.types import BIGINT, SMALLINT, TEXT, TIMESTAMP, VARCHAR
 
 from auxillary.mixins.transactional_boxes.auxillary import (
     EventHolderMixin,
-    RetriedProcessingMixin,
     get_mixin_constraints,
     t_table_args,
 )
-
-
-class OutboxTableMixin(EventHolderMixin, RetriedProcessingMixin):
-    message_id: Mapped[int] = mapped_column(
-        BIGINT, primary_key=True, autoincrement=True
-    )
-
-    # NOTE: Indexing decisions are to be made by the user of this mixin class
-    @classmethod
-    def outbox_constraints(cls) -> t_table_args:
-        return get_mixin_constraints(cls)
-
-    @declared_attr.directive
-    @classmethod
-    def __table_args__(cls):
-        return cls.outbox_constraints()
 
 
 class TransactionalBoxMixin(EventHolderMixin):
@@ -57,6 +40,7 @@ class TransactionalBoxDeadLetterMixin:
 
     # NOTE: NON-Nullable attributes are also allowed to be NULL
     # here in case of malformmed messages
+    # Also why we couldn't inherit from EventHolderMixin
     message_id: Mapped[int | None] = mapped_column(BIGINT, nullable=True)
     payload: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     event_type: Mapped[str | None] = mapped_column(VARCHAR(64), nullable=True)
