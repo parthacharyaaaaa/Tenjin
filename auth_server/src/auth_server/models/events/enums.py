@@ -2,4 +2,9 @@ from enum import StrEnum
 
 
 class EventType(StrEnum):
+    KEY_STORE_WRITE = "KEY_STORE_WRITE"
+
+
+class EventSubtype(StrEnum):
     JWKS_UPDATION_ANNOUNCEMENT = "JWKS_UPDATION_ANNOUNCEMENT"
+    SYNCED_STORE_UPDATION = "SYNCED_STORE_UPDATION"

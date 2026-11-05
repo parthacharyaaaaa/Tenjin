@@ -19,6 +19,7 @@ from auth_server.dependencies.local import (
 from auth_server.dependencies.requests import require_permissions
 from auth_server.models.data_transport.keydata import (
     ActiveKeyPublicDataResult,
+    EllipticCurveJWKResult,
     ExpiredKeyDataResult,
     RotatedKeyDataResult,
 )
@@ -85,24 +86,20 @@ async def invalidate_key(
     key_lifecycle_manager: Annotated[
         KeyLifecycleManager, Depends(get_key_lifecycle_manager)
     ],
-    synced_keystate_manager: Annotated[
-        SyncedStoreKeyStateManager, Depends(get_synced_store_key_state_manager)
-    ],
 ) -> JSONResponse:
     additional_kw: dict[str, str] = {}
     try:
-        await key_lifecycle_manager.invalidate_key(
-            kid, intermediate_message_mapping=additional_kw
-        )
+        jwks: tuple[
+            EllipticCurveJWKResult, ...
+        ] = await key_lifecycle_manager.invalidate_key(kid)
     except KeyStateError as e:
         raise HTTPException(409, str(e)) from e
 
-    valid_keys: list[str] = [i.kid for i in await synced_keystate_manager.get_jwks()]
     return JSONResponse(
         {
             "message": "Key invalidated successfully",
             "purged_key": kid,
-            "valid_keys": valid_keys,
+            "valid_keys": [k.kid for k in jwks],
             "additional_info": additional_kw,
         }
     )
@@ -148,13 +145,8 @@ async def rotate_keys(
         HypermediaLinkBuilder, Depends(get_hypermedia_link_builder)
     ],
 ) -> JSONResponse:
-    previous_active_key_id: Final[str] = (await synced_key_state_manager.get_jwks())[
-        0
-    ].kid
     try:
-        active_key: Final[
-            ActiveKeyPublicDataResult
-        ] = await key_lifecycle_manager.rotate_key(
+        active_key, previous_key = await key_lifecycle_manager.rotate_key(
             rotation_author=admin_session.admin_id
         )
     except KeyStateError as e:
@@ -163,10 +155,11 @@ async def rotate_keys(
         {
             "message": "Key rotation successful",
             "active_key_data": json_repr(active_key),
-            "previous_kid": previous_active_key_id,
+            "previous_kid": previous_key.kid,
+            "rotated_out_at": previous_key.rotated_out_at.isoformat(),
         },
         status_code=201,
         hypermedia_data=key_rotation_hypermedia(
-            link_builder, active_key.kid, previous_active_key_id
+            link_builder, active_key.kid, previous_key.kid
         ),
     )

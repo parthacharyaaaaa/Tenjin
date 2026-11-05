@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import AsyncGenerator, MutableMapping, Sequence
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -10,6 +10,7 @@ from typing import Final, Protocol
 
 import orjson
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
+from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auxillary.mixins.metaclass import AntiSingletonMixin
 from auxillary.security.data_structures.jwks.models import (
     EllipticCurveJWK,
@@ -21,6 +22,7 @@ from auxillary.security.serialization import (
 )
 from auxillary.utils import json_repr
 from redis.asyncio.client import Redis
+from redis.exceptions import RedisError
 
 from auth_server.config.sub_config import JWKSConfigModel, KeyConfigModel
 from auth_server.datastructures.exceptions.keys import (
@@ -37,6 +39,9 @@ from auth_server.models.data_transport.keydata import (
     ExpiredKeyDataResult,
     RotatedKeyDataResult,
 )
+from auth_server.models.events.enums import EventType
+from auth_server.models.events.events import InboxEvent
+from auth_server.repositories.inbox import InboxRepository
 from auth_server.repositories.keydata import (
     EllipticCurveJWKResult,
     KeydataRepository,
@@ -123,7 +128,9 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
 
 @dataclass(slots=True, frozen=True)
 class KeyLifecycleManager(AntiSingletonMixin):
+    inbox_repository: InboxRepository
     keydata_repository: KeydataRepository
+    repository_coordinator: MultiRepositoryWorkCoordinator
     token_manager: TokenManager
     key_config: KeyConfigModel
     jwks_config: JWKSConfigModel
@@ -150,10 +157,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
         object.__setattr__(
             self,
             "_transactional_stack_order",
-            (
-                self.synced_store_key_manager,
-                self.token_manager,
-            ),
+            (self.token_manager,),
         )
 
     def start_token_manager_polling(self) -> None:
@@ -209,62 +213,54 @@ class KeyLifecycleManager(AntiSingletonMixin):
         self,
         key_id: str,
         *,
-        intermediate_message_mapping: MutableMapping[str, str] | None = None,
         cooldown_duration: int | None = None,
-    ) -> None:
+    ) -> tuple[EllipticCurveJWKResult, ...]:
         async with self._transactional_block(
             operation=SyncedStoreKeyStrings.JWKS_WRITE_LOCK,
             lock_duration=LockTIme.MEDIUM,
             operational_cooldown_duration=cooldown_duration,
         ):
-            async with self.keydata_repository.unit_of_work():
-                # Select and lock key if exists
-                # Weaker, shared FOR KEY SHARE lock acquired since contention is
-                # handled above DB, and we only need to prevent DELETE and key-UPDATEs
-                target_key: (
-                    RotatedKeyDataResult | ExpiredKeyDataResult | None
-                ) = await self.keydata_repository.get_rotated_keydata(
-                    key_id,
-                    include_expired=True,
-                    lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ),
+            # Select and lock key if exists
+            # Weaker, shared FOR KEY SHARE lock acquired since contention is
+            # handled above DB, and we only need to prevent DELETE and key-UPDATEs
+            target_key: (
+                RotatedKeyDataResult | ExpiredKeyDataResult | None
+            ) = await self.keydata_repository.get_rotated_keydata(
+                key_id,
+                include_expired=True,
+                lock_args=(SelectionLockOption.KEY_SHARE, SelectionLockOption.READ),
+            )
+            if not target_key:
+                raise KeyNotFoundError(f"No inactive key with ID {key_id} found")
+            if isinstance(target_key, ExpiredKeyDataResult):
+                raise ExpiredKeyError(
+                    f"Key {key_id} already expired at {target_key.expired_at.isoformat()}"
                 )
-                if not target_key:
-                    raise KeyNotFoundError(f"No inactive key with ID {key_id} found")
-                if isinstance(target_key, ExpiredKeyDataResult):
-                    raise ExpiredKeyError(
-                        f"Key {key_id} already expired at {target_key.expired_at.isoformat()}"
-                    )
+            async with self.repository_coordinator.external_work_context(
+                self.keydata_repository, self.inbox_repository
+            ):
                 await self.keydata_repository.expire_keydata(key_id)
 
                 # Key invalidation successful, update local token manager
                 self.token_manager.invalidate_key(key_id)
                 # Update distributed state
-                jwks: list[
-                    EllipticCurveJWKResult
-                ] = await self.synced_store_key_manager.get_jwks()
-
-                # Should never happen, but in case it does we fall back and regenerate the entire list
-                if not (jwks and any(j.kid == key_id for j in jwks)):
-                    if intermediate_message_mapping is not None:
-                        intermediate_message_mapping["keylist_integrity_warning"] = (
-                            "Synced keylist state was inconsistent and hence regenerated through database"
-                        )
-                    jwks = list(await self.keydata_repository.get_jwks())
-                else:
-                    jwks = list(filter(lambda x: x.kid != key_id, jwks))
-
-                await self.synced_store_key_manager.set_jwks(jwks)
-
-        await self.jwks_update_announcer.stream_update(
-            VariableJWKS.model_validate(
-                {
-                    "keys": [
-                        EllipticCurveJWK.model_validate(jwk.model_dump())
-                        for jwk in jwks
-                    ]
-                }
-            )
-        )
+                jwks: tuple[
+                    EllipticCurveJWKResult, ...
+                ] = await self.keydata_repository.get_jwks()
+                inbox_event: Final[InboxEvent] = InboxEvent(
+                    type=EventType.KEY_STORE_WRITE,
+                    payload=VariableJWKS.model_validate(
+                        {
+                            "keys": [
+                                EllipticCurveJWK.model_validate(jwk.model_dump())
+                                for jwk in jwks
+                            ]
+                        }
+                    ).model_dump(mode="json"),
+                )
+                await self.inbox_repository.insert_into_inbox(inbox_event)
+        await self._optimistic_update_synced_jwks_state(jwks)
+        return jwks
 
     async def clean_keystore(
         self, cooldown_duration: int | None = None
@@ -275,29 +271,37 @@ class KeyLifecycleManager(AntiSingletonMixin):
             lock_duration=LockTIme.MEDIUM,
             operational_cooldown_duration=cooldown_duration,
         ):
-            async with self.keydata_repository.unit_of_work():
-                jwks_data: list[EllipticCurveJWKResult] = list(
-                    await self.keydata_repository.get_jwks()
-                )
-                if len(jwks_data) == 1:
-                    raise InvalidKeyOperationError(
-                        "No inactive keys present to invalidate"
-                    )
-                active_key: Final[EllipticCurveJWKResult] = jwks_data.pop(0)
-                # Prune JWKS
+            jwks_data: list[EllipticCurveJWKResult] = list(
+                await self.keydata_repository.get_jwks()
+            )
+            if len(jwks_data) == 1:
+                raise InvalidKeyOperationError("No inactive keys present to invalidate")
+            active_key: Final[EllipticCurveJWKResult] = jwks_data.pop(0)
+            # Prune JWKS
+            async with self.repository_coordinator.external_work_context(
+                self.inbox_repository, self.keydata_repository
+            ):
                 await self.keydata_repository.batch_expire_keydata(
                     tuple(k.kid for k in jwks_data)
                 )
-                await self.synced_store_key_manager.set_jwks((active_key,))
                 for key in jwks_data:
                     self.token_manager.invalidate_key(key.kid)
 
-        await self.jwks_update_announcer.stream_update(
-            VariableJWKS.model_validate(
-                {"keys": [EllipticCurveJWK.model_validate(active_key.model_dump())]}
-            )
-        )
+                inbox_event: Final[InboxEvent] = InboxEvent(
+                    type=EventType.KEY_STORE_WRITE,
+                    payload=VariableJWKS.model_validate(
+                        {
+                            "keys": (
+                                EllipticCurveJWK.model_validate(
+                                    active_key.model_dump()
+                                ),
+                            )
+                        }
+                    ).model_dump(mode="json"),
+                )
+                await self.inbox_repository.insert_into_inbox(inbox_event)
 
+        await self._optimistic_update_synced_jwks_state((active_key,))
         return active_key.kid, tuple(i.kid for i in jwks_data)
 
     async def rotate_key(
@@ -305,7 +309,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
         cooldown_duration: int | None = None,
         *,
         rotation_author: int | None = None,
-    ) -> ActiveKeyPublicDataResult:
+    ) -> tuple[ActiveKeyPublicDataResult, RotatedKeyDataResult]:
         async with self._transactional_block(
             operation=SyncedStoreKeyStrings.JWKS_WRITE_LOCK,
             lock_duration=LockTIme.MEDIUM,
@@ -320,17 +324,18 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 verification_key,
                 self.key_config.PUBLIC_PEM_FORMAT,
             )
+            # Update currently active key
+            previous_key: (
+                ActiveKeyPublicDataResult | None
+            ) = await self.keydata_repository.get_active_key(
+                lock_args=(SelectionLockOption.READ, SelectionLockOption.KEY_SHARE)
+            )
+            if not previous_key:  # Should never happen!!!
+                raise KeyStateError("Invalid key state!")
 
-            async with self.keydata_repository.unit_of_work():
-                # Update currently active key
-                previous_key: (
-                    ActiveKeyPublicDataResult | None
-                ) = await self.keydata_repository.get_active_key(
-                    lock_args=(SelectionLockOption.READ, SelectionLockOption.KEY_SHARE)
-                )
-                if not previous_key:  # Should never happen!!!
-                    raise KeyStateError("Invalid key state!")
-
+            async with self.repository_coordinator.external_work_context(
+                self.inbox_repository, self.keydata_repository
+            ):
                 # Reflect rotation in DB
                 new_key: Final[
                     ActiveKeyPrivateDataResult
@@ -371,21 +376,37 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 # Update token manager's mapping to use this newly created ECDSA pair
                 self.token_manager.update_signing_key(new_key)
                 # Update distributed state
-                jwks: list[EllipticCurveJWKResult] = list(
-                    await self.keydata_repository.get_jwks()
+                jwks: Final[
+                    tuple[EllipticCurveJWKResult, ...]
+                ] = await self.keydata_repository.get_jwks()
+
+                inbox_event: Final[InboxEvent] = InboxEvent(
+                    type=EventType.KEY_STORE_WRITE,
+                    payload=VariableJWKS.model_validate(
+                        {
+                            "keys": [
+                                EllipticCurveJWK.model_validate(jwk.model_dump())
+                                for jwk in jwks
+                            ]
+                        }
+                    ).model_dump(mode="json"),
                 )
-                await self.synced_store_key_manager.set_jwks(jwks)
-        await self.jwks_update_announcer.stream_update(
-            VariableJWKS.model_validate(
-                {
-                    "keys": [
-                        EllipticCurveJWK.model_validate(jwk.model_dump())
-                        for jwk in jwks
-                    ]
-                }
-            )
+                await self.inbox_repository.insert_into_inbox(inbox_event)
+        await self._optimistic_update_synced_jwks_state(jwks)
+        return (
+            new_key.create_public_copy(),
+            RotatedKeyDataResult(
+                kid=previous_key.kid,
+                alg=previous_key.alg,
+                curve=previous_key.curve,
+                epoch=previous_key.epoch,
+                public_pem=previous_key.public_pem,
+                rotated_out_at=generation_epoch,
+                expired_at=None,
+                manual_rotation=True,
+                rotated_by=None,
+            ),
         )
-        return new_key.create_public_copy()
 
     async def token_manager_updation_poller(self, interval: timedelta) -> None:
         while True:
@@ -401,3 +422,11 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 self._logger.error(format_exc())
             finally:
                 await asyncio.sleep(interval.total_seconds())
+
+    async def _optimistic_update_synced_jwks_state(
+        self, jwks: Sequence[EllipticCurveJWKResult]
+    ) -> None:
+        try:
+            await self.synced_store_key_manager.set_jwks(jwks)
+        except RedisError:
+            self._logger.debug("Failed optimistic synced state update")
