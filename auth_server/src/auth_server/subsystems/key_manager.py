@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -8,7 +8,6 @@ from logging import Logger, getLogger
 from traceback import format_exc
 from typing import Final, Protocol
 
-import orjson
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from auxillary.mixins.metaclass import AntiSingletonMixin
@@ -20,13 +19,10 @@ from auxillary.security.serialization import (
     pem_serialize_private_key,
     pem_serialize_public_key,
 )
-from auxillary.utils import json_repr
 from redis.asyncio.client import Redis
-from redis.exceptions import RedisError
 
 from auth_server.config.sub_config import JWKSConfigModel, KeyConfigModel
 from auth_server.datastructures.exceptions.keys import (
-    EmptyKeysError,
     ExpiredKeyError,
     InvalidKeyOperationError,
     KeyNotFoundError,
@@ -79,21 +75,6 @@ class SupportsTransactionalBlocks(Protocol):
 class SyncedStoreKeyStateManager(AntiSingletonMixin):
     synced_store_client: Redis
 
-    @asynccontextmanager
-    async def transactional_block(
-        self,
-    ) -> AsyncGenerator[None]:
-        raw_jwks: Final[str] = await self.synced_store_client.get(
-            SyncedStoreKeyStrings.JWKS_KEY
-        )
-        try:
-            yield
-        except Exception:
-            async with self.synced_store_client.pipeline(transaction=True) as pipeline:
-                pipeline.set(SyncedStoreKeyStrings.JWKS_KEY, raw_jwks)
-                await pipeline.execute()
-            raise
-
     async def get_key_operational_cooldown(self) -> bool:
         return bool(
             await self.synced_store_client.get(
@@ -106,23 +87,6 @@ class SyncedStoreKeyStateManager(AntiSingletonMixin):
             SyncedStoreKeyStrings.KEY_ROTATION_COOLDOWN,
             1,
             ex=cooldown,
-        )
-
-    async def get_jwks(self) -> list[EllipticCurveJWKResult]:
-        raw_jwks: str = await self.synced_store_client.get(
-            SyncedStoreKeyStrings.JWKS_KEY
-        )
-        return [
-            EllipticCurveJWKResult.initialize_from_cache(k)
-            for k in orjson.loads(raw_jwks)["keys"]
-        ]
-
-    async def set_jwks(self, keys: Sequence[EllipticCurveJWKResult]) -> None:
-        if not keys:
-            raise EmptyKeysError("keys must be non-empty")
-        await self.synced_store_client.set(
-            SyncedStoreKeyStrings.JWKS_KEY,
-            orjson.dumps({"keys": [json_repr(k) for k in keys]}),
         )
 
 
@@ -259,7 +223,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     ).model_dump(mode="json"),
                 )
                 await self.inbox_repository.insert_into_inbox(inbox_event)
-        await self._optimistic_update_synced_jwks_state(jwks)
+        # await self._optimistic_update_synced_jwks_state(jwks)
         return jwks
 
     async def clean_keystore(
@@ -301,7 +265,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 )
                 await self.inbox_repository.insert_into_inbox(inbox_event)
 
-        await self._optimistic_update_synced_jwks_state((active_key,))
+        # await self._optimistic_update_synced_jwks_state((active_key,))
         return active_key.kid, tuple(i.kid for i in jwks_data)
 
     async def rotate_key(
@@ -392,7 +356,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
                     ).model_dump(mode="json"),
                 )
                 await self.inbox_repository.insert_into_inbox(inbox_event)
-        await self._optimistic_update_synced_jwks_state(jwks)
+        # await self._optimistic_update_synced_jwks_state(jwks)
         return (
             new_key.create_public_copy(),
             RotatedKeyDataResult(
@@ -412,7 +376,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
         while True:
             try:
                 global_jwks: Final[tuple[EllipticCurveJWKResult, ...]] = tuple(
-                    await self.synced_store_key_manager.get_jwks()
+                    await self.keydata_repository.get_jwks()
                 )
                 if not global_jwks:
                     raise KeyStateError("Global key state empty or not found")
@@ -423,10 +387,10 @@ class KeyLifecycleManager(AntiSingletonMixin):
             finally:
                 await asyncio.sleep(interval.total_seconds())
 
-    async def _optimistic_update_synced_jwks_state(
-        self, jwks: Sequence[EllipticCurveJWKResult]
-    ) -> None:
-        try:
-            await self.synced_store_key_manager.set_jwks(jwks)
-        except RedisError:
-            self._logger.debug("Failed optimistic synced state update")
+    # async def _optimistic_update_synced_jwks_state(
+    #     self, jwks: Sequence[EllipticCurveJWKResult]
+    # ) -> None:
+    #     try:
+    #         await self.synced_store_key_manager.set_jwks(jwks)
+    #     except RedisError:
+    #         self._logger.debug("Failed optimistic synced state update")

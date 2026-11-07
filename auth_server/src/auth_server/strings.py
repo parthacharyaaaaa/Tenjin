@@ -15,7 +15,6 @@ class SyncedStoreCommandStrings(StrEnum):
 
 
 class SyncedStoreKeyStrings(StrEnum):
-    JWKS_KEY = "JWKS_KEY"
     JWKS_WRITE_LOCK = "JWKS_WRITE_LOCK"
     KEY_ROTATION_COOLDOWN = "KEY_ROTATION_COOLDOWN"
 

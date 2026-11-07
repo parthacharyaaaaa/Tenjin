@@ -14,12 +14,11 @@ from auth_server.datastructures.exceptions.token import TokenError
 from auth_server.dependencies.local import (
     get_app_config,
     get_hypermedia_link_builder,
-    get_synced_store_key_state_manager,
+    get_keydata_repository,
     get_token_manager,
 )
 from auth_server.models.auth_requests import AuthenticationModel, RegistrationModel
-from auth_server.repositories.keydata import EllipticCurveJWKResult
-from auth_server.subsystems.key_manager import SyncedStoreKeyStateManager
+from auth_server.repositories.keydata import EllipticCurveJWKResult, KeydataRepository
 from auth_server.subsystems.token_manager import TokenManager
 from auth_server.tokens.typing import StandardRefreshTokenClaims, TokenType
 from auth_server.utils.auth_auxillary import attach_tokens
@@ -33,11 +32,11 @@ config: Final[AppConfig] = get_app_config()
 ### Endpoints ###
 @AUTH.get("/jwks")
 async def jwks(
-    synced_keystate_manager: Annotated[
-        SyncedStoreKeyStateManager, Depends(get_synced_store_key_state_manager)
+    keydata_repository: Annotated[
+        KeydataRepository, Annotated[Depends(get_keydata_repository)]
     ],
 ) -> JSONResponse:
-    jwks_list: list[EllipticCurveJWKResult] = await synced_keystate_manager.get_jwks()
+    jwks_list: tuple[EllipticCurveJWKResult, ...] = await keydata_repository.get_jwks()
     return JSONResponse({"keys": [json_repr(key) for key in jwks_list]})
 
 

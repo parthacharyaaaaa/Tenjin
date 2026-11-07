@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = "==3.13.*"
 
 [manifest]
@@ -89,7 +89,6 @@ dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "httpx" },
     { name = "mako" },
-    { name = "orjson" },
     { name = "psycopg" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -117,7 +116,6 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.136.3" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "mako", specifier = ">=1.4.2,<2" },
-    { name = "orjson", specifier = ">=3.11.9" },
     { name = "psycopg", specifier = ">=3.3.4" },
     { name = "pydantic", specifier = ">=2.11.10,<3" },
     { name = "pydantic-settings", specifier = ">=2.14.2,<3" },
