@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import (
 
 from auth_server.config import AppConfig
 from auth_server.repositories.admin import AdminRepository
+from auth_server.repositories.inbox import InboxRepository
 from auth_server.repositories.keydata import KeydataRepository
 from auth_server.repositories.suspicious_activity import SuspiciousActivityRepository
 from auth_server.subsystems.jwks_announcer import JWKSUpdateAnnouncer
@@ -97,6 +98,10 @@ def get_suspicious_activity_repository() -> SuspiciousActivityRepository:
     return SuspiciousActivityRepository(get_database_session_maker())
 
 
+def get_inbox_repository() -> InboxRepository:
+    return InboxRepository(get_database_session_maker())
+
+
 def get_repository_work_coordinator() -> MultiRepositoryWorkCoordinator:
     return MultiRepositoryWorkCoordinator(get_database_session_maker())
 
@@ -134,7 +139,9 @@ def get_jwks_update_announcer() -> JWKSUpdateAnnouncer:
 def get_key_lifecycle_manager() -> KeyLifecycleManager:
     app_config: Final[AppConfig] = get_app_config()
     return KeyLifecycleManager(
+        get_inbox_repository(),
         get_keydata_repository(),
+        get_repository_work_coordinator(),
         get_token_manager(),
         app_config.KEYS,
         app_config.JWKS,
