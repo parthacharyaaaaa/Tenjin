@@ -1,6 +1,7 @@
 import datetime
 
 from auxillary.mixins.transactional_boxes.auxillary import (
+    EventSchedulerMixin,
     RetriedProcessingMixin,
     t_table_args,
 )
@@ -21,7 +22,7 @@ from sqlalchemy.dialects.postgresql import BYTEA
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 from sqlalchemy.schema import CheckConstraint
 from sqlalchemy.sql.functions import func
-from sqlalchemy.sql.schema import Index
+from sqlalchemy.sql.schema import ForeignKeyConstraint, Index
 from sqlalchemy.types import BIGINT
 
 from auth_server.admin.roles import AdminRole
@@ -181,16 +182,32 @@ class EventDelivery(RetriedProcessingMixin, Base):
     subscriber_type: Mapped[EventSubtype] = mapped_column(
         INBOX_EVENT_SUBTYPES, nullable=False
     )
+    supersession_message_id: Mapped[int | None] = mapped_column(BIGINT, nullable=True)
 
     @classmethod
     def implementation_constraints(cls) -> t_table_args:
         return (
             PrimaryKeyConstraint(cls.subscriber_type, cls.message_id),
+            ForeignKeyConstraint(
+                ["subscriber_type", "supersession_message_id"],
+                [
+                    f"{cls.__tablename__}.subscriber_type",
+                    f"{cls.__tablename__}.message_id",
+                ],
+            ),
+            Index(
+                "ix_superceeded_supercession_message_id",
+                cls.supersession_message_id,
+                cls.message_id,
+                postgresql_where=(cls.supersession_message_id.isnot(None)),
+            ),
             Index(
                 "ix_pending_inbox_id",
                 cls.subscriber_type,
-                cls.message_id,
-                postgresql_where=(cls.processed_at.is_(None)),
+                cls.message_id.desc(),
+                postgresql_where=(
+                    cls.processed_at.is_(None) & cls.supersession_message_id.is_(None)
+                ),
             ),
             Index(
                 "ix_processed",
@@ -205,23 +222,23 @@ class EventDelivery(RetriedProcessingMixin, Base):
         return cls.implementation_constraints() + cls.constraints()
 
 
-# class SubEventScheduleTrack(EventSchedulerMixin, Base):
-#     """
-#     Singleton table to keep track of the last sub-event in an inbox/outbox table
-#     that was scheduled for processing
-#     """
-#
-#     __tablename__ = "sub_event_schedule_track"
-#
-#     # Override with narrowed EventSubtype StrEnum
-#     subscriber_type: Mapped[EventSubtype] = mapped_column(
-#         INBOX_EVENT_SUBTYPES, primary_key=True
-#     )
-#
-#     @declared_attr.directive
-#     @classmethod
-#     def __table_args__(cls) -> t_table_args:  # pyrefly: ignore[bad-override]
-#         return cls.constraints()
+class SubEventScheduleTrack(EventSchedulerMixin, Base):
+    """
+    Singleton table to keep track of the last sub-event in an inbox/outbox table
+    that was scheduled for processing
+    """
+
+    __tablename__ = "sub_event_schedule_track"
+
+    # Override with narrowed EventSubtype StrEnum
+    subscriber_type: Mapped[EventSubtype] = mapped_column(
+        INBOX_EVENT_SUBTYPES, primary_key=True
+    )
+
+    @declared_attr.directive
+    @classmethod
+    def __table_args__(cls) -> t_table_args:  # pyrefly: ignore[bad-override]
+        return cls.constraints()
 
 
 class InboxDeadLetter(TransactionalBoxDeadLetterMixin, Base):
