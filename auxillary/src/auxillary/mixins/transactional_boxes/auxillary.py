@@ -25,6 +25,13 @@ class EventHolderMixin:
     event_type: Mapped[str] = mapped_column(VARCHAR(64), nullable=False)
 
 
+class LeaseProcessingMixin:
+    lease_expiry_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    lease_token: Mapped[str | None] = mapped_column(VARCHAR(32), nullable=True)
+
+
 class RetriedProcessingMixin:
     # Default to 1 and not 0 since subscribers record their entries
     # on their first attempts
@@ -37,10 +44,6 @@ class RetriedProcessingMixin:
     processed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
-    lease_expiry_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
-    )
-    lease_token: Mapped[str | None] = mapped_column(VARCHAR(32), nullable=True)
 
     @classmethod
     def constraints(cls) -> t_table_args:
@@ -50,13 +53,20 @@ class RetriedProcessingMixin:
                 | (cls.last_attempt_at < cls.processed_at),
                 "ck_processed_timestamp_chronology",
             ),
+            CheckConstraint(cls.attempts >= 0, "ck_attempts_lower_bound"),
+        )
+
+
+class LeasedRetriedProcessingMixin(RetriedProcessingMixin, LeaseProcessingMixin):
+    @classmethod
+    def constraints(cls) -> t_table_args:
+        return (
             CheckConstraint(
                 (cls.lease_expiry_at.is_(None) | cls.last_attempt_at.is_(None))
                 | (cls.lease_expiry_at > cls.last_attempt_at),
                 "ck_lease_chronology",
             ),
-            CheckConstraint(cls.attempts >= 0, "ck_attempts_lower_bound"),
-        )
+        ) + RetriedProcessingMixin.constraints()
 
 
 class EventSchedulerMixin:
