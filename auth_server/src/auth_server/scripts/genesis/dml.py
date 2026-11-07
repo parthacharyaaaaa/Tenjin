@@ -6,8 +6,7 @@ from typing import Final
 from auth_server.admin.roles import AdminRole
 from auth_server.config.app_config import AppConfig
 from auth_server.dependencies.local import get_app_config
-from auth_server.models.database import Admin, SubEventScheduleTrack
-from auth_server.models.events.downstream import EVENT_DOWNSTREAM_MAPPING
+from auth_server.models.database import Admin
 from auxillary.security.hashing import bcrypt_hash_password
 from dotenv import load_dotenv
 from sqlalchemy import Engine, create_engine
@@ -51,11 +50,6 @@ def main(env_filepath: str | None = None) -> None:
                 )
             """)
         )
-        for subevents_tuple in EVENT_DOWNSTREAM_MAPPING.values():
-            session.execute(
-                insert(SubEventScheduleTrack),
-                tuple({"subscriber_type": subevent} for subevent in subevents_tuple),
-            )
         session.commit()
 
 

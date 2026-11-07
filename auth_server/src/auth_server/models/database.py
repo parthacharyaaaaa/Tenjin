@@ -1,8 +1,7 @@
 import datetime
 
 from auxillary.mixins.transactional_boxes.auxillary import (
-    EventSchedulerMixin,
-    RetriedProcessingMixin,
+    LeasedRetriedProcessingMixin,
     t_table_args,
 )
 from auxillary.mixins.transactional_boxes.transactional_boxes import (
@@ -172,7 +171,7 @@ class InboxTable(TransactionalBoxMixin, Base):
         return cls.table_constraints()
 
 
-class EventDelivery(RetriedProcessingMixin, Base):
+class EventDelivery(LeasedRetriedProcessingMixin, Base):
     __tablename__ = "event_deliveries"
     message_id: Mapped[int] = mapped_column(
         BIGINT,
@@ -220,25 +219,6 @@ class EventDelivery(RetriedProcessingMixin, Base):
     @classmethod
     def __table_args__(cls) -> t_table_args:  # pyrefly: ignore[bad-override]
         return cls.implementation_constraints() + cls.constraints()
-
-
-class SubEventScheduleTrack(EventSchedulerMixin, Base):
-    """
-    Singleton table to keep track of the last sub-event in an inbox/outbox table
-    that was scheduled for processing
-    """
-
-    __tablename__ = "sub_event_schedule_track"
-
-    # Override with narrowed EventSubtype StrEnum
-    subscriber_type: Mapped[EventSubtype] = mapped_column(
-        INBOX_EVENT_SUBTYPES, primary_key=True
-    )
-
-    @declared_attr.directive
-    @classmethod
-    def __table_args__(cls) -> t_table_args:  # pyrefly: ignore[bad-override]
-        return cls.constraints()
 
 
 class InboxDeadLetter(TransactionalBoxDeadLetterMixin, Base):

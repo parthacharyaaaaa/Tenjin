@@ -66,7 +66,7 @@ class LeasedRetriedProcessingMixin(RetriedProcessingMixin, LeaseProcessingMixin)
                 | (cls.lease_expiry_at > cls.last_attempt_at),
                 "ck_lease_chronology",
             ),
-        ) + RetriedProcessingMixin.constraints()
+        ) + super().constraints()
 
 
 class EventSchedulerMixin:
