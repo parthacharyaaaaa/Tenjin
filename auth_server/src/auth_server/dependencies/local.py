@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from auth_server.config import AppConfig
+from auth_server.config.inbox_config import InboxWorkerSettings
 from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.inbox import InboxRepository
 from auth_server.repositories.keydata import KeydataRepository
@@ -34,7 +35,7 @@ def get_hypermedia_link_builder(request: Request) -> HypermediaLinkBuilder:
 
 @lru_cache(maxsize=1)
 def get_app_config() -> AppConfig:
-    return AppConfig()  # type: ignore[reportCallIssue]
+    return AppConfig()
 
 
 @lru_cache(maxsize=1)
@@ -149,3 +150,8 @@ def get_key_lifecycle_manager() -> KeyLifecycleManager:
         get_distributed_lock_factory(),
         get_jwks_update_announcer(),
     )
+
+
+@lru_cache(maxsize=1)
+def get_inbox_worker_config() -> InboxWorkerSettings:
+    return InboxWorkerSettings()
