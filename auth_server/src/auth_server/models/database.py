@@ -14,7 +14,6 @@ from sqlalchemy import (
     TIMESTAMP,
     VARCHAR,
     ForeignKey,
-    PrimaryKeyConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import BYTEA
@@ -176,7 +175,8 @@ class EventDelivery(LeasedRetriedProcessingMixin, Base):
     message_id: Mapped[int] = mapped_column(
         BIGINT,
         ForeignKey(f"{InboxTable.__tablename__}.{InboxTable.message_id.name}"),
-        nullable=False,
+        primary_key=True,
+        autoincrement=True,
     )
     subscriber_type: Mapped[EventSubtype] = mapped_column(
         INBOX_EVENT_SUBTYPES, nullable=False
@@ -186,7 +186,6 @@ class EventDelivery(LeasedRetriedProcessingMixin, Base):
     @classmethod
     def implementation_constraints(cls) -> t_table_args:
         return (
-            PrimaryKeyConstraint(cls.subscriber_type, cls.message_id),
             ForeignKeyConstraint(
                 ["subscriber_type", "supersession_message_id"],
                 [
@@ -230,6 +229,10 @@ class InboxDeadLetter(TransactionalBoxDeadLetterMixin, Base):
         nullable=False,
         server_default=InboxErrorTypes.GENERAL_PROCESSING_ERROR,
     )
+    # Override with narrowed EventSubtype StrEnum
+    event_type: Mapped[EventSubtype] = mapped_column(
+        INBOX_EVENT_SUBTYPES, nullable=False
+    )
 
     @declared_attr.directive
     @classmethod
@@ -239,9 +242,13 @@ class InboxDeadLetter(TransactionalBoxDeadLetterMixin, Base):
             Index(
                 "ix_event_type",
                 cls.event_type,
-                cls.last_attempt,
+                cls.last_attempt.desc(),
                 postgresql_where=(cls.event_type.isnot(None)),
             ),
-            Index("ix_error_type", cls.error_type, cls.last_attempt),
+            Index("ix_error_type", cls.error_type, cls.last_attempt.desc()),
+            ForeignKeyConstraint(
+                ("message_id",),
+                (f"{EventDelivery.__tablename__}.{EventDelivery.message_id.name}",),
+            ),
         )
         return implementation_constraints + cls.table_constraints()

@@ -5,7 +5,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.schema import CheckConstraint, ColumnCollectionConstraint, Index
 from sqlalchemy.sql.expression import text
-from sqlalchemy.types import BIGINT, SMALLINT, TIMESTAMP, VARCHAR
+from sqlalchemy.types import BIGINT, SMALLINT, TEXT, TIMESTAMP, VARCHAR
 
 type t_table_args = tuple[ColumnCollectionConstraint | Index, ...]
 
@@ -44,6 +44,7 @@ class RetriedProcessingMixin:
     processed_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    last_error_text: Mapped[str | None] = mapped_column(TEXT, nullable=True)
 
     @classmethod
     def constraints(cls) -> t_table_args:
