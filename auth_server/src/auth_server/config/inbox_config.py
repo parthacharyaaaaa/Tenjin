@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Annotated, ClassVar, Self
 
-from auxillary.mixins.annotations import timedelta_ms, timedelta_s
+from auxillary.mixins.annotations import timedelta_ms
 from pydantic import ConfigDict, Field, model_validator
 from pydantic.main import BaseModel
 from pydantic_settings import (
@@ -17,10 +17,8 @@ class GeneralInboxWorkerConfig(BaseModel):
     MAXIMUM_BACKOFF_INTERVAL: timedelta_ms
     BASE_BACKOFF_INTERVAL: timedelta_ms
     BACKOFF_EXPONENTIAL: Annotated[int, Field(ge=1, default=2)]
-    GENERAL_INTERVAL: timedelta_ms
     LEASE_DURATION: timedelta_ms
     MAX_ATTEMPTS: Annotated[int, Field(ge=1)]
-    IDEMPOTENCY_DURATION: timedelta_s
 
     @model_validator(mode="after")
     def validate_backoff_values(self) -> Self:
