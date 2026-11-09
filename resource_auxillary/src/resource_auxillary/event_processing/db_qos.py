@@ -2,11 +2,11 @@ from datetime import UTC, datetime
 from typing import Any, Callable, Coroutine, Iterable, TypeVar
 from uuid import uuid4
 
+from auxillary.coordination import exponential_jittered_backoff
 from psycopg import AsyncConnection, sql
 from psycopg.errors import IntegrityError
 
 from resource_auxillary.constants import POTENTIAL_TRANSIENT_ERRORS
-from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.datastructures.database import EventLiteral
 from resource_auxillary.strings import EventName
 from resource_auxillary.templates.sql import (

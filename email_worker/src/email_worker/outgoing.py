@@ -6,7 +6,7 @@ from typing import MutableSequence, Sequence
 
 from aiosmtplib import SMTP, SMTPServerDisconnected
 from aiosmtplib.errors import SMTPException, SMTPTimeoutError
-from resource_auxillary.coordination import exponential_jittered_backoff
+from auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.typing import SupportsExponentialJitteredRetryPolicy
 

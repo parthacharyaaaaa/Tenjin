@@ -1,8 +1,8 @@
 from functools import partial
 from typing import Final
 
+from auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.constants import POTENTIAL_TRANSIENT_ERRORS
-from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.datastructures.database import SideEffectsTables, StrongEntity
 from resource_auxillary.event_processing.db_qos import (
     db_execute_with_retries,

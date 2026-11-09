@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import httpx
 import orjson
+from auxillary.coordination import exponential_jittered_backoff
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
 from auxillary.security.data_structures.jwks.enums import JWKKty
 from auxillary.security.data_structures.jwks.models import (
@@ -17,7 +18,6 @@ from auxillary.security.serialization import pem_serialize_public_key
 from auxillary.singleton import SingletonMetaclass
 from cryptography.hazmat.primitives.asymmetric import ec
 from redis.asyncio import Redis
-from resource_auxillary.coordination import exponential_jittered_backoff
 
 from resource_server.config.constants import RedisConstants
 from resource_server.config.sub_config import JWKSConfig

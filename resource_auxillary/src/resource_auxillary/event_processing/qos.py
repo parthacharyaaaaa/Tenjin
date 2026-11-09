@@ -2,9 +2,9 @@
 
 from typing import Any, Callable, Coroutine, Sequence, TypeVar
 
+from auxillary.coordination import exponential_jittered_backoff
 from redis.exceptions import ExceptionType, RedisError
 
-from resource_auxillary.coordination import exponential_jittered_backoff
 from resource_auxillary.event_processing.event_stream_manager import EventStreamManager
 from resource_auxillary.events import StreamedEvent
 from resource_auxillary.strings import StreamName
