@@ -2,8 +2,13 @@ from dataclasses import dataclass
 from typing import Final, Literal, overload
 
 from auxillary.data_structures.repository import AbstractWorkRepository
-from sqlalchemy.sql.expression import insert
+from sqlalchemy.ext.asyncio.session import AsyncSession
+from sqlalchemy.sql.expression import insert, text
 
+from auth_server.datastructures.exceptions.database import (
+    FailedApplicationSerializationError,
+)
+from auth_server.models.advisory_locks import LockNamespace
 from auth_server.models.database import EventDelivery, InboxTable
 from auth_server.models.events.downstream import EVENT_DOWNSTREAM_MAPPING
 from auth_server.models.events.events import InboxEvent
@@ -13,17 +18,48 @@ from auth_server.models.events.events import InboxEvent
 class InboxRepository(AbstractWorkRepository):
     @overload
     async def insert_into_inbox(
-        self, event: InboxEvent, *, return_message_id: Literal[False] = False
+        self,
+        event: InboxEvent,
+        *,
+        return_message_id: Literal[False] = False,
+        serialization_lock: int | None = None,
     ) -> None: ...
     @overload
     async def insert_into_inbox(
-        self, event: InboxEvent, *, return_message_id: Literal[True]
+        self,
+        event: InboxEvent,
+        *,
+        return_message_id: Literal[True],
+        serialization_lock: int | None = None,
     ) -> int: ...
 
+    async def set_transactional_advisory_exclusive_lock(
+        self, session: AsyncSession, namespace: int, lock: int
+    ) -> bool:
+        return await session.scalar(
+            text(
+                "SELECT pg_try_advisory_xact_lock(:namespace, :lock_value) AS lock_set;"
+            ),
+            {"namespace": namespace, "lock": lock},
+        )
+
     async def insert_into_inbox(
-        self, event: InboxEvent, *, return_message_id: bool = False
+        self,
+        event: InboxEvent,
+        *,
+        return_message_id: bool = False,
+        serialization_lock: int | None = None,
     ) -> int | None:
         async with self._work_scoped_session() as session:
+            if serialization_lock is not None and not (
+                await self.set_transactional_advisory_exclusive_lock(
+                    session, LockNamespace.EVENT_SERIALIZATION, serialization_lock
+                )
+            ):
+                raise FailedApplicationSerializationError(
+                    f"Failed to acquire serialization lock Value: {serialization_lock}"
+                )
+
             message_id: Final[int] = (
                 await session.execute(
                     insert(InboxTable)

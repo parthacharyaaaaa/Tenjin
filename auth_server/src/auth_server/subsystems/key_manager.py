@@ -29,6 +29,7 @@ from auth_server.datastructures.exceptions.keys import (
     KeyStateError,
 )
 from auth_server.keys.keygen import generate_ecdsa_pair
+from auth_server.models.advisory_locks import EventSerializationNamespace
 from auth_server.models.data_transport.keydata import (
     ActiveKeyPrivateDataResult,
     ActiveKeyPublicDataResult,
@@ -222,8 +223,10 @@ class KeyLifecycleManager(AntiSingletonMixin):
                         }
                     ).model_dump(mode="json"),
                 )
-                await self.inbox_repository.insert_into_inbox(inbox_event)
-        # await self._optimistic_update_synced_jwks_state(jwks)
+                await self.inbox_repository.insert_into_inbox(
+                    inbox_event,
+                    serialization_lock=EventSerializationNamespace.KEY_STATE_CHANGE,
+                )
         return jwks
 
     async def clean_keystore(
@@ -263,9 +266,11 @@ class KeyLifecycleManager(AntiSingletonMixin):
                         }
                     ).model_dump(mode="json"),
                 )
-                await self.inbox_repository.insert_into_inbox(inbox_event)
+                await self.inbox_repository.insert_into_inbox(
+                    inbox_event,
+                    serialization_lock=EventSerializationNamespace.KEY_STATE_CHANGE,
+                )
 
-        # await self._optimistic_update_synced_jwks_state((active_key,))
         return active_key.kid, tuple(i.kid for i in jwks_data)
 
     async def rotate_key(
@@ -355,8 +360,10 @@ class KeyLifecycleManager(AntiSingletonMixin):
                         }
                     ).model_dump(mode="json"),
                 )
-                await self.inbox_repository.insert_into_inbox(inbox_event)
-        # await self._optimistic_update_synced_jwks_state(jwks)
+                await self.inbox_repository.insert_into_inbox(
+                    inbox_event,
+                    serialization_lock=EventSerializationNamespace.KEY_STATE_CHANGE,
+                )
         return (
             new_key.create_public_copy(),
             RotatedKeyDataResult(
@@ -386,11 +393,3 @@ class KeyLifecycleManager(AntiSingletonMixin):
                 self._logger.error(format_exc())
             finally:
                 await asyncio.sleep(interval.total_seconds())
-
-    # async def _optimistic_update_synced_jwks_state(
-    #     self, jwks: Sequence[EllipticCurveJWKResult]
-    # ) -> None:
-    #     try:
-    #         await self.synced_store_key_manager.set_jwks(jwks)
-    #     except RedisError:
-    #         self._logger.debug("Failed optimistic synced state update")
