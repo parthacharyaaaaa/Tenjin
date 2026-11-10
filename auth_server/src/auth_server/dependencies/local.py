@@ -4,9 +4,11 @@ from typing import AsyncGenerator, Final
 
 from auxillary.data_structures.enriched.link_builder import HypermediaLinkBuilder
 from auxillary.data_structures.locks.lock import RedisInstanceLockFactory
+from auxillary.data_structures.redis_script_registry import RedisScriptRegistry
 from auxillary.data_structures.uow import MultiRepositoryWorkCoordinator
 from fastapi import Request
-from redis.asyncio import Redis
+from redis.asyncio.client import Redis as AsyncRedis
+from redis.client import Redis as SyncRedis
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -16,6 +18,7 @@ from sqlalchemy.ext.asyncio import (
 
 from auth_server.config import AppConfig
 from auth_server.config.inbox_config import InboxWorkerSettings
+from auth_server.datastructures.redis.script_registration import RAW_SCRIPT_REGISTRY
 from auth_server.repositories.admin import AdminRepository
 from auth_server.repositories.inbox import InboxRepository
 from auth_server.repositories.keydata import KeydataRepository
@@ -39,10 +42,10 @@ def get_app_config() -> AppConfig:
 
 
 @lru_cache(maxsize=1)
-def get_synced_store_client() -> Redis:
+def get_synced_store_client() -> AsyncRedis:
     config: Final[AppConfig] = get_app_config()
 
-    return Redis(
+    return AsyncRedis(
         # username=os.environ["AUTH_WORKER_REDIS_USERNAME"],
         # password=os.environ["AUTH_WORKER_REDIS_PASSWORD"],
         **config.REDIS.SYNCED_STORE.model_dump(by_alias=True),
@@ -50,10 +53,21 @@ def get_synced_store_client() -> Redis:
 
 
 @lru_cache(maxsize=1)
-def get_token_store_client() -> Redis:
+def _get_blocking_synced_store_client() -> SyncRedis:
     config: Final[AppConfig] = get_app_config()
 
-    return Redis(
+    return SyncRedis(
+        # username=os.environ["AUTH_WORKER_REDIS_USERNAME"],
+        # password=os.environ["AUTH_WORKER_REDIS_PASSWORD"],
+        **config.REDIS.SYNCED_STORE.model_dump(by_alias=True),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_token_store_client() -> AsyncRedis:
+    config: Final[AppConfig] = get_app_config()
+
+    return AsyncRedis(
         # username=os.environ["AUTH_WORKER_REDIS_USERNAME"],
         # password=os.environ["AUTH_WORKER_REDIS_PASSWORD"],
         **config.REDIS.TOKEN_STORE.model_dump(by_alias=True),
@@ -107,10 +121,6 @@ def get_repository_work_coordinator() -> MultiRepositoryWorkCoordinator:
     return MultiRepositoryWorkCoordinator(get_database_session_maker())
 
 
-def get_admin_session_manager() -> AdminSessionManager:
-    return AdminSessionManager(get_synced_store_client(), get_app_config().ADMIN)
-
-
 @lru_cache(maxsize=1)
 def get_token_manager() -> TokenManager:
     app_config: Final[AppConfig] = get_app_config()
@@ -155,3 +165,16 @@ def get_key_lifecycle_manager() -> KeyLifecycleManager:
 @lru_cache(maxsize=1)
 def get_inbox_worker_config() -> InboxWorkerSettings:
     return InboxWorkerSettings()
+
+
+@lru_cache(maxsize=1)
+def get_redis_script_registry() -> RedisScriptRegistry:
+    return RedisScriptRegistry.sync_initialize_script_registry(
+        _get_blocking_synced_store_client(), RAW_SCRIPT_REGISTRY
+    )
+
+
+def get_admin_session_manager() -> AdminSessionManager:
+    return AdminSessionManager(
+        get_synced_store_client(), get_redis_script_registry(), get_app_config().ADMIN
+    )
