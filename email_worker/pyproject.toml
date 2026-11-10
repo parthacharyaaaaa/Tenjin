@@ -6,7 +6,7 @@ dependencies = [
     "aiosmtplib>=5.1.2, <6",
     "psycopg>=3.3.4, <4",
     "psycopg-pool>=3.3.1, <4",
-    "redis>=7.4.1, <8",
+    "redis==8.1",
     "resource-auxillary",
 ]
 
