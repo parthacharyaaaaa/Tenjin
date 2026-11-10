@@ -25,8 +25,8 @@ from auth_server.dependencies.local import (
     get_database_session_maker,
     get_distributed_lock_factory,
     get_key_lifecycle_manager,
+    get_redis_script_registry,
     get_synced_store_client,
-    get_synced_store_key_state_manager,
     get_token_manager,
 )
 from auth_server.keys.keygen import generate_ecdsa_pair
@@ -41,7 +41,6 @@ from auth_server.routers import RouterName, URLPrefix
 from auth_server.strings import SyncedStoreCommandStrings
 from auth_server.subsystems.key_manager import (
     KeyLifecycleManager,
-    SyncedStoreKeyStateManager,
 )
 from auth_server.subsystems.token_manager import TokenManager
 
@@ -81,7 +80,6 @@ async def _initialize_active_key(
 async def master_bootup(
     config: AppConfig,
     synced_store_client: Redis,
-    synced_store_manager: SyncedStoreKeyStateManager,
     keydata_repository: KeydataRepository,
     token_manager: TokenManager,
     process_id: int,
@@ -90,6 +88,9 @@ async def master_bootup(
 ) -> None:
     logger = logger or logging.getLogger(f"{process_id}::{master_bootup.__name__}")
     logger.info("Serving as master")
+
+    # Register Lua scripts with Redis server once (idempotent, retries tolerated)
+    await asyncio.to_thread(get_redis_script_registry)
 
     active_keydata: ActiveKeyPrivateDataResult | None = None
     rotated_verifying_keys: list[RotatedKeyDataResult] = []
@@ -114,7 +115,6 @@ async def master_bootup(
                 rotated_verifying_keys[config.JWKS.JWKS_CAP - 2].epoch
             )
             rotated_verifying_keys = rotated_verifying_keys[: config.JWKS.JWKS_CAP - 1]
-        await synced_store_manager.set_jwks(await keydata_repository.get_jwks())
         token_manager.set_key_state(
             active_keydata, {i.kid: i for i in rotated_verifying_keys}
         )
@@ -168,9 +168,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         get_database_session_maker()
     )
     token_manager: Final[TokenManager] = get_token_manager()
-    synced_state_manager: Final[SyncedStoreKeyStateManager] = (
-        get_synced_store_key_state_manager()
-    )
     lifecycle_manager: Final[KeyLifecycleManager] = get_key_lifecycle_manager()
 
     master_lock_context: Final[BasicLockContext] = await lock_factory.lock(
@@ -184,7 +181,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             await master_bootup(
                 config,
                 synced_store_client,
-                synced_state_manager,
                 keydata_repository,
                 token_manager,
                 pid,
