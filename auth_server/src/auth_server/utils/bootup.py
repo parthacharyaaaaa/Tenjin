@@ -21,6 +21,7 @@ from auth_server.config.app_config import AppConfig
 from auth_server.config.sub_config import KeyConfigModel
 from auth_server.datastructures.exceptions.keys import EmptyKeysError
 from auth_server.dependencies.local import (
+    get_admin_session_manager,
     get_app_config,
     get_database_session_maker,
     get_distributed_lock_factory,
@@ -38,11 +39,13 @@ from auth_server.repositories.keydata import (
     KeydataRepository,
 )
 from auth_server.routers import RouterName, URLPrefix
+from auth_server.scripts.writeback import coordinated_admin_auth_time_writeback
 from auth_server.strings import SyncedStoreCommandStrings
 from auth_server.subsystems.key_manager import (
     KeyLifecycleManager,
 )
 from auth_server.subsystems.token_manager import TokenManager
+from auth_server.utils.auxxillary import cancel_and_await_task
 
 
 def register_exception_handler(
@@ -191,5 +194,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         )
 
     lifecycle_manager.start_token_manager_polling()
+    admin_auth_writeback_task: Final[asyncio.Task[None]] = asyncio.create_task(
+        coordinated_admin_auth_time_writeback(
+            get_database_session_maker(),
+            get_admin_session_manager(),
+            get_distributed_lock_factory(),
+            get_app_config().ADMIN,
+        )
+    )
     yield
     await lifecycle_manager.stop_token_manager_polling()
+    await cancel_and_await_task(admin_auth_writeback_task)
