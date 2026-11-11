@@ -1,7 +1,7 @@
 from typing import Annotated, Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from redis.typing import DecodedT, KeyT
+from redis.typing import DecodedT, FieldT
 from sqlalchemy.util.typing import TypeGuard
 
 from auth_server.admin.roles import AdminRole
@@ -33,12 +33,12 @@ class AdminSession(BaseModel):
         return self
 
     @staticmethod
-    def _is_redis_dict(value: dict[str, Any]) -> TypeGuard[dict[KeyT, DecodedT]]:
+    def _is_redis_dict(value: dict[str, Any]) -> TypeGuard[dict[FieldT, DecodedT]]:
         return all(
-            isinstance(k, KeyT) and isinstance(v, DecodedT) for k, v in value.items()
+            isinstance(k, FieldT) and isinstance(v, DecodedT) for k, v in value.items()
         )
 
-    def model_dump_redis(self) -> dict[KeyT, DecodedT]:
+    def model_dump_redis(self) -> dict[FieldT, DecodedT]:
         model_dump: dict[str, Any] = self.model_dump()
         model_dump["role"] = model_dump["role"].value
 

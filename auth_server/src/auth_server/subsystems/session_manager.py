@@ -53,7 +53,7 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
         self, session_id: str, *, missing_ok: bool = True
     ) -> AdminSession | None:
         session_name: Final[str] = self.generate_admin_session_name(session_id)
-        admin_session_dict: dict[str, Any] = await self.session_store.hgetall(  # pyrefly: ignore[not-async]
+        admin_session_dict: dict[str, Any] = await self.session_store.hgetall(  # pyrefly: ignore[not-async, bad-assignment]
             session_name
         )
 
@@ -83,7 +83,7 @@ class AdminSessionManager(metaclass=SingletonMetaclass):
     async def get_admin_session_via_admin_id(
         self, admin_id: int, *, missing_ok: bool = True
     ) -> AdminSession | None:
-        session_id: str | None = await self.session_store.hget(  # pyrefly: ignore[not-async]
+        session_id: str | None = await self.session_store.hget(  # pyrefly: ignore[not-async, bad-assignment]
             self.admin_session_reverse_mapping_name, str(admin_id)
         )
         if not session_id:
