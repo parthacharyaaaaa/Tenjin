@@ -3,7 +3,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Annotated, Any, Self
 
-from auxillary.mixins.annotations import timedelta_s
+from auxillary.mixins.annotations import timedelta_ms, timedelta_s
 from auxillary.mixins.db_config import (
     BasicPostgresDatabaseConfigMixin,
     BasicSQLAlchemyConfigMixin,
@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.serialization import (
 )
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     Field,
     computed_field,
     model_validator,
@@ -132,6 +133,18 @@ class AdminConfigModel(BaseModel):
     MAX_SESSION_ITERATIONS: Annotated[int, Field(ge=1)]
     ADMIN_SESSION_DURATION: timedelta_s
     REVIVAL_DIGEST_LENGTH: Annotated[int, Field(ge=1)]
+
+    LATEST_AUTH_ACTIIVTY_WRITEBACK_MAX_INTERVAL: timedelta_ms
+    LATEST_AUTH_ACTIIVTY_WRITEBACK_MIN_INTERVAL: timedelta_ms
+    LATEST_AUTH_ACTIIVTY_WRITEBACK_LOCK_DURATION: timedelta_ms
+    LATEST_AUTH_ACTIIVTY_WRITEBACK_LOCK_VALUE: Annotated[
+        str, Field(default="1"), BeforeValidator(lambda x: x.strip())
+    ]
+    LATEST_AUTH_ACTIIVTY_WRITEBACK_LOCK_NAME: Annotated[
+        str,
+        Field(default="__AUTH_ACTIVITY_WRITEBACK_LOCK__"),
+        BeforeValidator(lambda x: x.strip()),
+    ]
 
 
 class SAConfigModel(BasicSQLAlchemyConfigMixin, BaseModel): ...
