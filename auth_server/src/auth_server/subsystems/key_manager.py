@@ -50,6 +50,7 @@ from auth_server.strings import (
 )
 from auth_server.subsystems.jwks_announcer import JWKSUpdateAnnouncer
 from auth_server.subsystems.token_manager import TokenManager
+from auth_server.utils.auxxillary import cancel_and_await_task
 
 
 class KeyOperationLocks(IntFlag):
@@ -136,11 +137,7 @@ class KeyLifecycleManager(AntiSingletonMixin):
         )
 
     async def stop_token_manager_polling(self) -> None:
-        self._token_manager_polling_task.cancel()
-        try:
-            await self._token_manager_polling_task
-        except asyncio.CancelledError:
-            pass
+        await cancel_and_await_task(self._token_manager_polling_task)
         object.__setattr__(self, "_token_manager_polling_task", None)
 
     @asynccontextmanager
